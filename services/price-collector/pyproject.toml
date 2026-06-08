@@ -1,0 +1,19 @@
+[project]
+name = "signal-alpha-price-collector"
+version = "0.1.0"
+description = "C-4 Kiwoom OpenAPI+ price and supply/demand collector for Signal Alpha"
+requires-python = ">=3.11"
+dependencies = [
+  "psycopg[binary]>=3.1.0"
+]
+
+[project.optional-dependencies]
+# Windows-only: Kiwoom OpenAPI+ COM control. Not installed in Linux/CI.
+kiwoom = [
+  "pykiwoom>=0.1.0",
+  "pandas>=2.0.0"
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
