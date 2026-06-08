@@ -19,7 +19,7 @@ Signal Alpha 데이터베이스는 DART 공시, 증권사 리포트, 채용공�
 
 | Zone | 영역 | 주요 테이블 |
 | --- | --- | --- |
-| Zone A | Market | `stocks`, `ohlcv_data`, `fundamentals` |
+| Zone A | Market | `stocks`, `ohlcv_data`, `fundamentals`, `sectors`, `sector_ohlcv` |
 | Zone B | User / Billing 기본 | `users`, `subscription_plans` |
 | Zone C | Collection / Raw | `collector_runs`, `raw_documents`, `dart_raw_details`, `report_raw_details`, `hiring_raw_details`, `patent_raw_details`, `datalab_raw_details`, `report_chunks` |
 | Zone D | Processing / Normalization | `processing_queue`, `source_documents`, `signal_events`, `signal_metrics`, `validation_logs` |
