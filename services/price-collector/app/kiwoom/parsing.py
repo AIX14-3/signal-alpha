@@ -46,6 +46,12 @@ def parse_decimal(raw: object, default: float | None = None) -> float | None:
         return default
 
 
+def parse_points(raw: object, default: float = 0.0) -> float:
+    """Parse an index level magnitude (업종지수, pt) dropping the direction sign."""
+    value = parse_decimal(raw, None)
+    return abs(value) if value is not None else default
+
+
 def parse_date(raw: object, default: date | None = None) -> date | None:
     """Parse a ``YYYYMMDD`` trade date."""
     text = _clean(raw)
