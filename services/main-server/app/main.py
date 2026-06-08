@@ -1,7 +1,9 @@
 from fastapi import FastAPI
 
 from app.api.routes.health import router as health_router
+from app.api.routes.signals import router as signals_router
 from app.core.config import get_settings
+from app.core.database import lifespan_with_database
 
 
 def create_app() -> FastAPI:
@@ -9,9 +11,11 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="Signal Alpha Main Server",
         version=settings.version,
-        summary="User-facing API boundary for Signal Alpha"
+        summary="User-facing API boundary for Signal Alpha",
+        lifespan=lifespan_with_database
     )
     app.include_router(health_router)
+    app.include_router(signals_router)
     return app
 
 
