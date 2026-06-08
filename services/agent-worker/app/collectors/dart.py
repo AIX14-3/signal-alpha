@@ -107,23 +107,56 @@ class DartCollector:
             raise DartApiError(f"DART corp_code is not mapped for ticker: {ticker}")
 
         corp_code = corp_row["corp_code"]
+        bgn_de = self._start_date or _default_start_date()
+        end_de = self._end_date or _default_end_date()
+        first_response = await self._fetch_page(
+            corp_code=corp_code,
+            bgn_de=bgn_de,
+            end_de=end_de,
+            page_no=1,
+        )
+        if first_response is None:
+            return []
+
+        disclosures = list(first_response.get("list", []))
+        total_page = _int_response_value(first_response.get("total_page"), default=1)
+        for page_no in range(2, total_page + 1):
+            response = await self._fetch_page(
+                corp_code=corp_code,
+                bgn_de=bgn_de,
+                end_de=end_de,
+                page_no=page_no,
+            )
+            if response is None:
+                break
+            disclosures.extend(response.get("list", []))
+
+        return [
+            _disclosure_to_evidence(ticker, corp_code, item)
+            for item in disclosures
+        ]
+
+    async def _fetch_page(
+        self,
+        *,
+        corp_code: str,
+        bgn_de: str,
+        end_de: str,
+        page_no: int,
+    ) -> dict[str, Any] | None:
         response = await self._client.list_disclosures(
             corp_code=corp_code,
-            bgn_de=self._start_date or _default_start_date(),
-            end_de=self._end_date or _default_end_date(),
-            page_no=1,
+            bgn_de=bgn_de,
+            end_de=end_de,
+            page_no=page_no,
             page_count=self._page_size,
         )
         status = response.get("status")
         if status == "013":
-            return []
+            return None
         if status != "000":
             raise DartApiError(f"DART API failed: {status} {response.get('message', '')}".strip())
-
-        return [
-            _disclosure_to_evidence(ticker, corp_code, item)
-            for item in response.get("list", [])
-        ]
+        return response
 
 
 def _disclosure_to_evidence(
@@ -178,6 +211,12 @@ def _infer_disclosure_type(report_name: str) -> str | None:
     if "주요사항보고서" in report_name:
         return "material_event"
     return None
+
+
+def _int_response_value(value: Any, *, default: int) -> int:
+    if value in (None, ""):
+        return default
+    return int(value)
 
 
 def _default_start_date() -> str:

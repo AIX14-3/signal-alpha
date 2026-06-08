@@ -75,3 +75,52 @@ class DartRepository:
             """,
             corp_code.strip(),
         )
+
+    async def upsert_listed_corp_codes(self, entries: list[dict[str, Any]]) -> int:
+        rows = [
+            (
+                entry["corp_code"].strip(),
+                entry["ticker"].strip(),
+                entry["corp_name"],
+                entry.get("stock_name") or entry["corp_name"],
+                True,
+            )
+            for entry in entries
+            if entry.get("corp_code") and entry.get("ticker") and entry.get("corp_name")
+        ]
+        if not rows:
+            return 0
+
+        await self._connection.executemany(
+            """
+            INSERT INTO dart_corp_codes (
+                stock_id,
+                corp_code,
+                ticker,
+                corp_name,
+                stock_name,
+                is_active,
+                synced_at
+            )
+            VALUES (
+                (SELECT id FROM stocks WHERE ticker = $2),
+                $1,
+                $2,
+                $3,
+                $4,
+                $5,
+                NOW()
+            )
+            ON CONFLICT (ticker)
+            DO UPDATE SET
+                stock_id = EXCLUDED.stock_id,
+                corp_code = EXCLUDED.corp_code,
+                corp_name = EXCLUDED.corp_name,
+                stock_name = EXCLUDED.stock_name,
+                is_active = EXCLUDED.is_active,
+                synced_at = EXCLUDED.synced_at,
+                updated_at = NOW()
+            """,
+            rows,
+        )
+        return len(rows)

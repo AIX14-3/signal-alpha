@@ -17,10 +17,19 @@ from app.main import app
 
 
 class FakeConnection:
+    def __init__(self):
+        self.calls = []
+
     async def fetchrow(self, sql, *args):
+        self.calls.append(("fetchrow", sql, args))
         return {"id": 99, "task_type": args[0], "retry_count": 0, "max_retry_count": 3}
 
+    async def fetchval(self, sql, *args):
+        self.calls.append(("fetchval", sql, args))
+        return 77
+
     async def execute(self, sql, *args):
+        self.calls.append(("execute", sql, args))
         return "OK"
 
 
@@ -54,6 +63,26 @@ class TaskRouteTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "success")
         self.assertEqual(response.json()["result"]["handled"], True)
+
+    def test_enqueue_task_uses_dedupe_by_default(self):
+        app.dependency_overrides[get_database_pool] = lambda: FakePool()
+        client = TestClient(app)
+
+        response = client.post(
+            "/internal/tasks/collect_dart/enqueue",
+            json={
+                "stock_id": 1,
+                "priority": "batch",
+                "task_context": {
+                    "stock_code": "005930",
+                    "bgn_de": "20260601",
+                    "end_de": "20260608",
+                },
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"task_id": 77, "task_type": "collect_dart"})
 
 
 if __name__ == "__main__":

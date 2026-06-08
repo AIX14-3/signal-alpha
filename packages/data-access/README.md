@@ -30,7 +30,7 @@ the main server and agent worker.
 - `DartRepository`: OpenDART `corp_code` to local stock mapping.
 - `MarketDataRepository`: OHLCV and fundamental data upsert/read helpers.
 - `NormalizationRepository`: source documents, signal events, signal metrics, and validation logs.
-- `ProcessingQueueRepository`: worker queue enqueue, claim, success, failure, and skip updates.
+- `ProcessingQueueRepository`: worker queue enqueue/dedupe, claim, success, failure, skip, and stale task sweep updates.
 - `ReportChunkRepository`: embedding-pending chunk lookup, embedding update, and pgvector similarity search.
 - `AnalysisRepository`: analysis results, agent results, and final signal upsert.
 - `SignalRepository`: current published signal lookup for API/UI reads.
@@ -55,6 +55,10 @@ row.
 
 Local seeds include initial mappings for `005930`, `000660`, and `035420` in
 `database/seeds/004_seed_dart_corp_codes.sql`.
+
+The agent worker can refresh listed DART mappings through `POST /internal/dart/corp-codes/sync`.
+The sync stores entries with `stock_code` and links `stock_id` when a matching `stocks.ticker`
+exists.
 
 Recommended `RawEvidence.metadata` keys for DART:
 

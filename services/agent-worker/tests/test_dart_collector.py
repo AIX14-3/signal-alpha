@@ -13,6 +13,16 @@ class FakeClient:
         return self.response
 
 
+class FakePagedClient:
+    def __init__(self, responses):
+        self.responses = responses
+        self.calls = []
+
+    async def list_disclosures(self, **kwargs):
+        self.calls.append(kwargs)
+        return self.responses[kwargs["page_no"]]
+
+
 class FakeCorpCodeRepository:
     def __init__(self, row):
         self.row = row
@@ -92,6 +102,63 @@ class DartCollectorTest(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(DartApiError):
             await collector.collect("005930")
+
+    async def test_collector_fetches_all_pages_until_total_page(self):
+        client = FakePagedClient(
+            {
+                1: {
+                    "status": "000",
+                    "page_no": "1",
+                    "total_page": "2",
+                    "list": [
+                        {
+                            "corp_code": "00126380",
+                            "corp_name": "삼성전자",
+                            "stock_code": "005930",
+                            "corp_cls": "Y",
+                            "report_nm": "분기보고서",
+                            "rcept_no": "202606080001",
+                            "flr_nm": "삼성전자",
+                            "rcept_dt": "20260608",
+                            "rm": "",
+                        }
+                    ],
+                },
+                2: {
+                    "status": "000",
+                    "page_no": "2",
+                    "total_page": "2",
+                    "list": [
+                        {
+                            "corp_code": "00126380",
+                            "corp_name": "삼성전자",
+                            "stock_code": "005930",
+                            "corp_cls": "Y",
+                            "report_nm": "주요사항보고서",
+                            "rcept_no": "202606080002",
+                            "flr_nm": "삼성전자",
+                            "rcept_dt": "20260608",
+                            "rm": "",
+                        }
+                    ],
+                },
+            }
+        )
+        repository = FakeCorpCodeRepository({"corp_code": "00126380", "corp_name": "삼성전자"})
+        collector = DartCollector(
+            api_key="test-key",
+            corp_code_repository=repository,
+            client=client,
+            start_date="20260601",
+            end_date="20260608",
+            page_size=1,
+        )
+
+        evidence = await collector.collect("005930")
+
+        self.assertEqual([call["page_no"] for call in client.calls], [1, 2])
+        self.assertEqual(len(evidence), 2)
+        self.assertEqual(evidence[1].metadata["receipt_no"], "202606080002")
 
 
 class DartDisclosureClientTest(unittest.TestCase):
