@@ -1,6 +1,7 @@
 """In-memory fakes so the collector can be tested without Kiwoom or PostgreSQL."""
 
 from app.schemas.price import OhlcvRow
+from app.schemas.sector import SectorOhlcvRow, SectorRef
 
 
 class FakeKiwoomClient:
@@ -34,6 +35,48 @@ class FakeOhlcvRepository:
 
     def upsert_ohlcv(self, stock_id: int, rows: list[OhlcvRow]) -> int:
         self.upserts.setdefault(stock_id, []).extend(rows)
+        return len(rows)
+
+    def start_run(self, run_mode: str) -> int:
+        run_id = len(self.runs) + 1
+        self.runs.append({"id": run_id, "run_mode": run_mode})
+        return run_id
+
+    def finish_run(
+        self,
+        run_id: int,
+        status: str,
+        collected_count: int,
+        inserted_count: int,
+        failed_count: int,
+        error_message: str | None = None
+    ) -> None:
+        self.finished.append(
+            {
+                "id": run_id,
+                "status": status,
+                "collected_count": collected_count,
+                "inserted_count": inserted_count,
+                "failed_count": failed_count,
+                "error_message": error_message
+            }
+        )
+
+
+class FakeSectorRepository:
+    """Records sector_ohlcv upserts and run lifecycle in memory."""
+
+    def __init__(self, sectors: list[SectorRef]) -> None:
+        self._sectors = sectors
+        self.upserts: list[SectorOhlcvRow] = []
+        self.runs: list[dict[str, object]] = []
+        self.finished: list[dict[str, object]] = []
+
+    def list_active_sectors(self) -> list[SectorRef]:
+        return list(self._sectors)
+
+    def upsert_sector_ohlcv(self, rows: list[SectorOhlcvRow]) -> int:
+        self.upserts.extend(rows)
         return len(rows)
 
     def start_run(self, run_mode: str) -> int:
