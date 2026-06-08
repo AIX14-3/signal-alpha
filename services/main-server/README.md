@@ -2,6 +2,29 @@
 
 User-facing backend API server.
 
+## Local Development
+
+```bash
+python -m pip install -e ".[dev]"
+python -m uvicorn app.main:app --reload
+```
+
+Health check:
+
+```text
+GET /health
+```
+
+Expected response:
+
+```json
+{
+  "status": "ok",
+  "service": "main-server",
+  "version": "0.1.0"
+}
+```
+
 ## Responsibilities
 
 - Expose frontend APIs.
