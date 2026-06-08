@@ -12,6 +12,10 @@ class FakeConnection:
         self.calls.append(("fetchrow", sql, args))
         return {"raw_document_id": args[0], "stock_id": args[1]}
 
+    async def fetch(self, sql, *args):
+        self.calls.append(("fetch", sql, args))
+        return [{"raw_document_id": 1, "receipt_no": "202606080001"}]
+
 
 class RawDetailRepositoryTest(unittest.IsolatedAsyncioTestCase):
     async def test_upsert_dart_detail_uses_raw_document_conflict(self):
@@ -66,3 +70,13 @@ class RawDetailRepositoryTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertIn("ON CONFLICT (stock_id, keyword, observed_date, period_type, device, gender, age_group)", connection.calls[0][1])
+
+    async def test_list_dart_documents_by_raw_ids_joins_raw_documents(self):
+        connection = FakeConnection()
+        repository = RawDetailRepository(connection)
+
+        rows = await repository.list_dart_documents_by_raw_ids([1, 2])
+
+        self.assertEqual(rows[0]["receipt_no"], "202606080001")
+        self.assertIn("INNER JOIN raw_documents", connection.calls[0][1])
+        self.assertEqual(connection.calls[0][2], ([1, 2],))
