@@ -27,6 +27,7 @@ the main server and agent worker.
 - `StockRepository`: stock lookup and ticker-based upsert.
 - `CollectionRepository`: collector run logs, raw document upsert, report details, and report chunks.
 - `RawDetailRepository`: DART, hiring, patent, and DataLab source-specific raw detail rows.
+- `DartRepository`: OpenDART `corp_code` to local stock mapping.
 - `MarketDataRepository`: OHLCV and fundamental data upsert/read helpers.
 - `NormalizationRepository`: source documents, signal events, signal metrics, and validation logs.
 - `ProcessingQueueRepository`: worker queue enqueue, claim, success, failure, and skip updates.
@@ -44,6 +45,31 @@ the main server and agent worker.
 - `main-server` exposes `GET /signals/{ticker}` and reads through `SignalRepository`.
 - `agent-worker` exposes `POST /internal/queue/{task_type}/claim` and claims work through
   `ProcessingQueueRepository`.
+
+## DART Collection Notes
+
+DART collectors should set `raw_documents.source_type = "DART"` and use the OpenDART
+`receipt_no` as `raw_documents.external_id`. `CollectionRepository.upsert_raw_document()` uses
+`(source_type, external_id)` as the conflict key so repeated receipt collection updates the same
+row.
+
+Local seeds include initial mappings for `005930`, `000660`, and `035420` in
+`database/seeds/004_seed_dart_corp_codes.sql`.
+
+Recommended `RawEvidence.metadata` keys for DART:
+
+```python
+{
+    "receipt_no": "202606080001",
+    "external_id": "202606080001",
+    "corp_code": "00126380",
+    "report_name": "Quarterly report",
+    "disclosure_type": "quarterly",
+    "priority": "batch",
+    "published_at": "2026-06-08T00:00:00+09:00",
+    "source_name": "OpenDART",
+}
+```
 
 ## Connection
 

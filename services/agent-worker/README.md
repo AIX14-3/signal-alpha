@@ -57,10 +57,43 @@ The worker keeps collection and LLM analysis separate.
 Pipeline flow:
 
 ```text
-Collector.collect(stock_code)
+await Collector.collect(stock_code)
   -> list[RawEvidence]
-Analyzer.analyze(stock_code, evidence)
+await Analyzer.analyze(stock_code, evidence)
   -> SourceResult
-AgentOrchestrator.run(stock_code)
+await AgentOrchestrator.run(stock_code)
   -> dict[source, SourceResult]
+```
+
+## DART Collection
+
+The first DART collector scope collects the OpenDART disclosure list only.
+
+```text
+collect_dart task
+  -> dart_corp_codes lookup by ticker
+  -> OpenDART /list.json
+  -> RawEvidence(source="DART")
+  -> raw_documents + dart_raw_details
+  -> normalize_dart queue task
+```
+
+Required environment values:
+
+```text
+DART_API_KEY=
+DART_BASE_URL=https://opendart.fss.or.kr/api
+DART_TIMEOUT_SECONDS=10
+DART_PAGE_SIZE=100
+```
+
+The `collect_dart` task expects `processing_queue.task_context` to include `stock_code`.
+Optional date filters use OpenDART parameter names:
+
+```json
+{
+  "stock_code": "005930",
+  "bgn_de": "20260601",
+  "end_de": "20260608"
+}
 ```

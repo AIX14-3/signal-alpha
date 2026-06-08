@@ -1,5 +1,6 @@
 import sys
 import unittest
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "packages" / "data-access"))
@@ -59,7 +60,8 @@ class CollectionPersistenceTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(result["inserted_count"], 1)
-        self.assertTrue(any("INSERT INTO raw_documents" in call[1] for call in connection.calls))
+        raw_insert = next(call for call in connection.calls if "INSERT INTO raw_documents" in call[1])
+        self.assertIsInstance(raw_insert[2][8], datetime)
         self.assertTrue(any("INSERT INTO report_raw_details" in call[1] for call in connection.calls))
         self.assertTrue(any(call[0] == "executemany" for call in connection.calls))
         self.assertTrue(any("INSERT INTO processing_queue" in call[1] for call in connection.calls))

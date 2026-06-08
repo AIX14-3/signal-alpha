@@ -1,4 +1,5 @@
 import unittest
+import json
 
 from signal_alpha_data_access.repositories.processing_queue import ProcessingQueueRepository
 
@@ -30,10 +31,12 @@ class ProcessingQueueRepositoryTest(unittest.IsolatedAsyncioTestCase):
             task_type="normalize_report",
             source_raw_ids=[20],
             priority="batch",
+            task_context={"stock_code": "005930"},
         )
 
         self.assertEqual(task_id, 50)
         self.assertEqual(connection.calls[0][2][0:3], (1, "normalize_report", "batch"))
+        self.assertEqual(json.loads(connection.calls[0][2][6])["stock_code"], "005930")
 
     async def test_claim_next_pending_uses_skip_locked(self):
         connection = FakeConnection()
@@ -52,4 +55,5 @@ class ProcessingQueueRepositoryTest(unittest.IsolatedAsyncioTestCase):
         await repository.mark_failed(task_id=50, error_message="timeout", retry=True)
 
         self.assertIn("retry_count = retry_count + 1", connection.calls[0][1])
+        self.assertIn("$3::VARCHAR", connection.calls[0][1])
         self.assertEqual(connection.calls[0][2], (50, "timeout", "retrying"))

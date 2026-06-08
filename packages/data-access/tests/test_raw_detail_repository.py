@@ -1,4 +1,5 @@
 import unittest
+import json
 
 from signal_alpha_data_access.repositories.raw_details import RawDetailRepository
 
@@ -26,6 +27,8 @@ class RawDetailRepositoryTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertIn("ON CONFLICT (raw_document_id)", connection.calls[0][1])
+        self.assertIsInstance(connection.calls[0][2][10], str)
+        self.assertEqual(json.loads(connection.calls[0][2][10])["corp"], "삼성전자")
 
     async def test_upsert_hiring_detail_uses_raw_document_conflict(self):
         connection = FakeConnection()

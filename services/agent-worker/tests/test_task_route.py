@@ -12,7 +12,7 @@ warnings.filterwarnings(
 )
 from starlette.testclient import TestClient
 
-from app.api.routes.tasks import get_database_pool, get_task_handlers
+from app.api.routes.tasks import get_database_pool, get_task_handler_factory
 from app.main import app
 
 
@@ -46,7 +46,7 @@ class TaskRouteTest(unittest.TestCase):
             return {"task_id": task["id"], "handled": True}
 
         app.dependency_overrides[get_database_pool] = lambda: FakePool()
-        app.dependency_overrides[get_task_handlers] = lambda: {"normalize_report": handler}
+        app.dependency_overrides[get_task_handler_factory] = lambda: lambda connection: {"normalize_report": handler}
         client = TestClient(app)
 
         response = client.post("/internal/tasks/normalize_report/run")

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 
@@ -53,7 +54,7 @@ class RawDetailRepository:
             priority_reason,
             is_correction,
             original_receipt_no,
-            extra_payload,
+            _jsonb(extra_payload),
         )
 
     async def upsert_hiring_detail(
@@ -92,7 +93,7 @@ class RawDetailRepository:
             job_count,
             previous_job_count,
             change_pct,
-            extra_payload or {},
+            _jsonb(extra_payload or {}),
         )
 
     async def upsert_patent_detail(
@@ -136,7 +137,7 @@ class RawDetailRepository:
             application_date,
             tech_category,
             is_new_category,
-            extra_payload,
+            _jsonb(extra_payload),
         )
 
     async def upsert_datalab_detail(
@@ -189,5 +190,13 @@ class RawDetailRepository:
             gender,
             age_group,
             is_spike,
-            extra_payload,
+            _jsonb(extra_payload),
         )
+
+
+def _jsonb(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False)

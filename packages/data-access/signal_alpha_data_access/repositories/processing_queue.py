@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 
@@ -40,7 +41,7 @@ class ProcessingQueueRepository:
             source_raw_ids,
             source_signal_event_ids,
             source_analysis_result_ids,
-            task_context,
+            _jsonb(task_context),
             scheduled_at,
         )
 
@@ -96,11 +97,11 @@ class ProcessingQueueRepository:
             """
             UPDATE processing_queue
             SET
-                status = $3,
+                status = $3::VARCHAR,
                 retry_count = retry_count + 1,
                 error_message = $2,
-                finished_at = CASE WHEN $3 = 'failed' THEN NOW() ELSE finished_at END,
-                scheduled_at = CASE WHEN $3 = 'retrying' THEN NOW() ELSE scheduled_at END,
+                finished_at = CASE WHEN $3::VARCHAR = 'failed' THEN NOW() ELSE finished_at END,
+                scheduled_at = CASE WHEN $3::VARCHAR = 'retrying' THEN NOW() ELSE scheduled_at END,
                 updated_at = NOW()
             WHERE id = $1
             """,
@@ -123,3 +124,11 @@ class ProcessingQueueRepository:
             task_id,
             message,
         )
+
+
+def _jsonb(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False)
