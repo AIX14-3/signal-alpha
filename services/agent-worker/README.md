@@ -2,6 +2,29 @@
 
 Worker service for data collection and LLM-based analysis.
 
+## Local Development
+
+```bash
+python -m pip install -e ".[dev]"
+python -m uvicorn app.main:app --reload --port 8011
+```
+
+Health check:
+
+```text
+GET /health
+```
+
+Expected response:
+
+```json
+{
+  "status": "ok",
+  "service": "agent-worker",
+  "version": "0.1.0"
+}
+```
+
 ## Responsibilities
 
 - Collect raw source data.
