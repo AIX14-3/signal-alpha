@@ -58,6 +58,23 @@ class WorkerBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(hasattr(evidence[0], "score"))
         self.assertFalse(hasattr(evidence[0], "summary"))
 
+    async def test_raw_evidence_metadata_accepts_non_string_values(self) -> None:
+        evidence = RawEvidence(
+            source="DART",
+            stock_code="005930",
+            title="DART receipt",
+            content="Disclosure content",
+            metadata={
+                "receipt_no": "202606080001",
+                "priority_score": 10,
+                "is_correction": False,
+                "raw_payload": {"corp_code": "00126380"},
+            },
+        )
+
+        self.assertEqual(evidence.metadata["priority_score"], 10)
+        self.assertEqual(evidence.metadata["raw_payload"]["corp_code"], "00126380")
+
     async def test_analyzer_turns_raw_evidence_into_source_result(self) -> None:
         collector: Collector = StaticCollector()
         analyzer: Analyzer = StaticAnalyzer()

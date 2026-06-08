@@ -1,11 +1,45 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 
 class RawDetailRepository:
     def __init__(self, connection: Any) -> None:
         self._connection = connection
+
+    async def list_dart_documents_by_raw_ids(self, raw_document_ids: list[int]) -> list[Any]:
+        if not raw_document_ids:
+            return []
+
+        return await self._connection.fetch(
+            """
+            SELECT
+                raw_documents.id AS raw_document_id,
+                raw_documents.stock_id,
+                raw_documents.source_type,
+                raw_documents.source_name,
+                raw_documents.title,
+                raw_documents.source_url,
+                raw_documents.published_at,
+                raw_documents.collected_at,
+                dart_raw_details.receipt_no,
+                dart_raw_details.corp_code,
+                dart_raw_details.report_name,
+                dart_raw_details.disclosure_type,
+                dart_raw_details.priority,
+                dart_raw_details.priority_reason,
+                dart_raw_details.is_correction,
+                dart_raw_details.original_receipt_no,
+                dart_raw_details.extra_payload
+            FROM dart_raw_details
+            INNER JOIN raw_documents
+                ON raw_documents.id = dart_raw_details.raw_document_id
+            WHERE dart_raw_details.raw_document_id = ANY($1::BIGINT[])
+            ORDER BY raw_documents.published_at DESC, raw_documents.id DESC
+            """,
+            raw_document_ids,
+        )
 
     async def upsert_dart_detail(
         self,
@@ -53,7 +87,7 @@ class RawDetailRepository:
             priority_reason,
             is_correction,
             original_receipt_no,
-            extra_payload,
+            _jsonb(extra_payload),
         )
 
     async def upsert_hiring_detail(
@@ -92,7 +126,7 @@ class RawDetailRepository:
             job_count,
             previous_job_count,
             change_pct,
-            extra_payload or {},
+            _jsonb(extra_payload or {}),
         )
 
     async def upsert_patent_detail(
@@ -136,7 +170,7 @@ class RawDetailRepository:
             application_date,
             tech_category,
             is_new_category,
-            extra_payload,
+            _jsonb(extra_payload),
         )
 
     async def upsert_datalab_detail(
@@ -189,5 +223,13 @@ class RawDetailRepository:
             gender,
             age_group,
             is_spike,
-            extra_payload,
+            _jsonb(extra_payload),
         )
+
+
+def _jsonb(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False)

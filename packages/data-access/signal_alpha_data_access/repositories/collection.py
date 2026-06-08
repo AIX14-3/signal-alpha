@@ -84,9 +84,10 @@ class CollectionRepository:
                 collector_ver
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-            ON CONFLICT (source_hash)
+            ON CONFLICT (source_type, external_id)
             DO UPDATE SET
                 collector_run_id = EXCLUDED.collector_run_id,
+                source_hash = EXCLUDED.source_hash,
                 source_name = EXCLUDED.source_name,
                 title = EXCLUDED.title,
                 source_url = EXCLUDED.source_url,

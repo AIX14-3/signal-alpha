@@ -34,7 +34,7 @@ class CollectionRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(run_id, 10)
         self.assertEqual(connection.calls[0][2], ("REPORT", "batch"))
 
-    async def test_upsert_raw_document_uses_source_hash_conflict(self):
+    async def test_upsert_raw_document_uses_source_type_external_id_conflict(self):
         connection = FakeConnection()
         repository = CollectionRepository(connection)
 
@@ -51,7 +51,7 @@ class CollectionRepositoryTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(row["source_hash"], "abc123")
-        self.assertIn("ON CONFLICT (source_hash)", connection.calls[0][1])
+        self.assertIn("ON CONFLICT (source_type, external_id)", connection.calls[0][1])
 
     async def test_replace_report_chunks_deletes_then_bulk_inserts(self):
         connection = FakeConnection()

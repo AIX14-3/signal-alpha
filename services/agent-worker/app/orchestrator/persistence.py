@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from hashlib import sha256
-from datetime import date
+from datetime import date, datetime, time
 from typing import Any
 
 from app.schemas.evidence import RawEvidence, SourceType
@@ -49,7 +49,7 @@ class CollectionPersistence:
                     source_hash=_source_hash(item),
                     title=item.title,
                     source_url=item.url,
-                    published_at=item.published_at or item.metadata.get("published_at"),
+                    published_at=_to_datetime(item.published_at or item.metadata.get("published_at")),
                     collector_ver=item.metadata.get("collector_ver", "1.0"),
                 )
                 raw_document_id = raw_document["id"]
@@ -104,7 +104,7 @@ class CollectionPersistence:
                 raw_document_id=raw_document_id,
                 stock_id=stock_id,
                 securities_firm=item.metadata.get("securities_firm", item.metadata.get("source_name", "unknown")),
-                publish_date=item.metadata.get("publish_date", item.published_at),
+                publish_date=_to_date(item.metadata.get("publish_date", item.published_at)),
                 analyst_name=item.metadata.get("analyst_name"),
                 investment_opinion=item.metadata.get("investment_opinion"),
                 target_price=_optional_int(item.metadata.get("target_price")),
@@ -153,7 +153,7 @@ class CollectionPersistence:
                 stock_id=stock_id,
                 application_no=item.metadata.get("application_no", _external_id(item)),
                 patent_title=item.metadata.get("patent_title", item.title),
-                application_date=item.metadata.get("application_date", item.published_at),
+                application_date=_to_date(item.metadata.get("application_date", item.published_at)),
                 applicant_name=item.metadata.get("applicant_name"),
                 tech_category=item.metadata.get("tech_category"),
                 is_new_category=_truthy(item.metadata.get("is_new_category")),
@@ -164,7 +164,7 @@ class CollectionPersistence:
                 raw_document_id=raw_document_id,
                 stock_id=stock_id,
                 keyword=item.metadata.get("keyword", item.title),
-                observed_date=item.metadata.get("observed_date", item.published_at),
+                observed_date=_to_date(item.metadata.get("observed_date", item.published_at)),
                 search_index=item.metadata.get("search_index", 0),
                 keyword_group=item.metadata.get("keyword_group"),
                 previous_search_index=item.metadata.get("previous_search_index"),
@@ -318,6 +318,34 @@ def _optional_int(value: str | None) -> int | None:
 
 def _truthy(value: str | None) -> bool:
     return str(value).lower() in {"1", "true", "yes", "y"}
+
+
+def _to_datetime(value: Any) -> datetime:
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, date):
+        return datetime.combine(value, time.min)
+    if not value:
+        return datetime.combine(date.today(), time.min)
+
+    text = str(value)
+    if len(text) == 8 and text.isdigit():
+        return datetime.strptime(text, "%Y%m%d")
+    return datetime.fromisoformat(text)
+
+
+def _to_date(value: Any) -> date:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if not value:
+        return date.today()
+
+    text = str(value)
+    if len(text) == 8 and text.isdigit():
+        return datetime.strptime(text, "%Y%m%d").date()
+    return datetime.fromisoformat(text).date()
 
 
 def _raw_id_for_evidence(source_raw_ids: list[int], index: int) -> int:
