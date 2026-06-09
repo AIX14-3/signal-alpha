@@ -74,6 +74,15 @@ class ProcessingQueueRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("FOR UPDATE SKIP LOCKED", connection.calls[0][1])
         self.assertEqual(connection.calls[0][2], ("normalize_report",))
 
+    async def test_mark_success_clears_previous_error_message(self):
+        connection = FakeConnection()
+        repository = ProcessingQueueRepository(connection)
+
+        await repository.mark_success(task_id=50)
+
+        self.assertIn("error_message = NULL", connection.calls[0][1])
+        self.assertEqual(connection.calls[0][2], (50,))
+
     async def test_mark_failed_can_schedule_retrying_status(self):
         connection = FakeConnection()
         repository = ProcessingQueueRepository(connection)

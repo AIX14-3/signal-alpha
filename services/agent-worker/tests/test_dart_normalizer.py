@@ -31,3 +31,15 @@ class DartNormalizerTest(unittest.TestCase):
 
         self.assertEqual(first, second)
         self.assertEqual(len(first), 64)
+
+    def test_classifies_korean_correction_marker(self):
+        classification = classify_dart_report("[정정]Quarterly report")
+
+        self.assertEqual(classification.event_type, "correction")
+        self.assertTrue(classification.needs_review)
+
+    def test_classifies_correction_flag_as_correction_event(self):
+        classification = classify_dart_report("Quarterly report", is_correction=True)
+
+        self.assertEqual(classification.event_type, "correction")
+        self.assertTrue(classification.needs_review)

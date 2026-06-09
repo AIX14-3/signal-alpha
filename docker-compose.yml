@@ -40,6 +40,12 @@ services:
       PYTHONPATH: /workspace/services/agent-worker:/workspace/packages/data-access
       LLM_API_KEY: ${LLM_API_KEY:-}
       DART_API_KEY: ${DART_API_KEY:-}
+      DART_BASE_URL: ${DART_BASE_URL:-https://opendart.fss.or.kr/api}
+      DART_TIMEOUT_SECONDS: ${DART_TIMEOUT_SECONDS:-10}
+      DART_PAGE_SIZE: ${DART_PAGE_SIZE:-100}
+      DART_FETCH_DOCUMENTS: ${DART_FETCH_DOCUMENTS:-true}
+      DART_MAX_RETRIES: ${DART_MAX_RETRIES:-2}
+      DART_RETRY_BACKOFF_SECONDS: ${DART_RETRY_BACKOFF_SECONDS:-0.5}
     ports:
       - "${AGENT_WORKER_PORT:-8011}:8011"
     command: >

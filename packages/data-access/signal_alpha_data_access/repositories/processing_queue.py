@@ -99,6 +99,7 @@ class ProcessingQueueRepository:
             UPDATE processing_queue
             SET
                 status = 'success',
+                error_message = NULL,
                 finished_at = NOW(),
                 updated_at = NOW()
             WHERE id = $1

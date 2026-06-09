@@ -81,6 +81,7 @@ psql -d signal_alpha -f migrations/008_admin.sql
 psql -d signal_alpha -f migrations/009_triggers.sql
 psql -d signal_alpha -f migrations/010_report_chunk_index.sql
 psql -d signal_alpha -f migrations/012_dart_corp_codes.sql
+psql -d signal_alpha -f migrations/013_dart_collection_states.sql
 ```
 
 `010_report_chunk_index.sql`은 Report RAG 검색을 위한 embedding index를 생성합니다. 개발 초기에는 데이터가 적어도 index 생성은 가능하지만, 실제 검색 품질은 청크 데이터가 쌓인 뒤 더 안정적입니다.
