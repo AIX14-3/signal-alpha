@@ -1046,7 +1046,7 @@ Signal α 프로젝트를 구현하려고 한다.
    - /agents/report
    - /agents/alternative
    - Pydantic schema: SourceResult, AggregatedSignal
-   - 각 agent는 지금은 mock data로 동작하게 구현
+   - 각 agent는 실제 수집/저장 데이터를 기반으로 동작하게 구현
    - Debate Aggregation은 confidence 대신 consensus_score/alignment_rate 사용
    - 금지 표현 필터를 포함
    - watchlist CRUD
@@ -1078,4 +1078,4 @@ Signal α 프로젝트를 구현하려고 한다.
 - PDF 원문 노출 금지.
 - Signal Journal은 사용자의 주관적 복기 도구로 제한한다.
 - 데이터 수급 검증이 1순위다.
-- 처음부터 완벽한 실시간 서비스를 만들지 말고, 3개 종목과 mock/fallback 데이터로 E2E 데모를 먼저 완성한다.
+- 처음부터 완벽한 실시간 서비스를 만들지 말고, 3개 종목의 실제 수집 데이터를 우선 연결하고 실패 source는 partial/fallback 상태로 처리한다.

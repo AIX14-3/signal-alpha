@@ -13,8 +13,9 @@
 - Analyzer는 `raw_evidence`를 읽어 `source_results`만 만든다.
 - Orchestrator는 job 상태, 수집 실행, 분석 실행, aggregation 순서만 조율한다.
 - DART / Report / Alternative 수집과 분석 결과는 코드, DB, 테스트에서 분리한다.
-- MVP는 삼성전자, SK하이닉스, 네이버 3개 종목과 mock/fallback 데이터로 E2E 데모를 먼저 완성한다.
-- 외부 데이터 수급은 1순위로 검증하되, 막히면 즉시 fixture/mock 기반 데모 경로를 유지한다.
+- MVP는 삼성전자, SK하이닉스, 네이버 3개 종목의 실제 수집 데이터를 우선 사용한다.
+- mock/fixture는 주요 개발 경로가 아니라 테스트, 장애 재현, fallback 검증 용도로만 사용한다.
+- 실제 데이터 수집이 막히면 해당 source를 `partial`로 표시하고, 가능한 source 결과만으로 분석/통합을 계속한다.
 
 ---
 
@@ -130,10 +131,9 @@
 - [ ] `POST /agents/report`
 - [ ] `POST /agents/alternative`
 - [ ] `collectors/`, `analyzers/`, `orchestrator/` 디렉터리 분리
-- [ ] source별 mock `RawEvidence` fixture 생성
-- [ ] source별 mock `SourceResult` fixture 생성
+- [ ] 실제 수집 task와 분석 task를 별도 queue로 분리
 - [ ] collect 단계 fan-out 구현
-- [ ] analyze 단계 fan-out 구현
+- [ ] 저장된 raw data 기반 analyze 단계 fan-out 구현
 - [ ] aggregation 단계 구현
 - [ ] partial 실패 처리
 - [ ] 규칙 기반 aggregation fallback 구현
@@ -161,19 +161,19 @@
 - [ ] `rcept_no` 기준 중복 방지
 - [ ] 정정/철회 공시를 원본 이벤트와 연결할 raw metadata 저장
 - [ ] 공시 제목, 접수번호, URL, 제출일을 `raw_evidence`로 저장
-- [ ] API 실패용 DART raw fixture 작성
+- [ ] API 실패/무데이터/기간 오류 상태를 retry 또는 partial 상태로 기록
 
 **Analyzer 작업**
 
 - [ ] 고임팩트 공시 유형 분류
-- [ ] 실적/주요사항 분석 fixture 작성
+- [ ] 실제 저장된 DART raw 문서 기반 분석 입력 구성
 - [ ] 공식 데이터 기준 방향성 산출
 - [ ] DART source result 생성
 
 **완료 기준**
 
-- [ ] 삼성전자, SK하이닉스, 네이버 중 최소 1개 종목의 실제 DART 호출이 성공한다.
-- [ ] DART Collector 실패 시 fixture 기반 `raw_evidence`가 저장된다.
+- [ ] 삼성전자, SK하이닉스, 네이버 MVP 종목의 실제 DART 호출과 DB 적재가 성공한다.
+- [ ] DART Collector 실패 시 fixture 대신 실패 상태와 `partial` 판단 근거가 기록된다.
 - [ ] DART Analyzer는 저장된 `raw_evidence`만으로 결과를 만든다.
 
 ---
@@ -218,7 +218,7 @@
 - [ ] MVP 첫 source 선택: DataLab 또는 KIPRIS
 - [ ] API/크롤링 접근 가능성 검증
 - [ ] 실패 시 `data_status: partial` 반환
-- [ ] 채용/특허/DataLab fixture 작성
+- [ ] 실패/부분 데이터 상태와 원인 metadata 저장
 - [ ] 원천 count, time-series, keyword, URL을 `raw_evidence`로 저장
 
 **Analyzer 작업**
@@ -230,7 +230,7 @@
 
 **완료 기준**
 
-- [ ] 최소 1개 Alternative source가 실제 호출 또는 fixture로 동작한다.
+- [ ] 최소 1개 Alternative source가 실제 호출로 동작한다.
 - [ ] Alternative Analyzer는 외부 수집을 하지 않고 저장된 raw data만 해석한다.
 - [ ] 단정 표현 없이 “변화 흔적” 중심으로 요약한다.
 
@@ -324,7 +324,7 @@
 
 - [ ] 금지 표현 필터 테스트
 - [ ] JSON Schema/Pydantic validation 테스트
-- [ ] agent fixture 테스트
+- [ ] 실제 수집 데이터 기반 worker 핵심 경로 테스트
 - [ ] aggregation 충돌 케이스 테스트
 - [ ] API 통합 테스트
 - [ ] 외부 API timeout/retry 설정
@@ -368,37 +368,37 @@
 2. FastAPI agent-worker skeleton
 3. Next.js web skeleton
 4. shared schema 정의
-5. mock collector fixture 작성
-6. mock analyzer fixture 작성
-7. mock `/agents/analyze`
-8. web 카드에 mock signal 표시
+5. DB compose + seed stocks
+6. Collector / Analyzer / Orchestrator 경계 분리
+7. DART corp code sync와 실제 수집 task 준비
+8. web 카드가 실제 API 응답을 받을 자리 준비
 
-### Sprint 1 — E2E 데모 루프
+### Sprint 1 — 실제 DART 수집·정규화 루프
 
-1. DB compose + seed stocks
-2. watchlist CRUD
-3. signal run endpoint
-4. `raw_evidence` 저장
-5. `source_results` 저장
-6. worker orchestration mock
+1. watchlist CRUD
+2. DART Collector 실제 호출 검증
+3. DART raw evidence 저장
+4. `normalize_dart` queue 실행
+5. DART signal event / source result 생성
+6. signal run endpoint
 7. latest signal API
 8. dashboard update
 9. journal create/list
 
-### Sprint 2 — 실제 데이터 하나씩 붙이기
+### Sprint 2 — Report / Alternative 실제 데이터 연결
 
-1. DART Collector 실제 호출 검증
-2. DART Analyzer fixture 검증
-3. Report Collector local PDF ingestion
-4. Report Analyzer RAG 검증
-5. Alternative Collector source 1개 검증
-6. Alternative Analyzer 변화율 검증
-7. partial/fallback 처리
+1. Report Collector local PDF ingestion
+2. Report Analyzer RAG 검증
+3. Alternative Collector source 1개 실제 호출 검증
+4. Alternative Analyzer 변화율 검증
+5. source별 SourceResult 생성
+6. partial/fallback 처리
+7. Debate Aggregation 통합
 8. source detail 화면
 
 ### Sprint 3 — 발표 가능한 완성도
 
-1. 삼성전자 / SK하이닉스 / 네이버 fixture 정리
+1. 삼성전자 / SK하이닉스 / 네이버 실제 수집 데이터 점검
 2. Debate Aggregation 품질 개선
 3. 금지 표현 필터 강화
 4. loading/error 상태 polish
@@ -412,10 +412,10 @@
 첫 구현은 아래 순서가 가장 덜 막히고, 화면까지 빨리 보입니다.
 
 1. `packages/signal-core`에 공통 타입/스키마 추가
-2. `services/agent-worker`에 source별 mock collector 추가
-3. `services/agent-worker`에 source별 mock analyzer 추가
-4. `services/agent-worker`에 Debate Aggregation과 `/agents/analyze` 추가
-5. `services/main-server`에 `/api/signals/run/{stockCode}` 프록시/저장 mock 추가
+2. `services/agent-worker`에 DART 실제 수집 task 추가
+3. `services/agent-worker`에 DART normalize/analyze task 추가
+4. `services/agent-worker`에 SourceResult 저장과 Debate Aggregation 추가
+5. `services/main-server`에 `/api/signals/run/{stockCode}` worker 호출과 결과 조회 추가
 6. `web`에 Watchlist Dashboard 카드 UI 추가
 7. Signal Journal form을 카드 하단에 붙이기
 
