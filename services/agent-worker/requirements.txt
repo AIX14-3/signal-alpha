@@ -1,0 +1,35 @@
+# =============================================================================
+# signal-alpha / services/agent-worker
+# requirements.txt  —  Hiring Collector 포함 전체 의존성
+#
+# 설치:
+#   pip install -r services/agent-worker/requirements.txt
+#
+# pyproject.toml 과의 관계:
+#   pyproject.toml  → 패키지 배포·빌드 메타데이터(정식 선언)
+#   requirements.txt → pip install 용 직접 실행 목록(개발 편의)
+#   두 파일의 버전 제약을 동기화 유지할 것.
+# =============================================================================
+
+# ── 운영 (FastAPI 서버) ───────────────────────────────────────────────────────
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+
+# ── 데이터베이스 (base_collector.py / mock_collector.py) ─────────────────────
+# SQLAlchemy Core+ORM: 수집기 DB 적재 및 향후 ORM 모델
+sqlalchemy>=2.0.0
+# psycopg2-binary: PostgreSQL 드라이버
+#   운영(Linux 컨테이너)에서는 소스 빌드 psycopg2 권장, 로컬/CI 는 binary 로 충분
+psycopg2-binary>=2.9.0
+
+# ── 웹 크롤러 (web_crawler.py · Selenium 사람인) ─────────────────────────────
+selenium>=4.20.0
+beautifulsoup4>=4.12.0
+webdriver-manager>=4.0.0
+
+# ── 환경변수 로딩 (main.py · .env 자동 로드, 선택) ───────────────────────────
+python-dotenv>=1.0.0
+
+# ── 개발 / 테스트 전용 ────────────────────────────────────────────────────────
+# FastAPI TestClient / httpx 기반 통합 테스트
+httpx>=0.27.0
