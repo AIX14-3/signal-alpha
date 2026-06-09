@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "packages" / "data-access"))
 
-from app.orchestrator.dart_tasks import DartCollectionTaskHandler
+from app.orchestrator.dart.tasks import DartCollectionTaskHandler
 
 
 class FakeSettings:
@@ -58,6 +58,8 @@ class FakeConnection:
 
     async def fetchval(self, sql, *args):
         self.calls.append(("fetchval", sql, args))
+        if "SELECT id" in sql and "FROM processing_queue" in sql:
+            return None
         self.next_id += 1
         return self.next_id
 

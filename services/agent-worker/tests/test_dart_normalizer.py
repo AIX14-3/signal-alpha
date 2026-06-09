@@ -1,7 +1,7 @@
 import unittest
 from pathlib import Path
 
-from app.orchestrator.dart_normalizer import classify_dart_report, make_dart_event_hash
+from app.analyzers.dart.rules import classify_dart_report, make_dart_event_hash
 
 
 class DartNormalizerTest(unittest.TestCase):
@@ -46,7 +46,7 @@ class DartNormalizerTest(unittest.TestCase):
         self.assertTrue(classification.needs_review)
 
     def test_normalizer_source_does_not_keep_mojibake_markers(self):
-        source = Path("app/orchestrator/dart_normalizer.py").read_text(encoding="utf-8")
+        source = Path("app/analyzers/dart/rules.py").read_text(encoding="utf-8")
 
         mojibake_markers = (
             "\u4e8c\uc1e0\uc2b5?\uc774\ube46\u8e42\ub2ff\ud000",

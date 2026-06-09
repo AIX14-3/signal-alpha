@@ -3,7 +3,7 @@ import unittest
 from unittest.mock import patch
 
 from app.core.config import Settings
-from app.orchestrator.task_types import COLLECT_DART, ANALYZE_DART, NORMALIZE_DART
+from app.orchestrator.queue.task_types import COLLECT_DART, ANALYZE_DART, NORMALIZE_DART
 
 
 class DartConfigTest(unittest.TestCase):

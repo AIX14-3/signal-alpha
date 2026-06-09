@@ -1,6 +1,6 @@
 import unittest
 
-from app.orchestrator.dart_scheduler import DartCollectionScheduler
+from app.orchestrator.dart.scheduler import DartCollectionScheduler
 
 
 class FakeStockRepository:

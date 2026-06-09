@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends
 
 from app.core.config import Settings, get_settings
 from app.core.database import get_database_pool
-from app.orchestrator.dart_corp_code_sync import DartCorpCodeSyncService
+from app.orchestrator.dart.corp_code_sync import DartCorpCodeSyncService
 
 router = APIRouter(prefix="/internal/dart", tags=["dart"])
 
