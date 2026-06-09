@@ -12,7 +12,7 @@ from starlette.testclient import TestClient
 
 from app.api.routes.dart import get_corp_code_sync_service_factory
 from app.core.database import get_database_pool
-from app.collectors.dart_corp_codes import parse_corp_code_zip
+from app.collectors.dart.corp_codes import parse_corp_code_zip
 from app.main import app
 
 

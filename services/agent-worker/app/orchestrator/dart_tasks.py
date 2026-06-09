@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from app.collectors.dart import DartCollector, DartDisclosureClient
+from app.collectors.dart.disclosure import DartCollector, DartDisclosureClient
 from app.orchestrator.dart_normalizer import classify_dart_report, make_dart_event_hash
 from app.orchestrator.persistence import CollectionPersistence
 from app.orchestrator.task_types import NORMALIZE_DART

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
-from app.collectors.dart_corp_codes import DartCorpCodeClient, DartCorpCodeEntry
+from app.collectors.dart.corp_codes import DartCorpCodeClient, DartCorpCodeEntry
 
 
 class DartCorpCodeRepository(Protocol):

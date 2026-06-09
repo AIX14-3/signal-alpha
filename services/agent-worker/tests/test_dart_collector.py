@@ -4,7 +4,7 @@ import unittest
 import zipfile
 from urllib.error import URLError
 
-from app.collectors.dart import DartApiError, DartCollector, DartDisclosureClient
+from app.collectors.dart.disclosure import DartApiError, DartCollector, DartDisclosureClient
 
 
 class FakeClient:
