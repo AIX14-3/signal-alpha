@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 
-from app.collectors.dart import DartCollector, DartDisclosureClient
+from app.collectors.dart.disclosure import DartCollector, DartDisclosureClient
 from app.orchestrator.dart_normalizer import classify_dart_report, make_dart_event_hash
 from app.orchestrator.persistence import CollectionPersistence
 from app.orchestrator.task_types import NORMALIZE_DART
@@ -28,23 +28,50 @@ class DartCollectionTaskHandler:
         stock_id = int(task["stock_id"])
         task_context = _task_context(task.get("task_context"))
         stock_code = _stock_code_from_context(task_context)
+        dart_repository = DartRepository(self._connection)
+        date_window = await _resolve_collection_window(
+            repository=dart_repository,
+            stock_code=stock_code,
+            task_context=task_context,
+        )
+        if date_window.get("skip_reason"):
+            return {
+                "collector_run_id": None,
+                "collected_count": 0,
+                "inserted_count": 0,
+                "raw_document_ids": [],
+                "skipped_reason": date_window["skip_reason"],
+                "last_end_de": date_window.get("last_end_de"),
+                "end_de": date_window["end_de"],
+            }
 
         collector = DartCollector(
             api_key=self._settings.dart_api_key,
-            corp_code_repository=DartRepository(self._connection),
-            client=self._client,
-            start_date=task_context.get("bgn_de"),
-            end_date=task_context.get("end_de"),
+            corp_code_repository=dart_repository,
+            client=self._client or _dart_client_from_settings(self._settings),
+            start_date=date_window["bgn_de"],
+            end_date=date_window["end_de"],
             page_size=self._settings.dart_page_size,
+            fetch_documents=getattr(self._settings, "dart_fetch_documents", True),
         )
         evidence = await collector.collect(stock_code)
-        return await CollectionPersistence(self._connection).save_evidence_batch(
+        result = await CollectionPersistence(self._connection).save_evidence_batch(
             stock_id=stock_id,
             stock_code=stock_code,
             evidence=evidence,
             collector_type="DART",
             enqueue_task_type=NORMALIZE_DART,
         )
+        await dart_repository.upsert_collection_state(
+            stock_id=stock_id,
+            ticker=stock_code,
+            last_bgn_de=date_window["bgn_de"],
+            last_end_de=date_window["end_de"],
+            last_receipt_no=_last_receipt_no(evidence),
+            last_collected_count=result["collected_count"],
+            last_collector_run_id=result["collector_run_id"],
+        )
+        return result
 
 
 class DartNormalizeTaskHandler:
@@ -60,7 +87,11 @@ class DartNormalizeTaskHandler:
 
         signal_event_ids: list[int] = []
         for row in rows:
-            classification = classify_dart_report(row["report_name"])
+            classification = classify_dart_report(
+                row["report_name"],
+                is_correction=_truthy(row.get("is_correction")),
+            )
+            evidence_text = _dart_evidence_text(row)
             source_document = await self._normalization_repository.upsert_source_document(
                 raw_document_id=row["raw_document_id"],
                 stock_id=row["stock_id"],
@@ -84,7 +115,7 @@ class DartNormalizeTaskHandler:
                 impact_level=classification.impact_level,
                 title=row["report_name"],
                 summary=f"DART disclosure: {row['report_name']}",
-                evidence_text=row["report_name"],
+                evidence_text=evidence_text,
                 evidence_url=row["source_url"],
                 needs_review=classification.needs_review,
             )
@@ -141,6 +172,91 @@ def _source_raw_ids(value: Any) -> list[int]:
         parsed = json.loads(text)
         return [int(item) for item in parsed]
     return [int(value)]
+
+
+async def _resolve_collection_window(
+    *,
+    repository: DartRepository,
+    stock_code: str,
+    task_context: dict[str, Any],
+) -> dict[str, str]:
+    end_de = _yyyymmdd(task_context.get("end_de")) or _today_yyyymmdd()
+    bgn_de = _yyyymmdd(task_context.get("bgn_de"))
+    if bgn_de:
+        return {"bgn_de": bgn_de, "end_de": end_de}
+
+    state = await repository.get_collection_state_by_ticker(stock_code)
+    if state and state.get("last_end_de"):
+        next_bgn_de = _next_yyyymmdd(state["last_end_de"])
+        if next_bgn_de > end_de:
+            return {
+                "bgn_de": next_bgn_de,
+                "end_de": end_de,
+                "last_end_de": _yyyymmdd(state["last_end_de"]),
+                "skip_reason": "dart_collection_up_to_date",
+            }
+        return {
+            "bgn_de": next_bgn_de,
+            "end_de": end_de,
+        }
+    return {"bgn_de": _default_bgn_de(end_de), "end_de": end_de}
+
+
+def _last_receipt_no(evidence: list[Any]) -> str | None:
+    if not evidence:
+        return None
+    return evidence[-1].metadata.get("receipt_no")
+
+
+def _yyyymmdd(value: Any) -> str | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, datetime):
+        return value.strftime("%Y%m%d")
+    if isinstance(value, date):
+        return value.strftime("%Y%m%d")
+    text = str(value).strip()
+    if len(text) == 8 and text.isdigit():
+        return text
+    return datetime.fromisoformat(text[:10]).strftime("%Y%m%d")
+
+
+def _next_yyyymmdd(value: Any) -> str:
+    parsed = datetime.strptime(_yyyymmdd(value), "%Y%m%d").date()
+    return (parsed + timedelta(days=1)).strftime("%Y%m%d")
+
+
+def _default_bgn_de(end_de: str) -> str:
+    parsed = datetime.strptime(end_de, "%Y%m%d").date()
+    return (parsed - timedelta(days=30)).strftime("%Y%m%d")
+
+
+def _today_yyyymmdd() -> str:
+    return date.today().strftime("%Y%m%d")
+
+
+def _dart_client_from_settings(settings: Any) -> DartDisclosureClient:
+    return DartDisclosureClient(
+        api_key=settings.dart_api_key,
+        base_url=getattr(settings, "dart_base_url", "https://opendart.fss.or.kr/api"),
+        timeout_seconds=getattr(settings, "dart_timeout_seconds", 10),
+        max_retries=getattr(settings, "dart_max_retries", 2),
+        retry_backoff_seconds=getattr(settings, "dart_retry_backoff_seconds", 0.5),
+    )
+
+
+def _dart_evidence_text(row: Mapping[str, Any]) -> str:
+    extra_payload = row.get("extra_payload") or {}
+    if isinstance(extra_payload, str):
+        extra_payload = json.loads(extra_payload)
+    document_text = extra_payload.get("document_text")
+    if document_text:
+        return str(document_text)
+    return str(row["report_name"])
+
+
+def _truthy(value: Any) -> bool:
+    return str(value).lower() in {"1", "true", "yes", "y"}
 
 
 def _to_date(value: Any) -> date:

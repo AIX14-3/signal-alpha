@@ -14,6 +14,9 @@ class DartConfigTest(unittest.TestCase):
             "DART_BASE_URL": "https://opendart.example",
             "DART_TIMEOUT_SECONDS": "15",
             "DART_PAGE_SIZE": "50",
+            "DART_FETCH_DOCUMENTS": "false",
+            "DART_MAX_RETRIES": "4",
+            "DART_RETRY_BACKOFF_SECONDS": "0.25",
         }
 
         with patch.dict(os.environ, env, clear=True):
@@ -23,6 +26,9 @@ class DartConfigTest(unittest.TestCase):
         self.assertEqual(settings.dart_base_url, "https://opendart.example")
         self.assertEqual(settings.dart_timeout_seconds, 15)
         self.assertEqual(settings.dart_page_size, 50)
+        self.assertFalse(settings.dart_fetch_documents)
+        self.assertEqual(settings.dart_max_retries, 4)
+        self.assertEqual(settings.dart_retry_backoff_seconds, 0.25)
 
     def test_dart_task_type_constants_are_stable(self):
         self.assertEqual(COLLECT_DART, "collect_dart")

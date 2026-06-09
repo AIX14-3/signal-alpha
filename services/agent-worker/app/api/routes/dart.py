@@ -17,7 +17,7 @@ CorpCodeSyncServiceFactory = Callable[[Any, Settings], DartCorpCodeSyncService]
 def build_corp_code_sync_service(connection: Any, settings: Settings) -> DartCorpCodeSyncService:
     from signal_alpha_data_access.repositories import DartRepository
 
-    from app.collectors.dart_corp_codes import DartCorpCodeClient
+    from app.collectors.dart.corp_codes import DartCorpCodeClient
 
     return DartCorpCodeSyncService(
         client=DartCorpCodeClient(

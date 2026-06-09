@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date, datetime
 from typing import Any
 
 
@@ -76,6 +77,59 @@ class DartRepository:
             corp_code.strip(),
         )
 
+    async def get_collection_state_by_ticker(self, ticker: str) -> Any:
+        return await self._connection.fetchrow(
+            """
+            SELECT *
+            FROM dart_collection_states
+            WHERE ticker = $1
+            """,
+            ticker.strip(),
+        )
+
+    async def upsert_collection_state(
+        self,
+        *,
+        stock_id: int,
+        ticker: str,
+        last_bgn_de: str,
+        last_end_de: str,
+        last_receipt_no: str | None = None,
+        last_collected_count: int = 0,
+        last_collector_run_id: int | None = None,
+    ) -> Any:
+        return await self._connection.fetchrow(
+            """
+            INSERT INTO dart_collection_states (
+                stock_id,
+                ticker,
+                last_bgn_de,
+                last_end_de,
+                last_receipt_no,
+                last_collected_count,
+                last_collector_run_id
+            )
+            VALUES ($1, $2, $3::DATE, $4::DATE, $5, $6, $7)
+            ON CONFLICT (stock_id)
+            DO UPDATE SET
+                ticker = EXCLUDED.ticker,
+                last_bgn_de = EXCLUDED.last_bgn_de,
+                last_end_de = EXCLUDED.last_end_de,
+                last_receipt_no = EXCLUDED.last_receipt_no,
+                last_collected_count = EXCLUDED.last_collected_count,
+                last_collector_run_id = EXCLUDED.last_collector_run_id,
+                updated_at = NOW()
+            RETURNING *
+            """,
+            stock_id,
+            ticker.strip(),
+            _to_date(last_bgn_de),
+            _to_date(last_end_de),
+            last_receipt_no,
+            last_collected_count,
+            last_collector_run_id,
+        )
+
     async def upsert_listed_corp_codes(self, entries: list[dict[str, Any]]) -> int:
         rows = [
             (
@@ -124,3 +178,14 @@ class DartRepository:
             rows,
         )
         return len(rows)
+
+
+def _to_date(value: Any) -> date:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    text = str(value).strip()
+    if len(text) == 8 and text.isdigit():
+        return datetime.strptime(text, "%Y%m%d").date()
+    return datetime.fromisoformat(text[:10]).date()
