@@ -19,7 +19,7 @@ Signal Alpha 데이터베이스는 DART 공시, 증권사 리포트, 채용공�
 
 | Zone | 영역 | 주요 테이블 |
 | --- | --- | --- |
-| Zone A | Market | `stocks`, `ohlcv_data`, `fundamentals` |
+| Zone A | Market | `stocks`, `ohlcv_data`, `fundamentals`, `sectors`, `sector_ohlcv` |
 | Zone B | User / Billing 기본 | `users`, `subscription_plans` |
 | Zone C | Collection / Raw | `collector_runs`, `raw_documents`, `dart_raw_details`, `report_raw_details`, `hiring_raw_details`, `patent_raw_details`, `datalab_raw_details`, `report_chunks` |
 | Zone D | Processing / Normalization | `processing_queue`, `source_documents`, `signal_events`, `signal_metrics`, `validation_logs` |
@@ -80,6 +80,7 @@ psql -d signal_alpha -f migrations/007_user_billing_extend.sql
 psql -d signal_alpha -f migrations/008_admin.sql
 psql -d signal_alpha -f migrations/009_triggers.sql
 psql -d signal_alpha -f migrations/010_report_chunk_index.sql
+psql -d signal_alpha -f migrations/012_dart_corp_codes.sql
 ```
 
 `010_report_chunk_index.sql`은 Report RAG 검색을 위한 embedding index를 생성합니다. 개발 초기에는 데이터가 적어도 index 생성은 가능하지만, 실제 검색 품질은 청크 데이터가 쌓인 뒤 더 안정적입니다.
@@ -111,6 +112,7 @@ seeds/
   001_subscription_plans.sql
   002_stocks_sample.sql
   003_admin_accounts.sql
+  004_seed_dart_corp_codes.sql
 ```
 
 실행 방법:

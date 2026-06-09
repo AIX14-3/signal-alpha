@@ -1,14 +1,18 @@
 FROM python:3.13-slim
 
-WORKDIR /app
+WORKDIR /workspace
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-COPY pyproject.toml ./
-RUN python -m pip install --no-cache-dir -e .
+COPY packages/data-access ./packages/data-access
+COPY services/agent-worker/pyproject.toml ./services/agent-worker/pyproject.toml
+COPY services/agent-worker/app ./services/agent-worker/app
+RUN python -m pip install --no-cache-dir \
+    -e ./packages/data-access \
+    -e ./services/agent-worker
 
-COPY app ./app
+WORKDIR /workspace/services/agent-worker
 
 EXPOSE 8011
 

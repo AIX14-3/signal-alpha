@@ -25,16 +25,19 @@ services:
 
   agent-worker:
     build:
-      context: ./services/agent-worker
+      context: .
+      dockerfile: ./services/agent-worker/Dockerfile
     container_name: signal-alpha-agent-worker
-    working_dir: /app
+    working_dir: /workspace/services/agent-worker
     volumes:
-      - ./services/agent-worker:/app
+      - ./services/agent-worker:/workspace/services/agent-worker
+      - ./packages/data-access:/workspace/packages/data-access
       - agent-worker-pip-cache:/root/.cache/pip
     environment:
       SERVICE_NAME: agent-worker
       SERVICE_VERSION: ${SERVICE_VERSION:-0.1.0}
       DATABASE_URL: ${DATABASE_URL:-postgresql://signal_alpha:signal_alpha_password@postgres:5432/signal_alpha}
+      PYTHONPATH: /workspace/services/agent-worker:/workspace/packages/data-access
       LLM_API_KEY: ${LLM_API_KEY:-}
       DART_API_KEY: ${DART_API_KEY:-}
     ports:
@@ -47,16 +50,19 @@ services:
 
   main-server:
     build:
-      context: ./services/main-server
+      context: .
+      dockerfile: ./services/main-server/Dockerfile
     container_name: signal-alpha-main-server
-    working_dir: /app
+    working_dir: /workspace/services/main-server
     volumes:
-      - ./services/main-server:/app
+      - ./services/main-server:/workspace/services/main-server
+      - ./packages/data-access:/workspace/packages/data-access
       - main-server-pip-cache:/root/.cache/pip
     environment:
       SERVICE_NAME: main-server
       SERVICE_VERSION: ${SERVICE_VERSION:-0.1.0}
       DATABASE_URL: ${DATABASE_URL:-postgresql://signal_alpha:signal_alpha_password@postgres:5432/signal_alpha}
+      PYTHONPATH: /workspace/services/main-server:/workspace/packages/data-access
       AGENT_WORKER_BASE_URL: ${AGENT_WORKER_BASE_URL:-http://agent-worker:8011}
     ports:
       - "${MAIN_SERVER_PORT:-8000}:8000"

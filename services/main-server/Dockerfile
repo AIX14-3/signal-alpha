@@ -1,14 +1,18 @@
 FROM python:3.13-slim
 
-WORKDIR /app
+WORKDIR /workspace
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-COPY pyproject.toml ./
-RUN python -m pip install --no-cache-dir -e .
+COPY packages/data-access ./packages/data-access
+COPY services/main-server/pyproject.toml ./services/main-server/pyproject.toml
+COPY services/main-server/app ./services/main-server/app
+RUN python -m pip install --no-cache-dir \
+    -e ./packages/data-access \
+    -e ./services/main-server
 
-COPY app ./app
+WORKDIR /workspace/services/main-server
 
 EXPOSE 8000
 

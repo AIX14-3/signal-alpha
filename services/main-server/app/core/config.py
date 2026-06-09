@@ -6,6 +6,7 @@ class Settings:
     def __init__(self) -> None:
         self.service_name = getenv("SERVICE_NAME", "main-server")
         self.version = getenv("SERVICE_VERSION", "0.1.0")
+        self.database_url = getenv("DATABASE_URL")
 
 
 @lru_cache

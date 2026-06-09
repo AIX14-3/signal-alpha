@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal
 
-SourceType = Literal["dart", "report", "alternative"]
+SourceType = Literal["DART", "REPORT", "HIRING", "PATENT", "DATALAB"]
 
 
 @dataclass(frozen=True)
@@ -12,4 +12,4 @@ class RawEvidence:
     content: str
     published_at: str | None = None
     url: str | None = None
-    metadata: dict[str, str] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)

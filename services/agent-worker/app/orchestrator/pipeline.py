@@ -12,17 +12,17 @@ class SourcePipeline:
     collector: Collector
     analyzer: Analyzer
 
-    def run(self, stock_code: str) -> SourceResult:
-        evidence = self.collector.collect(stock_code)
-        return self.analyzer.analyze(stock_code, evidence)
+    async def run(self, stock_code: str) -> SourceResult:
+        evidence = await self.collector.collect(stock_code)
+        return await self.analyzer.analyze(stock_code, evidence)
 
 
 @dataclass(frozen=True)
 class AgentOrchestrator:
     pipelines: list[SourcePipeline]
 
-    def run(self, stock_code: str) -> dict[SourceType, SourceResult]:
-        return {
-            pipeline.source: pipeline.run(stock_code)
-            for pipeline in self.pipelines
-        }
+    async def run(self, stock_code: str) -> dict[SourceType, SourceResult]:
+        results: dict[SourceType, SourceResult] = {}
+        for pipeline in self.pipelines:
+            results[pipeline.source] = await pipeline.run(stock_code)
+        return results
