@@ -34,6 +34,16 @@ class DartCollectionTaskHandler:
             stock_code=stock_code,
             task_context=task_context,
         )
+        if date_window.get("skip_reason"):
+            return {
+                "collector_run_id": None,
+                "collected_count": 0,
+                "inserted_count": 0,
+                "raw_document_ids": [],
+                "skipped_reason": date_window["skip_reason"],
+                "last_end_de": date_window.get("last_end_de"),
+                "end_de": date_window["end_de"],
+            }
 
         collector = DartCollector(
             api_key=self._settings.dart_api_key,
@@ -177,8 +187,16 @@ async def _resolve_collection_window(
 
     state = await repository.get_collection_state_by_ticker(stock_code)
     if state and state.get("last_end_de"):
+        next_bgn_de = _next_yyyymmdd(state["last_end_de"])
+        if next_bgn_de > end_de:
+            return {
+                "bgn_de": next_bgn_de,
+                "end_de": end_de,
+                "last_end_de": _yyyymmdd(state["last_end_de"]),
+                "skip_reason": "dart_collection_up_to_date",
+            }
         return {
-            "bgn_de": _next_yyyymmdd(state["last_end_de"]),
+            "bgn_de": next_bgn_de,
             "end_de": end_de,
         }
     return {"bgn_de": _default_bgn_de(end_de), "end_de": end_de}

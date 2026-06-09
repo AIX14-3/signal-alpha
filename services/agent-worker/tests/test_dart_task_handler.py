@@ -42,14 +42,15 @@ class FakeClient:
 
 
 class FakeConnection:
-    def __init__(self):
+    def __init__(self, *, state_last_end_de="20260608"):
         self.calls = []
         self.next_id = 300
+        self.state_last_end_de = state_last_end_de
 
     async def fetchrow(self, sql, *args):
         self.calls.append(("fetchrow", sql, args))
         if "FROM dart_collection_states" in sql:
-            return {"last_end_de": "20260608", "last_receipt_no": "202606080001"}
+            return {"last_end_de": self.state_last_end_de, "last_receipt_no": "202606080001"}
         if "FROM dart_corp_codes" in sql:
             return {"corp_code": "00126380", "corp_name": "삼성전자"}
         self.next_id += 1
@@ -142,3 +143,29 @@ class DartCollectionTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(state_call[2][0:2], (1, "005930"))
         self.assertEqual(state_call[2][2], date(2026, 6, 9))
         self.assertEqual(state_call[2][3], date(2026, 6, 10))
+
+    async def test_handler_skips_when_collection_state_already_covers_end_date(self):
+        connection = FakeConnection(state_last_end_de="20260609")
+        client = FakeClient()
+        handler = DartCollectionTaskHandler(
+            connection=connection,
+            settings=FakeSettings(),
+            client=client,
+        )
+
+        result = await handler(
+            {
+                "id": 10,
+                "stock_id": 1,
+                "task_context": {
+                    "stock_code": "005930",
+                    "end_de": "20260609",
+                },
+            }
+        )
+
+        self.assertEqual(result["collected_count"], 0)
+        self.assertEqual(result["inserted_count"], 0)
+        self.assertEqual(result["skipped_reason"], "dart_collection_up_to_date")
+        self.assertEqual(client.calls, [])
+        self.assertFalse(any("INSERT INTO dart_collection_states" in call[1] for call in connection.calls))
