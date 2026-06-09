@@ -2,6 +2,7 @@ import io
 import json
 import unittest
 import zipfile
+from pathlib import Path
 from urllib.error import URLError
 
 from app.collectors.dart.disclosure import DartApiError, DartCollector, DartDisclosureClient
@@ -168,6 +169,12 @@ class DartCollectorTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(evidence[0].metadata["disclosure_type"], "correction")
         self.assertEqual(evidence[0].metadata["correction_policy"], "separate_event")
         self.assertEqual(evidence[0].metadata["priority"], "immediate")
+
+    def test_disclosure_collector_source_does_not_keep_mojibake_markers(self):
+        source = Path("app/collectors/dart/disclosure.py").read_text(encoding="utf-8")
+
+        self.assertNotIn("\u6e72\uacd7\uc631?\ubea4\uc819", source)
+        self.assertNotIn("?\ubea4\uc819", source)
 
     async def test_collector_records_document_fetch_error_metadata(self):
         client = FakeDocumentErrorClient(

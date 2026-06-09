@@ -22,13 +22,13 @@ def classify_dart_report(report_name: str, *, is_correction: bool = False) -> Da
             impact_level="low",
             needs_review=True,
         )
-    if _contains_any(normalized_name, ("주요사항보고서", "二쇱슂?ы빆蹂닿퀬")):
+    if _contains_any(normalized_name, ("주요사항보고서",)):
         return DartClassification(
             event_type="material_event",
             signal_direction="mixed",
             impact_level="high",
         )
-    if _contains_any(normalized_name, ("임원", "?꾩썝")) and _contains_any(normalized_name, ("주요주주", "二쇱슂二쇱＜")):
+    if _contains_any(normalized_name, ("임원",)) and _contains_any(normalized_name, ("주요주주",)):
         return DartClassification(
             event_type="insider_ownership",
             signal_direction="neutral",
@@ -40,9 +40,6 @@ def classify_dart_report(report_name: str, *, is_correction: bool = False) -> Da
             "사업보고서",
             "반기보고서",
             "분기보고서",
-            "?ъ뾽蹂닿퀬",
-            "諛섍린蹂닿퀬",
-            "遺꾧린蹂닿퀬",
         ),
     ):
         return DartClassification(
@@ -50,7 +47,7 @@ def classify_dart_report(report_name: str, *, is_correction: bool = False) -> Da
             signal_direction="neutral",
             impact_level="medium",
         )
-    if _contains_any(normalized_name, ("기업지배구조보고서", "湲곗뾽吏諛곌뎄議곕낫怨좎꽌")):
+    if _contains_any(normalized_name, ("기업지배구조보고서",)):
         return DartClassification(
             event_type="governance_report",
             signal_direction="neutral",
@@ -78,8 +75,6 @@ def _has_correction_marker(report_name: str) -> bool:
             "정정",
             "correction",
             "amendment",
-            "湲곗옱?뺤젙",
-            "?뺤젙",
         ),
     )
 

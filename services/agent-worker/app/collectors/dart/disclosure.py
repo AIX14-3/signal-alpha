@@ -377,8 +377,6 @@ def _is_correction_disclosure(item: dict[str, Any]) -> bool:
             "[correction]",
             "correction",
             "amendment",
-            "湲곗옱?뺤젙",
-            "?뺤젙",
         )
     )
 
