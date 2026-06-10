@@ -15,6 +15,10 @@ class FakeConnection:
         self.calls.append(("fetchval", sql, args))
         return 40
 
+    async def fetch(self, sql, *args):
+        self.calls.append(("fetch", sql, args))
+        return []
+
 
 class NormalizationRepositoryTest(unittest.IsolatedAsyncioTestCase):
     async def test_upsert_source_document_uses_raw_document_conflict(self):
@@ -67,6 +71,16 @@ class NormalizationRepositoryTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(row["id"], 30)
         self.assertIn("ON CONFLICT (signal_event_id, metric_name)", connection.calls[0][1])
+
+    async def test_list_signal_events_by_ids_joins_source_documents(self):
+        connection = FakeConnection()
+        repository = NormalizationRepository(connection)
+
+        await repository.list_signal_events_by_ids([1, 2])
+
+        self.assertIn("FROM signal_events", connection.calls[0][1])
+        self.assertIn("INNER JOIN source_documents", connection.calls[0][1])
+        self.assertEqual(connection.calls[0][2], ([1, 2],))
 
     async def test_record_validation_log_requires_one_target_identifier(self):
         connection = FakeConnection()

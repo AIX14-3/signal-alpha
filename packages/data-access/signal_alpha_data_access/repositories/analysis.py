@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 
@@ -167,7 +168,7 @@ class AnalysisRepository:
             source_signal_event_ids,
             method_score,
             method_signal,
-            method_detail,
+            _jsonb(method_detail),
             reliability_score,
             evidence_quality,
             llm_model,
@@ -253,7 +254,7 @@ class AnalysisRepository:
             signal,
             source_agreement,
             warning_level,
-            score_breakdown,
+            _jsonb(score_breakdown),
             summary,
             bull_point,
             bear_point,
@@ -263,3 +264,11 @@ class AnalysisRepository:
             is_published,
             published_at,
         )
+
+
+def _jsonb(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False)

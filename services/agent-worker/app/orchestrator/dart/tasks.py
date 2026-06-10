@@ -5,11 +5,18 @@ from collections.abc import Mapping
 from datetime import date, datetime, timedelta
 from typing import Any
 
+from app.analyzers.dart.source_result import build_dart_analysis_result
 from app.collectors.dart.disclosure import DartCollector, DartDisclosureClient
 from app.analyzers.dart.rules import classify_dart_report, make_dart_event_hash
 from app.orchestrator.persistence import CollectionPersistence
-from app.orchestrator.queue.task_types import NORMALIZE_DART
-from signal_alpha_data_access.repositories import DartRepository, NormalizationRepository, RawDetailRepository
+from app.orchestrator.queue.task_types import ANALYZE_DART, NORMALIZE_DART
+from signal_alpha_data_access.repositories import (
+    AnalysisRepository,
+    DartRepository,
+    NormalizationRepository,
+    ProcessingQueueRepository,
+    RawDetailRepository,
+)
 
 
 class DartCollectionTaskHandler:
@@ -76,8 +83,10 @@ class DartCollectionTaskHandler:
 
 class DartNormalizeTaskHandler:
     def __init__(self, connection: Any) -> None:
+        self._connection = connection
         self._raw_detail_repository = RawDetailRepository(connection)
         self._normalization_repository = NormalizationRepository(connection)
+        self._queue_repository = ProcessingQueueRepository(connection)
 
     async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
         task_context = _task_context(task.get("task_context"))
@@ -134,9 +143,74 @@ class DartNormalizeTaskHandler:
                 message=f"Normalized from raw_document_id={row['raw_document_id']}",
             )
 
+        analysis_task_id: int | None = None
+        if signal_event_ids:
+            analysis_task_id = await self._queue_repository.enqueue(
+                stock_id=int(rows[0]["stock_id"]),
+                task_type=ANALYZE_DART,
+                priority="batch",
+                source_signal_event_ids=signal_event_ids,
+                task_context={"stock_code": stock_code, "source_type": "DART"},
+                dedupe=True,
+            )
+
         return {
             "normalized_count": len(rows),
             "signal_event_ids": signal_event_ids,
+            "analysis_task_id": analysis_task_id,
+        }
+
+
+class DartAnalyzeTaskHandler:
+    def __init__(self, connection: Any) -> None:
+        self._normalization_repository = NormalizationRepository(connection)
+        self._analysis_repository = AnalysisRepository(connection)
+
+    async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
+        stock_id = int(task["stock_id"])
+        task_context = _task_context(task.get("task_context"))
+        signal_event_ids = _source_signal_event_ids(task.get("source_signal_event_ids"))
+        rows = await self._normalization_repository.list_signal_events_by_ids(signal_event_ids)
+        events = [dict(row) for row in rows]
+        result = build_dart_analysis_result(events)
+        analysis_date = _analysis_date(events)
+        run_key = _run_key(task_context)
+
+        analysis_result = await self._analysis_repository.upsert_analysis_result(
+            stock_id=stock_id,
+            analysis_date=analysis_date,
+            run_key=run_key,
+            source_signal_event_ids=signal_event_ids,
+            base_score=result.score,
+            analysis_mode="dart_only",
+            warning="; ".join(result.risk_flags) or None,
+            version="dart-rules-v1",
+        )
+        agent_result = await self._analysis_repository.upsert_agent_result(
+            result_id=analysis_result["id"],
+            stock_id=stock_id,
+            debate_method="D-1",
+            source_signal_event_ids=signal_event_ids,
+            method_score=result.score,
+            method_signal=result.direction,
+            method_detail={
+                **result.method_detail,
+                "summary": result.summary,
+                "risk_flags": result.risk_flags,
+                "needs_review": result.needs_review,
+                "stock_code": task_context.get("stock_code"),
+            },
+            reliability_score=90,
+            evidence_quality=_evidence_quality(events),
+            prompt_ver="dart-rules-v1",
+        )
+        return {
+            "analysis_result_id": analysis_result["id"],
+            "agent_result_id": agent_result["id"],
+            "analyzed_count": len(events),
+            "direction": result.direction,
+            "score": result.score,
+            "needs_review": result.needs_review,
         }
 
 
@@ -156,6 +230,25 @@ def _task_context(value: Any) -> dict[str, Any]:
 
 
 def _source_raw_ids(value: Any) -> list[int]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [int(item) for item in value]
+    if isinstance(value, tuple):
+        return [int(item) for item in value]
+    if isinstance(value, str):
+        text = value.strip()
+        if text.startswith("{") and text.endswith("}"):
+            inner = text[1:-1].strip()
+            if not inner:
+                return []
+            return [int(item.strip()) for item in inner.split(",")]
+        parsed = json.loads(text)
+        return [int(item) for item in parsed]
+    return [int(value)]
+
+
+def _source_signal_event_ids(value: Any) -> list[int]:
     if value is None:
         return []
     if isinstance(value, list):
@@ -268,3 +361,23 @@ def _to_date(value: Any) -> date:
     if len(text) == 8 and text.isdigit():
         return datetime.strptime(text, "%Y%m%d").date()
     return datetime.fromisoformat(text[:10]).date()
+
+
+def _analysis_date(events: list[dict[str, Any]]) -> date:
+    if not events:
+        return date.today()
+    event_dates = [_to_date(event["event_date"]) for event in events if event.get("event_date")]
+    if not event_dates:
+        return date.today()
+    return max(event_dates)
+
+
+def _run_key(task_context: dict[str, Any]) -> str:
+    return str(task_context.get("run_key") or "DART").strip() or "DART"
+
+
+def _evidence_quality(events: list[dict[str, Any]]) -> int:
+    if not events:
+        return 0
+    official_count = sum(1 for event in events if event.get("is_official"))
+    return round((official_count / len(events)) * 100)
