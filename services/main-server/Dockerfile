@@ -1,19 +1,25 @@
-FROM python:3.13-slim
+FROM ghcr.io/astral-sh/uv:0.11.19 AS uv
+FROM python:3.11-slim
 
 WORKDIR /workspace
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+ENV PATH="/workspace/.venv/bin:$PATH"
 
+COPY --from=uv /uv /uvx /bin/
+
+COPY pyproject.toml uv.lock .python-version ./
 COPY packages/data-access ./packages/data-access
+COPY packages/signal-core/pyproject.toml ./packages/signal-core/pyproject.toml
+COPY services/agent-worker/pyproject.toml ./services/agent-worker/pyproject.toml
 COPY services/main-server/pyproject.toml ./services/main-server/pyproject.toml
+COPY services/price-collector/pyproject.toml ./services/price-collector/pyproject.toml
 COPY services/main-server/app ./services/main-server/app
-RUN python -m pip install --no-cache-dir \
-    -e ./packages/data-access \
-    -e ./services/main-server
+RUN uv sync --locked --package signal-alpha-main-server --no-dev
 
 WORKDIR /workspace/services/main-server
 
 EXPOSE 8000
 
-CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

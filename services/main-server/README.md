@@ -5,8 +5,8 @@ User-facing backend API server.
 ## Local Development
 
 ```bash
-python -m pip install -e ".[dev]"
-python -m uvicorn app.main:app --reload
+uv sync --package signal-alpha-main-server --extra dev
+uv run --package signal-alpha-main-server uvicorn app.main:app --reload
 ```
 
 Health check:
