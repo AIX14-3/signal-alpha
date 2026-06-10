@@ -5,8 +5,8 @@ Worker service for data collection and LLM-based analysis.
 ## Local Development
 
 ```bash
-python -m pip install -e ".[dev]"
-python -m uvicorn app.main:app --reload --port 8011
+uv sync --package signal-alpha-agent-worker --extra dev
+uv run --package signal-alpha-agent-worker uvicorn app.main:app --reload --port 8011
 ```
 
 Health check:
