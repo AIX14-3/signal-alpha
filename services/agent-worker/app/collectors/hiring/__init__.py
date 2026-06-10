@@ -8,5 +8,5 @@ __all__ = [
     "BaseCollector",
     "MockCollector",
     "WebCrawler",
-    "MultiSourceCrawler",
+    "MultiSourceCrawler", 
 ]
