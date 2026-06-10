@@ -1,3 +1,4 @@
+import json
 import sys
 import unittest
 from datetime import datetime
@@ -16,6 +17,8 @@ class FakeConnection:
 
     async def fetchval(self, sql, *args):
         self.calls.append(("fetchval", sql, args))
+        if "SELECT id" in sql and "FROM processing_queue" in sql:
+            return None
         self.next_id += 1
         return self.next_id
 
@@ -65,6 +68,40 @@ class CollectionPersistenceTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any("INSERT INTO report_raw_details" in call[1] for call in connection.calls))
         self.assertTrue(any(call[0] == "executemany" for call in connection.calls))
         self.assertTrue(any("INSERT INTO processing_queue" in call[1] for call in connection.calls))
+
+    async def test_save_dart_evidence_enqueues_normalize_task_with_dedupe_identity(self):
+        connection = FakeConnection()
+        persistence = CollectionPersistence(connection)
+
+        await persistence.save_evidence_batch(
+            stock_id=1,
+            stock_code="005930",
+            evidence=[
+                RawEvidence(
+                    source="DART",
+                    stock_code="005930",
+                    title="분기보고서",
+                    content="DART body",
+                    published_at="2026-06-08",
+                    url="https://dart.example/receipt",
+                    metadata={
+                        "source_name": "OpenDART",
+                        "receipt_no": "202606080001",
+                        "report_name": "분기보고서",
+                        "external_id": "202606080001",
+                    },
+                )
+            ],
+            collector_type="DART",
+            enqueue_task_type="normalize_dart",
+        )
+
+        dedupe_call = next(call for call in connection.calls if "SELECT id" in call[1] and "FROM processing_queue" in call[1])
+        self.assertIn("source_raw_ids IS NOT DISTINCT FROM", dedupe_call[1])
+
+        enqueue_call = next(call for call in connection.calls if "INSERT INTO processing_queue" in call[1])
+        task_context = json.loads(enqueue_call[2][6])
+        self.assertEqual(task_context, {"stock_code": "005930", "source_type": "DART"})
 
     async def test_save_empty_evidence_finishes_collector_run(self):
         connection = FakeConnection()

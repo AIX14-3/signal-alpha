@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any, Protocol
 
-from app.orchestrator.task_types import COLLECT_DART
+from app.orchestrator.queue.task_types import COLLECT_DART
 
 
 class StockRepository(Protocol):

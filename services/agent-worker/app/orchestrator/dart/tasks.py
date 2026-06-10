@@ -6,9 +6,9 @@ from datetime import date, datetime, timedelta
 from typing import Any
 
 from app.collectors.dart.disclosure import DartCollector, DartDisclosureClient
-from app.orchestrator.dart_normalizer import classify_dart_report, make_dart_event_hash
+from app.analyzers.dart.rules import classify_dart_report, make_dart_event_hash
 from app.orchestrator.persistence import CollectionPersistence
-from app.orchestrator.task_types import NORMALIZE_DART
+from app.orchestrator.queue.task_types import NORMALIZE_DART
 from signal_alpha_data_access.repositories import DartRepository, NormalizationRepository, RawDetailRepository
 
 

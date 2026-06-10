@@ -7,8 +7,8 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
 from app.core.database import get_database_pool
-from app.orchestrator.handlers import build_task_handlers
-from app.orchestrator.tasks import QueueTaskRunner, TaskHandler
+from app.orchestrator.queue.handlers import build_task_handlers
+from app.orchestrator.queue.tasks import QueueTaskRunner, TaskHandler
 
 router = APIRouter(prefix="/internal/tasks", tags=["tasks"])
 

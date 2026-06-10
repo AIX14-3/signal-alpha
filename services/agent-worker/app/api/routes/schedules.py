@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
 from app.core.database import get_database_pool
-from app.orchestrator.dart_scheduler import DartCollectionScheduler
+from app.orchestrator.dart.scheduler import DartCollectionScheduler
 
 router = APIRouter(prefix="/internal/schedules", tags=["schedules"])
 

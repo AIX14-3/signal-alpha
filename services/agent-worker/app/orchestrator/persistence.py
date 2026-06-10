@@ -65,8 +65,8 @@ class CollectionPersistence:
                         task_context={
                             "stock_code": stock_code,
                             "source_type": item.source,
-                            "collector_run_id": run_id,
                         },
+                        dedupe=True,
                     )
 
             await self._collection_repository.finish_collector_run(
