@@ -1,5 +1,11 @@
 from functools import lru_cache
 from os import getenv
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+# 프로젝트 루트의 .env 로드
+load_dotenv(Path(__file__).resolve().parents[4] / ".env")
 
 
 class Settings:
@@ -7,6 +13,9 @@ class Settings:
         self.service_name = getenv("SERVICE_NAME", "agent-worker")
         self.version = getenv("SERVICE_VERSION", "0.1.0")
         self.database_url = getenv("DATABASE_URL")
+        self.parsed_reports_path: Path = (
+            Path(__file__).resolve().parents[4] / "data" / "parsed_reports.json"
+        )
         self.collector_version = getenv("COLLECTOR_VERSION", "1.0")
         self.dart_api_key = getenv("DART_API_KEY", "")
         self.dart_base_url = getenv("DART_BASE_URL", "https://opendart.fss.or.kr/api")

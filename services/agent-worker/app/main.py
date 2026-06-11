@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 
+from app.api.routes.report import router as report_router
 from app.api.routes.dart import router as dart_router
 from app.api.routes.health import router as health_router
 from app.api.routes.price import router as price_router
@@ -19,6 +20,7 @@ def create_app() -> FastAPI:
         lifespan=lifespan_with_database
     )
     app.include_router(health_router)
+    app.include_router(report_router)
     app.include_router(dart_router)
     app.include_router(price_router)
     app.include_router(queue_router)
