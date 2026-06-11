@@ -20,8 +20,6 @@ TR_INVESTOR_FLOW = "opt10059"   # 종목별 투자자 매매동향
 OUTPUT_STOCK_BASIC = "주식기본정보"
 OUTPUT_DAILY_CHART = "주식일봉차트조회"
 OUTPUT_INVESTOR_FLOW = "종목별투자자기관별"
-OUTPUT_SECTOR_QUOTE = "업종별시세"
-OUTPUT_SECTOR_DAILY = "업종일봉차트조회"
 
 # --- Kiwoom market codes (시장구분) --------------------------------------
 MARKET_KOSPI = "0"
