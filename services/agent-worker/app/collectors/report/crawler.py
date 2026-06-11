@@ -199,8 +199,12 @@ def parse_reports(html: str) -> tuple[list[dict], bool]:
 
             title = title_tag.get_text(strip=True)
             pdf_href = title_tag.get("href", "")
-            # href는 research/ 기준 상대경로 (company_read.naver?nid=...)
+            # Naver 리포트 상세 페이지 URL
             pdf_url = urljoin(NAVER_RESEARCH_BASE, pdf_href) if pdf_href else None
+
+            # 첨부 컬럼(3)에서 직접 PDF 다운로드 URL 추출
+            attach_tag = cols[3].select_one("a")
+            pdf_direct_url = attach_tag.get("href") if attach_tag else None
 
             # 목록 페이지에는 목표주가·투자의견 없음 → PDF 파싱 단계에서 채움
             target_price = None
@@ -218,6 +222,7 @@ def parse_reports(html: str) -> tuple[list[dict], bool]:
                 "target_price": target_price,
                 "date": date_str,
                 "pdf_url": pdf_url,
+                "pdf_direct_url": pdf_direct_url,
                 "report_type": report_type,
                 "collected_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "processed": False,
