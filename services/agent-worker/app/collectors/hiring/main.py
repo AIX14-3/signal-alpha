@@ -93,8 +93,8 @@ def _preview_keyword_groups(db_url: str) -> None:
                 )
             ).fetchall()
         companies = [
-            {"company_name": row[0], "category": row[1], "short_name": row[2]}
-            for row in rows
+            {"company_name": name, "category": sector, "short_name": short_name}
+            for name, sector, short_name in rows
         ]
     except Exception as exc:
         logger.error("❌ 미리보기용 DB 조회 실패: %s", exc)

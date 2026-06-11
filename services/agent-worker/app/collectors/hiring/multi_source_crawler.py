@@ -36,15 +36,19 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-# ── 크롤링 대상 기업 → 공식 사이트 크롤러 매핑 ──────────────────────────────
-# recruiter.co.kr 기업 (RecruiterKrCrawler 가 회사별 URL 로 분기)
+# ── 크롤링 대상 기업 → 공식 사이트 크롤러 분류 ──────────────────────────────
+# recruiter.co.kr 집계 기업
 _RECRUITER_KR_COMPANIES = {"HL만도", "셀트리온", "유한양행"}
 
-# API 기반 (Selenium 불필요 — driver=None 전달)
-_API_COMPANIES = {"삼성전자", "NAVER", "카카오"}
+# 순수 requests 기반 (driver=None) — Selenium 완전 불필요
+_REQUESTS_ONLY_COMPANIES = {"삼성전자"}
 
-# Selenium SPA/ATS (driver 공유)
+# requests 1차 시도, Selenium 폴백 혼합형 — driver 전달 필요
+_REQUESTS_WITH_FALLBACK_COMPANIES = {"NAVER"}
+
+# Selenium SPA/ATS 전용 (driver 필수)
 _SELENIUM_COMPANIES = {
+    "카카오",                                    # SPA, Selenium 필수
     "SK하이닉스", "크래프톤",
     "HYBE", "SM엔터테인먼트",
     "한미반도체", "스튜디오드래곤", "삼성바이오로직스",
@@ -128,58 +132,14 @@ class MultiSourceCrawler(BaseCollector):
         self.driver_rotation_size = max(driver_rotation_size, 0)
         self.driver = None
 
-    # ── WebDriver 초기화 (Anti-Bot + 안정성) ─────────────────────────────────
+    # ── WebDriver 초기화 ──────────────────────────────────────────────────────
     def _setup_driver(self) -> None:
-        """
-        Chrome WebDriver 초기화.
-
-        추가된 안정성 옵션:
-          --disable-gpu           헤드리스 환경의 GPU 초기화 실패 크래시 방지
-          --disable-dev-shm-usage /dev/shm 메모리 부족 방지 (컨테이너/Windows 공통)
-          --window-size=1920,1080 뷰포트 고정 (레이아웃 파싱 안정화)
-
-        Anti-Bot:
-          --disable-blink-features=AutomationControlled  ← 자동화 플래그 숨김
-          ※ '--blink-features=AutomationControlled' 는 반대 효과 (활성화)이므로 사용 금지
-        """
-        from selenium import webdriver
-        from selenium.webdriver.chrome.options import Options
-        from selenium.webdriver.chrome.service import Service
-
-        opts = Options()
-        if self.headless:
-            opts.add_argument("--headless=new")
-
-        # ── 안정성 ────────────────────────────────────────────────────────────
-        opts.add_argument("--disable-gpu")             # GPU 가속 비활성화 (헤드리스 필수)
-        opts.add_argument("--no-sandbox")
-        opts.add_argument("--disable-dev-shm-usage")   # 공유 메모리 부족 방지
-        opts.add_argument("--disable-plugins")
-        opts.add_argument("--disable-extensions")
-        opts.add_argument("--window-size=1920,1080")   # 뷰포트 고정
-        opts.add_argument("--blink-settings=imagesEnabled=false")  # 이미지 차단
-
-        # ── Anti-Bot ──────────────────────────────────────────────────────────
-        opts.add_argument(
-            "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        )
-        opts.add_argument("--disable-blink-features=AutomationControlled")
-        opts.add_experimental_option("excludeSwitches", ["enable-automation"])
-        opts.add_experimental_option("useAutomationExtension", False)
-
+        """Chrome WebDriver 초기화. driver_utils.create_chrome_driver 에 위임."""
         try:
-            from webdriver_manager.chrome import ChromeDriverManager
-            service = Service(ChromeDriverManager().install())
-            self.driver = webdriver.Chrome(service=service, options=opts)
-        except Exception:
-            self.driver = webdriver.Chrome(options=opts)
-
-        self.driver.execute_cdp_cmd(
-            "Page.addScriptToEvaluateOnNewDocument",
-            {"source": "Object.defineProperty(navigator,'webdriver',{get:()=>undefined})"},
-        )
-        logger.info("✓ Chrome WebDriver 초기화 완료")
+            from driver_utils import create_chrome_driver
+        except ImportError:
+            from app.collectors.hiring.driver_utils import create_chrome_driver
+        self.driver = create_chrome_driver(self.headless)
 
     def _quit_driver(self) -> None:
         """

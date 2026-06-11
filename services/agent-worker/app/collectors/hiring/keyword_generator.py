@@ -95,6 +95,6 @@ class HiringKeywordGenerator:
             f"{company_name} 입사",
             f"{company_name} 채용공고",
         ]
-        if short_name and short_name.strip() and short_name != company_name:
-            keywords.append(f"{short_name} 채용")
+        if short_name and (s := short_name.strip()) and s != company_name:
+            keywords.append(f"{s} 채용")
         return keywords
