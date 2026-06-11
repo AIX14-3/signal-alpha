@@ -80,7 +80,7 @@ class CollectionPersistenceTest(unittest.IsolatedAsyncioTestCase):
         connection = FakeConnection()
         persistence = CollectionPersistence(connection)
 
-        await persistence.save_evidence_batch(
+        result = await persistence.save_evidence_batch(
             stock_id=1,
             stock_code="005930",
             evidence=[
@@ -109,6 +109,7 @@ class CollectionPersistenceTest(unittest.IsolatedAsyncioTestCase):
         enqueue_call = next(call for call in connection.calls if "INSERT INTO processing_queue" in call[1])
         task_context = json.loads(enqueue_call[2][6])
         self.assertEqual(task_context, {"stock_code": "005930", "source_type": "DART"})
+        self.assertEqual(result["queued_task_ids"], [104])
 
     async def test_save_existing_dart_evidence_updates_detail_without_reenqueuing_normalize_task(self):
         connection = FakeConnection(raw_inserted=False)

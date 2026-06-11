@@ -105,7 +105,7 @@ class AnalysisAndSignalRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("INNER JOIN stocks", connection.calls[0][1])
         self.assertIn("agent_results", connection.calls[0][1])
         self.assertIn("signal_events", connection.calls[0][1])
-        self.assertIn("ar.run_key = 'DART'", connection.calls[0][1])
+        self.assertIn("ar.run_key LIKE 'DART%'", connection.calls[0][1])
         self.assertEqual(connection.calls[0][2], ("005930", "2026-06-08", 20))
 
     async def test_get_current_by_ticker_filters_to_current_published_signal(self):

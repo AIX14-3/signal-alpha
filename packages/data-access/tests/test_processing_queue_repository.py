@@ -95,6 +95,17 @@ class ProcessingQueueRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("FOR UPDATE SKIP LOCKED", connection.calls[0][1])
         self.assertEqual(connection.calls[0][2], ("normalize_report",))
 
+    async def test_claim_pending_by_id_restricts_to_requested_task(self):
+        connection = FakeConnection()
+        repository = ProcessingQueueRepository(connection)
+
+        row = await repository.claim_pending_by_id(task_id=77, task_type="collect_dart")
+
+        self.assertEqual(row["status"], "running")
+        self.assertIn("WHERE id = $1", connection.calls[0][1])
+        self.assertIn("task_type = $2", connection.calls[0][1])
+        self.assertEqual(connection.calls[0][2], (77, "collect_dart"))
+
     async def test_mark_success_clears_previous_error_message(self):
         connection = FakeConnection()
         repository = ProcessingQueueRepository(connection)

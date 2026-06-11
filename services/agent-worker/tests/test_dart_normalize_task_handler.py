@@ -16,7 +16,7 @@ class FakeConnection:
 
     async def fetch(self, sql, *args):
         self.calls.append(("fetch", sql, args))
-        return self.rows or [
+        rows = self.rows or [
             {
                 "raw_document_id": 10,
                 "stock_id": 1,
@@ -32,9 +32,15 @@ class FakeConnection:
                 "disclosure_type": "quarter_report",
                 "is_correction": False,
                 "original_receipt_no": None,
-                "extra_payload": {"document_text": "Original DART body for analysis."},
+                "extra_payload": {
+                    "document_text": "Original DART body for analysis. 매출액 77,781억원, 영업이익 6,606억원, 당기순이익 5,745억원.",
+                },
             }
         ]
+        if "signal_events.id = ANY" in sql and args:
+            requested_ids = set(args[0])
+            return [row for row in rows if row.get("id") in requested_ids]
+        return rows
 
     async def fetchrow(self, sql, *args):
         self.calls.append(("fetchrow", sql, args))
@@ -67,14 +73,22 @@ class DartNormalizeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any("INSERT INTO source_documents" in call[1] for call in connection.calls))
         signal_event_call = next(call for call in connection.calls if "INSERT INTO signal_events" in call[1])
         self.assertIsInstance(signal_event_call[2][5], date)
-        self.assertEqual(signal_event_call[2][10], "Original DART body for analysis.")
+        self.assertIn("Original DART body for analysis.", signal_event_call[2][10])
         self.assertTrue(any("INSERT INTO signal_metrics" in call[1] for call in connection.calls))
+        metric_calls = [call for call in connection.calls if "INSERT INTO signal_metrics" in call[1]]
+        metric_names = [call[2][1] for call in metric_calls]
+        self.assertIn("dart_revenue", metric_names)
+        revenue_call = next(call for call in metric_calls if call[2][1] == "dart_revenue")
+        self.assertEqual(revenue_call[2][2:4], (7778100, "KRW_million"))
         self.assertTrue(any("INSERT INTO validation_logs" in call[1] for call in connection.calls))
         self.assertTrue(any("INSERT INTO processing_queue" in call[1] for call in connection.calls))
-        self.assertEqual(result["analysis_task_id"], 405)
+        self.assertIsNotNone(result["analysis_task_id"])
         enqueue_call = next(call for call in connection.calls if "INSERT INTO processing_queue" in call[1])
-        self.assertIsNone(enqueue_call[2][4])
-        self.assertEqual(enqueue_call[2][6], '{"stock_code": "005930", "source_type": "DART", "analysis_date": "2026-06-08"}')
+        self.assertEqual(enqueue_call[2][4], [402])
+        self.assertEqual(
+            enqueue_call[2][6],
+            '{"stock_code": "005930", "source_type": "DART", "run_key": "DART_EVENT_402"}',
+        )
 
     async def test_handler_accepts_json_string_raw_ids(self):
         connection = FakeConnection()
@@ -176,7 +190,7 @@ class DartAnalyzeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(agent_call[2][5], "neutral")
         self.assertEqual(agent_call[2][10], "dart-rules-v1")
 
-    async def test_handler_without_event_ids_analyzes_all_dart_events_for_date(self):
+    async def test_handler_with_event_ids_analyzes_only_requested_dart_event(self):
         connection = FakeConnection(
             rows=[
                 {
@@ -229,6 +243,32 @@ class DartAnalyzeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
             {
                 "id": 30,
                 "stock_id": 1,
+                "source_signal_event_ids": [501],
+                "task_context": {
+                    "stock_code": "005930",
+                    "source_type": "DART",
+                    "run_key": "DART_EVENT_501",
+                },
+            }
+        )
+
+        self.assertEqual(result["analyzed_count"], 1)
+        id_query = connection.calls[0]
+        self.assertIn("signal_events.id = ANY($1::BIGINT[])", id_query[1])
+        self.assertEqual(id_query[2], ([501],))
+        analysis_call = next(call for call in connection.calls if "INSERT INTO analysis_results" in call[1])
+        self.assertEqual(analysis_call[2][4], [501])
+        self.assertEqual(analysis_call[2][2], date(2026, 6, 8))
+        self.assertEqual(analysis_call[2][3], "DART_EVENT_501")
+
+    async def test_handler_without_event_ids_skips_date_level_analysis(self):
+        connection = FakeConnection(rows=[])
+        handler = DartAnalyzeTaskHandler(connection)
+
+        result = await handler(
+            {
+                "id": 30,
+                "stock_id": 1,
                 "source_signal_event_ids": None,
                 "task_context": {
                     "stock_code": "005930",
@@ -238,8 +278,6 @@ class DartAnalyzeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        self.assertEqual(result["analyzed_count"], 2)
-        date_query = connection.calls[0]
-        self.assertIn("signal_events.event_date = $3::DATE", date_query[1])
-        analysis_call = next(call for call in connection.calls if "INSERT INTO analysis_results" in call[1])
-        self.assertEqual(analysis_call[2][4], [501, 502])
+        self.assertEqual(result["analyzed_count"], 0)
+        self.assertEqual(result["skipped_reason"], "source_signal_event_ids_required")
+        self.assertFalse(any("INSERT INTO analysis_results" in call[1] for call in connection.calls))

@@ -99,6 +99,24 @@ class ProcessingQueueRepository:
             task_type,
         )
 
+    async def claim_pending_by_id(self, *, task_id: int, task_type: str) -> Any:
+        return await self._connection.fetchrow(
+            """
+            UPDATE processing_queue
+            SET
+                status = 'running',
+                started_at = NOW(),
+                updated_at = NOW()
+            WHERE id = $1
+              AND task_type = $2
+              AND status IN ('pending', 'retrying')
+              AND scheduled_at <= NOW()
+            RETURNING *
+            """,
+            task_id,
+            task_type,
+        )
+
     async def mark_success(self, *, task_id: int) -> None:
         await self._connection.execute(
             """

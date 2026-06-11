@@ -7,6 +7,7 @@ from typing import Any
 
 from app.analyzers.dart.source_result import build_dart_analysis_result
 from app.collectors.dart.disclosure import DartCollector, DartDisclosureClient
+from app.analyzers.dart.financials import extract_dart_financial_metrics
 from app.analyzers.dart.rules import classify_dart_report, make_dart_event_hash
 from app.orchestrator.persistence import CollectionPersistence
 from app.orchestrator.queue.task_types import ANALYZE_DART, NORMALIZE_DART
@@ -96,7 +97,7 @@ class DartNormalizeTaskHandler:
         rows = await self._raw_detail_repository.list_dart_documents_by_raw_ids(raw_document_ids)
 
         signal_event_ids: list[int] = []
-        analysis_dates: set[date] = set()
+        analysis_task_ids: list[int] = []
         for row in rows:
             classification = classify_dart_report(
                 row["report_name"],
@@ -131,13 +132,19 @@ class DartNormalizeTaskHandler:
                 needs_review=classification.needs_review,
             )
             signal_event_ids.append(signal_event["id"])
-            analysis_dates.add(_to_date(row["published_at"]))
             await self._normalization_repository.upsert_signal_metric(
                 signal_event_id=signal_event["id"],
                 metric_name="dart_disclosure_count",
                 metric_value=1,
                 metric_unit="count",
             )
+            for metric in extract_dart_financial_metrics(evidence_text):
+                await self._normalization_repository.upsert_signal_metric(
+                    signal_event_id=signal_event["id"],
+                    metric_name=metric["metric_name"],
+                    metric_value=metric["metric_value"],
+                    metric_unit=metric["metric_unit"],
+                )
             await self._normalization_repository.record_validation_log(
                 target_type="signal_event",
                 target_id_int=signal_event["id"],
@@ -145,22 +152,19 @@ class DartNormalizeTaskHandler:
                 passed=True,
                 message=f"Normalized from raw_document_id={row['raw_document_id']}",
             )
-
-        analysis_task_ids: list[int] = []
-        if signal_event_ids:
-            for analysis_date in sorted(analysis_dates):
-                analysis_task_id = await self._queue_repository.enqueue(
-                    stock_id=int(rows[0]["stock_id"]),
-                    task_type=ANALYZE_DART,
-                    priority="batch",
-                    task_context={
-                        "stock_code": stock_code,
-                        "source_type": "DART",
-                        "analysis_date": analysis_date.isoformat(),
-                    },
-                    dedupe=True,
-                )
-                analysis_task_ids.append(analysis_task_id)
+            analysis_task_id = await self._queue_repository.enqueue(
+                stock_id=int(row["stock_id"]),
+                task_type=ANALYZE_DART,
+                priority="batch",
+                source_signal_event_ids=[int(signal_event["id"])],
+                task_context={
+                    "stock_code": stock_code,
+                    "source_type": "DART",
+                    "run_key": f"DART_EVENT_{signal_event['id']}",
+                },
+                dedupe=True,
+            )
+            analysis_task_ids.append(analysis_task_id)
 
         return {
             "normalized_count": len(rows),
@@ -179,14 +183,15 @@ class DartAnalyzeTaskHandler:
         stock_id = int(task["stock_id"])
         task_context = _task_context(task.get("task_context"))
         signal_event_ids = _source_signal_event_ids(task.get("source_signal_event_ids"))
-        if signal_event_ids:
-            rows = await self._normalization_repository.list_signal_events_by_ids(signal_event_ids)
-        else:
-            rows = await self._normalization_repository.list_signal_events_for_stock_date(
-                stock_id=stock_id,
-                source_type="DART",
-                event_date=_task_analysis_date(task_context),
-            )
+        if not signal_event_ids:
+            return {
+                "analyzed_count": 0,
+                "analysis_result_id": None,
+                "agent_result_id": None,
+                "skipped_reason": "source_signal_event_ids_required",
+            }
+
+        rows = await self._normalization_repository.list_signal_events_by_ids(signal_event_ids)
         events = [dict(row) for row in rows]
         signal_event_ids = [int(event["id"]) for event in events]
         result = build_dart_analysis_result(events)

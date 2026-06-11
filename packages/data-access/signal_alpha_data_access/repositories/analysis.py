@@ -248,7 +248,7 @@ class AnalysisRepository:
             ) signal_events ON TRUE
             WHERE stocks.ticker = $1
               AND ($2::DATE IS NULL OR ar.analysis_date = $2::DATE)
-              AND ar.run_key = 'DART'
+              AND ar.run_key LIKE 'DART%'
             ORDER BY ar.analysis_date DESC, ar.created_at DESC, ar.id DESC
             LIMIT $3
             """,

@@ -235,3 +235,172 @@ class CollectionRepository:
             """,
             rows,
         )
+
+    async def delete_dart_test_data(
+        self,
+        *,
+        stock_code: str,
+        bgn_de: Any,
+        end_de: Any,
+    ) -> dict[str, int]:
+        transaction = getattr(self._connection, "transaction", None)
+        if transaction is None:
+            return await self._delete_dart_test_data_counts(stock_code, bgn_de, end_de)
+        async with self._connection.transaction():
+            return await self._delete_dart_test_data_counts(stock_code, bgn_de, end_de)
+
+    async def _delete_dart_test_data_counts(
+        self,
+        stock_code: str,
+        bgn_de: Any,
+        end_de: Any,
+    ) -> dict[str, int]:
+        deleted_score_history_count = await self._delete_dart_score_history(stock_code, bgn_de, end_de)
+        deleted_final_signal_count = await self._delete_dart_final_signals(stock_code, bgn_de, end_de)
+        deleted_agent_result_count = await self._delete_dart_agent_results(stock_code, bgn_de, end_de)
+        deleted_analysis_result_count = await self._delete_dart_analysis_results(stock_code, bgn_de, end_de)
+        deleted_signal_event_count = await self._delete_dart_signal_events(stock_code, bgn_de, end_de)
+        deleted_raw_document_count = await self._delete_dart_raw_documents(stock_code, bgn_de, end_de)
+        return {
+            "deleted_score_history_count": deleted_score_history_count,
+            "deleted_final_signal_count": deleted_final_signal_count,
+            "deleted_agent_result_count": deleted_agent_result_count,
+            "deleted_analysis_result_count": deleted_analysis_result_count,
+            "deleted_signal_event_count": deleted_signal_event_count,
+            "deleted_raw_document_count": deleted_raw_document_count,
+        }
+
+    async def _delete_dart_score_history(self, stock_code: str, bgn_de: Any, end_de: Any) -> int:
+        return await self._delete_dart_count(
+            """
+            WITH target_results AS (
+                SELECT id
+                FROM analysis_results
+                WHERE stock_id = (SELECT id FROM stocks WHERE ticker = $1)
+                  AND run_key LIKE 'DART%'
+                  AND analysis_date BETWEEN $2::DATE AND $3::DATE
+            ),
+            deleted AS (
+                DELETE FROM score_history
+                WHERE analysis_result_id IN (SELECT id FROM target_results)
+                   OR final_signal_id IN (
+                       SELECT id
+                       FROM final_signals
+                       WHERE analysis_result_id IN (SELECT id FROM target_results)
+                   )
+                RETURNING id
+            )
+            SELECT count(*) FROM deleted
+            """,
+            stock_code,
+            bgn_de,
+            end_de,
+        )
+
+    async def _delete_dart_final_signals(self, stock_code: str, bgn_de: Any, end_de: Any) -> int:
+        return await self._delete_dart_count(
+            """
+            WITH target_results AS (
+                SELECT id
+                FROM analysis_results
+                WHERE stock_id = (SELECT id FROM stocks WHERE ticker = $1)
+                  AND run_key LIKE 'DART%'
+                  AND analysis_date BETWEEN $2::DATE AND $3::DATE
+            ),
+            deleted AS (
+                DELETE FROM final_signals
+                WHERE analysis_result_id IN (SELECT id FROM target_results)
+                RETURNING id
+            )
+            SELECT count(*) FROM deleted
+            """,
+            stock_code,
+            bgn_de,
+            end_de,
+        )
+
+    async def _delete_dart_agent_results(self, stock_code: str, bgn_de: Any, end_de: Any) -> int:
+        return await self._delete_dart_count(
+            """
+            WITH target_results AS (
+                SELECT id
+                FROM analysis_results
+                WHERE stock_id = (SELECT id FROM stocks WHERE ticker = $1)
+                  AND run_key LIKE 'DART%'
+                  AND analysis_date BETWEEN $2::DATE AND $3::DATE
+            ),
+            deleted AS (
+                DELETE FROM agent_results
+                WHERE result_id IN (SELECT id FROM target_results)
+                RETURNING id
+            )
+            SELECT count(*) FROM deleted
+            """,
+            stock_code,
+            bgn_de,
+            end_de,
+        )
+
+    async def _delete_dart_analysis_results(self, stock_code: str, bgn_de: Any, end_de: Any) -> int:
+        return await self._delete_dart_count(
+            """
+            WITH deleted AS (
+                DELETE FROM analysis_results
+                WHERE stock_id = (SELECT id FROM stocks WHERE ticker = $1)
+                  AND run_key LIKE 'DART%'
+                  AND analysis_date BETWEEN $2::DATE AND $3::DATE
+                RETURNING id
+            )
+            SELECT count(*) FROM deleted
+            """,
+            stock_code,
+            bgn_de,
+            end_de,
+        )
+
+    async def _delete_dart_signal_events(self, stock_code: str, bgn_de: Any, end_de: Any) -> int:
+        return await self._delete_dart_count(
+            """
+            WITH target_raw_documents AS (
+                SELECT raw_documents.id
+                FROM raw_documents
+                WHERE raw_documents.stock_id = (SELECT id FROM stocks WHERE ticker = $1)
+                  AND raw_documents.source_type = 'DART'
+                  AND raw_documents.published_at::DATE BETWEEN $2::DATE AND $3::DATE
+            ),
+            deleted AS (
+                DELETE FROM signal_events
+                WHERE source_document_id IN (
+                    SELECT id
+                    FROM source_documents
+                    WHERE raw_document_id IN (SELECT id FROM target_raw_documents)
+                )
+                RETURNING id
+            )
+            SELECT count(*) FROM deleted
+            """,
+            stock_code,
+            bgn_de,
+            end_de,
+        )
+
+    async def _delete_dart_raw_documents(self, stock_code: str, bgn_de: Any, end_de: Any) -> int:
+        return await self._delete_dart_count(
+            """
+            WITH deleted AS (
+                DELETE FROM raw_documents
+                WHERE stock_id = (SELECT id FROM stocks WHERE ticker = $1)
+                  AND source_type = 'DART'
+                  AND published_at::DATE BETWEEN $2::DATE AND $3::DATE
+                RETURNING id
+            )
+            SELECT count(*) FROM deleted
+            """,
+            stock_code,
+            bgn_de,
+            end_de,
+        )
+
+    async def _delete_dart_count(self, sql: str, stock_code: str, bgn_de: Any, end_de: Any) -> int:
+        value = await self._connection.fetchval(sql, stock_code, bgn_de, end_de)
+        return int(value or 0)

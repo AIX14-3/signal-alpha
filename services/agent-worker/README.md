@@ -151,6 +151,24 @@ Query stored DART analysis results:
 Invoke-RestMethod -Method Get -Uri "http://localhost:8011/internal/dart/analysis-results?stock_code=005930&analysis_date=2026-06-08"
 ```
 
+Run a development E2E pass that collects, normalizes, analyzes, and returns stored DART analysis
+results:
+
+```powershell
+$body = '{"stock_id":1,"stock_code":"005930","bgn_de":"2026-06-01","end_de":"2026-06-08","force_reprocess":true}'
+Invoke-RestMethod -Method Post -Uri "http://localhost:8011/internal/dart/e2e/run" -ContentType "application/json" -Body $body
+```
+
+Delete development DART test data for a stock and date range:
+
+```powershell
+Invoke-RestMethod -Method Delete -Uri "http://localhost:8011/internal/dart/test-data?stock_code=005930&bgn_de=2026-06-01&end_de=2026-06-30"
+```
+
+Quarterly and annual report text is scanned for basic financial figures such as revenue,
+operating profit, and net income. Extracted values are stored in `signal_metrics` as
+`KRW_million` metrics when recognizable values are present.
+
 ### DART Collection Schedule
 
 An external cron or operations script can enqueue DART collection tasks for active stocks:

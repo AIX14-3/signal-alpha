@@ -41,6 +41,7 @@ class CollectionPersistence:
         raw_document_ids: list[int] = []
         inserted_raw_ids: list[int] = []
         reprocessed_raw_ids: list[int] = []
+        queued_task_ids: list[int] = []
         try:
             for item in evidence:
                 raw_document = await self._collection_repository.upsert_raw_document(
@@ -65,7 +66,7 @@ class CollectionPersistence:
                 await self._save_source_detail(raw_document_id, stock_id, item)
 
                 if enqueue_task_type and (is_inserted or force_reprocess):
-                    await self._queue_repository.enqueue(
+                    task_id = await self._queue_repository.enqueue(
                         stock_id=stock_id,
                         task_type=enqueue_task_type,
                         priority=item.metadata.get("priority", "batch"),
@@ -76,6 +77,7 @@ class CollectionPersistence:
                         },
                         dedupe=True,
                     )
+                    queued_task_ids.append(task_id)
 
             await self._collection_repository.finish_collector_run(
                 run_id=run_id,
@@ -103,6 +105,7 @@ class CollectionPersistence:
             "raw_document_ids": raw_document_ids,
             "new_raw_document_ids": inserted_raw_ids,
             "reprocessed_raw_document_ids": reprocessed_raw_ids,
+            "queued_task_ids": queued_task_ids,
         }
 
     async def _save_source_detail(
