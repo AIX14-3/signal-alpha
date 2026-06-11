@@ -34,6 +34,7 @@ if sys.platform == "win32" and hasattr(sys.stdout, "buffer"):
 _COLLECTORS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(_COLLECTORS_DIR))
 
+from base_collector import get_target_companies   # noqa: E402
 from keyword_generator import HiringKeywordGenerator  # noqa: E402
 from mock_collector import MockCollector               # noqa: E402
 from multi_source_crawler import MultiSourceCrawler   # noqa: E402
@@ -49,16 +50,8 @@ _DEFAULT_DATABASE_URL = (
     "postgresql://signal_alpha:signal_alpha_password@localhost:5432/signal_alpha"
 )
 
-# 대상 기업 15개 (COMPANY_STOCK_MAP 과 동일)
-_TARGET_COMPANIES = [
-    "삼성전자", "SK하이닉스", "한미반도체",
-    "NAVER", "카카오", "크래프톤",
-    "현대자동차", "기아", "HL만도",
-    "HYBE", "SM엔터테인먼트", "스튜디오드래곤",
-    "삼성바이오로직스", "셀트리온", "유한양행",
-]
-
-# Mode 4에서 사용할 기업 카테고리 매핑
+# Mode 4 전용: DB 불필요, 기업 카테고리 정보만 사용
+# 기업 목록 변경은 DB(is_target) 기준이 우선 — 이 dict는 카테고리 표시용으로만 사용
 _COMPANY_CATEGORIES: dict[str, str] = {
     "삼성전자": "반도체", "SK하이닉스": "반도체", "한미반도체": "반도체장비",
     "NAVER": "인터넷", "카카오": "인터넷", "크래프톤": "게임",
@@ -87,12 +80,12 @@ def get_database_url() -> str:
 
 
 def _preview_keyword_groups() -> None:
-    """Mode 4: HiringKeywordGenerator 결과를 터미널에 출력해 즉시 검증."""
+    """Mode 4: HiringKeywordGenerator 결과를 터미널에 출력해 즉시 검증 (DB 불필요)."""
     gen = HiringKeywordGenerator()
 
     companies = [
         {"company_name": name, "category": _COMPANY_CATEGORIES.get(name, "기타")}
-        for name in _TARGET_COMPANIES
+        for name in _COMPANY_CATEGORIES
     ]
     groups = gen.generate_for_multiple_companies(companies)
 
@@ -115,7 +108,6 @@ def _preview_keyword_groups() -> None:
     print(f"  네이버 DataLab API 1회 호출 배치(5개) 기준 → {-(-len(groups) // 5)}회 필요")
     print(sep)
 
-    # Naver API 실제 전송 형태 샘플 1개 출력
     first_name = next(iter(groups))
     first = groups[first_name]
     print(f"\n  [Naver API 전송 형태 샘플 — {first_name}]")
@@ -141,30 +133,37 @@ def main() -> None:
         print("\n👋 종료합니다.\n")
         return
 
+    if choice == "4":
+        # DB 연결 불필요 — 순수 로직만 실행
+        _preview_keyword_groups()
+        return
+
+    # Mode 1~3 공통: DB URL + 동적 기업 목록 로드
+    db_url = get_database_url()
+    target_companies = get_target_companies(db_url)  # ← DB is_target=TRUE 기준
+
     if choice == "1":
-        db_url = get_database_url()
         print("\n🔄 Mock Collector 실행 중...")
         collector = MockCollector(database_url=db_url)
         count = collector.run()
         print(f"\n✅ Mock 수집 완료: 신규 {count}개 적재\n")
 
     elif choice == "2":
-        db_url = get_database_url()
-        print("\n🕷️  Web Crawler (사람인 + 잡코리아) 실행 중...  (이용약관/robots.txt 준수)")
+        print(f"\n🕷️  Web Crawler (사람인 + 잡코리아) — {len(target_companies)}개 기업")
+        print("   (이용약관/robots.txt 준수)")
         crawler = MultiSourceCrawler(
             database_url=db_url,
-            target_companies=_TARGET_COMPANIES,
+            target_companies=target_companies,   # ← DB에서 동적 로드
             headless=True,
-            use_portals=True,    # 사람인 + 잡코리아
-            use_official=False,  # 공식 사이트 제외
+            use_portals=True,
+            use_official=False,
         )
         count = crawler.run()
         print(f"\n✅ 포털 크롤링 완료: 신규 {count}개 적재\n")
 
     elif choice == "3":
-        db_url = get_database_url()
-        print("\n🌐 Multi-Source Crawler 실행 중...")
-        print("   소스: 사람인 + 잡코리아 + 15개 공식 사이트")
+        print(f"\n🌐 Multi-Source Crawler — {len(target_companies)}개 기업")
+        print("   소스: 사람인 + 잡코리아 + 공식 사이트")
         print("   ⚠️  이용약관/robots.txt 준수  |  완료까지 수 분 소요\n")
 
         use_portals = _ask_yn("  - 포털 수집 포함? (사람인+잡코리아) [Y/n]: ", default=True)
@@ -172,17 +171,13 @@ def main() -> None:
 
         crawler = MultiSourceCrawler(
             database_url=db_url,
-            target_companies=_TARGET_COMPANIES,
+            target_companies=target_companies,   # ← DB에서 동적 로드
             headless=True,
             use_portals=use_portals,
             use_official=use_official,
         )
         count = crawler.run()
         print(f"\n✅ 멀티소스 크롤링 완료: 신규 {count}개 적재\n")
-
-    elif choice == "4":
-        # DB 연결 불필요 — 순수 로직만 실행
-        _preview_keyword_groups()
 
     else:
         print("\n❌ 잘못된 선택입니다.\n")

@@ -83,6 +83,38 @@ COMPANY_STOCK_MAP: dict[str, tuple[str, str, str]] = {
 }
 
 
+def get_target_companies(database_url: str) -> list[str]:
+    """
+    DB의 is_target=TRUE 기업 목록을 동적으로 반환 (동기식).
+
+    - 조회 성공 → DB 결과 반환
+    - is_target=TRUE 행 없음 → COMPANY_STOCK_MAP 폴백 (경고 로그)
+    - DB 연결 실패 등 예외 → COMPANY_STOCK_MAP 폴백 (에러 로그)
+
+    모든 수집기(Hiring·DataLab·Patent 등)가 공통으로 사용하는 Single Source of Truth.
+    기업 추가/제거는 SQL UPDATE 한 줄이면 충분하고 코드 수정이 불필요하다.
+    """
+    engine = create_engine(database_url, echo=False, future=True)
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text("SELECT name FROM stocks WHERE is_target = TRUE ORDER BY name")
+            ).fetchall()
+        if rows:
+            names = [row[0] for row in rows]
+            logger.info("🎯 수집 대상 %d개 기업 (DB is_target=TRUE)", len(names))
+            return names
+        logger.warning("⚠️  is_target=TRUE 기업 없음 → COMPANY_STOCK_MAP 폴백")
+    except Exception as exc:
+        logger.error("❌ 수집 대상 기업 조회 실패 → COMPANY_STOCK_MAP 폴백: %s", exc)
+    finally:
+        engine.dispose()
+
+    fallback = list(COMPANY_STOCK_MAP.keys())
+    logger.info("🔄 폴백 사용: %d개 기업", len(fallback))
+    return fallback
+
+
 class _SkipRecord(Exception):
     """오류가 아닌 정상 스킵(중복·매핑 없음). savepoint 컨텍스트가 자동 롤백."""
 
