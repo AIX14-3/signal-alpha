@@ -36,15 +36,19 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-# ── 크롤링 대상 기업 → 공식 사이트 크롤러 매핑 ──────────────────────────────
-# recruiter.co.kr 기업 (RecruiterKrCrawler 가 회사별 URL 로 분기)
+# ── 크롤링 대상 기업 → 공식 사이트 크롤러 분류 ──────────────────────────────
+# recruiter.co.kr 집계 기업
 _RECRUITER_KR_COMPANIES = {"HL만도", "셀트리온", "유한양행"}
 
-# API 기반 (Selenium 불필요 — driver=None 전달)
-_API_COMPANIES = {"삼성전자", "NAVER", "카카오"}
+# 순수 requests 기반 (driver=None) — Selenium 완전 불필요
+_REQUESTS_ONLY_COMPANIES = {"삼성전자"}
 
-# Selenium SPA/ATS (driver 공유)
+# requests 1차 시도, Selenium 폴백 혼합형 — driver 전달 필요
+_REQUESTS_WITH_FALLBACK_COMPANIES = {"NAVER"}
+
+# Selenium SPA/ATS 전용 (driver 필수)
 _SELENIUM_COMPANIES = {
+    "카카오",                                    # SPA, Selenium 필수
     "SK하이닉스", "크래프톤",
     "HYBE", "SM엔터테인먼트",
     "한미반도체", "스튜디오드래곤", "삼성바이오로직스",
@@ -97,100 +101,45 @@ class MultiSourceCrawler(BaseCollector):
     """
     모든 소스를 통합 수집하는 오케스트레이터.
 
+    수집 대상 기업 목록은 BaseCollector.run()이 DB(is_target=TRUE)에서 동적으로 조회해
+    collect(target_companies)로 주입한다. 기업 추가/제거는 SQL UPDATE 한 줄로 처리.
+
     Args:
         database_url:      PostgreSQL 연결 문자열
-        target_companies:  수집 대상 기업명 리스트 (None → 기본 15개)
         headless:          Selenium 헤드리스 모드 (기본 True)
         use_portals:       사람인/잡코리아 포털 수집 여부 (기본 True)
         use_official:      기업 공식 사이트 수집 여부 (기본 True)
         rate_limit_sec:    기업 간 대기 시간 (기본 2.0s)
+        driver_rotation_size: 몇 개 기업마다 Chrome 을 재시작할지 (기본 3).
+                              헤드리스 Chrome 의 메모리 누적 크래시 방지.
+                              0 또는 음수면 로테이션 비활성화.
     """
-
-    DEFAULT_COMPANIES = [
-        "삼성전자", "SK하이닉스", "한미반도체",
-        "NAVER", "카카오", "크래프톤",
-        "현대자동차", "기아", "HL만도",
-        "HYBE", "SM엔터테인먼트", "스튜디오드래곤",
-        "삼성바이오로직스", "셀트리온", "유한양행",
-    ]
 
     def __init__(
         self,
         database_url: str,
-        target_companies: list[str] | None = None,
         headless: bool = True,
         use_portals: bool = True,
         use_official: bool = True,
         rate_limit_sec: float = 2.0,
         driver_rotation_size: int = 3,
     ):
-        """
-        Args:
-            driver_rotation_size: 몇 개 기업마다 Chrome 을 재시작할지 (기본 3).
-                                   헤드리스 Chrome 의 메모리 누적 크래시 방지.
-                                   0 또는 음수면 로테이션 비활성화.
-        """
         super().__init__(database_url)
-        self.target_companies = target_companies or self.DEFAULT_COMPANIES
         self.headless = headless
         self.use_portals = use_portals
         self.use_official = use_official
         self.rate_limit_sec = rate_limit_sec
-        self.driver_rotation_size = driver_rotation_size if driver_rotation_size > 0 else 0
+        self.driver_rotation_size = max(driver_rotation_size, 0)
         self.driver = None
 
-    # ── WebDriver 초기화 (Anti-Bot + 안정성) ─────────────────────────────────
+    # ── WebDriver 초기화 ──────────────────────────────────────────────────────
     def _setup_driver(self) -> None:
-        """
-        Chrome WebDriver 초기화.
-
-        추가된 안정성 옵션:
-          --disable-gpu           헤드리스 환경의 GPU 초기화 실패 크래시 방지
-          --disable-dev-shm-usage /dev/shm 메모리 부족 방지 (컨테이너/Windows 공통)
-          --window-size=1920,1080 뷰포트 고정 (레이아웃 파싱 안정화)
-
-        Anti-Bot:
-          --disable-blink-features=AutomationControlled  ← 자동화 플래그 숨김
-          ※ '--blink-features=AutomationControlled' 는 반대 효과 (활성화)이므로 사용 금지
-        """
-        from selenium import webdriver
-        from selenium.webdriver.chrome.options import Options
-        from selenium.webdriver.chrome.service import Service
-
-        opts = Options()
-        if self.headless:
-            opts.add_argument("--headless=new")
-
-        # ── 안정성 ────────────────────────────────────────────────────────────
-        opts.add_argument("--disable-gpu")             # GPU 가속 비활성화 (헤드리스 필수)
-        opts.add_argument("--no-sandbox")
-        opts.add_argument("--disable-dev-shm-usage")   # 공유 메모리 부족 방지
-        opts.add_argument("--disable-plugins")
-        opts.add_argument("--disable-extensions")
-        opts.add_argument("--window-size=1920,1080")   # 뷰포트 고정
-        opts.add_argument("--blink-settings=imagesEnabled=false")  # 이미지 차단
-
-        # ── Anti-Bot ──────────────────────────────────────────────────────────
-        opts.add_argument(
-            "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        )
-        opts.add_argument("--disable-blink-features=AutomationControlled")
-        opts.add_experimental_option("excludeSwitches", ["enable-automation"])
-        opts.add_experimental_option("useAutomationExtension", False)
-
+        """Chrome WebDriver 초기화. driver_utils.create_chrome_driver 에 위임."""
         try:
-            from webdriver_manager.chrome import ChromeDriverManager
-            service = Service(ChromeDriverManager().install())
-            self.driver = webdriver.Chrome(service=service, options=opts)
-        except Exception:
-            self.driver = webdriver.Chrome(options=opts)
-
-        self.driver.execute_cdp_cmd(
-            "Page.addScriptToEvaluateOnNewDocument",
-            {"source": "Object.defineProperty(navigator,'webdriver',{get:()=>undefined})"},
-        )
-        logger.info("✓ Chrome WebDriver 초기화 완료")
+            from driver_utils import create_chrome_driver
+        except ImportError:
+            from app.collectors.hiring.driver_utils import create_chrome_driver
+        self.driver = create_chrome_driver(self.headless)
 
     def _quit_driver(self) -> None:
         """
@@ -216,7 +165,7 @@ class MultiSourceCrawler(BaseCollector):
         return SaraminCrawler(driver=self.driver), JobkoreaCrawler(driver=self.driver)
 
     # ── 수집 ─────────────────────────────────────────────────────────────────
-    def collect(self) -> list:
+    def collect(self, target_companies: list[str]) -> list:
         """
         전 소스에서 채용 데이터 수집 후 하나의 list[dict] 로 반환.
 
@@ -230,7 +179,7 @@ class MultiSourceCrawler(BaseCollector):
         all_jobs: list[dict] = []
 
         try:
-            for idx, company in enumerate(self.target_companies):
+            for idx, company in enumerate(target_companies):
 
                 # ── 드라이버 로테이션 ────────────────────────────────────────
                 # idx==0 은 이미 위에서 기동했으므로 건너뜀
@@ -241,7 +190,7 @@ class MultiSourceCrawler(BaseCollector):
                 ):
                     logger.info(
                         "🔄 드라이버 로테이션 (기업 %d/%d, 배치 크기 %d) — 재시작 중...",
-                        idx + 1, len(self.target_companies), self.driver_rotation_size,
+                        idx + 1, len(target_companies), self.driver_rotation_size,
                     )
                     self._quit_driver()    # 기존 Chrome 완전 종료
                     self._setup_driver()   # 새 Chrome 기동 (메모리 초기화)
@@ -249,7 +198,7 @@ class MultiSourceCrawler(BaseCollector):
                 company_jobs: list[dict] = []
                 logger.info("─" * 60)
                 logger.info("🏢 [%d/%d] %s 수집 시작",
-                            idx + 1, len(self.target_companies), company)
+                            idx + 1, len(target_companies), company)
 
                 # 1) 포털 수집 (사람인 + 잡코리아)
                 if self.use_portals:

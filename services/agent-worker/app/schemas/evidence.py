@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-SourceType = Literal["DART", "REPORT", "HIRING", "PATENT", "DATALAB"]
+SourceType = Literal["DART", "REPORT", "HIRING", "PATENT", "DATALAB", "PRICE"]
 
 
 @dataclass(frozen=True)

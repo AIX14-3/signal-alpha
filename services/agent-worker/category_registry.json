@@ -1,0 +1,56 @@
+[
+  {
+    "category_id": 1,
+    "category_name": "HBM",
+    "keyword_group": "HBM",
+    "keywords": ["HBM", "HBM3E", "HBM4", "HBM5", "고대역폭 메모리"]
+  },
+  {
+    "category_id": 2,
+    "category_name": "AI_SEMICONDUCTOR",
+    "keyword_group": "AI_SEMICONDUCTOR",
+    "keywords": ["AI 반도체", "AI 칩", "NPU", "GPU 반도체"]
+  },
+  {
+    "category_id": 3,
+    "category_name": "MEMORY_CORE",
+    "keyword_group": "MEMORY_CORE",
+    "keywords": ["D램", "DRAM", "낸드", "NAND", "메모리 반도체"]
+  },
+  {
+    "category_id": 5,
+    "category_name": "SAMSUNG_BRAND",
+    "keyword_group": "SAMSUNG_BRAND",
+    "keywords": ["삼성전자", "삼성 주가", "삼성전자 실적"]
+  },
+  {
+    "category_id": 6,
+    "category_name": "HYNIX_BRAND",
+    "keyword_group": "HYNIX_BRAND",
+    "keywords": ["SK하이닉스", "하이닉스 주가", "SK하이닉스 실적"]
+  },
+  {
+    "category_id": 9,
+    "category_name": "NAVER_BRAND",
+    "keyword_group": "NAVER_BRAND",
+    "keywords": ["네이버", "네이버 주가", "네이버 실적"]
+  },
+  {
+    "category_id": 10,
+    "category_name": "AI_SEARCH",
+    "keyword_group": "AI_SEARCH",
+    "keywords": ["네이버 AI", "하이퍼클로바", "하이퍼클로바X", "네이버 검색 AI", "AI 검색"]
+  },
+  {
+    "category_id": 11,
+    "category_name": "CLOUD_B2B",
+    "keyword_group": "CLOUD_B2B",
+    "keywords": ["네이버클라우드", "네이버 클라우드", "소버린 AI", "AI 데이터센터"]
+  },
+  {
+    "category_id": 12,
+    "category_name": "NAVER_COMMERCE",
+    "keyword_group": "NAVER_COMMERCE",
+    "keywords": ["네이버 쇼핑", "네이버 스마트스토어", "네이버 AI 쇼핑", "네이버페이"]
+  }
+]

@@ -18,6 +18,7 @@ Selenium 기반 실제 채용공고 크롤러 (사람인)
 from __future__ import annotations
 
 import logging
+import re
 import time
 from datetime import datetime, timezone
 
@@ -57,74 +58,27 @@ _TECH_KEYWORDS = [
 class WebCrawler(BaseCollector):
     """Selenium 으로 사람인 채용공고를 수집하는 수집기."""
 
-    def __init__(self, database_url: str, target_companies: list[str], headless: bool = True):
+    def __init__(self, database_url: str, headless: bool = True):
         super().__init__(database_url)
-        self.target_companies = target_companies
         self.headless = headless
         self.driver = None
 
     # ── WebDriver 초기화 ────────────────────────────────────────────────────────
     def _setup_driver(self) -> None:
-        """
-        Chrome WebDriver 초기화 (Anti-Bot + 안정성).
-
-        안정성 옵션:
-          --disable-gpu           헤드리스 환경의 GPU 초기화 실패 크래시 방지
-          --disable-dev-shm-usage /dev/shm 메모리 부족 방지 (컨테이너/Windows 공통)
-          --window-size=1920,1080 뷰포트 고정 (레이아웃 파싱 안정화)
-
-        Anti-Bot:
-          --disable-blink-features=AutomationControlled  ← 자동화 플래그 숨김
-          ※ '--blink-features=AutomationControlled' 는 반대 효과이므로 사용 금지
-        """
-        from selenium import webdriver
-        from selenium.webdriver.chrome.options import Options
-        from selenium.webdriver.chrome.service import Service
-
-        opts = Options()
-        if self.headless:
-            opts.add_argument("--headless=new")
-
-        # ── 안정성 ────────────────────────────────────────────────────────────
-        opts.add_argument("--disable-gpu")             # GPU 가속 비활성화 (헤드리스 필수)
-        opts.add_argument("--no-sandbox")
-        opts.add_argument("--disable-dev-shm-usage")   # 공유 메모리 부족 방지
-        opts.add_argument("--disable-plugins")
-        opts.add_argument("--disable-extensions")
-        opts.add_argument("--window-size=1920,1080")   # 뷰포트 고정
-        opts.add_argument("--blink-settings=imagesEnabled=false")  # 이미지 로드 차단
-
-        # ── Anti-Bot ──────────────────────────────────────────────────────────
-        opts.add_argument(
-            "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        )
-        opts.add_argument("--disable-blink-features=AutomationControlled")
-        opts.add_experimental_option("excludeSwitches", ["enable-automation"])
-        opts.add_experimental_option("useAutomationExtension", False)
-
+        """Chrome WebDriver 초기화. driver_utils.create_chrome_driver 에 위임."""
         try:
-            from webdriver_manager.chrome import ChromeDriverManager
-            service = Service(ChromeDriverManager().install())
-            self.driver = webdriver.Chrome(service=service, options=opts)
-        except Exception:
-            # webdriver-manager 실패 시 PATH의 chromedriver 사용 시도
-            self.driver = webdriver.Chrome(options=opts)
-
-        # navigator.webdriver 은닉
-        self.driver.execute_cdp_cmd(
-            "Page.addScriptToEvaluateOnNewDocument",
-            {"source": "Object.defineProperty(navigator,'webdriver',{get:()=>undefined})"},
-        )
-        logger.info("✓ Chrome WebDriver 초기화 완료 (Anti-Bot 강화)")
+            from driver_utils import create_chrome_driver
+        except ImportError:
+            from app.collectors.hiring.driver_utils import create_chrome_driver
+        self.driver = create_chrome_driver(self.headless)
 
     # ── 수집 ─────────────────────────────────────────────────────────────────────
-    def collect(self) -> list:
+    def collect(self, target_companies: list[str]) -> list:
         """대상 기업별 사람인 채용공고 크롤링."""
         self._setup_driver()
         all_jobs: list[dict] = []
         try:
-            for company in self.target_companies:
+            for company in target_companies:
                 try:
                     logger.info("🔄 %s 크롤링 중...", company)
                     jobs = self._crawl_saramin(company)
@@ -158,7 +112,6 @@ class WebCrawler(BaseCollector):
             logger.info("ℹ️  %s: 채용공고 없음 (정상)", company_name)
             return []
 
-        time.sleep(1.5)
         soup = BeautifulSoup(self.driver.page_source, "html.parser")
         elements = soup.find_all("div", class_="item_recruit")
         if not elements:
@@ -235,7 +188,23 @@ class WebCrawler(BaseCollector):
 
     @staticmethod
     def _extract_tech_keywords(text: str) -> list[str]:
-        """텍스트에서 기술 키워드 추출 (대소문자 무시, 중복 제거)."""
+        """
+        텍스트에서 기술 키워드 추출 (단어 경계 \b 매칭, 오탐 방지).
+
+        단순 substring 매칭(in)은 "django" 안의 "go", "html" 안의 "ml" 등
+        false positive 를 유발한다. 정규식 단어 경계를 사용해 독립 단어만 매칭.
+        C++, C# 등 특수문자 포함 키워드는 \b 가 동작하지 않으므로 별도 처리.
+        """
         low = text.lower()
-        found = [t for t in _TECH_KEYWORDS if t.lower() in low]
+        found: list[str] = []
+        for kw in _TECH_KEYWORDS:
+            kw_lower = kw.lower()
+            if any(ch in kw_lower for ch in ("+", "#", ".")):
+                # 특수문자 포함 (C++, C#, Next.js 등): 단순 포함 검사
+                if kw_lower in low:
+                    found.append(kw)
+            else:
+                # 일반 영문 키워드: 단어 경계로 정확히 매칭
+                if re.search(r"\b" + re.escape(kw_lower) + r"\b", low):
+                    found.append(kw)
         return sorted(set(found))
