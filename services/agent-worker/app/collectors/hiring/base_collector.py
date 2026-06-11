@@ -42,10 +42,14 @@ base_collector.py
 
 from __future__ import annotations
 
+import datetime
 import hashlib
 import json
 import logging
+import zoneinfo
 from abc import ABC, abstractmethod
+
+_KST = zoneinfo.ZoneInfo("Asia/Seoul")
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
@@ -129,6 +133,12 @@ class BaseCollector(ABC):
     def _source_hash(seed: str) -> str:
         """seed(unique_key 또는 job_link) → SHA-256 hex 64자. source_hash UNIQUE 충족."""
         return hashlib.sha256(seed.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _get_current_quarter() -> str:
+        """현재 날짜(KST 기준) → "Q1"~"Q4". UTC 서버에서도 한국 분기 기준으로 정확히 동작."""
+        month = datetime.datetime.now(_KST).month
+        return f"Q{(month - 1) // 3 + 1}"
 
     # ── stocks 매칭 / 자동 등록 ─────────────────────────────────────────────────
     def _resolve_stock(self, db, raw_company_name: str) -> tuple[int, str] | None:
@@ -223,10 +233,32 @@ class BaseCollector(ABC):
             raise _SkipRecord
         stock_id, sector = resolved
 
+        # 계절성 기준선 조회 — 테이블 미생성·DB 점검 등 어떤 이슈에도 크롤링 계속
+        quarter = self._get_current_quarter()
+        q_col = f"q{quarter[1]}_factor"
+        seasonal_baseline: float | None = None
+        try:
+            baseline_row = db.execute(
+                text(
+                    "SELECT avg_search_volume, q1_factor, q2_factor, q3_factor, q4_factor "
+                    "FROM hiring_baseline WHERE stock_id = :sid"
+                ),
+                {"sid": stock_id},
+            ).fetchone()
+            if baseline_row:
+                # SQLAlchemy 2.0 Row: _mapping.get()으로 문자열 변수 기반 컬럼 조회
+                q_factor = baseline_row._mapping.get(q_col) or 1.0
+                seasonal_baseline = float(baseline_row._mapping["avg_search_volume"]) * float(q_factor)
+        except Exception as _baseline_err:
+            logger.warning("⚠️  hiring_baseline 조회 실패 (계절 가중치 스킵): %s", _baseline_err)
+
         job_link = data.get("job_link") or data.get("source_url")
         if not job_link:
             logger.warning("⚠️  job_link 없음 스킵: %s", data.get("job_title"))
             raise _SkipRecord
+
+        # published_at NOT NULL 방어: posting_date 누락 시 수집 시각으로 대체
+        posting_date = data.get("posting_date") or datetime.datetime.now(_KST).isoformat()
 
         # source_hash seed: unique_key 우선, 없으면 job_link
         seed = data.get("unique_key") or job_link
@@ -255,7 +287,7 @@ class BaseCollector(ABC):
                 "source_hash": self._source_hash(seed),
                 "title": data["job_title"],
                 "source_url": job_link,
-                "published_at": data.get("posting_date"),
+                "published_at": posting_date,
             },
         ).scalar()
 
@@ -274,6 +306,8 @@ class BaseCollector(ABC):
             "signal_strength": data.get("signal_strength"),
             "source_type": data.get("source_type"),   # 논리 라벨 (SEED_JOB / WEB ...)
             "unique_key": data.get("unique_key"),
+            "quarter": quarter,
+            "seasonal_baseline": seasonal_baseline,
         }
         db.execute(
             text("""
