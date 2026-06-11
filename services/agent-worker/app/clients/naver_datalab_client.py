@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from typing import Any
+from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 
@@ -33,6 +35,9 @@ class NaverDataLabClient:
     """Client for Naver DataLab search trend API."""
 
     API_URL = "https://openapi.naver.com/v1/datalab/search"
+
+    MAX_RETRIES = 3
+    RETRY_BACKOFF_SECONDS = 1.0
 
     PERIOD_TYPE_MAP = {
         "date": "daily",
@@ -134,8 +139,20 @@ class NaverDataLabClient:
             },
             method="POST",
         )
-        with urlopen(request, timeout=self._timeout_seconds) as response:
-            return json.loads(response.read().decode("utf-8"))
+        # The DataLab API intermittently stalls on a request (~1 in 15); retry
+        # transient network/timeout failures so one stall does not abort a run.
+        last_error: Exception | None = None
+        for attempt in range(self.MAX_RETRIES):
+            try:
+                with urlopen(request, timeout=self._timeout_seconds) as response:
+                    return json.loads(response.read().decode("utf-8"))
+            except (TimeoutError, URLError) as exc:
+                last_error = exc
+                if attempt < self.MAX_RETRIES - 1:
+                    time.sleep(self.RETRY_BACKOFF_SECONDS * (attempt + 1))
+        raise NaverDataLabError(
+            f"Naver DataLab request failed after {self.MAX_RETRIES} attempts: {last_error}"
+        )
 
     def _parse_response(
         self,

@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import time
 import xml.etree.ElementTree as ET
 from typing import Any
+from urllib.error import URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
+
+_MAX_RETRIES = 3
+_RETRY_BACKOFF_SECONDS = 1.0
 
 
 class KiprisApiError(RuntimeError):
@@ -106,8 +111,20 @@ class KiprisClient:
 
     def _get_xml(self, url: str) -> str:
         request = Request(url, headers={"Accept": "application/xml"})
-        with urlopen(request, timeout=self._timeout_seconds) as response:
-            return response.read().decode("utf-8")
+        # Retry transient network/timeout failures; quota/business errors are
+        # returned as a valid XML body and handled in _parse_response.
+        last_error: Exception | None = None
+        for attempt in range(_MAX_RETRIES):
+            try:
+                with urlopen(request, timeout=self._timeout_seconds) as response:
+                    return response.read().decode("utf-8")
+            except (TimeoutError, URLError) as exc:
+                last_error = exc
+                if attempt < _MAX_RETRIES - 1:
+                    time.sleep(_RETRY_BACKOFF_SECONDS * (attempt + 1))
+        raise KiprisApiError(
+            f"KIPRIS request failed after {_MAX_RETRIES} attempts: {last_error}"
+        )
 
     def _parse_response(self, xml_text: str) -> tuple[list[KiprisPatentRecord], int]:
         try:
