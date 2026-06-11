@@ -1,4 +1,4 @@
--- 015_processing_queue_nullable_stock.sql
+-- 019_processing_queue_nullable_stock.sql
 --
 -- DataLab tasks are enqueued by category, not by stock. The Normalizer resolves
 -- category → stock(s) via datalab_category_stocks, so the Collector must enqueue

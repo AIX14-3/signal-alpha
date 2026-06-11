@@ -1,4 +1,4 @@
--- 016_datalab_raw_details_category.sql
+-- 020_datalab_raw_details_category.sql
 --
 -- Redefine datalab_raw_details to the category-based contract.
 --

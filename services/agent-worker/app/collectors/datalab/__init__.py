@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from datetime import date
 from typing import Any
 
 import asyncpg  # type: ignore[import]
@@ -150,6 +151,9 @@ class DataLabCollector:
     ) -> bool:
         """Insert raw + detail + queue in one transaction. Returns True if inserted, False if skipped."""
         observed_date = record.period
+        # asyncpg needs a date object for DATE/TIMESTAMPTZ params; the string
+        # form is kept for source_hash and external_id.
+        observed_date_obj = date.fromisoformat(observed_date)
         source_hash = make_source_hash(
             SOURCE_TYPE,
             category_id,
@@ -181,7 +185,7 @@ class DataLabCollector:
                             external_id, source_hash, title, published_at,
                             collect_status, collector_ver
                         )
-                        VALUES ($1, $2, $3, $4, $5, $6, $7::DATE, $8, $9)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                         RETURNING id
                         """,
                         category_id,
@@ -190,7 +194,7 @@ class DataLabCollector:
                         external_id,
                         source_hash,
                         title,
-                        observed_date,
+                        observed_date_obj,
                         "success",
                         self._collector_ver,
                     )
@@ -202,13 +206,13 @@ class DataLabCollector:
                             change_pct, period_type, device, gender, age_group,
                             is_spike, extra_payload
                         )
-                        VALUES ($1, $2, $3, $4, $5::DATE, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
                         """,
                         raw_id,
                         category_id,
                         record.keyword,
                         record.keyword_group,
-                        observed_date,
+                        observed_date_obj,
                         record.ratio,
                         previous_search_index,
                         change_pct,
