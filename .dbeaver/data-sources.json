@@ -1,0 +1,40 @@
+{
+	"folders": {},
+	"connections": {
+		"postgres-jdbc-19eb60fe1da-67db5863fa1c323d": {
+			"provider": "postgresql",
+			"driver": "postgres-jdbc",
+			"name": "signal_alpha",
+			"save-password": true,
+			"configuration": {
+				"host": "localhost",
+				"port": "5432",
+				"database": "signal_alpha",
+				"url": "jdbc:postgresql://localhost:5432/signal_alpha",
+				"configurationType": "MANUAL",
+				"type": "dev",
+				"closeIdleConnection": true,
+				"provider-properties": {
+					"@dbeaver-show-non-default-db@": "false"
+				},
+				"auth-model": "native"
+			}
+		}
+	},
+	"connection-types": {
+		"dev": {
+			"name": "Development",
+			"color": "255,255,255",
+			"description": "Regular development database",
+			"auto-commit": true,
+			"confirm-execute": false,
+			"confirm-data-change": false,
+			"smart-commit": false,
+			"smart-commit-recover": true,
+			"auto-close-transactions": true,
+			"close-transactions-period": 1800,
+			"auto-close-connections": true,
+			"close-connections-period": 14400
+		}
+	}
+}

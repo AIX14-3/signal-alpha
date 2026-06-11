@@ -322,11 +322,11 @@ class BaseCollector(ABC):
             text("""
                 INSERT INTO hiring_raw_details (
                     raw_document_id, stock_id, keyword, job_category,
-                    job_count, extra_payload
+                    job_count, observed_date, extra_payload
                 )
                 VALUES (
                     :raw_document_id, :stock_id, :keyword, :job_category,
-                    :job_count, :extra_payload ::jsonb
+                    :job_count, CURRENT_DATE, :extra_payload ::jsonb
                 )
                 ON CONFLICT (raw_document_id) DO NOTHING
             """),

@@ -1,0 +1,92 @@
+# scripts/bootstrap_hiring_baseline.py
+import asyncio
+from datetime import date, timedelta
+import asyncpg
+from app.clients.naver_datalab_client import NaverDataLabClient
+from app.collectors.hiring.keyword_generator import HiringKeywordGenerator
+
+async def bootstrap_baselines(pool, datalab_client: NaverDataLabClient):
+    generator = HiringKeywordGenerator()
+    
+    # 1. DB에서 수집 대상 기업 리스트 조회
+    async with pool.acquire() as conn:
+        stocks = await conn.fetch("SELECT id, company_name, short_name FROM stocks WHERE is_target = TRUE")
+    
+    # 3년 전 날짜 계산
+    start_date_obj = date.today() - timedelta(days=365 * 3)
+    end_date_obj = date.today()
+    
+    start_date_str = start_date_obj.isoformat()
+    end_date_str = end_date_obj.isoformat()
+
+    for stock in stocks:
+        stock_id = stock["id"]
+        c_name = stock["company_name"]
+        s_name = stock["short_name"]
+        
+        # 2. Generator로 네이버 API 규격 키워드 그룹 변환
+        kw_group = generator.generate_keyword_group(company_name=c_name, short_name=s_name)
+        group_name = kw_group["groupName"]
+        
+        try:
+            # 3. NaverDataLabClient 호출 (3년치 트렌드를 위해 주간 단위 'week' 사용)
+            records = await datalab_client.search_grouped(
+                keyword_group=group_name,
+                keywords=kw_group["keywords"],
+                start_date=start_date_str,
+                end_date=end_date_str,
+                time_unit="week"
+            )
+            
+            if not records:
+                print(f"⚠️ {c_name}의 검색 기록 데이터가 없습니다. 건너뜁니다.")
+                continue
+                
+            # 4. 분기별 가중치 및 평균 계산 파싱 로직
+            total_ratio = 0.0
+            quarter_ratios = {"Q1": [], "Q2": [], "Q3": [], "Q4": []}
+            
+            for r in records:
+                total_ratio += r.ratio
+                # r.period 형식: "2024-03-15"에서 월 추출
+                month = int(r.period.split("-")[1])
+                q_label = f"Q{(month - 1) // 3 + 1}"
+                quarter_ratios[q_label].append(r.ratio)
+            
+            avg_search_volume = total_ratio / len(records)
+            
+            # 분기별 factor 계산 (분기평균 / 전체평균)
+            factors = {}
+            for q, values in quarter_ratios.items():
+                q_avg = sum(values) / len(values) if values else avg_search_volume
+                factors[q] = round(q_avg / avg_search_volume, 3) if avg_search_volume > 0 else 1.000
+
+            # 5. 실제 DB 스키마(hiring_baseline) 컬럼명에 맞춰 매핑 및 UPSERT
+            async with pool.acquire() as conn:
+                await conn.execute("""
+                    INSERT INTO hiring_baseline (
+                        stock_id, avg_search_volume, 
+                        q1_factor, q2_factor, q3_factor, q4_factor, 
+                        keyword_group_name, data_start_date, data_end_date, updated_at
+                    )
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8::DATE, $9::DATE, NOW())
+                    ON CONFLICT (stock_id) DO UPDATE 
+                    SET avg_search_volume = EXCLUDED.avg_search_volume,
+                        q1_factor = EXCLUDED.q1_factor,
+                        q2_factor = EXCLUDED.q2_factor,
+                        q3_factor = EXCLUDED.q3_factor,
+                        q4_factor = EXCLUDED.q4_factor,
+                        keyword_group_name = EXCLUDED.keyword_group_name,
+                        data_start_date = EXCLUDED.data_start_date,
+                        data_end_date = EXCLUDED.data_end_date,
+                        updated_at = NOW()
+                """, 
+                stock_id, avg_search_volume, 
+                factors["Q1"], factors["Q2"], factors["Q3"], factors["Q4"],
+                group_name, start_date_obj, end_date_obj)
+                
+            print(f"✅ {c_name} (ID: {stock_id}) Baseline 적재 완료!")
+            await asyncio.sleep(0.5)  # API 과부하 방지 디레이
+            
+        except Exception as e:
+            print(f"❌ {c_name} Baseline 생성 중 에러 발생: {e}")
