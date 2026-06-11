@@ -76,6 +76,28 @@ coverage.xml
 .hypothesis/
 cover/
 
+# Report RAG — PDF 원본 (로컬 저장, git 제외)
+*.pdf
+data/reports/
+
+# Report RAG — 실행 결과 / 로그
+*_log.txt
+setup_log.txt
+rag_test_log.txt
+vector_store_log.txt
+vs_incremental_log.txt
+services/agent-worker/test_report_agent.txt
+
+# Report RAG — 크롤러/파서 생성 데이터 (재생성 가능)
+data/report_list.csv
+data/report_list.json
+
+# Report RAG — 개인 작업 문서 (은진)
+docs/Report_RAG_*.md
+docs/Signal_Alpha_기획서_v4.md
+docs/Report_RAG_은진_다음작업.md
+docs/report_sej/
+
 # Local data/runtime files
 db.sqlite3
 db.sqlite3-journal
