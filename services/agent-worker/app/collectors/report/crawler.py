@@ -73,7 +73,7 @@ HEADERS = {
     "Referer": NAVER_FINANCE_BASE,
 }
 
-ROOT_DIR = Path(__file__).resolve().parent.parent
+ROOT_DIR = Path(__file__).resolve().parents[5]
 DATA_DIR = ROOT_DIR / "data"
 
 

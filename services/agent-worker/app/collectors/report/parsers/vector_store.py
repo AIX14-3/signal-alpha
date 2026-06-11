@@ -11,9 +11,10 @@ if hasattr(sys.stdout, "reconfigure"):
 
 from dotenv import load_dotenv
 
-ROOT_DIR = Path(__file__).resolve().parent.parent
+ROOT_DIR = Path(__file__).resolve().parents[6]
 load_dotenv(ROOT_DIR / ".env")
 
+sys.path.insert(0, str(Path(__file__).parent))
 from chunker import chunk_text
 from pdf_extractor import extract_text
 

@@ -9,8 +9,8 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from app.analyzers.report_analyzer import ReportAnalyzer
-from app.collectors.report_collector import ReportCollector
+from app.analyzers.report.analyzer import ReportAnalyzer
+from app.collectors.report.collector import ReportCollector
 from app.orchestrator.pipeline import AgentOrchestrator, SourcePipeline
 
 router = APIRouter(prefix="/agents", tags=["agents"])

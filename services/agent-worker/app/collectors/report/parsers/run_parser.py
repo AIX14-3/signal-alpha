@@ -10,10 +10,11 @@ from pathlib import Path
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
+sys.path.insert(0, str(Path(__file__).parent))
 from pdf_extractor import extract_first_pages
 from llm_parser import parse_report
 
-ROOT_DIR = Path(__file__).resolve().parent.parent
+ROOT_DIR = Path(__file__).resolve().parents[6]
 DATA_DIR = ROOT_DIR / "data"
 REPORTS_DIR = DATA_DIR / "reports"
 LIST_PATH = DATA_DIR / "report_list.json"

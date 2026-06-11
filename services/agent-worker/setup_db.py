@@ -8,7 +8,7 @@ if hasattr(sys.stdout, "reconfigure"):
 
 from dotenv import load_dotenv
 
-load_dotenv(Path(__file__).parent / ".env")
+load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 import psycopg2
 
 db_url = os.environ.get("DATABASE_URL", "")
