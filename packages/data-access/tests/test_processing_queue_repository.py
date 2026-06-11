@@ -64,6 +64,27 @@ class ProcessingQueueRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("status IN ('pending', 'running', 'retrying')", connection.calls[0][1])
         self.assertEqual(len(connection.calls), 1)
 
+    async def test_enqueue_dedupe_compares_source_id_arrays(self):
+        connection = FakeDuplicateConnection()
+        repository = ProcessingQueueRepository(connection)
+
+        task_id = await repository.enqueue(
+            stock_id=1,
+            task_type="normalize_dart",
+            priority="batch",
+            source_raw_ids=[20],
+            source_signal_event_ids=[30],
+            source_analysis_result_ids=[40],
+            task_context={"stock_code": "005930", "source_type": "DART"},
+            dedupe=True,
+        )
+
+        self.assertEqual(task_id, 49)
+        self.assertIn("source_raw_ids IS NOT DISTINCT FROM", connection.calls[0][1])
+        self.assertIn("source_signal_event_ids IS NOT DISTINCT FROM", connection.calls[0][1])
+        self.assertIn("source_analysis_result_ids IS NOT DISTINCT FROM", connection.calls[0][1])
+        self.assertEqual(connection.calls[0][2][3:6], ([20], [30], [40]))
+
     async def test_claim_next_pending_uses_skip_locked(self):
         connection = FakeConnection()
         repository = ProcessingQueueRepository(connection)
@@ -73,6 +94,15 @@ class ProcessingQueueRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row["status"], "running")
         self.assertIn("FOR UPDATE SKIP LOCKED", connection.calls[0][1])
         self.assertEqual(connection.calls[0][2], ("normalize_report",))
+
+    async def test_mark_success_clears_previous_error_message(self):
+        connection = FakeConnection()
+        repository = ProcessingQueueRepository(connection)
+
+        await repository.mark_success(task_id=50)
+
+        self.assertIn("error_message = NULL", connection.calls[0][1])
+        self.assertEqual(connection.calls[0][2], (50,))
 
     async def test_mark_failed_can_schedule_retrying_status(self):
         connection = FakeConnection()

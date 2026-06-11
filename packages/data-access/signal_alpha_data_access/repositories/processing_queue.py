@@ -30,6 +30,9 @@ class ProcessingQueueRepository:
                 WHERE stock_id = $1
                   AND task_type = $2
                   AND task_context IS NOT DISTINCT FROM $3::JSONB
+                  AND source_raw_ids IS NOT DISTINCT FROM $4::BIGINT[]
+                  AND source_signal_event_ids IS NOT DISTINCT FROM $5::BIGINT[]
+                  AND source_analysis_result_ids IS NOT DISTINCT FROM $6::BIGINT[]
                   AND status IN ('pending', 'running', 'retrying')
                 ORDER BY created_at DESC, id DESC
                 LIMIT 1
@@ -37,6 +40,9 @@ class ProcessingQueueRepository:
                 stock_id,
                 task_type,
                 serialized_task_context,
+                source_raw_ids,
+                source_signal_event_ids,
+                source_analysis_result_ids,
             )
             if existing_task_id is not None:
                 return existing_task_id
@@ -99,6 +105,7 @@ class ProcessingQueueRepository:
             UPDATE processing_queue
             SET
                 status = 'success',
+                error_message = NULL,
                 finished_at = NOW(),
                 updated_at = NOW()
             WHERE id = $1

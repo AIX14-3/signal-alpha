@@ -78,6 +78,24 @@ class MarketDataRepository:
             end_date,
         )
 
+    async def list_recent_ohlcv(self, *, stock_id: int, limit: int = 120) -> list[Any]:
+        """Latest ``limit`` sessions, oldest first (subquery keeps the LIMIT on the newest rows)."""
+        return await self._connection.fetch(
+            """
+            SELECT *
+            FROM (
+                SELECT *
+                FROM ohlcv_data
+                WHERE stock_id = $1
+                ORDER BY trade_date DESC
+                LIMIT $2
+            ) recent
+            ORDER BY trade_date ASC
+            """,
+            stock_id,
+            limit,
+        )
+
     async def get_price_on_or_after(self, *, stock_id: int, trade_date: Any) -> Any:
         return await self._connection.fetchrow(
             """

@@ -72,7 +72,6 @@ class RecruiterKrCrawler(BaseSiteCrawler):
             or soup.select("ul.list > li")
         )
 
-        base = "https://recruiter.co.kr"
         for item in items:
             try:
                 # 직무명

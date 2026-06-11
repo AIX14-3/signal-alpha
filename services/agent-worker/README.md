@@ -5,8 +5,8 @@ Worker service for data collection and LLM-based analysis.
 ## Local Development
 
 ```bash
-python -m pip install -e ".[dev]"
-python -m uvicorn app.main:app --reload --port 8011
+uv sync --package signal-alpha-agent-worker --extra dev
+uv run --package signal-alpha-agent-worker uvicorn app.main:app --reload --port 8011
 ```
 
 Health check:
@@ -67,15 +67,16 @@ await AgentOrchestrator.run(stock_code)
 
 ## DART Collection
 
-The first DART collector scope collects the OpenDART disclosure list only.
-It follows OpenDART pagination by fetching page 1 first and then continuing through
-`total_page` with the configured `DART_PAGE_SIZE`.
+The DART collector fetches OpenDART disclosure lists and, by default, downloads each disclosure
+document ZIP through `document.xml`. It follows OpenDART pagination by fetching page 1 first and
+then continuing through `total_page` with the configured `DART_PAGE_SIZE`.
 
 ```text
 collect_dart task
   -> dart_corp_codes lookup by ticker
   -> OpenDART /list.json
-  -> RawEvidence(source="DART")
+  -> OpenDART /document.xml by receipt number
+  -> RawEvidence(source="DART", content=document_text)
   -> raw_documents + dart_raw_details
   -> normalize_dart queue task
 ```
@@ -87,7 +88,18 @@ DART_API_KEY=
 DART_BASE_URL=https://opendart.fss.or.kr/api
 DART_TIMEOUT_SECONDS=10
 DART_PAGE_SIZE=100
+DART_FETCH_DOCUMENTS=true
+DART_MAX_RETRIES=2
+DART_RETRY_BACKOFF_SECONDS=0.5
 ```
+
+Set `DART_FETCH_DOCUMENTS=false` to collect disclosure list metadata only.
+Retryable DART failures such as request-limit responses (`020`), maintenance (`800`), undefined
+server errors (`900`), HTTP 429/5xx, and transient network failures are retried with exponential
+backoff. Auth/IP/key failures such as `010`, `011`, `012`, and `901` fail without retry.
+Disclosure document download failures do not fail the whole list collection; the worker stores
+`document_fetch_status`, `document_error_category`, and retryability metadata in the DART raw
+detail payload.
 
 The `collect_dart` task expects `processing_queue.task_context` to include `stock_code`.
 Optional date filters use OpenDART parameter names:
@@ -100,6 +112,20 @@ Optional date filters use OpenDART parameter names:
 }
 ```
 
+If `bgn_de` is omitted, the worker reads `dart_collection_states` and starts from the day after
+the last successful `last_end_de`. If no state exists yet, it uses a 30-day lookback from `end_de`.
+After a successful collection, it updates the state with the resolved date window, collected count,
+collector run id, and last receipt number.
+
+DART duplicate and correction policy:
+
+- Repeated collection of the same `receipt_no` updates the same raw document through
+  `(source_type, external_id)` upsert.
+- Correction disclosures are not merged into the original disclosure. They are stored as separate
+  raw documents and separate `correction` signal events.
+- When OpenDART provides an original receipt number, it is stored as `original_receipt_no`.
+- Correction disclosures use `priority="immediate"` and `needs_review=true` after normalization.
+
 Queue a DART collection task through the worker API:
 
 ```powershell
@@ -110,6 +136,18 @@ Invoke-RestMethod -Method Post -Uri "http://localhost:8011/internal/tasks/collec
 The enqueue endpoint deduplicates by default. If an active `pending`, `running`, or `retrying`
 task already exists with the same `stock_id`, `task_type`, and `task_context`, the endpoint
 returns the existing `task_id` instead of inserting another queue row.
+
+### DART Collection Schedule
+
+An external cron or operations script can enqueue DART collection tasks for active stocks:
+
+```powershell
+$body = '{"limit":100,"end_de":"20260610","priority":"batch"}'
+Invoke-RestMethod -Method Post -Uri "http://localhost:8011/internal/schedules/dart/collect" -ContentType "application/json" -Body $body
+```
+
+The schedule endpoint enqueues `collect_dart` tasks only. Actual analysis can run on a separate
+schedule by claiming/running `normalize_dart` and later analysis tasks independently.
 
 ### DART Corp Code Sync
 

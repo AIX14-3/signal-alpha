@@ -1,6 +1,7 @@
 import unittest
+from pathlib import Path
 
-from app.orchestrator.dart_normalizer import classify_dart_report, make_dart_event_hash
+from app.analyzers.dart.rules import classify_dart_report, make_dart_event_hash
 
 
 class DartNormalizerTest(unittest.TestCase):
@@ -31,3 +32,31 @@ class DartNormalizerTest(unittest.TestCase):
 
         self.assertEqual(first, second)
         self.assertEqual(len(first), 64)
+
+    def test_classifies_korean_correction_marker(self):
+        classification = classify_dart_report("[정정]Quarterly report")
+
+        self.assertEqual(classification.event_type, "correction")
+        self.assertTrue(classification.needs_review)
+
+    def test_classifies_correction_flag_as_correction_event(self):
+        classification = classify_dart_report("Quarterly report", is_correction=True)
+
+        self.assertEqual(classification.event_type, "correction")
+        self.assertTrue(classification.needs_review)
+
+    def test_normalizer_source_does_not_keep_mojibake_markers(self):
+        source = Path("app/analyzers/dart/rules.py").read_text(encoding="utf-8")
+
+        mojibake_markers = (
+            "\u4e8c\uc1e0\uc2b5?\uc774\ube46\u8e42\ub2ff\ud000",
+            "?\uae3e\uc36d",
+            "?\uc790\ubf7d\u8e42\ub2ff\ud000",
+            "\u8adb\uc12c\uae30\u8e42\ub2ff\ud000",
+            "\u907a\uae3e\uae30\u8e42\ub2ff\ud000",
+            "\u6e72\uacd7\ubf7d\ufffd\u8adb\uace8\ubf0c\u8b70\uace8\ub0ab\u6028\uc878\uae4c",
+            "\u6e72\uacd7\uc631?\ubea4\uc819",
+            "?\ubea4\uc819",
+        )
+        for marker in mojibake_markers:
+            self.assertNotIn(marker, source)

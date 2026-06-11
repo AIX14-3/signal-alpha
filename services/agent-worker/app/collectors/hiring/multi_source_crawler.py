@@ -28,7 +28,6 @@ from __future__ import annotations
 import logging
 import time
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
 
 try:
     from base_collector import BaseCollector          # 스크립트 직접 실행
@@ -63,7 +62,7 @@ def _make_crawler(company: str, driver):
             HyundaiCrawler, KiaCrawler,
             SimpleSiteCrawler,
         )
-        from sites import SaraminCrawler, JobkoreaCrawler, RecruiterKrCrawler
+        from sites import RecruiterKrCrawler
     except ImportError:
         from app.collectors.hiring.sites.company import (
             SamsungCrawler, NaverCrawler, KakaoCrawler,
@@ -72,7 +71,7 @@ def _make_crawler(company: str, driver):
             HyundaiCrawler, KiaCrawler,
             SimpleSiteCrawler,
         )
-        from app.collectors.hiring.sites import SaraminCrawler, JobkoreaCrawler, RecruiterKrCrawler
+        from app.collectors.hiring.sites import RecruiterKrCrawler
 
     mapping = {
         "삼성전자":         SamsungCrawler(driver=None),

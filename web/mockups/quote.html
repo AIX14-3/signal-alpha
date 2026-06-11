@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Signal α — 시세 (목업)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700;900&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  /* ===== Signal α design tokens (README3.md §2) ===== */
+  :root{
+    --brand-600:#ea580c; --brand-500:#f97316; --brand-400:#fb923c; --brand-50:#fff7ed;
+    --n900:#171717; --n700:#404040; --n500:#737373; --n400:#a3a3a3;
+    --n200:#e5e5e5; --n100:#f5f5f5; --bg:#fafafa; --white:#ffffff;
+    --up:#dc2626; --up-bg:#fef2f2; --down:#2563eb; --down-bg:#eff6ff;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{font-family:'Inter','Noto Sans KR',sans-serif;background:#e8eaed;display:flex;justify-content:center;align-items:center;min-height:100vh;padding:24px;color:var(--n900);}
+
+  .phone{width:412px;height:880px;background:#0a0a0a;border-radius:48px;padding:11px;box-shadow:0 30px 70px rgba(0,0,0,.35);}
+  .screen{width:100%;height:100%;background:var(--bg);border-radius:38px;overflow:hidden;display:flex;flex-direction:column;}
+
+  .statusbar{display:flex;justify-content:space-between;align-items:center;padding:16px 26px 6px;font-size:14px;font-weight:600;}
+  .statusbar .icons{display:flex;align-items:center;gap:6px;}
+
+  /* Header */
+  .appbar{display:flex;align-items:center;gap:12px;padding:8px 20px 10px;}
+  .appbar .back{color:var(--n700);cursor:pointer;}
+  .appbar .title{flex:1;display:flex;align-items:baseline;gap:8px;}
+  .appbar .nm{font-size:18px;font-weight:900;letter-spacing:-.01em;}
+  .appbar .code{font-family:'Inter';font-size:12px;color:var(--n400);font-weight:500;}
+  .appbar .star{color:var(--brand-500);cursor:pointer;}
+
+  .body{flex:1;overflow-y:auto;padding:4px 20px 0;}
+  .body::-webkit-scrollbar{display:none;}
+
+  /* Price hero */
+  .pricehero{padding:6px 2px 14px;}
+  .pricehero .price{font-size:34px;font-weight:900;font-family:'Inter';letter-spacing:-.02em;}
+  .pricehero .chg{font-size:14px;font-weight:700;font-family:'Inter';margin-top:3px;display:flex;align-items:center;gap:8px;}
+  .pricehero .ts{font-size:11px;color:var(--n400);font-weight:500;margin-top:2px;}
+  .up{color:var(--up);} .down{color:var(--down);}
+
+  /* Period tabs */
+  .periods{display:flex;gap:6px;margin:4px 0 12px;}
+  .periods .p{flex:1;text-align:center;font-size:13px;font-weight:700;color:var(--n500);padding:8px 0;border-radius:10px;cursor:pointer;transition:.15s;}
+  .periods .p.active{background:var(--brand-600);color:#fff;box-shadow:0 4px 12px rgba(234,88,12,.25);}
+
+  /* Chart card */
+  .chartcard{background:var(--white);border:1px solid var(--n200);border-radius:18px;box-shadow:0 4px 14px rgba(0,0,0,.04);padding:14px 12px 10px;}
+  .legend{display:flex;align-items:center;gap:14px;padding:0 6px 8px;font-size:11px;color:var(--n500);font-weight:600;}
+  .legend .k{display:inline-flex;align-items:center;gap:5px;}
+  .legend .sw{width:14px;height:3px;border-radius:2px;display:inline-block;}
+  .chartsvg{width:100%;height:auto;display:block;}
+
+  /* Info grid */
+  .sectit{font-size:13px;font-weight:800;color:var(--n700);margin:20px 4px 10px;}
+  .infogrid{background:var(--white);border:1px solid var(--n200);border-radius:18px;display:grid;grid-template-columns:1fr 1fr;overflow:hidden;}
+  .cell{padding:13px 16px;border-top:1px solid var(--n100);}
+  .cell:nth-child(1),.cell:nth-child(2){border-top:none;}
+  .cell .l{font-size:11px;color:var(--n400);font-weight:500;margin-bottom:3px;}
+  .cell .v{font-size:14px;font-weight:700;font-family:'Inter';}
+  .cell:nth-child(odd){border-right:1px solid var(--n100);}
+
+  /* Market index row */
+  .idxrow{display:flex;gap:10px;}
+  .idxcard{flex:1;background:var(--white);border:1px solid var(--n200);border-radius:16px;padding:13px 14px;}
+  .idxcard .l{font-size:12px;font-weight:700;color:var(--n700);}
+  .idxcard .v{font-size:17px;font-weight:900;font-family:'Inter';margin-top:5px;}
+  .idxcard .c{font-size:12px;font-weight:700;font-family:'Inter';margin-top:1px;}
+  .idxcard .spark{width:100%;height:30px;margin-top:6px;}
+
+  /* Signal mini */
+  .signalcard{display:flex;align-items:center;gap:16px;background:linear-gradient(135deg,var(--brand-600),var(--brand-500));color:#fff;border-radius:18px;padding:16px 18px;box-shadow:0 10px 24px rgba(234,88,12,.28);}
+  .donut{width:64px;height:64px;border-radius:50%;flex-shrink:0;display:grid;place-items:center;background:conic-gradient(#fff 0 87%, rgba(255,255,255,.28) 87% 100%);}
+  .donut .hole{width:48px;height:48px;border-radius:50%;background:var(--brand-600);display:grid;place-items:center;font-family:'Inter';font-weight:900;font-size:18px;}
+  .signalcard .meta .lab{font-size:12px;opacity:.9;font-weight:600;}
+  .signalcard .meta .big{font-size:16px;font-weight:900;margin-top:2px;}
+  .signalcard .chip{display:inline-block;background:rgba(255,255,255,.22);font-size:11px;font-weight:800;padding:3px 9px;border-radius:999px;margin-top:7px;}
+
+  .footnote{font-size:11px;color:var(--n400);text-align:center;margin:18px 0 14px;line-height:1.5;}
+
+  .bottomnav{display:flex;justify-content:space-around;align-items:center;background:var(--white);border-top:1px solid var(--n200);padding:10px 8px 22px;}
+  .tab{display:flex;flex-direction:column;align-items:center;gap:5px;font-size:11px;font-weight:600;color:var(--n400);flex:1;cursor:pointer;}
+  .tab.active{color:var(--brand-600);}
+</style>
+</head>
+<body>
+  <div class="phone"><div class="screen">
+
+    <div class="statusbar">
+      <span>1:20</span>
+      <div class="icons">
+        <svg width="18" height="12" viewBox="0 0 18 12"><g fill="#171717"><rect x="0" y="8" width="3" height="4" rx="1"/><rect x="5" y="5" width="3" height="7" rx="1"/><rect x="10" y="2" width="3" height="10" rx="1" opacity=".35"/><rect x="15" y="0" width="3" height="12" rx="1" opacity=".35"/></g></svg>
+        <svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M8 10.5l1.6-2c-.9-.7-2.3-.7-3.2 0L8 10.5z" fill="#171717"/><path d="M3.2 5.6c2.7-2.3 6.9-2.3 9.6 0M5.3 8c1.6-1.3 3.8-1.3 5.4 0" stroke="#171717" stroke-width="1.4" stroke-linecap="round"/></svg>
+        <svg width="26" height="13" viewBox="0 0 26 13"><rect x="1" y="1" width="22" height="11" rx="3" fill="none" stroke="#171717" stroke-opacity=".4"/><rect x="3" y="3" width="17" height="7" rx="1.5" fill="#171717"/><rect x="24" y="4" width="2" height="5" rx="1" fill="#171717" fill-opacity=".4"/></svg>
+      </div>
+    </div>
+
+    <!-- Header -->
+    <div class="appbar">
+      <svg class="back" width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M15 6l-6 6 6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <div class="title"><span class="nm">삼성전자</span><span class="code">005930 · KOSPI</span></div>
+      <svg class="star" width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3l2.6 5.6 6.1.8-4.5 4.2 1.2 6L12 17.8 6.6 19.6l1.2-6L3.3 9.4l6.1-.8L12 3z"/></svg>
+    </div>
+
+    <div class="body">
+
+      <!-- Price hero -->
+      <div class="pricehero">
+        <div class="price" id="px">—</div>
+        <div class="chg" id="chg"></div>
+        <div class="ts">실시간 09:31 기준 · 데모 데이터</div>
+      </div>
+
+      <!-- Period tabs -->
+      <div class="periods">
+        <div class="p active">일</div><div class="p">주</div><div class="p">월</div><div class="p">3개월</div><div class="p">1년</div>
+      </div>
+
+      <!-- Candle chart -->
+      <div class="chartcard">
+        <div class="legend">
+          <span class="k"><span class="sw" style="background:var(--up)"></span>상승</span>
+          <span class="k"><span class="sw" style="background:var(--down)"></span>하락</span>
+          <span class="k"><span class="sw" style="background:var(--brand-600)"></span>20일 이동평균</span>
+        </div>
+        <svg class="chartsvg" id="chart" viewBox="0 0 350 262" preserveAspectRatio="xMidYMid meet"></svg>
+      </div>
+
+      <!-- Stock info -->
+      <div class="sectit">종목 정보</div>
+      <div class="infogrid" id="infogrid"></div>
+
+      <!-- Market indices -->
+      <div class="sectit">시장 지수</div>
+      <div class="idxrow" id="idxrow"></div>
+
+      <!-- Signal summary -->
+      <div class="sectit">Signal α 교차검증</div>
+      <div class="signalcard">
+        <div class="donut"><div class="hole">87</div></div>
+        <div class="meta">
+          <div class="lab">방향성 일치율</div>
+          <div class="big">DART · 리포트 · 대체데이터 일치</div>
+          <span class="chip">POSITIVE · 주의근거 1건</span>
+        </div>
+      </div>
+
+      <p class="footnote">※ 투자 권유가 아닌 정보 제공 목적입니다.<br />시세·지수·점수는 데모용 목업 데이터입니다.</p>
+    </div>
+
+    <!-- Bottom nav (시세 active) -->
+    <div class="bottomnav">
+      <div class="tab"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M3 10.5L12 4l9 6.5V20a1 1 0 01-1 1h-5v-6H9v6H4a1 1 0 01-1-1v-9.5z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>홈</div>
+      <div class="tab active"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M4 19V5M4 19h16M7 16l3-4 3 2 4-6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>시세</div>
+      <div class="tab"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M12 3l2.1 4.9L19 9l-3.6 3.3.9 5.1L12 15l-4.3 2.4.9-5.1L5 9l4.9-1.1L12 3z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>분석</div>
+      <div class="tab"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M6 4h11a2 2 0 012 2v14H8a2 2 0 01-2-2V4z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M6 4a2 2 0 00-2 2v12" stroke="currentColor" stroke-width="1.8"/></svg>저널</div>
+    </div>
+
+  </div></div>
+
+<script>
+  const UP='#dc2626', DOWN='#2563eb', MA='#ea580c';
+  const fmt = n => Math.round(n).toLocaleString('ko-KR');
+  function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+
+  /* ===== mock daily OHLCV (seeded random walk, looks natural) ===== */
+  const N=42, rnd=mulberry32(20260609);
+  const candles=[]; let prev=68500;
+  for(let i=0;i<N;i++){
+    const open = prev + (rnd()-0.5)*350;
+    const drift = (rnd()-0.46)*900;          // slight upward bias
+    const close = Math.max(40000, open + drift);
+    const high = Math.max(open,close) + rnd()*500;
+    const low  = Math.min(open,close) - rnd()*500;
+    const vol  = 6_000_000 + rnd()*16_000_000;
+    candles.push({open,high,low,close,vol});
+    prev = close;
+  }
+  const closes = candles.map(c=>c.close);
+  const last = candles[N-1], prevClose = candles[N-2].close;
+  const diff = last.close - prevClose, pct = diff/prevClose*100;
+
+  /* price hero */
+  document.getElementById('px').textContent = fmt(last.close);
+  const up = diff>=0, cls = up?'up':'down', sign = up?'+':'';
+  document.getElementById('px').className = 'price';
+  document.getElementById('chg').className = 'chg '+cls;
+  document.getElementById('chg').innerHTML =
+    `<span>${up?'▲':'▼'} ${fmt(Math.abs(diff))}</span><span>${sign}${pct.toFixed(2)}%</span>`;
+
+  /* ===== draw candlestick + volume + MA20 ===== */
+  (function drawChart(){
+    const W=350, priceTop=10, priceBot=176, volTop=196, volBot=252, padL=6, padR=40;
+    const hi=Math.max(...candles.map(c=>c.high)), lo=Math.min(...candles.map(c=>c.low));
+    const pad=(hi-lo)*0.06, max=hi+pad, min=lo-pad;
+    const yP = p => priceTop + (1-(p-min)/(max-min))*(priceBot-priceTop);
+    const volMax=Math.max(...candles.map(c=>c.vol));
+    const yV = v => volBot - (v/volMax)*(volBot-volTop);
+    const step=(W-padL-padR)/N, bw=step*0.6;
+    let s='';
+
+    /* grid + price axis */
+    for(let g=0; g<=4; g++){
+      const p=min+(max-min)*g/4, y=yP(p);
+      s+=`<line x1="${padL}" y1="${y.toFixed(1)}" x2="${W-padR}" y2="${y.toFixed(1)}" stroke="#f0f0f0" stroke-width="1"/>`;
+      s+=`<text x="${W-padR+4}" y="${(y+3).toFixed(1)}" font-size="9" fill="#a3a3a3" font-family="Inter">${fmt(p)}</text>`;
+    }
+
+    /* MA20 */
+    const ma=[];
+    for(let i=0;i<N;i++){ if(i<19){ma.push(null);continue;} let sum=0; for(let j=i-19;j<=i;j++)sum+=closes[j]; ma.push(sum/20); }
+    const maPts = ma.map((m,i)=> m==null?null:`${(padL+i*step+step/2).toFixed(1)},${yP(m).toFixed(1)}`).filter(Boolean).join(' ');
+
+    /* candles + volume */
+    candles.forEach((c,i)=>{
+      const x=padL+i*step+step/2;
+      const col = c.close>=c.open ? UP : DOWN;
+      // volume
+      s+=`<rect x="${(x-bw/2).toFixed(1)}" y="${yV(c.vol).toFixed(1)}" width="${bw.toFixed(1)}" height="${(volBot-yV(c.vol)).toFixed(1)}" fill="${col}" opacity=".28"/>`;
+      // wick
+      s+=`<line x1="${x.toFixed(1)}" y1="${yP(c.high).toFixed(1)}" x2="${x.toFixed(1)}" y2="${yP(c.low).toFixed(1)}" stroke="${col}" stroke-width="1"/>`;
+      // body
+      const yo=yP(c.open), yc=yP(c.close), top=Math.min(yo,yc), h=Math.max(1.2,Math.abs(yc-yo));
+      s+=`<rect x="${(x-bw/2).toFixed(1)}" y="${top.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" fill="${col}" rx="0.6"/>`;
+    });
+
+    s+=`<polyline points="${maPts}" fill="none" stroke="${MA}" stroke-width="1.6" stroke-linejoin="round" opacity=".9"/>`;
+
+    /* last price dashed marker */
+    const yl=yP(last.close);
+    s+=`<line x1="${padL}" y1="${yl.toFixed(1)}" x2="${W-padR}" y2="${yl.toFixed(1)}" stroke="${up?UP:DOWN}" stroke-width="1" stroke-dasharray="3 3" opacity=".7"/>`;
+    s+=`<rect x="${W-padR}" y="${(yl-8).toFixed(1)}" width="${padR}" height="16" fill="${up?UP:DOWN}" rx="3"/>`;
+    s+=`<text x="${W-padR/2}" y="${(yl+3.5).toFixed(1)}" font-size="9" fill="#fff" font-family="Inter" font-weight="700" text-anchor="middle">${fmt(last.close)}</text>`;
+
+    /* volume label */
+    s+=`<text x="${padL}" y="${(volTop-3).toFixed(1)}" font-size="9" fill="#a3a3a3" font-family="Noto Sans KR">거래량</text>`;
+
+    document.getElementById('chart').innerHTML=s;
+  })();
+
+  /* ===== info grid ===== */
+  const todayOpen=candles[N-1].open;
+  const info=[
+    ['시가', fmt(last.open)],['종가(현재)', fmt(last.close)],
+    ['고가', fmt(last.high)],['저가', fmt(last.low)],
+    ['전일종가', fmt(prevClose)],['거래량', fmt(last.vol)],
+    ['거래대금', (last.vol*last.close/1e8|0).toLocaleString('ko-KR')+'억'],['시가총액', '438.2조'],
+    ['PER', '14.3배'],['PBR', '1.42배'],
+    ['52주 최고', '88,800'],['52주 최저', '49,900'],
+  ];
+  document.getElementById('infogrid').innerHTML = info.map(([l,v])=>
+    `<div class="cell"><div class="l">${l}</div><div class="v">${v}</div></div>`).join('');
+
+  /* ===== market index cards w/ sparkline ===== */
+  function spark(seed,upTrend){
+    const r=mulberry32(seed),n=20,w=120,h=30,pad=3,drift=upTrend?0.5:-0.5;
+    let v=0;const pts=[];for(let i=0;i<n;i++){v+=(r()-0.5)*1.3+drift*(i/n);pts.push(v);}
+    const mn=Math.min(...pts),mx=Math.max(...pts),sp=(mx-mn)||1;
+    const line=pts.map((p,i)=>`${(pad+i*((w-2*pad)/(n-1))).toFixed(1)},${(h-pad-((p-mn)/sp)*(h-2*pad)).toFixed(1)}`).join(' ');
+    const col=upTrend?UP:DOWN;
+    return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"><polyline points="${line}" fill="none" stroke="${col}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  }
+  const idx=[
+    {l:'KOSPI', v:'2,612.45', c:'+0.62%', up:true},
+    {l:'KOSDAQ',v:'745.30',   c:'-0.41%', up:false},
+  ];
+  document.getElementById('idxrow').innerHTML = idx.map(x=>
+    `<div class="idxcard"><div class="l">${x.l}</div><div class="v">${x.v}</div>
+     <div class="c ${x.up?'up':'down'}">${x.up?'▲':'▼'} ${x.c}</div>${spark(x.l.length*7+3,x.up)}</div>`).join('');
+</script>
+</body>
+</html>

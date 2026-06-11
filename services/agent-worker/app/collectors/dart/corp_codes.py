@@ -9,7 +9,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from xml.etree import ElementTree
 
-from app.collectors.dart import DartApiError
+from app.collectors.dart.disclosure import DartApiError
 
 
 @dataclass(frozen=True)

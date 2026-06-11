@@ -27,7 +27,7 @@ the main server and agent worker.
 - `StockRepository`: stock lookup and ticker-based upsert.
 - `CollectionRepository`: collector run logs, raw document upsert, report details, and report chunks.
 - `RawDetailRepository`: DART, hiring, patent, and DataLab source-specific raw detail rows.
-- `DartRepository`: OpenDART `corp_code` to local stock mapping.
+- `DartRepository`: OpenDART `corp_code` mapping, corp-code sync, and per-stock DART collection state.
 - `MarketDataRepository`: OHLCV and fundamental data upsert/read helpers.
 - `NormalizationRepository`: source documents, signal events, signal metrics, and validation logs.
 - `ProcessingQueueRepository`: worker queue enqueue/dedupe, claim, success, failure, skip, and stale task sweep updates.
@@ -60,6 +60,17 @@ The agent worker can refresh listed DART mappings through `POST /internal/dart/c
 The sync stores entries with `stock_code` and links `stock_id` when a matching `stocks.ticker`
 exists.
 
+Per-stock incremental DART collection state is stored in `dart_collection_states`. When a
+`collect_dart` task omits `bgn_de`, the worker can derive the next date window from the previous
+successful `last_end_de`.
+
+DART duplicate and correction policy:
+
+- Duplicate receipt collection is handled by `raw_documents` upsert on `(source_type, external_id)`.
+- Correction disclosures remain separate rows because their `receipt_no` is distinct.
+- `dart_raw_details.original_receipt_no` links a correction to the original disclosure when that
+  value is available in the source payload.
+
 Recommended `RawEvidence.metadata` keys for DART:
 
 ```python
@@ -70,6 +81,8 @@ Recommended `RawEvidence.metadata` keys for DART:
     "report_name": "Quarterly report",
     "disclosure_type": "quarterly",
     "priority": "batch",
+    "is_correction": False,
+    "original_receipt_no": None,
     "published_at": "2026-06-08T00:00:00+09:00",
     "source_name": "OpenDART",
 }
