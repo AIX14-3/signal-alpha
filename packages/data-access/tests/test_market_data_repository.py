@@ -46,6 +46,18 @@ class MarketDataRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rows[0]["close"], 1000)
         self.assertIn("ORDER BY trade_date ASC", connection.calls[0][1])
 
+    async def test_list_recent_ohlcv_limits_newest_then_orders_ascending(self):
+        connection = FakeConnection()
+        repository = MarketDataRepository(connection)
+
+        await repository.list_recent_ohlcv(stock_id=1, limit=120)
+
+        sql = connection.calls[0][1]
+        self.assertIn("ORDER BY trade_date DESC", sql)
+        self.assertIn("LIMIT $2", sql)
+        self.assertIn("ORDER BY trade_date ASC", sql)
+        self.assertEqual(connection.calls[0][2], (1, 120))
+
     async def test_upsert_fundamental_uses_unique_period(self):
         connection = FakeConnection()
         repository = MarketDataRepository(connection)
