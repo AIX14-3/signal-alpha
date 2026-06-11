@@ -2,18 +2,17 @@
 main.py
 Hiring Collector 실행 진입점
 
-실행 (signal-alpha 루트에서):
-    python services/agent-worker/app/collectors/main.py
+실행:
+    DATABASE_URL=postgresql://... python services/agent-worker/app/collectors/hiring/main.py
 
-  또는 환경변수 지정:
-    DATABASE_URL=postgresql://signal_alpha:signal_alpha_password@localhost:5432/signal_alpha \\
-    python services/agent-worker/app/collectors/main.py
+  로컬 개발 환경 (.env 파일 사용):
+    .env 파일에 DATABASE_URL=... 을 설정하거나 .env.example 참고
 
 메뉴:
-    1  Mock 수집기 (Fixture 기반)           - 테스트용, DB 없이도 동작 확인
+    1  Mock 수집기 (Fixture 기반)           - 테스트용
     2  Web Crawler (사람인 + 잡코리아)      - 포털 2개 수집, 공식 사이트 제외
-    3  Multi-Source Crawler (전체 소스)     - 사람인 + 잡코리아 + 15개 공식 사이트
-    4  [Admin] DataLab 키워드 그룹 미리보기 - DB 불필요, API 파라미터 즉시 검증
+    3  Multi-Source Crawler (전체 소스)     - 사람인 + 잡코리아 + 공식 사이트
+    4  [Admin] DataLab 키워드 그룹 미리보기 - DB 실시간 연동, API 파라미터 즉시 검증
     0  종료
 """
 
@@ -37,7 +36,7 @@ sys.path.insert(0, str(_COLLECTORS_DIR))
 from keyword_generator import HiringKeywordGenerator  # noqa: E402
 from mock_collector import MockCollector               # noqa: E402
 from multi_source_crawler import MultiSourceCrawler   # noqa: E402
-from web_crawler import WebCrawler                     # noqa: E402
+from web_crawler import WebCrawler                     # noqa: E402  # noqa: F401 (public API)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -45,23 +44,19 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-_DEFAULT_DATABASE_URL = (
-    "postgresql://signal_alpha:signal_alpha_password@localhost:5432/signal_alpha"
-)
-
-# Mode 4 전용: DB 불필요, 기업 카테고리 정보만 사용
-# 기업 목록 변경은 DB(is_target) 기준이 우선 — 이 dict는 카테고리 표시용으로만 사용
-_COMPANY_CATEGORIES: dict[str, str] = {
-    "삼성전자": "반도체", "SK하이닉스": "반도체", "한미반도체": "반도체장비",
-    "NAVER": "인터넷", "카카오": "인터넷", "크래프톤": "게임",
-    "현대자동차": "자동차", "기아": "자동차", "HL만도": "자동차부품",
-    "HYBE": "엔터", "SM엔터테인먼트": "엔터", "스튜디오드래곤": "콘텐츠",
-    "삼성바이오로직스": "바이오", "셀트리온": "바이오", "유한양행": "제약",
-}
-
 
 def get_database_url() -> str:
-    """DATABASE_URL 조회. .env 가 있으면 python-dotenv 로 로드(선택)."""
+    """
+    DATABASE_URL 환경변수 조회. .env 가 있으면 python-dotenv 로 자동 로드.
+
+    설정 방법:
+      1) .env 파일에 DATABASE_URL=postgresql://... 추가  (.env.example 참고)
+      2) 또는 실행 시 환경변수 직접 지정:
+         DATABASE_URL=postgresql://... python main.py
+
+    Raises:
+        RuntimeError: DATABASE_URL 이 설정되지 않은 경우
+    """
     try:
         from dotenv import load_dotenv
         load_dotenv()
@@ -70,27 +65,54 @@ def get_database_url() -> str:
 
     db_url = os.getenv("DATABASE_URL")
     if not db_url:
-        db_url = _DEFAULT_DATABASE_URL
-        logger.warning("⚠️  DATABASE_URL 미설정 → 기본값 사용")
+        raise RuntimeError(
+            "DATABASE_URL 환경변수가 설정되지 않았습니다.\n"
+            ".env 파일에 DATABASE_URL=postgresql://... 을 추가하세요. (.env.example 참고)"
+        )
 
     safe = db_url.split("@")[-1] if "@" in db_url else db_url
     logger.info("✓ DB 대상: ...@%s", safe)
     return db_url
 
 
-def _preview_keyword_groups() -> None:
-    """Mode 4: HiringKeywordGenerator 결과를 터미널에 출력해 즉시 검증 (DB 불필요)."""
-    gen = HiringKeywordGenerator()
+def _preview_keyword_groups(db_url: str) -> None:
+    """
+    Mode 4: DB 실시간 조회 기반 키워드 그룹 미리보기.
+    stocks 테이블의 name, sector, short_name 을 읽어 HiringKeywordGenerator 에 주입.
+    """
+    from sqlalchemy import create_engine, text as sa_text
 
-    companies = [
-        {"company_name": name, "category": _COMPANY_CATEGORIES.get(name, "기타")}
-        for name in _COMPANY_CATEGORIES
-    ]
+    engine = create_engine(db_url, echo=False, future=True)
+    companies: list[dict] = []
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(
+                sa_text(
+                    "SELECT name, COALESCE(sector, 'tech'), short_name "
+                    "FROM stocks WHERE is_target = TRUE ORDER BY name"
+                )
+            ).fetchall()
+        companies = [
+            {"company_name": row[0], "category": row[1], "short_name": row[2]}
+            for row in rows
+        ]
+    except Exception as exc:
+        logger.error("❌ 미리보기용 DB 조회 실패: %s", exc)
+        return
+    finally:
+        engine.dispose()
+
+    if not companies:
+        print("\n⚠️  현재 DB에 is_target=TRUE 기업이 없습니다.")
+        print("   016_seed_stocks_targets.sql 과 015_stocks_is_target.sql 을 실행하세요.")
+        return
+
+    gen = HiringKeywordGenerator()
     groups = gen.generate_for_multiple_companies(companies)
 
     sep = "-" * 70
     print(f"\n{sep}")
-    print(f"  DataLab 키워드 그룹 미리보기  (총 {len(groups)}개 기업)")
+    print(f"  DataLab 키워드 그룹 미리보기  [실시간 DB 연동]  (총 {len(groups)}개 기업)")
     print(sep)
 
     total_keywords = 0
@@ -110,10 +132,10 @@ def _preview_keyword_groups() -> None:
     first_name = next(iter(groups))
     first = groups[first_name]
     print(f"\n  [Naver API 전송 형태 샘플 — {first_name}]")
-    print(f"  {{")
+    print("  {")
     print(f'    "groupName": "{first["groupName"]}",')
     print(f'    "keywords": {first["keywords"]}')
-    print(f"  }}")
+    print("  }")
     print()
 
 
@@ -123,8 +145,8 @@ def main() -> None:
     print("=" * 70)
     print("  1  Mock (Fixture 기반)              - 테스트용")
     print("  2  Web Crawler (사람인+잡코리아)    - 포털 2개, 공식 사이트 제외")
-    print("  3  Multi-Source (전체 소스)         - 사람인+잡코리아+공식 15개 사이트")
-    print("  4  [Admin] DataLab 키워드 그룹 미리보기 - DB 불필요, 즉시 검증")
+    print("  3  Multi-Source (전체 소스)         - 사람인+잡코리아+공식 사이트")
+    print("  4  [Admin] DataLab 키워드 그룹 미리보기 - DB 실시간 연동")
     print("  0  종료")
 
     choice = input("\n선택 (0-4): ").strip()
@@ -132,13 +154,12 @@ def main() -> None:
         print("\n👋 종료합니다.\n")
         return
 
-    if choice == "4":
-        # DB 연결 불필요 — 순수 로직만 실행
-        _preview_keyword_groups()
-        return
-
-    # Mode 1~3 공통: DB URL 취득 (기업 목록은 run() 내부에서 자동 로드)
+    # 모든 모드 공통: DB URL 취득 (Mode 4도 DB 실시간 조회)
     db_url = get_database_url()
+
+    if choice == "4":
+        _preview_keyword_groups(db_url)
+        return
 
     if choice == "1":
         print("\n🔄 Mock Collector 실행 중...")
