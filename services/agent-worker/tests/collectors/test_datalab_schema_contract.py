@@ -142,20 +142,31 @@ class TestDataLabSchemaContract(unittest.TestCase):
         self.assertFalse(missing, f"processing_queue missing columns: {missing}")
 
     def test_processing_queue_stock_id_is_nullable(self):
-        """The collector enqueues DataLab tasks with stock_id=NULL, so a
-        migration must drop the NOT NULL constraint that 005 declared."""
-        nullable = False
+        """The collector enqueues DataLab tasks with stock_id=NULL, so the
+        final schema must not declare NOT NULL on processing_queue.stock_id
+        (either nullable in the CREATE TABLE itself, or relaxed by a later
+        ALTER ... DROP NOT NULL migration)."""
+        stock_id_definition = None
+        dropped_not_null = False
         for path in sorted(_MIGRATIONS.glob("*.sql")):
             text = path.read_text(encoding="utf-8")
+            body = _extract_create_table(text, "processing_queue")
+            if body is not None:
+                for piece in body.split(","):
+                    tokens = piece.strip().split()
+                    if tokens and tokens[0].lower() == "stock_id":
+                        stock_id_definition = piece.strip()
             if re.search(
                 r"ALTER TABLE\s+processing_queue\s+ALTER COLUMN\s+stock_id\s+DROP NOT NULL",
                 text,
                 re.IGNORECASE,
             ):
-                nullable = True
+                dropped_not_null = True
+        self.assertIsNotNone(stock_id_definition, "processing_queue must define stock_id")
+        declared_not_null = re.search(r"NOT\s+NULL", stock_id_definition, re.IGNORECASE)
         self.assertTrue(
-            nullable,
-            "processing_queue.stock_id must be made nullable for NORMALIZE_DATALAB tasks",
+            not declared_not_null or dropped_not_null,
+            "processing_queue.stock_id must be nullable for NORMALIZE_DATALAB tasks",
         )
 
 

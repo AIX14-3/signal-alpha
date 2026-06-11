@@ -1,4 +1,8 @@
-CREATE TABLE IF NOT EXISTS signal_subscriptions (
+-- 010_users_billing_extend.sql
+-- Zone F (User/Billing 확장): 구독·워치리스트·저널·본인인증·약관.
+-- signal_journals / user_signal_reads가 final_signals(009)를 참조하므로 분석 Zone 뒤에 위치.
+
+CREATE TABLE signal_subscriptions (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(id),
     plan_id BIGINT NOT NULL REFERENCES subscription_plans(id),
@@ -17,11 +21,11 @@ CREATE TABLE IF NOT EXISTS signal_subscriptions (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_subscription_active
+CREATE UNIQUE INDEX idx_subscription_active
     ON signal_subscriptions (user_id)
     WHERE status = 'active';
 
-CREATE TABLE IF NOT EXISTS watchlists (
+CREATE TABLE watchlists (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(id),
     stock_id BIGINT NOT NULL REFERENCES stocks(id),
@@ -30,13 +34,13 @@ CREATE TABLE IF NOT EXISTS watchlists (
     CONSTRAINT uq_watchlist UNIQUE (user_id, stock_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_watchlists_user
+CREATE INDEX idx_watchlists_user
     ON watchlists (user_id);
 
-CREATE INDEX IF NOT EXISTS idx_watchlists_stock
+CREATE INDEX idx_watchlists_stock
     ON watchlists (stock_id);
 
-CREATE TABLE IF NOT EXISTS signal_journals (
+CREATE TABLE signal_journals (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(id),
     final_signal_id BIGINT REFERENCES final_signals(id),
@@ -57,17 +61,17 @@ CREATE TABLE IF NOT EXISTS signal_journals (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_signal_journals_user_created
+CREATE INDEX idx_signal_journals_user_created
     ON signal_journals (user_id, created_at DESC);
 
-CREATE INDEX IF NOT EXISTS idx_signal_journals_stock_created
+CREATE INDEX idx_signal_journals_stock_created
     ON signal_journals (stock_id, created_at DESC);
 
-CREATE INDEX IF NOT EXISTS idx_signal_journals_final_signal
+CREATE INDEX idx_signal_journals_final_signal
     ON signal_journals (final_signal_id)
     WHERE final_signal_id IS NOT NULL;
 
-CREATE TABLE IF NOT EXISTS user_signal_reads (
+CREATE TABLE user_signal_reads (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(id),
     final_signal_id BIGINT NOT NULL REFERENCES final_signals(id),
@@ -76,13 +80,13 @@ CREATE TABLE IF NOT EXISTS user_signal_reads (
     CONSTRAINT uq_read UNIQUE (user_id, final_signal_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_user_signal_reads_user_read_at
+CREATE INDEX idx_user_signal_reads_user_read_at
     ON user_signal_reads (user_id, read_at DESC);
 
-CREATE INDEX IF NOT EXISTS idx_user_signal_reads_final_signal
+CREATE INDEX idx_user_signal_reads_final_signal
     ON user_signal_reads (final_signal_id);
 
-CREATE TABLE IF NOT EXISTS social_accounts (
+CREATE TABLE social_accounts (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     provider VARCHAR(20) NOT NULL CHECK (provider IN ('google', 'kakao', 'naver')),
@@ -94,10 +98,10 @@ CREATE TABLE IF NOT EXISTS social_accounts (
     CONSTRAINT uq_social UNIQUE (provider, provider_user_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_social_accounts_user
+CREATE INDEX idx_social_accounts_user
     ON social_accounts (user_id);
 
-CREATE TABLE IF NOT EXISTS portone_verifications (
+CREATE TABLE portone_verifications (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(id),
     imp_uid VARCHAR(100) NOT NULL UNIQUE,
@@ -109,13 +113,13 @@ CREATE TABLE IF NOT EXISTS portone_verifications (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_portone_verifications_user_created
+CREATE INDEX idx_portone_verifications_user_created
     ON portone_verifications (user_id, created_at DESC);
 
-CREATE INDEX IF NOT EXISTS idx_portone_verifications_merchant_uid
+CREATE INDEX idx_portone_verifications_merchant_uid
     ON portone_verifications (merchant_uid);
 
-CREATE TABLE IF NOT EXISTS terms_agreements (
+CREATE TABLE terms_agreements (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(id),
     terms_type VARCHAR(50) NOT NULL,
@@ -126,5 +130,5 @@ CREATE TABLE IF NOT EXISTS terms_agreements (
     CONSTRAINT uq_terms_agreement UNIQUE (user_id, terms_type, version)
 );
 
-CREATE INDEX IF NOT EXISTS idx_terms_agreements_user_agreed_at
+CREATE INDEX idx_terms_agreements_user_agreed_at
     ON terms_agreements (user_id, agreed_at DESC);

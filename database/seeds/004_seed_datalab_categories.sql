@@ -1,4 +1,4 @@
--- 005_seed_datalab_categories.sql
+-- 004_seed_datalab_categories.sql
 --
 -- Seeds datalab_categories and datalab_category_stocks.
 -- Source of truth: .claude/skills/signal-alpha-collector/references/category-registry.md

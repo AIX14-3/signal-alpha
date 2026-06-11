@@ -1,6 +1,11 @@
-CREATE TABLE IF NOT EXISTS processing_queue (
+-- 007_processing.sql
+-- Zone D (Processing/Normalization): 작업 큐 + 정규화 산출물.
+-- processing_queue.stock_id는 NULL 허용 — DataLab 작업은 카테고리 단위로 인큐되고
+-- Normalizer가 datalab_category_stocks로 카테고리 → 종목을 해석한다.
+
+CREATE TABLE processing_queue (
     id BIGSERIAL PRIMARY KEY,
-    stock_id BIGINT NOT NULL REFERENCES stocks(id),
+    stock_id BIGINT REFERENCES stocks(id),
     task_type VARCHAR(50) NOT NULL,
     status VARCHAR(20) NOT NULL DEFAULT 'pending'
         CHECK (status IN ('pending', 'running', 'success', 'failed', 'retrying', 'skipped')),
@@ -20,24 +25,24 @@ CREATE TABLE IF NOT EXISTS processing_queue (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_queue_pending
+CREATE INDEX idx_queue_pending
     ON processing_queue (task_type, priority, scheduled_at ASC)
     WHERE status IN ('pending', 'retrying');
 
-CREATE INDEX IF NOT EXISTS idx_queue_immediate
+CREATE INDEX idx_queue_immediate
     ON processing_queue (stock_id, scheduled_at ASC)
     WHERE priority = 'immediate' AND status = 'pending';
 
-CREATE INDEX IF NOT EXISTS idx_queue_raw_ids
+CREATE INDEX idx_queue_raw_ids
     ON processing_queue USING GIN (source_raw_ids);
 
-CREATE INDEX IF NOT EXISTS idx_queue_signal_event_ids
+CREATE INDEX idx_queue_signal_event_ids
     ON processing_queue USING GIN (source_signal_event_ids);
 
-CREATE INDEX IF NOT EXISTS idx_queue_analysis_result_ids
+CREATE INDEX idx_queue_analysis_result_ids
     ON processing_queue USING GIN (source_analysis_result_ids);
 
-CREATE TABLE IF NOT EXISTS source_documents (
+CREATE TABLE source_documents (
     id BIGSERIAL PRIMARY KEY,
     raw_document_id BIGINT NOT NULL UNIQUE,
     stock_id BIGINT NOT NULL,
@@ -57,10 +62,10 @@ CREATE TABLE IF NOT EXISTS source_documents (
         ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_source_doc_stock
+CREATE INDEX idx_source_doc_stock
     ON source_documents (stock_id, source_type, published_at DESC);
 
-CREATE TABLE IF NOT EXISTS signal_events (
+CREATE TABLE signal_events (
     id BIGSERIAL PRIMARY KEY,
     stock_id BIGINT NOT NULL REFERENCES stocks(id),
     source_document_id BIGINT NOT NULL REFERENCES source_documents(id),
@@ -81,7 +86,7 @@ CREATE TABLE IF NOT EXISTS signal_events (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS signal_metrics (
+CREATE TABLE signal_metrics (
     id BIGSERIAL PRIMARY KEY,
     signal_event_id BIGINT NOT NULL REFERENCES signal_events(id) ON DELETE CASCADE,
     metric_name VARCHAR(50) NOT NULL,
@@ -95,7 +100,7 @@ CREATE TABLE IF NOT EXISTS signal_metrics (
     CONSTRAINT uq_signal_metric UNIQUE (signal_event_id, metric_name)
 );
 
-CREATE TABLE IF NOT EXISTS validation_logs (
+CREATE TABLE validation_logs (
     id BIGSERIAL PRIMARY KEY,
     target_type VARCHAR(30) NOT NULL
         CHECK (target_type IN (

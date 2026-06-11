@@ -1,8 +1,9 @@
--- hiring_baseline: 네이버 DataLab 기반 채용 트렌드 계절성 기준선
--- 분기별 가중치(qX_factor) × 평균 검색량(avg_search_volume) = seasonal_baseline
--- DataLabBaselineCollector가 분기 1회 UPSERT, HiringCollector가 읽기 전용으로 참조
+-- 006_collection_hiring.sql
+-- Zone C (Collection/Hiring): 네이버 DataLab 기반 채용 트렌드 계절성 기준선.
+-- 분기별 가중치(qX_factor) × 평균 검색량(avg_search_volume) = seasonal_baseline.
+-- DataLabBaselineCollector가 분기 1회 UPSERT, HiringCollector가 읽기 전용으로 참조.
 
-CREATE TABLE IF NOT EXISTS hiring_baseline (
+CREATE TABLE hiring_baseline (
     id                 BIGSERIAL PRIMARY KEY,
     stock_id           BIGINT NOT NULL REFERENCES stocks(id) ON DELETE CASCADE,
     avg_search_volume  NUMERIC(10,2) NOT NULL DEFAULT 0,
@@ -18,5 +19,5 @@ CREATE TABLE IF NOT EXISTS hiring_baseline (
     CONSTRAINT uq_hiring_baseline_stock UNIQUE (stock_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_hiring_baseline_stock
+CREATE INDEX idx_hiring_baseline_stock
     ON hiring_baseline (stock_id);
