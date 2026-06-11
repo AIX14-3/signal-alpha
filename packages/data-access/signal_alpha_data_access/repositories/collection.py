@@ -96,7 +96,7 @@ class CollectionRepository:
                 collect_error = EXCLUDED.collect_error,
                 collected_at = NOW(),
                 collector_ver = EXCLUDED.collector_ver
-            RETURNING *
+            RETURNING *, (xmax = 0) AS inserted
             """,
             stock_id,
             collector_run_id,

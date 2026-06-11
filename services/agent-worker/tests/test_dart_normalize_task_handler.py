@@ -72,6 +72,9 @@ class DartNormalizeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any("INSERT INTO validation_logs" in call[1] for call in connection.calls))
         self.assertTrue(any("INSERT INTO processing_queue" in call[1] for call in connection.calls))
         self.assertEqual(result["analysis_task_id"], 405)
+        enqueue_call = next(call for call in connection.calls if "INSERT INTO processing_queue" in call[1])
+        self.assertIsNone(enqueue_call[2][4])
+        self.assertEqual(enqueue_call[2][6], '{"stock_code": "005930", "source_type": "DART", "analysis_date": "2026-06-08"}')
 
     async def test_handler_accepts_json_string_raw_ids(self):
         connection = FakeConnection()
@@ -172,3 +175,71 @@ class DartAnalyzeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(agent_call[2][2], "D-1")
         self.assertEqual(agent_call[2][5], "neutral")
         self.assertEqual(agent_call[2][10], "dart-rules-v1")
+
+    async def test_handler_without_event_ids_analyzes_all_dart_events_for_date(self):
+        connection = FakeConnection(
+            rows=[
+                {
+                    "id": 501,
+                    "stock_id": 1,
+                    "source_document_id": 401,
+                    "event_hash": "hash-1",
+                    "source_type": "DART",
+                    "event_type": "insider_ownership",
+                    "event_date": date(2026, 6, 8),
+                    "signal_direction": "neutral",
+                    "impact_level": "low",
+                    "title": "Insider ownership",
+                    "summary": "DART disclosure: Insider ownership",
+                    "evidence_text": "Insider ownership body",
+                    "evidence_url": "https://dart.example/501",
+                    "needs_review": False,
+                    "source_name": "OpenDART",
+                    "source_url": "https://dart.example/501",
+                    "published_at": datetime(2026, 6, 8),
+                    "reliability_level": "high",
+                    "is_official": True,
+                },
+                {
+                    "id": 502,
+                    "stock_id": 1,
+                    "source_document_id": 402,
+                    "event_hash": "hash-2",
+                    "source_type": "DART",
+                    "event_type": "dart_disclosure",
+                    "event_date": date(2026, 6, 8),
+                    "signal_direction": "unknown",
+                    "impact_level": "low",
+                    "title": "Major shareholder change",
+                    "summary": "DART disclosure: Major shareholder change",
+                    "evidence_text": "Major shareholder change body",
+                    "evidence_url": "https://dart.example/502",
+                    "needs_review": True,
+                    "source_name": "OpenDART",
+                    "source_url": "https://dart.example/502",
+                    "published_at": datetime(2026, 6, 8),
+                    "reliability_level": "high",
+                    "is_official": True,
+                },
+            ]
+        )
+        handler = DartAnalyzeTaskHandler(connection)
+
+        result = await handler(
+            {
+                "id": 30,
+                "stock_id": 1,
+                "source_signal_event_ids": None,
+                "task_context": {
+                    "stock_code": "005930",
+                    "source_type": "DART",
+                    "analysis_date": "2026-06-08",
+                },
+            }
+        )
+
+        self.assertEqual(result["analyzed_count"], 2)
+        date_query = connection.calls[0]
+        self.assertIn("signal_events.event_date = $3::DATE", date_query[1])
+        analysis_call = next(call for call in connection.calls if "INSERT INTO analysis_results" in call[1])
+        self.assertEqual(analysis_call[2][4], [501, 502])

@@ -194,6 +194,41 @@ class NormalizationRepository:
             signal_event_ids,
         )
 
+    async def list_signal_events_for_stock_date(
+        self,
+        *,
+        stock_id: int,
+        source_type: str,
+        event_date: Any,
+    ) -> list[Any]:
+        return await self._connection.fetch(
+            """
+            SELECT
+                signal_events.*,
+                source_documents.source_name,
+                source_documents.source_url,
+                source_documents.published_at,
+                source_documents.reliability_level,
+                source_documents.is_official
+            FROM signal_events
+            INNER JOIN source_documents
+                ON source_documents.id = signal_events.source_document_id
+            WHERE signal_events.stock_id = $1
+              AND signal_events.source_type = $2
+              AND signal_events.event_date = $3::DATE
+            ORDER BY
+                CASE signal_events.impact_level
+                    WHEN 'high' THEN 0
+                    WHEN 'medium' THEN 1
+                    ELSE 2
+                END,
+                signal_events.id ASC
+            """,
+            stock_id,
+            source_type,
+            event_date,
+        )
+
     async def record_validation_log(
         self,
         *,

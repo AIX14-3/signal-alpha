@@ -137,6 +137,20 @@ The enqueue endpoint deduplicates by default. If an active `pending`, `running`,
 task already exists with the same `stock_id`, `task_type`, and `task_context`, the endpoint
 returns the existing `task_id` instead of inserting another queue row.
 
+To intentionally re-run normalization and analysis for already collected DART documents, include
+`"force_reprocess":true` in `task_context`:
+
+```powershell
+$body = '{"stock_id":1,"priority":"batch","task_context":{"stock_code":"005930","bgn_de":"20260601","end_de":"20260608","force_reprocess":true}}'
+Invoke-RestMethod -Method Post -Uri "http://localhost:8011/internal/tasks/collect_dart/enqueue" -ContentType "application/json" -Body $body
+```
+
+Query stored DART analysis results:
+
+```powershell
+Invoke-RestMethod -Method Get -Uri "http://localhost:8011/internal/dart/analysis-results?stock_code=005930&analysis_date=2026-06-08"
+```
+
 ### DART Collection Schedule
 
 An external cron or operations script can enqueue DART collection tasks for active stocks:

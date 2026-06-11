@@ -30,6 +30,7 @@ class CollectionPersistence:
         collector_type: SourceType | None = None,
         run_mode: str = "batch",
         enqueue_task_type: str | None = None,
+        force_reprocess: bool = False,
     ) -> dict[str, Any]:
         resolved_collector_type = collector_type or _infer_collector_type(evidence)
         run_id = await self._collection_repository.create_collector_run(
@@ -37,7 +38,9 @@ class CollectionPersistence:
             run_mode,
         )
 
+        raw_document_ids: list[int] = []
         inserted_raw_ids: list[int] = []
+        reprocessed_raw_ids: list[int] = []
         try:
             for item in evidence:
                 raw_document = await self._collection_repository.upsert_raw_document(
@@ -53,10 +56,15 @@ class CollectionPersistence:
                     collector_ver=item.metadata.get("collector_ver", "1.0"),
                 )
                 raw_document_id = raw_document["id"]
-                inserted_raw_ids.append(raw_document_id)
+                raw_document_ids.append(raw_document_id)
+                is_inserted = _raw_document_inserted(raw_document)
+                if is_inserted:
+                    inserted_raw_ids.append(raw_document_id)
+                elif force_reprocess:
+                    reprocessed_raw_ids.append(raw_document_id)
                 await self._save_source_detail(raw_document_id, stock_id, item)
 
-                if enqueue_task_type:
+                if enqueue_task_type and (is_inserted or force_reprocess):
                     await self._queue_repository.enqueue(
                         stock_id=stock_id,
                         task_type=enqueue_task_type,
@@ -81,7 +89,7 @@ class CollectionPersistence:
                 status="failed",
                 collected_count=len(evidence),
                 inserted_count=len(inserted_raw_ids),
-                failed_count=max(1, len(evidence) - len(inserted_raw_ids)),
+                failed_count=max(1, len(evidence) - len(raw_document_ids)),
                 error_message=str(exc),
             )
             raise
@@ -90,7 +98,11 @@ class CollectionPersistence:
             "collector_run_id": run_id,
             "collected_count": len(evidence),
             "inserted_count": len(inserted_raw_ids),
-            "raw_document_ids": inserted_raw_ids,
+            "skipped_count": len(raw_document_ids) - len(inserted_raw_ids) - len(reprocessed_raw_ids),
+            "reprocessed_count": len(reprocessed_raw_ids),
+            "raw_document_ids": raw_document_ids,
+            "new_raw_document_ids": inserted_raw_ids,
+            "reprocessed_raw_document_ids": reprocessed_raw_ids,
         }
 
     async def _save_source_detail(
@@ -304,6 +316,13 @@ def _source_hash(item: RawEvidence) -> str:
         ]
     )
     return sha256(stable_text.encode("utf-8")).hexdigest()
+
+
+def _raw_document_inserted(raw_document: Any) -> bool:
+    try:
+        return bool(raw_document["inserted"])
+    except (KeyError, IndexError, TypeError):
+        return True
 
 
 def _external_id(item: RawEvidence) -> str:

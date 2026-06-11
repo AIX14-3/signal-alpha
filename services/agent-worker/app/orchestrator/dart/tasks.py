@@ -68,6 +68,7 @@ class DartCollectionTaskHandler:
             evidence=evidence,
             collector_type="DART",
             enqueue_task_type=NORMALIZE_DART,
+            force_reprocess=_truthy(task_context.get("force_reprocess")),
         )
         await dart_repository.upsert_collection_state(
             stock_id=stock_id,
@@ -95,6 +96,7 @@ class DartNormalizeTaskHandler:
         rows = await self._raw_detail_repository.list_dart_documents_by_raw_ids(raw_document_ids)
 
         signal_event_ids: list[int] = []
+        analysis_dates: set[date] = set()
         for row in rows:
             classification = classify_dart_report(
                 row["report_name"],
@@ -129,6 +131,7 @@ class DartNormalizeTaskHandler:
                 needs_review=classification.needs_review,
             )
             signal_event_ids.append(signal_event["id"])
+            analysis_dates.add(_to_date(row["published_at"]))
             await self._normalization_repository.upsert_signal_metric(
                 signal_event_id=signal_event["id"],
                 metric_name="dart_disclosure_count",
@@ -143,21 +146,27 @@ class DartNormalizeTaskHandler:
                 message=f"Normalized from raw_document_id={row['raw_document_id']}",
             )
 
-        analysis_task_id: int | None = None
+        analysis_task_ids: list[int] = []
         if signal_event_ids:
-            analysis_task_id = await self._queue_repository.enqueue(
-                stock_id=int(rows[0]["stock_id"]),
-                task_type=ANALYZE_DART,
-                priority="batch",
-                source_signal_event_ids=signal_event_ids,
-                task_context={"stock_code": stock_code, "source_type": "DART"},
-                dedupe=True,
-            )
+            for analysis_date in sorted(analysis_dates):
+                analysis_task_id = await self._queue_repository.enqueue(
+                    stock_id=int(rows[0]["stock_id"]),
+                    task_type=ANALYZE_DART,
+                    priority="batch",
+                    task_context={
+                        "stock_code": stock_code,
+                        "source_type": "DART",
+                        "analysis_date": analysis_date.isoformat(),
+                    },
+                    dedupe=True,
+                )
+                analysis_task_ids.append(analysis_task_id)
 
         return {
             "normalized_count": len(rows),
             "signal_event_ids": signal_event_ids,
-            "analysis_task_id": analysis_task_id,
+            "analysis_task_id": analysis_task_ids[0] if analysis_task_ids else None,
+            "analysis_task_ids": analysis_task_ids,
         }
 
 
@@ -170,10 +179,18 @@ class DartAnalyzeTaskHandler:
         stock_id = int(task["stock_id"])
         task_context = _task_context(task.get("task_context"))
         signal_event_ids = _source_signal_event_ids(task.get("source_signal_event_ids"))
-        rows = await self._normalization_repository.list_signal_events_by_ids(signal_event_ids)
+        if signal_event_ids:
+            rows = await self._normalization_repository.list_signal_events_by_ids(signal_event_ids)
+        else:
+            rows = await self._normalization_repository.list_signal_events_for_stock_date(
+                stock_id=stock_id,
+                source_type="DART",
+                event_date=_task_analysis_date(task_context),
+            )
         events = [dict(row) for row in rows]
+        signal_event_ids = [int(event["id"]) for event in events]
         result = build_dart_analysis_result(events)
-        analysis_date = _analysis_date(events)
+        analysis_date = _analysis_date(events, task_context)
         run_key = _run_key(task_context)
 
         analysis_result = await self._analysis_repository.upsert_analysis_result(
@@ -363,13 +380,20 @@ def _to_date(value: Any) -> date:
     return datetime.fromisoformat(text[:10]).date()
 
 
-def _analysis_date(events: list[dict[str, Any]]) -> date:
+def _analysis_date(events: list[dict[str, Any]], task_context: dict[str, Any]) -> date:
     if not events:
-        return date.today()
+        return _task_analysis_date(task_context)
     event_dates = [_to_date(event["event_date"]) for event in events if event.get("event_date")]
     if not event_dates:
-        return date.today()
+        return _task_analysis_date(task_context)
     return max(event_dates)
+
+
+def _task_analysis_date(task_context: dict[str, Any]) -> date:
+    value = task_context.get("analysis_date") or task_context.get("event_date")
+    if value:
+        return _to_date(value)
+    return date.today()
 
 
 def _run_key(task_context: dict[str, Any]) -> str:

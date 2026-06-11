@@ -82,6 +82,21 @@ class NormalizationRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("INNER JOIN source_documents", connection.calls[0][1])
         self.assertEqual(connection.calls[0][2], ([1, 2],))
 
+    async def test_list_signal_events_for_stock_date_filters_stock_source_and_date(self):
+        connection = FakeConnection()
+        repository = NormalizationRepository(connection)
+
+        await repository.list_signal_events_for_stock_date(
+            stock_id=1,
+            source_type="DART",
+            event_date="2026-06-08",
+        )
+
+        self.assertIn("signal_events.stock_id = $1", connection.calls[0][1])
+        self.assertIn("signal_events.source_type = $2", connection.calls[0][1])
+        self.assertIn("signal_events.event_date = $3::DATE", connection.calls[0][1])
+        self.assertEqual(connection.calls[0][2], (1, "DART", "2026-06-08"))
+
     async def test_record_validation_log_requires_one_target_identifier(self):
         connection = FakeConnection()
         repository = NormalizationRepository(connection)
