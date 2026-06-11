@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="480" viewBox="0 0 1180 480" font-family="'Malgun Gothic','Apple SD Gothic Neo',sans-serif">
+  <defs>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L12,6 L0,12 z" fill="#455A64"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1180" height="480" fill="#FFFFFF"/>
+
+  <text x="590" y="42" text-anchor="middle" font-size="20" font-weight="bold" fill="#263238">Signal Alpha 분석 흐름 — 수집기 → 분석기 → 토론 → 점수</text>
+  <text x="590" y="66" text-anchor="middle" font-size="12" fill="#78909C">2026-06-11 · 이번 작업: ② 분석기에 PRICE(주가·수급) 추가</text>
+
+  <!-- ① 수집기 -->
+  <rect x="40" y="110" width="230" height="200" rx="10" fill="#FFF3E0" stroke="#EF6C00" stroke-width="2"/>
+  <text x="155" y="145" text-anchor="middle" font-size="16" font-weight="bold" fill="#E65100">① 수집기</text>
+  <text x="155" y="166" text-anchor="middle" font-size="11" fill="#BF360C">Collectors — 재료 사오기</text>
+  <line x1="60" y1="180" x2="250" y2="180" stroke="#FFCC80" stroke-width="1"/>
+  <text x="155" y="204" text-anchor="middle" font-size="12" fill="#5D4037">DART 공시</text>
+  <text x="155" y="228" text-anchor="middle" font-size="12" font-weight="bold" fill="#1565C0">키움 주가·수급 (price-collector)</text>
+  <text x="155" y="252" text-anchor="middle" font-size="12" fill="#5D4037">채용공고 · 검색 트렌드 …</text>
+  <text x="155" y="288" text-anchor="middle" font-size="11" font-style="italic" fill="#8D6E63">원본 그대로, 판단 없음</text>
+
+  <line x1="270" y1="210" x2="326" y2="210" stroke="#455A64" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="298" y="198" text-anchor="middle" font-size="10" fill="#546E7A">원본 증거</text>
+
+  <!-- ② 분석기 -->
+  <rect x="330" y="110" width="230" height="200" rx="10" fill="#E3F2FD" stroke="#1565C0" stroke-width="2"/>
+  <text x="445" y="145" text-anchor="middle" font-size="16" font-weight="bold" fill="#0D47A1">② 분석기</text>
+  <text x="445" y="166" text-anchor="middle" font-size="11" fill="#1565C0">Analyzers — 재료 손질</text>
+  <line x1="350" y1="180" x2="540" y2="180" stroke="#90CAF9" stroke-width="1"/>
+  <text x="445" y="204" text-anchor="middle" font-size="12" fill="#37474F">소스별로 방향 + 점수 + 근거</text>
+  <text x="445" y="228" text-anchor="middle" font-size="12" fill="#37474F">dart/ — 공시 분류</text>
+  <text x="445" y="252" text-anchor="middle" font-size="12" font-weight="bold" fill="#1565C0">price/ — 주가·수급 〔신규〕</text>
+  <text x="445" y="288" text-anchor="middle" font-size="11" font-style="italic" fill="#5C6BC0">점수 범위 [-1, +1]</text>
+
+  <line x1="560" y1="210" x2="616" y2="210" stroke="#455A64" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="588" y="198" text-anchor="middle" font-size="10" fill="#546E7A">SourceResult</text>
+
+  <!-- ③ 토론 -->
+  <rect x="620" y="110" width="230" height="200" rx="10" fill="#E8F5E9" stroke="#2E7D32" stroke-width="2"/>
+  <text x="735" y="145" text-anchor="middle" font-size="16" font-weight="bold" fill="#1B5E20">③ 토론</text>
+  <text x="735" y="166" text-anchor="middle" font-size="11" fill="#2E7D32">Orchestrator — 요리사 회의</text>
+  <line x1="640" y1="180" x2="830" y2="180" stroke="#A5D6A7" stroke-width="1"/>
+  <text x="735" y="204" text-anchor="middle" font-size="12" fill="#37474F">소스 결과를 한자리에 모음</text>
+  <text x="735" y="228" text-anchor="middle" font-size="12" fill="#37474F">방향 일치 · 충돌 비교</text>
+  <text x="735" y="252" text-anchor="middle" font-size="12" fill="#37474F">가중 합산 (D-1 규칙)</text>
+  <text x="735" y="288" text-anchor="middle" font-size="11" font-style="italic" fill="#558B2F">합의 보너스 / 충돌 패널티</text>
+
+  <line x1="850" y1="210" x2="906" y2="210" stroke="#455A64" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="878" y="198" text-anchor="middle" font-size="10" fill="#546E7A">합산 결과</text>
+
+  <!-- ④ 점수 -->
+  <rect x="910" y="110" width="230" height="200" rx="10" fill="#F3E5F5" stroke="#7B1FA2" stroke-width="2"/>
+  <text x="1025" y="145" text-anchor="middle" font-size="16" font-weight="bold" fill="#4A148C">④ 점수</text>
+  <text x="1025" y="166" text-anchor="middle" font-size="11" fill="#6A1B9A">Final Signal — 완성된 요리</text>
+  <line x1="930" y1="180" x2="1120" y2="180" stroke="#CE93D8" stroke-width="1"/>
+  <text x="1025" y="204" text-anchor="middle" font-size="12" fill="#37474F">최종 점수 + 경고 문구</text>
+  <text x="1025" y="228" text-anchor="middle" font-size="12" fill="#37474F">final_signals 저장</text>
+  <text x="1025" y="252" text-anchor="middle" font-size="12" fill="#37474F">main-server → 웹 표시</text>
+  <text x="1025" y="288" text-anchor="middle" font-size="11" font-style="italic" fill="#8E24AA">근거까지 역추적 가능</text>
+
+  <!-- DB footer -->
+  <rect x="40" y="350" width="1100" height="56" rx="8" fill="#FFF8E1" stroke="#F9A825" stroke-width="1.5"/>
+  <text x="590" y="374" text-anchor="middle" font-size="13" font-weight="bold" fill="#E65100">PostgreSQL — 모든 단계가 DB를 통해 데이터를 주고받습니다</text>
+  <text x="590" y="394" text-anchor="middle" font-size="11" fill="#8D6E63">수집기는 쓰기만 · 분석기는 읽기만 (서로 직접 호출하지 않음) · 결과는 agent_results / final_signals에 저장</text>
+
+  <text x="590" y="446" text-anchor="middle" font-size="11" fill="#90A4AE">자세한 구조: docs/superpowers/plans/2026-06-11-kiwoom-price-analyzer.svg · 설명: docs/price-analyzer-guide.md</text>
+</svg>

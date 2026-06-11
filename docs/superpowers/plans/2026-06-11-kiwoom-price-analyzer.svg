@@ -1,0 +1,144 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1300" height="900" viewBox="0 0 1300 900" font-family="'Malgun Gothic','Apple SD Gothic Neo',sans-serif">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#455A64"/>
+    </marker>
+    <marker id="arrowPurple" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#7B1FA2"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1300" height="900" fill="#FFFFFF"/>
+
+  <!-- 제목 -->
+  <text x="650" y="38" text-anchor="middle" font-size="20" font-weight="bold" fill="#263238">Signal Alpha — 키움 주가 분석기(PRICE) 설계 구조</text>
+  <text x="650" y="60" text-anchor="middle" font-size="12" fill="#78909C">feat/kiwoom-api-analyzer · 2026-06-11 · 계획 문서: docs/superpowers/plans/2026-06-11-kiwoom-price-analyzer.md</text>
+
+  <!-- ───────── 수집 측 (왼쪽) ───────── -->
+  <!-- 키움 REST API -->
+  <rect x="40" y="80" width="300" height="80" rx="8" fill="#FCE4EC" stroke="#C2185B" stroke-width="1.5"/>
+  <text x="190" y="112" text-anchor="middle" font-size="14" font-weight="bold" fill="#880E4F">키움증권 REST API</text>
+  <text x="190" y="136" text-anchor="middle" font-size="11" fill="#AD1457">api.kiwoom.com — OAuth2 (appkey/secretkey)</text>
+
+  <!-- price-collector -->
+  <rect x="40" y="210" width="300" height="130" rx="8" fill="#E3F2FD" stroke="#1565C0" stroke-width="2"/>
+  <text x="190" y="238" text-anchor="middle" font-size="14" font-weight="bold" fill="#0D47A1">services/price-collector</text>
+  <text x="190" y="260" text-anchor="middle" font-size="11" fill="#1565C0">배치 CLI · FastAPI 아님 · 엔드포인트 없음</text>
+  <text x="190" y="280" text-anchor="middle" font-size="11" fill="#1565C0">kiwoom/rest_client.py 〔진행 중〕</text>
+  <text x="190" y="300" text-anchor="middle" font-size="11" fill="#1565C0">REST 전환으로 Linux/Docker 실행 가능</text>
+  <text x="190" y="320" text-anchor="middle" font-size="11" fill="#1565C0">pipeline.py — 정규화 · 업서트</text>
+
+  <!-- collector → API (TR 호출, 위 방향) -->
+  <line x1="190" y1="210" x2="190" y2="164" stroke="#455A64" stroke-width="1.8" marker-end="url(#arrow)"/>
+  <text x="200" y="192" font-size="10" fill="#546E7A">TR 호출 (일봉 / 수급 / 기본정보)</text>
+
+  <!-- collector → DB (쓰기) -->
+  <line x1="190" y1="340" x2="190" y2="596" stroke="#455A64" stroke-width="1.8" marker-end="url(#arrow)"/>
+  <text x="200" y="470" font-size="11" fill="#546E7A">쓰기: OHLCV · 수급 적재 (psycopg)</text>
+
+  <!-- ───────── PostgreSQL (하단 중앙-좌) ───────── -->
+  <rect x="40" y="600" width="360" height="180" rx="8" fill="#FFF8E1" stroke="#F9A825" stroke-width="2"/>
+  <text x="220" y="628" text-anchor="middle" font-size="14" font-weight="bold" fill="#E65100">PostgreSQL (EC2 / 관리형)</text>
+  <text x="60" y="656" font-size="12" fill="#5D4037">시세: ohlcv_data · sector_ohlcv · collector_runs</text>
+  <text x="60" y="680" font-size="12" fill="#5D4037">분석: agent_results · final_signals</text>
+  <text x="60" y="704" font-size="12" fill="#8D6E63">후속: backtest_results · score_history</text>
+  <line x1="60" y1="718" x2="380" y2="718" stroke="#FFE082" stroke-width="1"/>
+  <text x="60" y="740" font-size="11" font-style="italic" fill="#8D6E63">수집기와 분석기는 DB로만 연결 (직접 호출 없음)</text>
+
+  <!-- ───────── agent-worker (오른쪽) ───────── -->
+  <rect x="430" y="80" width="830" height="440" rx="10" fill="#F8FAFB" stroke="#607D8B" stroke-width="1.5"/>
+  <text x="450" y="108" font-size="13" font-weight="bold" fill="#37474F">services/agent-worker (:8011 · FastAPI) — 분석 측</text>
+
+  <!-- PRICE 파이프라인 (신규) -->
+  <rect x="450" y="150" width="230" height="100" rx="8" fill="#E3F2FD" stroke="#1565C0" stroke-width="2"/>
+  <text x="565" y="178" text-anchor="middle" font-size="13" font-weight="bold" fill="#0D47A1">collectors/price/</text>
+  <text x="565" y="200" text-anchor="middle" font-size="12" fill="#1565C0">ohlcv_reader.py 〔신규〕</text>
+  <text x="565" y="222" text-anchor="middle" font-size="11" fill="#1565C0">ohlcv_data · sector_ohlcv 조회</text>
+
+  <line x1="680" y1="200" x2="736" y2="200" stroke="#455A64" stroke-width="1.8" marker-end="url(#arrow)"/>
+  <text x="710" y="190" text-anchor="middle" font-size="10" fill="#546E7A">RawEvidence</text>
+  <text x="710" y="216" text-anchor="middle" font-size="10" fill="#546E7A">(PRICE)</text>
+
+  <rect x="740" y="140" width="280" height="120" rx="8" fill="#E3F2FD" stroke="#1565C0" stroke-width="2"/>
+  <text x="880" y="166" text-anchor="middle" font-size="13" font-weight="bold" fill="#0D47A1">analyzers/price/ 〔신규〕</text>
+  <text x="880" y="190" text-anchor="middle" font-size="11" fill="#1565C0">indicators.py — MA · RSI · 거래량 · 수급</text>
+  <text x="880" y="210" text-anchor="middle" font-size="11" fill="#1565C0">rules.py — direction / score / risk_flags</text>
+  <text x="880" y="230" text-anchor="middle" font-size="11" fill="#1565C0">analyzer.py — PriceAnalyzer (LLM 없음)</text>
+
+  <line x1="1020" y1="200" x2="1076" y2="200" stroke="#455A64" stroke-width="1.8" marker-end="url(#arrow)"/>
+  <text x="1048" y="190" text-anchor="middle" font-size="10" fill="#546E7A">SourceResult</text>
+  <text x="1048" y="216" text-anchor="middle" font-size="10" fill="#546E7A">[-1, +1]</text>
+
+  <!-- DART 파이프라인 (기존) -->
+  <rect x="450" y="300" width="230" height="80" rx="8" fill="#F5F5F5" stroke="#90A4AE" stroke-width="1.5"/>
+  <text x="565" y="330" text-anchor="middle" font-size="13" font-weight="bold" fill="#546E7A">collectors/dart/ (기존)</text>
+  <text x="565" y="352" text-anchor="middle" font-size="11" fill="#78909C">disclosure.py · corp_codes.py</text>
+
+  <line x1="680" y1="340" x2="736" y2="340" stroke="#455A64" stroke-width="1.8" marker-end="url(#arrow)"/>
+  <text x="710" y="330" text-anchor="middle" font-size="10" fill="#546E7A">RawEvidence</text>
+
+  <rect x="740" y="300" width="280" height="80" rx="8" fill="#F5F5F5" stroke="#90A4AE" stroke-width="1.5"/>
+  <text x="880" y="330" text-anchor="middle" font-size="13" font-weight="bold" fill="#546E7A">analyzers/dart/ (기존)</text>
+  <text x="880" y="352" text-anchor="middle" font-size="11" fill="#78909C">rules.py — 공시 제목 분류</text>
+
+  <line x1="1020" y1="340" x2="1076" y2="340" stroke="#455A64" stroke-width="1.8" marker-end="url(#arrow)"/>
+  <text x="1048" y="330" text-anchor="middle" font-size="10" fill="#546E7A">SourceResult</text>
+
+  <!-- 오케스트레이터 -->
+  <rect x="1080" y="140" width="150" height="280" rx="8" fill="#E8F5E9" stroke="#2E7D32" stroke-width="2"/>
+  <text x="1155" y="190" text-anchor="middle" font-size="14" font-weight="bold" fill="#1B5E20">Agent</text>
+  <text x="1155" y="210" text-anchor="middle" font-size="14" font-weight="bold" fill="#1B5E20">Orchestrator</text>
+  <text x="1155" y="244" text-anchor="middle" font-size="10" fill="#2E7D32">dict[SourceType,</text>
+  <text x="1155" y="260" text-anchor="middle" font-size="10" fill="#2E7D32">SourceResult] 합산</text>
+  <line x1="1095" y1="280" x2="1215" y2="280" stroke="#A5D6A7" stroke-width="1"/>
+  <text x="1155" y="304" text-anchor="middle" font-size="10" fill="#2E7D32">persistence.py</text>
+  <text x="1155" y="320" text-anchor="middle" font-size="10" fill="#2E7D32">agent_results 저장</text>
+
+  <!-- 기타 소스 -->
+  <text x="740" y="470" text-anchor="middle" font-size="11" font-style="italic" fill="#90A4AE">REPORT · HIRING · PATENT · DATALAB — 동일 SourcePipeline 패턴으로 확장</text>
+
+  <!-- DB → agent-worker 읽기 -->
+  <path d="M400,620 L440,620 L440,204 L446,204" fill="none" stroke="#455A64" stroke-width="1.8" marker-end="url(#arrow)"/>
+  <text x="452" y="566" font-size="11" fill="#546E7A">↑ DB 읽기 전용 조회 (collectors/price)</text>
+
+  <!-- 오케스트레이터 → DB 쓰기 -->
+  <path d="M1230,380 L1268,380 L1268,700 L406,700" fill="none" stroke="#455A64" stroke-width="1.8" marker-end="url(#arrow)"/>
+  <text x="820" y="692" text-anchor="middle" font-size="11" fill="#546E7A">쓰기: agent_results · final_signals</text>
+
+  <!-- ───────── 서빙 측 (하단) ───────── -->
+  <rect x="440" y="760" width="260" height="70" rx="8" fill="#F5F5F5" stroke="#90A4AE" stroke-width="1.5"/>
+  <text x="570" y="788" text-anchor="middle" font-size="13" font-weight="bold" fill="#546E7A">services/main-server (:8000)</text>
+  <text x="570" y="810" text-anchor="middle" font-size="11" fill="#78909C">결과 조회 API (기존)</text>
+
+  <line x1="400" y1="795" x2="436" y2="795" stroke="#455A64" stroke-width="1.8" marker-end="url(#arrow)"/>
+
+  <rect x="760" y="760" width="180" height="70" rx="8" fill="#F5F5F5" stroke="#90A4AE" stroke-width="1.5"/>
+  <text x="850" y="788" text-anchor="middle" font-size="13" font-weight="bold" fill="#546E7A">web (:3000)</text>
+  <text x="850" y="810" text-anchor="middle" font-size="11" fill="#78909C">Next.js (기존)</text>
+
+  <line x1="700" y1="795" x2="756" y2="795" stroke="#455A64" stroke-width="1.8" marker-end="url(#arrow)"/>
+
+  <!-- ───────── 후속 브랜치 (점선) ───────── -->
+  <rect x="1000" y="580" width="260" height="100" rx="8" fill="#F3E5F5" stroke="#7B1FA2" stroke-width="1.8" stroke-dasharray="6,4"/>
+  <text x="1130" y="606" text-anchor="middle" font-size="13" font-weight="bold" fill="#4A148C">후속 브랜치 (범위 밖)</text>
+  <text x="1130" y="628" text-anchor="middle" font-size="11" fill="#6A1B9A">임시 예측 파이프라인</text>
+  <text x="1130" y="646" text-anchor="middle" font-size="11" fill="#6A1B9A">예측점수 vs 실제 주가 검증</text>
+  <text x="1130" y="664" text-anchor="middle" font-size="11" fill="#6A1B9A">하네스: 스킬 · 훅 루프 반복 개선</text>
+
+  <path d="M1000,640 L412,640" fill="none" stroke="#7B1FA2" stroke-width="1.5" stroke-dasharray="6,4" marker-end="url(#arrowPurple)"/>
+  <text x="705" y="632" text-anchor="middle" font-size="10" fill="#7B1FA2">final_signals · backtest_results 대조</text>
+
+  <!-- ───────── 범례 ───────── -->
+  <rect x="40" y="845" width="14" height="14" rx="3" fill="#E3F2FD" stroke="#1565C0" stroke-width="1.5"/>
+  <text x="62" y="857" font-size="12" fill="#37474F">신규 (이번 브랜치)</text>
+  <rect x="200" y="845" width="14" height="14" rx="3" fill="#F5F5F5" stroke="#90A4AE" stroke-width="1.5"/>
+  <text x="222" y="857" font-size="12" fill="#37474F">기존</text>
+  <rect x="290" y="845" width="14" height="14" rx="3" fill="#FFF8E1" stroke="#F9A825" stroke-width="1.5"/>
+  <text x="312" y="857" font-size="12" fill="#37474F">DB</text>
+  <rect x="370" y="845" width="14" height="14" rx="3" fill="#FCE4EC" stroke="#C2185B" stroke-width="1.5"/>
+  <text x="392" y="857" font-size="12" fill="#37474F">외부 API</text>
+  <rect x="480" y="845" width="14" height="14" rx="3" fill="#E8F5E9" stroke="#2E7D32" stroke-width="1.5"/>
+  <text x="502" y="857" font-size="12" fill="#37474F">합산/저장</text>
+  <rect x="590" y="845" width="14" height="14" rx="3" fill="#F3E5F5" stroke="#7B1FA2" stroke-width="1.5" stroke-dasharray="4,3"/>
+  <text x="612" y="857" font-size="12" fill="#37474F">후속 브랜치</text>
+</svg>
