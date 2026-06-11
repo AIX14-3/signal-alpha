@@ -39,8 +39,8 @@ class MockCollector(BaseCollector):
         super().__init__(database_url)
         self.fixture_path = Path(fixture_path) if fixture_path else _DEFAULT_FIXTURE
 
-    def collect(self) -> list:
-        """Fixture JSON 로드 → seed_job_data 리스트 반환."""
+    def collect(self, target_companies: list[str]) -> list:
+        """Fixture JSON 로드 → seed_job_data 리스트 반환. (target_companies는 무시)"""
         if not self.fixture_path.exists():
             raise FileNotFoundError(
                 f"Fixture 파일 없음: {self.fixture_path}\n"

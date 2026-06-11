@@ -97,46 +97,35 @@ class MultiSourceCrawler(BaseCollector):
     """
     모든 소스를 통합 수집하는 오케스트레이터.
 
+    수집 대상 기업 목록은 BaseCollector.run()이 DB(is_target=TRUE)에서 동적으로 조회해
+    collect(target_companies)로 주입한다. 기업 추가/제거는 SQL UPDATE 한 줄로 처리.
+
     Args:
         database_url:      PostgreSQL 연결 문자열
-        target_companies:  수집 대상 기업명 리스트 (None → 기본 15개)
         headless:          Selenium 헤드리스 모드 (기본 True)
         use_portals:       사람인/잡코리아 포털 수집 여부 (기본 True)
         use_official:      기업 공식 사이트 수집 여부 (기본 True)
         rate_limit_sec:    기업 간 대기 시간 (기본 2.0s)
+        driver_rotation_size: 몇 개 기업마다 Chrome 을 재시작할지 (기본 3).
+                              헤드리스 Chrome 의 메모리 누적 크래시 방지.
+                              0 또는 음수면 로테이션 비활성화.
     """
-
-    DEFAULT_COMPANIES = [
-        "삼성전자", "SK하이닉스", "한미반도체",
-        "NAVER", "카카오", "크래프톤",
-        "현대자동차", "기아", "HL만도",
-        "HYBE", "SM엔터테인먼트", "스튜디오드래곤",
-        "삼성바이오로직스", "셀트리온", "유한양행",
-    ]
 
     def __init__(
         self,
         database_url: str,
-        target_companies: list[str] | None = None,
         headless: bool = True,
         use_portals: bool = True,
         use_official: bool = True,
         rate_limit_sec: float = 2.0,
         driver_rotation_size: int = 3,
     ):
-        """
-        Args:
-            driver_rotation_size: 몇 개 기업마다 Chrome 을 재시작할지 (기본 3).
-                                   헤드리스 Chrome 의 메모리 누적 크래시 방지.
-                                   0 또는 음수면 로테이션 비활성화.
-        """
         super().__init__(database_url)
-        self.target_companies = target_companies or self.DEFAULT_COMPANIES
         self.headless = headless
         self.use_portals = use_portals
         self.use_official = use_official
         self.rate_limit_sec = rate_limit_sec
-        self.driver_rotation_size = driver_rotation_size if driver_rotation_size > 0 else 0
+        self.driver_rotation_size = max(driver_rotation_size, 0)
         self.driver = None
 
     # ── WebDriver 초기화 (Anti-Bot + 안정성) ─────────────────────────────────
@@ -216,7 +205,7 @@ class MultiSourceCrawler(BaseCollector):
         return SaraminCrawler(driver=self.driver), JobkoreaCrawler(driver=self.driver)
 
     # ── 수집 ─────────────────────────────────────────────────────────────────
-    def collect(self) -> list:
+    def collect(self, target_companies: list[str]) -> list:
         """
         전 소스에서 채용 데이터 수집 후 하나의 list[dict] 로 반환.
 
@@ -230,7 +219,7 @@ class MultiSourceCrawler(BaseCollector):
         all_jobs: list[dict] = []
 
         try:
-            for idx, company in enumerate(self.target_companies):
+            for idx, company in enumerate(target_companies):
 
                 # ── 드라이버 로테이션 ────────────────────────────────────────
                 # idx==0 은 이미 위에서 기동했으므로 건너뜀
@@ -241,7 +230,7 @@ class MultiSourceCrawler(BaseCollector):
                 ):
                     logger.info(
                         "🔄 드라이버 로테이션 (기업 %d/%d, 배치 크기 %d) — 재시작 중...",
-                        idx + 1, len(self.target_companies), self.driver_rotation_size,
+                        idx + 1, len(target_companies), self.driver_rotation_size,
                     )
                     self._quit_driver()    # 기존 Chrome 완전 종료
                     self._setup_driver()   # 새 Chrome 기동 (메모리 초기화)
@@ -249,7 +238,7 @@ class MultiSourceCrawler(BaseCollector):
                 company_jobs: list[dict] = []
                 logger.info("─" * 60)
                 logger.info("🏢 [%d/%d] %s 수집 시작",
-                            idx + 1, len(self.target_companies), company)
+                            idx + 1, len(target_companies), company)
 
                 # 1) 포털 수집 (사람인 + 잡코리아)
                 if self.use_portals:

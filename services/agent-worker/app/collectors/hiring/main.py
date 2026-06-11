@@ -34,7 +34,6 @@ if sys.platform == "win32" and hasattr(sys.stdout, "buffer"):
 _COLLECTORS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(_COLLECTORS_DIR))
 
-from base_collector import get_target_companies   # noqa: E402
 from keyword_generator import HiringKeywordGenerator  # noqa: E402
 from mock_collector import MockCollector               # noqa: E402
 from multi_source_crawler import MultiSourceCrawler   # noqa: E402
@@ -138,9 +137,8 @@ def main() -> None:
         _preview_keyword_groups()
         return
 
-    # Mode 1~3 공통: DB URL + 동적 기업 목록 로드
+    # Mode 1~3 공통: DB URL 취득 (기업 목록은 run() 내부에서 자동 로드)
     db_url = get_database_url()
-    target_companies = get_target_companies(db_url)  # ← DB is_target=TRUE 기준
 
     if choice == "1":
         print("\n🔄 Mock Collector 실행 중...")
@@ -149,11 +147,10 @@ def main() -> None:
         print(f"\n✅ Mock 수집 완료: 신규 {count}개 적재\n")
 
     elif choice == "2":
-        print(f"\n🕷️  Web Crawler (사람인 + 잡코리아) — {len(target_companies)}개 기업")
+        print("\n🕷️  Web Crawler (사람인 + 잡코리아)")
         print("   (이용약관/robots.txt 준수)")
         crawler = MultiSourceCrawler(
             database_url=db_url,
-            target_companies=target_companies,   # ← DB에서 동적 로드
             headless=True,
             use_portals=True,
             use_official=False,
@@ -162,7 +159,7 @@ def main() -> None:
         print(f"\n✅ 포털 크롤링 완료: 신규 {count}개 적재\n")
 
     elif choice == "3":
-        print(f"\n🌐 Multi-Source Crawler — {len(target_companies)}개 기업")
+        print("\n🌐 Multi-Source Crawler")
         print("   소스: 사람인 + 잡코리아 + 공식 사이트")
         print("   ⚠️  이용약관/robots.txt 준수  |  완료까지 수 분 소요\n")
 
@@ -171,7 +168,6 @@ def main() -> None:
 
         crawler = MultiSourceCrawler(
             database_url=db_url,
-            target_companies=target_companies,   # ← DB에서 동적 로드
             headless=True,
             use_portals=use_portals,
             use_official=use_official,

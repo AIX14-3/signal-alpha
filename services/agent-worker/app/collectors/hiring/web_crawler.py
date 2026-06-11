@@ -57,9 +57,8 @@ _TECH_KEYWORDS = [
 class WebCrawler(BaseCollector):
     """Selenium 으로 사람인 채용공고를 수집하는 수집기."""
 
-    def __init__(self, database_url: str, target_companies: list[str], headless: bool = True):
+    def __init__(self, database_url: str, headless: bool = True):
         super().__init__(database_url)
-        self.target_companies = target_companies
         self.headless = headless
         self.driver = None
 
@@ -119,12 +118,12 @@ class WebCrawler(BaseCollector):
         logger.info("✓ Chrome WebDriver 초기화 완료 (Anti-Bot 강화)")
 
     # ── 수집 ─────────────────────────────────────────────────────────────────────
-    def collect(self) -> list:
+    def collect(self, target_companies: list[str]) -> list:
         """대상 기업별 사람인 채용공고 크롤링."""
         self._setup_driver()
         all_jobs: list[dict] = []
         try:
-            for company in self.target_companies:
+            for company in target_companies:
                 try:
                     logger.info("🔄 %s 크롤링 중...", company)
                     jobs = self._crawl_saramin(company)

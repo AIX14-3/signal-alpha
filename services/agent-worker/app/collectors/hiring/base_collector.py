@@ -12,7 +12,8 @@ base_collector.py
    - 한 건 실패/스킵 → 해당 savepoint 만 롤백, 나머지 계속
    - 모든 레코드 누적 후 마지막에 단 1회 commit (재시도/재커밋 버그 없음)
 4. ON CONFLICT DO NOTHING 으로 중복 방지
-5. 기업명 정규화 → stocks 매칭 (ORDER BY CASE 우선순위) → COMPANY_STOCK_MAP 폴백
+5. 기업명 정규화 → stocks 매칭 (ORDER BY CASE 우선순위)
+   미등록 기업은 _SkipRecord 로 스킵 — DB가 Single Source of Truth
 6. json.dumps(ensure_ascii=False) + ::jsonb 캐스팅으로 한글 안전 직렬화
 
 ─────────────────────────────────────────────────────────────────────────────
@@ -61,38 +62,16 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# stocks 미등록 기업 자동 등록용 매핑: "기업명" → (ticker, market, sector)
-# ─────────────────────────────────────────────────────────────────────────────
-COMPANY_STOCK_MAP: dict[str, tuple[str, str, str]] = {
-    "삼성전자":         ("005930", "KOSPI",  "반도체"),
-    "SK하이닉스":       ("000660", "KOSPI",  "반도체"),
-    "한미반도체":       ("042700", "KOSPI",  "반도체장비"),
-    "NAVER":            ("035420", "KOSPI",  "인터넷"),
-    "카카오":           ("035720", "KOSPI",  "인터넷"),
-    "크래프톤":         ("259960", "KOSPI",  "게임"),
-    "현대자동차":       ("005380", "KOSPI",  "자동차"),
-    "기아":             ("000270", "KOSPI",  "자동차"),
-    "HL만도":           ("204320", "KOSPI",  "자동차부품"),
-    "HYBE":             ("352820", "KOSPI",  "엔터"),
-    "SM엔터테인먼트":   ("041510", "KOSPI",  "엔터"),
-    "스튜디오드래곤":   ("253450", "KOSDAQ", "콘텐츠"),
-    "삼성바이오로직스": ("207940", "KOSPI",  "바이오"),
-    "셀트리온":         ("068270", "KOSPI",  "바이오"),
-    "유한양행":         ("000100", "KOSPI",  "제약"),
-}
-
-
 def get_target_companies(database_url: str) -> list[str]:
     """
-    DB의 is_target=TRUE 기업 목록을 동적으로 반환 (동기식).
+    DB의 is_target=TRUE 기업 목록을 동적으로 반환 (Single Source of Truth).
 
     - 조회 성공 → DB 결과 반환
-    - is_target=TRUE 행 없음 → COMPANY_STOCK_MAP 폴백 (경고 로그)
-    - DB 연결 실패 등 예외 → COMPANY_STOCK_MAP 폴백 (에러 로그)
+    - is_target=TRUE 행 없음 → 빈 리스트 반환 (경고 로그)
+    - DB 연결 실패 등 예외 → 빈 리스트 반환 (에러 로그)
 
-    모든 수집기(Hiring·DataLab·Patent 등)가 공통으로 사용하는 Single Source of Truth.
     기업 추가/제거는 SQL UPDATE 한 줄이면 충분하고 코드 수정이 불필요하다.
+    (stocks 초기 데이터: database/migrations/016_seed_stocks_targets.sql)
     """
     engine = create_engine(database_url, echo=False, future=True)
     try:
@@ -104,15 +83,13 @@ def get_target_companies(database_url: str) -> list[str]:
             names = [row[0] for row in rows]
             logger.info("🎯 수집 대상 %d개 기업 (DB is_target=TRUE)", len(names))
             return names
-        logger.warning("⚠️  is_target=TRUE 기업 없음 → COMPANY_STOCK_MAP 폴백")
+        logger.warning("⚠️  is_target=TRUE 기업이 DB에 없습니다. 016_seed_stocks_targets.sql 을 실행하세요.")
+        return []
     except Exception as exc:
-        logger.error("❌ 수집 대상 기업 조회 실패 → COMPANY_STOCK_MAP 폴백: %s", exc)
+        logger.error("❌ 수집 대상 기업 조회 실패: %s", exc)
+        return []
     finally:
         engine.dispose()
-
-    fallback = list(COMPANY_STOCK_MAP.keys())
-    logger.info("🔄 폴백 사용: %d개 기업", len(fallback))
-    return fallback
 
 
 class _SkipRecord(Exception):
@@ -122,11 +99,16 @@ class _SkipRecord(Exception):
 class BaseCollector(ABC):
     """채용 데이터 수집의 공통 인터페이스 (Strategy Pattern)."""
 
+    # 매직 스트링 격리 — 상속 클래스에서 override 가능 (예: 'PATENT', 'DART')
+    SOURCE_TYPE: str = "HIRING"
+    COLLECTOR_VER: str = "1.0"
+
     def __init__(self, database_url: str):
         """
         Args:
             database_url: 예) postgresql://signal_alpha:signal_alpha_password@localhost:5432/signal_alpha
         """
+        self.database_url = database_url   # run() 에서 get_target_companies() 호출에 사용
         self.engine = create_engine(database_url, echo=False, future=True)
         self.SessionLocal = sessionmaker(
             autocommit=False,
@@ -139,8 +121,13 @@ class BaseCollector(ABC):
 
     # ── 하위 클래스가 구현 ────────────────────────────────────────────────────
     @abstractmethod
-    def collect(self) -> list:
-        """원본 데이터 수집 (Mock: JSON 읽기 / Web: 크롤링)."""
+    def collect(self, target_companies: list[str]) -> list:
+        """원본 데이터 수집 (Mock: JSON 읽기 / Web: 크롤링).
+
+        Args:
+            target_companies: run()이 DB에서 조회해서 주입하는 수집 대상 기업 목록.
+                              하위 클래스는 이 리스트만 순회하면 된다.
+        """
 
     @abstractmethod
     def parse(self, raw_data) -> dict:
@@ -172,15 +159,18 @@ class BaseCollector(ABC):
         month = datetime.datetime.now(_KST).month
         return f"Q{(month - 1) // 3 + 1}"
 
-    # ── stocks 매칭 / 자동 등록 ─────────────────────────────────────────────────
+    # ── stocks 매칭 ──────────────────────────────────────────────────────────────
     def _resolve_stock(self, db, raw_company_name: str) -> tuple[int, str] | None:
         """
         기업명 → (stock_id, sector).
 
-        매칭 우선순위
+        매칭 우선순위:
           1) 정규화된 이름으로 정확/부분 일치 (ORDER BY CASE: 정확>부분, 짧은 이름 우선)
-          2) COMPANY_STOCK_MAP 폴백 → stocks 자동 INSERT
-          3) 둘 다 실패 → None (호출부에서 _SkipRecord)
+          2) 일치 없음 → None 반환 (호출부에서 _SkipRecord)
+
+        미등록 기업은 스킵한다. DB가 Single Source of Truth:
+          초기 데이터 → database/migrations/016_seed_stocks_targets.sql
+          기업 추가   → INSERT INTO stocks ...
         """
         clean = self._clean_company_name(raw_company_name)
 
@@ -200,35 +190,21 @@ class BaseCollector(ABC):
         if row:
             return int(row[0]), row[1]
 
-        # 폴백: 매핑 테이블로 자동 등록
-        if clean not in COMPANY_STOCK_MAP:
-            return None
-
-        ticker, market, sector = COMPANY_STOCK_MAP[clean]
-        row = db.execute(
-            text("""
-                INSERT INTO stocks (ticker, name, market, sector)
-                VALUES (:ticker, :name, :market, :sector)
-                ON CONFLICT (ticker) DO UPDATE
-                    SET name = EXCLUDED.name, sector = EXCLUDED.sector
-                RETURNING id, COALESCE(sector, '')
-            """),
-            {"ticker": ticker, "name": clean, "market": market, "sector": sector},
-        ).fetchone()
-        logger.info("📋 stocks 자동 등록: %s (%s / %s)", clean, ticker, market)
-        return int(row[0]), row[1]
+        logger.warning("⚠️  DB stocks 에 미등록 기업 → 스킵: %s", clean)
+        return None
 
     # ── collector_runs 라이프사이클 ─────────────────────────────────────────────
     def _create_collector_run(self, db) -> int:
-        """collector_runs INSERT → id. collector_type='HIRING', run_mode='manual'."""
+        """collector_runs INSERT → id."""
         run_id = db.execute(
             text("""
                 INSERT INTO collector_runs (collector_type, run_mode, status, started_at)
-                VALUES ('HIRING', 'manual', 'running', NOW())
+                VALUES (:ctype, 'manual', 'running', NOW())
                 RETURNING id
-            """)
+            """),
+            {"ctype": self.SOURCE_TYPE},
         ).scalar_one()
-        logger.info("🏃 collector_run 생성: id=%s", run_id)
+        logger.info("🏃 collector_run 생성: id=%s (type=%s)", run_id, self.SOURCE_TYPE)
         return int(run_id)
 
     def _finish_collector_run(
@@ -261,7 +237,6 @@ class BaseCollector(ABC):
         # 1) stock 매칭
         resolved = self._resolve_stock(db, data["company_name"])
         if resolved is None:
-            logger.warning("⚠️  미등록 기업 스킵: %s", data["company_name"])
             raise _SkipRecord
         stock_id, sector = resolved
 
@@ -304,9 +279,9 @@ class BaseCollector(ABC):
                     published_at, collect_status, collector_ver
                 )
                 VALUES (
-                    :stock_id, :run_id, 'HIRING', :source_name,
+                    :stock_id, :run_id, :stype, :source_name,
                     :external_id, :source_hash, :title, :source_url,
-                    :published_at, 'success', '1.0'
+                    :published_at, 'success', :ver
                 )
                 ON CONFLICT (source_type, external_id) DO NOTHING
                 RETURNING id
@@ -314,12 +289,14 @@ class BaseCollector(ABC):
             {
                 "stock_id": stock_id,
                 "run_id": run_id,
+                "stype": self.SOURCE_TYPE,
                 "source_name": self._clean_company_name(data["company_name"])[:100],
                 "external_id": job_link[:200],
                 "source_hash": self._source_hash(seed),
                 "title": data["job_title"],
                 "source_url": job_link,
                 "published_at": posting_date,
+                "ver": self.COLLECTOR_VER,
             },
         ).scalar()
 
@@ -421,9 +398,23 @@ class BaseCollector(ABC):
 
     # ── 실행 흐름 ──────────────────────────────────────────────────────────────
     def run(self) -> int:
-        """collect → parse → insert_to_db."""
-        logger.info("🔄 데이터 수집 시작...")
-        raw = self.collect()
+        """
+        아키텍처 완성: DB에서 수집 대상을 동적으로 조회해 수집 프로세스에 주입.
+
+          1. get_target_companies() → DB is_target=TRUE 기업 목록
+          2. collect(target_companies) → 하위 크롤러에 리스트 전달
+          3. parse() → 표준 포맷 변환
+          4. insert_to_db() → DB 적재
+        """
+        logger.info("🔄 데이터 수집 파이프라인 가동...")
+
+        target_companies = get_target_companies(self.database_url)
+        if not target_companies:
+            logger.error("❌ 수집 대상 기업이 없어 파이프라인을 종료합니다. "
+                         "016_seed_stocks_targets.sql 과 015_stocks_is_target.sql 을 실행하세요.")
+            return 0
+
+        raw = self.collect(target_companies)
         logger.info("📊 %d건 파싱 중...", len(raw))
         parsed = [self.parse(item) for item in raw]
         logger.info("💾 DB 적재 중...")
