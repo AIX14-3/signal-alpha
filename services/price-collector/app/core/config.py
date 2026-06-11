@@ -3,24 +3,32 @@ from os import getenv
 
 
 class Settings:
-    """Runtime configuration sourced from environment variables.
-
-    ``DATABASE_URL`` follows the repo-wide convention used by the other
-    services and points at the shared PostgreSQL instance the collector
-    loads ``ohlcv_data`` into.
-    """
-
     def __init__(self) -> None:
         self.service_name = getenv("SERVICE_NAME", "price-collector")
-        self.version = getenv("SERVICE_VERSION", "0.1.0")
-        self.database_url = getenv("DATABASE_URL", "")
-        # Kiwoom limits TR requests to 5/sec and 100/min; 0.2s keeps us under.
-        self.tr_delay_sec = float(getenv("KIWOOM_TR_DELAY_SEC", "0.2"))
-        self.tr_max_per_minute = int(getenv("KIWOOM_TR_MAX_PER_MINUTE", "100"))
-        # How many trailing trade days of daily candles to keep in sync.
-        self.lookback_days = int(getenv("PRICE_LOOKBACK_DAYS", "120"))
-        # 수정주가구분=1 reflects splits / bonus issues (spec constraint 4).
-        self.use_adjusted_price = getenv("PRICE_USE_ADJUSTED", "1") != "0"
+        self.version = getenv("SERVICE_VERSION", "0.2.0")
+        self.database_url = getenv("DATABASE_URL")
+
+        # Kiwoom REST API (App Key/Secret + OAuth). Works on Linux/Docker —
+        # no Windows COM dependency. Mock domain by default because the
+        # currently issued key is a paper-trading key (expires 2026-09-06).
+        # Switch to https://api.kiwoom.com once a production key is issued.
+        self.kiwoom_app_key = getenv("KIWOOM_APP_KEY", "")
+        self.kiwoom_app_secret = getenv("KIWOOM_APP_SECRET", "")
+        self.kiwoom_api_base = getenv("KIWOOM_API_BASE", "https://mockapi.kiwoom.com").rstrip("/")
+        self.kiwoom_timeout_seconds = float(getenv("KIWOOM_TIMEOUT_SECONDS", "10"))
+        # Kiwoom enforces request-rate limits; keep a minimum gap between calls.
+        self.kiwoom_min_request_interval_sec = float(
+            getenv("KIWOOM_MIN_REQUEST_INTERVAL_SEC", "0.25")
+        )
+
+        # Intraday polling cadence (seconds between full target sweeps).
+        self.poll_interval_sec = float(getenv("PRICE_POLL_INTERVAL_SEC", "60"))
+        # Wait this long after market close before fetching confirmed
+        # investor-flow figures (they settle after the session ends).
+        self.flow_delay_after_close_min = int(getenv("PRICE_FLOW_DELAY_AFTER_CLOSE_MIN", "30"))
+
+        self.market_open = getenv("MARKET_OPEN", "09:00")
+        self.market_close = getenv("MARKET_CLOSE", "15:30")
 
 
 @lru_cache

@@ -1,80 +1,94 @@
-import unittest
+import asyncio
+from datetime import date, datetime
 
-from app.core.constants import (
-    TR_DAILY_CHART,
-    TR_INVESTOR_FLOW,
-    TR_STOCK_BASIC
-)
-from app.pipeline import PriceCollectionPipeline
-from tests.fakes import FakeKiwoomClient, FakeOhlcvRepository
+from app.core.market_hours import KST
+from app.pipeline import run_investor_flow_update, run_snapshot_cycle
+from app.schemas.snapshot import TargetStock
+from tests.fakes import FakeRepository, FakeRestClient, ka10001_payload, ka10059_payload
 
-
-def _client() -> FakeKiwoomClient:
-    return FakeKiwoomClient(
-        {
-            TR_DAILY_CHART: [
-                {
-                    "일자": "20260608",
-                    "시가": "59000",
-                    "고가": "59900",
-                    "저가": "58000",
-                    "현재가": "58900",
-                    "거래량": "12345"
-                }
-            ],
-            TR_INVESTOR_FLOW: [
-                {
-                    "일자": "20260608",
-                    "개인투자자": "100",
-                    "외국인투자자": "-200",
-                    "기관계": "300"
-                }
-            ],
-            TR_STOCK_BASIC: [{"현재가": "58900", "시가총액": "3515000"}]
-        }
-    )
+CAPTURED_AT = datetime(2026, 6, 11, 10, 30, tzinfo=KST)
+TARGETS = [
+    TargetStock(stock_id=1, ticker="005930", name="삼성전자"),
+    TargetStock(stock_id=2, ticker="000660", name="SK하이닉스"),
+]
 
 
-class PipelineTest(unittest.TestCase):
-    def test_run_upserts_rows_and_records_run(self) -> None:
-        repo = FakeOhlcvRepository({"005930": 1})
-        pipeline = PriceCollectionPipeline(_client(), repo)
+def test_snapshot_cycle_stores_all_targets():
+    client = FakeRestClient()
+    client.payloads[("ka10001", "005930")] = ka10001_payload()
+    client.payloads[("ka10001", "000660")] = ka10001_payload(stk_cd="000660", cur_prc="+201000")
+    repo = FakeRepository(TARGETS)
 
-        batch = pipeline.run(["005930"])
+    stats = asyncio.run(run_snapshot_cycle(client, repo, TARGETS, CAPTURED_AT))
 
-        self.assertEqual(batch.status, "success")
-        self.assertEqual(batch.inserted_count, 1)
-        row = repo.upserts[1][0]
-        self.assertEqual(row.foreign_net, -200)
-        self.assertEqual(row.market_cap, 3515000)
-        self.assertEqual(repo.finished[0]["status"], "success")
-        self.assertEqual(repo.finished[0]["inserted_count"], 1)
-
-    def test_unknown_ticker_is_skipped_not_failed(self) -> None:
-        repo = FakeOhlcvRepository({})  # ticker not seeded
-        pipeline = PriceCollectionPipeline(_client(), repo)
-
-        batch = pipeline.run(["999999"])
-
-        self.assertEqual(batch.status, "success")
-        self.assertEqual(batch.failed_count, 0)
-        self.assertEqual(batch.results[0].status, "skipped")
-
-    def test_collector_error_marks_ticker_failed(self) -> None:
-        class BoomClient(FakeKiwoomClient):
-            def request(self, tr_code, output, **inputs):
-                raise RuntimeError("TR rejected")
-
-        repo = FakeOhlcvRepository({"005930": 1})
-        pipeline = PriceCollectionPipeline(BoomClient({}), repo)
-
-        batch = pipeline.run(["005930"])
-
-        self.assertEqual(batch.status, "failed")
-        self.assertEqual(batch.failed_count, 1)
-        self.assertEqual(repo.finished[0]["status"], "failed")
-        self.assertIn("TR rejected", repo.finished[0]["error_message"])
+    assert stats.collected == 2
+    assert stats.stored == 2
+    assert stats.failed == 0
+    assert len(repo.snapshots) == 2
+    assert len(repo.ohlcv_upserts) == 2
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_snapshot_cycle_one_failure_does_not_stop_sweep():
+    client = FakeRestClient()
+    client.payloads[("ka10001", "005930")] = ka10001_payload()
+    client.errors[("ka10001", "000660")] = RuntimeError("rate limited")
+    repo = FakeRepository(TARGETS)
+
+    stats = asyncio.run(run_snapshot_cycle(client, repo, TARGETS, CAPTURED_AT))
+
+    assert stats.stored == 1
+    assert stats.failed == 1
+    assert "000660" in stats.errors[0]
+    assert len(repo.snapshots) == 1
+
+
+def test_snapshot_cycle_partial_ohlc_counts_skip():
+    client = FakeRestClient()
+    client.payloads[("ka10001", "005930")] = ka10001_payload(open_pric="")
+    targets = TARGETS[:1]
+    repo = FakeRepository(targets)
+
+    stats = asyncio.run(run_snapshot_cycle(client, repo, targets, CAPTURED_AT))
+
+    assert stats.stored == 1  # snapshot row still stored
+    assert stats.skipped == 1  # ohlcv upsert skipped
+    assert len(repo.ohlcv_upserts) == 0
+
+
+def test_investor_flow_update_attaches_to_existing_rows():
+    client = FakeRestClient()
+    client.payloads[("ka10001", "005930")] = ka10001_payload()
+    client.payloads[("ka10059", "005930")] = ka10059_payload()
+    targets = TARGETS[:1]
+    repo = FakeRepository(targets)
+
+    # First create today's ohlcv row via a snapshot cycle, then attach flows.
+    asyncio.run(run_snapshot_cycle(client, repo, targets, CAPTURED_AT))
+    stats = asyncio.run(run_investor_flow_update(client, repo, targets, date(2026, 6, 11)))
+
+    assert stats.stored == 1
+    assert repo.flow_updates[0][1].foreign_net == 95000
+
+
+def test_investor_flow_update_skips_when_no_ohlcv_row():
+    client = FakeRestClient()
+    client.payloads[("ka10059", "005930")] = ka10059_payload()
+    targets = TARGETS[:1]
+    repo = FakeRepository(targets)
+
+    stats = asyncio.run(run_investor_flow_update(client, repo, targets, date(2026, 6, 11)))
+
+    assert stats.stored == 0
+    assert stats.skipped == 1
+
+
+def test_investor_flow_update_skips_when_date_missing():
+    client = FakeRestClient()
+    client.payloads[("ka10059", "005930")] = ka10059_payload(rows=[])
+    targets = TARGETS[:1]
+    repo = FakeRepository(targets)
+
+    stats = asyncio.run(run_investor_flow_update(client, repo, targets, date(2026, 6, 11)))
+
+    assert stats.stored == 0
+    assert stats.skipped == 1

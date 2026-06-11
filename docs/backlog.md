@@ -34,7 +34,11 @@
 ## 2. Epic Backlog
 
 > 각 Epic 아래 `🔗 GitHub 이슈` 줄은 해당 작업의 GitHub 이슈 연결점입니다. 이슈 본문에도 이 파일(`docs/backlog.md`)의 Epic 섹션이 링크되어 양방향으로 추적됩니다.
-> 별도 트랙: C-4/C-4-1 price-collector(키움 주가·수급/업종 지수)는 #16 · #27 (모두 완료).
+> 별도 트랙: C-4/C-4-1 price-collector — OpenAPI+(Windows 전용) 구현(#16 · #27, PR #26 · #32)은
+> 도커 리눅스 실행 불가로 **revert**되었고, 키움 REST API 실시간 폴링 수집기로 재구현됨
+> (`services/price-collector`, `docs/kiwoom-rest-spec.md` 참고). 120일 과거 백필은 후속 작업.
+> 참고: price 트랙 수집기는 `raw_evidence`가 아니라 시세 전용 테이블(`price_snapshots`,
+> `ohlcv_data`)에 직접 적재하는 예외 트랙이다 (수치 시계열은 evidence 모델과 맞지 않음).
 
 ### E0. 레포 실행 골격 만들기
 

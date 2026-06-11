@@ -143,7 +143,7 @@ Get-ChildItem .\seeds\*.sql | Sort-Object Name | ForEach-Object {
 | Hiring Collector | `collector_runs` -> `raw_documents` -> `hiring_raw_details` -> `processing_queue` |
 | Patent Collector | `collector_runs` -> `raw_documents` -> `patent_raw_details` -> `processing_queue` |
 | DataLab Collector | `collector_runs` -> `raw_documents` -> `datalab_raw_details` -> `processing_queue` |
-| Price Collector | `ohlcv_data` |
+| Price Collector | `collector_runs` -> `price_snapshots` + `ohlcv_data` (시세 전용 테이블 — `raw_documents`/`processing_queue` 미사용) |
 
 Collector는 LLM을 호출하지 않습니다. 원본 데이터 저장, 중복 방지용 `source_hash` 생성, detail 저장, 처리 큐 등록까지만 담당합니다.
 

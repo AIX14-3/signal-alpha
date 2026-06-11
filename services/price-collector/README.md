@@ -1,96 +1,68 @@
-# Price Collector (C-4)
+# Price Collector (Kiwoom REST · 실시간 폴링)
 
-키움증권 OpenAPI+ 기반 **주가 · 수급 데이터 수집기**. MVP 종목의 일봉 OHLCV와
-투자자별 순매수, 기본 정보를 수집해 공유 PostgreSQL의 `ohlcv_data` 테이블에
-적재한다. (이슈 [C-4])
+키움증권 **REST API**(App Key/Secret + OAuth)로 타깃 종목의 주가 스냅샷을
+장중에 주기적으로 수집해 PostgreSQL에 적재하는 수집기입니다.
+COM/DLL 의존성이 없어 **리눅스·Docker에서 실행됩니다.**
+(이전 OpenAPI+/pykiwoom 배치 수집기는 PR #26·#32·#33·#52 revert로 제거)
 
-## 책임 범위
-
-- 수집 대상 TR
-  - `OPT10081` 주식 일봉 차트 → OHLCV
-  - `OPT10059` 종목별 투자자 매매동향 → 외국인/기관 순매수
-  - `OPT10001` 주식 기본 정보 → 시가총액 등 스냅샷
-- 적재 테이블: `ohlcv_data` (실행 추적은 `collector_runs`, `collector_type='PRICE'`)
-- 수집기는 **LLM을 호출하지 않으며**, 방향/점수/요약 등 분석 필드를 만들지 않는다.
-  정규화된 수치만 저장한다.
-
-## 실행 환경 (중요)
-
-키움 OpenAPI+는 **Windows COM(DLL) 전용**이라 리눅스(AWS EC2)에서 직접 실행할 수
-없다. 따라서 이 서비스는 **별도 Windows 머신**에서 실행해 PostgreSQL에 적재하고,
-`agent-worker` 등 분석 측은 DB 조회만 수행한다. (스펙 제약 1)
-
-> **이 수집기는 HTTP 엔드포인트가 없다.** FastAPI 서비스가 아니라 **배치 CLI**이며,
-> 호출 대상 주소가 아니라 작업 스케줄러/수동으로 실행하는 프로그램이다. 결과는
-> 응답이 아니라 PostgreSQL에 적재되고, 분석 측은 그 DB를 읽는다.
+## 동작 방식
 
 ```text
-┌──────────────────────── Windows 머신 ────────────────────────┐
-│  키움 OpenAPI+ (COM/DLL, 로그인 세션 필요)                    │
-│        │  pykiwoom block_request (OPT10081/10059/10001,       │
-│        │                            OPT20006/20004)           │
-│        ▼                                                      │
-│  price-collector (배치 CLI · 엔드포인트 없음)                 │
-│     python -m app.main          ← 종목 주가/수급             │
-│     python -m app.sector_main   ← 업종 지수                  │
-│     · Windows 작업 스케줄러로 장 마감 후 자동 실행            │
-└────────┬─────────────────────────────────────────────────────┘
-         │  psycopg (DATABASE_URL) · 쓰기 전용
-         ▼
-┌──────────────────────── EC2 / 관리형 ────────────────────────┐
-│  PostgreSQL : ohlcv_data · sector_ohlcv · collector_runs     │
-│        ▲                                                      │
-│        │  DB 조회만 (수집기를 직접 호출하지 않음)             │
-│  agent-worker(:8011) · main-server(:8000) · web(:3000)       │
-└──────────────────────────────────────────────────────────────┘
+stocks (is_target = TRUE)            ← 수집 대상은 DB 스위치로 결정 (하드코딩 없음)
+        │
+        ▼
+폴링 루프 (장중 09:00~15:30 KST, 기본 60초 간격)
+        │  ka10001 주식기본정보 (현재가·OHLC·거래량·시총·PER/PBR/EPS/BPS/ROE/ROA)
+        ▼
+price_snapshots  ← 장중 시점별 스냅샷 (stock_id, captured_at 유니크)
+ohlcv_data       ← 당일 행 UPSERT (close = 현재가, 수급 컬럼은 보존)
+        │
+        ▼
+장 마감 +30분: ka10059 투자자 순매수 확정치 → ohlcv_data.foreign_net/institution_net
+collector_runs   ← 세션 단위 실행 로그 (collector_type = 'PRICE')
 ```
 
-- TR 요청 제한: 초당 5회 / 분당 100회 → `RateLimiter`가 기본 0.2초 간격 + 분당
-  상한을 강제한다. (제약 2)
-- 차트 조회는 `수정주가구분=1`로 무상증자·액면분할을 반영한다. (제약 4)
-- 실시간 값은 평일 09:00~15:30에만 유효하므로 배치는 장 마감 후 실행을 권장한다.
+- 한 종목 실패가 전체 사이클을 멈추지 않습니다 (실패 카운트만 기록).
+- 레이트리밋: 호출 간 최소 간격 가드 (`KIWOOM_MIN_REQUEST_INTERVAL_SEC`, 기본 0.25초).
+- 휴장일(공휴일)은 별도 처리하지 않습니다 — 주말/장시간 게이트만 적용.
 
-## 설치 & 실행
+## 실행
 
-```bash
-# 코어 의존성 (psycopg)
-pip install -e .
+```powershell
+# 테스트
+cd services/price-collector
+uv run pytest
 
-# Windows 수집 머신에서 키움 연동 의존성 추가
-pip install -e ".[kiwoom]"
+# 단발 실행 (장시간 무관, 연결/필드 매핑 검증용)
+uv run python -m app.main --once
 
-# 키움 로그인 세션이 있는 상태에서 실행
-python -m app.main --all                                  # MVP 전체
-python -m app.main --tickers 005930 000660 --base-date 20260608
+# 수급 확정치만 1회 갱신
+uv run python -m app.main --flows
+
+# 데몬 (도커 기본 커맨드)
+uv run python -m app.main
 ```
 
-환경 변수는 레포 루트 `.env.example`을 따른다. 핵심은 `DATABASE_URL`이며,
-선택값으로 `KIWOOM_TR_DELAY_SEC`, `KIWOOM_TR_MAX_PER_MINUTE`,
-`PRICE_LOOKBACK_DAYS`, `PRICE_USE_ADJUSTED`가 있다.
+Docker Compose에서는 `price-collector` 서비스로 함께 올라갑니다.
 
-## 테스트
+## 환경 변수
 
-키움/DB 없이 fake로 파싱·병합·파이프라인을 검증한다.
+| 변수 | 기본값 | 설명 |
+| --- | --- | --- |
+| `KIWOOM_APP_KEY` / `KIWOOM_APP_SECRET` | — | REST API 앱 키/시크릿 (필수) |
+| `KIWOOM_API_BASE` | `https://mockapi.kiwoom.com` | 모의투자 도메인. 실전 키 발급 후 `https://api.kiwoom.com` |
+| `PRICE_POLL_INTERVAL_SEC` | `60` | 장중 폴링 간격 (초) |
+| `PRICE_FLOW_DELAY_AFTER_CLOSE_MIN` | `30` | 장 마감 후 수급 확정치 조회까지 대기 (분) |
+| `KIWOOM_MIN_REQUEST_INTERVAL_SEC` | `0.25` | 호출 간 최소 간격 |
+| `DATABASE_URL` | — | 공유 PostgreSQL (필수) |
 
-```bash
-python -m unittest discover -s tests
-```
+## 주의
 
-## 구조
-
-```
-app/
-  core/        설정 + TR 코드/ MVP 종목·업종 코드 상수
-  kiwoom/      KiwoomClient 추상화 + pykiwoom 구현 + 값 파싱
-  collectors/  TR별 수집기 (일봉 / 투자자 / 기본정보)
-  schemas/     정규화 dataclass + ohlcv_data 행 병합
-  storage/     OhlcvRepository (PostgreSQL upsert + collector_runs)
-  pipeline.py  종목 루프 + 실행 추적 오케스트레이션
-  main.py      배치 CLI 엔트리포인트
-```
-
-## 미적재 데이터
-
-매출/영업이익 등 재무 원본은 키움이 제공하지 않으므로 DART 수집기(별도 이슈)에서
-보완한다. (스펙 4) 업종 차트(`OPT20004/20006`) 상수는 정의해 두었으며 업종 상대강도
-지표용 수집은 후속 작업으로 둔다.
+1. **현재 발급 키는 모의투자용** (만료 2026-09-06). 모의 도메인은 시세 범위가
+   제한될 수 있으므로 실데이터 적재 시 실전투자용 키 발급이 필요합니다.
+2. ka10001/ka10059 응답 필드명은 키움 REST 문서 기준으로 매핑했으며
+   (`app/collectors/*.py`의 `*_FIELDS` 상수), 모의 도메인 실호출로 검증 후
+   필요 시 상수만 수정하면 됩니다. 검증: `uv run python -m app.main --once`
+3. 120일 과거 일봉 백필(ka10081)·주/월/년봉·업종 지수는 **후속 작업**입니다.
+   PRICE 분석기는 21영업일 이상 누적돼야 점수를 산출하므로, 백필 전까지는
+   `insufficient_history` 상태가 정상입니다.

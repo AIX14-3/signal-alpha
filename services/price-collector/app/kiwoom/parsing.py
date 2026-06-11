@@ -1,75 +1,54 @@
-"""Helpers for turning raw Kiwoom TR string fields into typed values.
+"""Numeric parsing helpers for Kiwoom REST responses.
 
-Kiwoom returns every field as a string, often with thousands separators,
-padding spaces, and a leading ``+``/``-`` sign that encodes the direction of
-change rather than a true negative magnitude (e.g. prices). The helpers below
-normalize those quirks.
+Kiwoom returns numbers as strings, often with a leading +/- that encodes the
+direction versus the previous close (e.g. "+74300", "-1.21") and sometimes
+with thousands separators. Price/size fields want the magnitude; net-buy
+fields keep their sign.
 """
 
-from datetime import date, datetime
+from __future__ import annotations
+
+from decimal import Decimal, InvalidOperation
 
 
-def _clean(raw: object) -> str:
-    if raw is None:
-        return ""
-    return str(raw).strip().replace(",", "").replace(" ", "")
+def _clean(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip().replace(",", "")
+    if not text or text in {"-", "+"}:
+        return None
+    return text
 
 
-def parse_int(raw: object, default: int = 0) -> int:
-    """Parse a signed integer, preserving sign (used for net-flow values)."""
-    text = _clean(raw)
-    if text in ("", "+", "-"):
-        return default
+def parse_price(value: object) -> Decimal | None:
+    """Magnitude of a price-like field; the +/- prefix is direction, not sign."""
+    text = _clean(value)
+    if text is None:
+        return None
     try:
-        return int(float(text))
-    except ValueError:
-        return default
+        return abs(Decimal(text))
+    except InvalidOperation:
+        return None
 
 
-def parse_price(raw: object, default: int = 0) -> int:
-    """Parse a price magnitude.
-
-    Kiwoom prefixes chart prices with a sign showing the move vs. the previous
-    close; the magnitude is the real price, so we drop the sign.
-    """
-    return abs(parse_int(raw, default))
-
-
-def parse_decimal(raw: object, default: float | None = None) -> float | None:
-    """Parse a ratio/percentage field (PER, ROE, 등락률 …)."""
-    text = _clean(raw)
-    if text in ("", "+", "-"):
-        return default
+def parse_decimal(value: object) -> Decimal | None:
+    """Signed decimal (e.g. change_pct, ROE)."""
+    text = _clean(value)
+    if text is None:
+        return None
     try:
-        return float(text)
-    except ValueError:
-        return default
+        return Decimal(text)
+    except InvalidOperation:
+        return None
 
 
-def parse_points(raw: object, default: float = 0.0) -> float:
-    """Parse an index level magnitude (업종지수, pt) dropping the direction sign."""
-    value = parse_decimal(raw, None)
-    return abs(value) if value is not None else default
+def parse_int(value: object) -> int | None:
+    """Magnitude of a count-like field (volume, market cap)."""
+    parsed = parse_price(value)
+    return int(parsed) if parsed is not None else None
 
 
-def parse_date(raw: object, default: date | None = None) -> date | None:
-    """Parse a ``YYYYMMDD`` trade date."""
-    text = _clean(raw)
-    if len(text) < 8:
-        return default
-    try:
-        return datetime.strptime(text[:8], "%Y%m%d").date()
-    except ValueError:
-        return default
-
-
-def field(record: dict[str, str], *candidates: str) -> str:
-    """Return the first present field value among the candidate column names.
-
-    Kiwoom column labels vary slightly across SDK versions (e.g. 상장주수 vs
-    상장주식수), so collectors pass every known alias.
-    """
-    for name in candidates:
-        if name in record and _clean(record[name]) != "":
-            return record[name]
-    return ""
+def parse_signed_int(value: object) -> int | None:
+    """Signed integer (net buy quantities keep their sign)."""
+    parsed = parse_decimal(value)
+    return int(parsed) if parsed is not None else None

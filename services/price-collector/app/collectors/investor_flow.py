@@ -1,45 +1,60 @@
-from datetime import datetime
+"""ka10059 종목별투자자기관별 — daily confirmed investor net-buy collector.
 
-from app.core.constants import OUTPUT_INVESTOR_FLOW, TR_INVESTOR_FLOW
-from app.kiwoom.client import KiwoomClient
-from app.kiwoom.parsing import field, parse_date, parse_decimal, parse_int
-from app.schemas.price import InvestorFlow
+Run once after market close; intraday investor figures are not final.
+"""
+
+from __future__ import annotations
+
+from datetime import date, datetime
+
+from app.kiwoom.parsing import parse_signed_int
+from app.kiwoom.rest_client import KiwoomRestClient
+from app.schemas.snapshot import InvestorFlow
+
+API_ID = "ka10059"
+
+ROWS_KEY = "stk_invsr_orgn"  # response list of per-date rows
+KA10059_FIELDS = {
+    "trade_date": "dt",  # YYYYMMDD
+    "individual_net": "ind_invsr",  # 개인투자자 순매수 (주)
+    "foreign_net": "frgnr_invsr",  # 외국인투자자 순매수 (주)
+    "institution_net": "orgn",  # 기관계 순매수 (주)
+}
 
 
-class InvestorFlowCollector:
-    """OPT10059 · 종목별 투자자 매매동향 → list[InvestorFlow]."""
+async def fetch_investor_flows(
+    client: KiwoomRestClient, ticker: str, base_date: date
+) -> list[InvestorFlow]:
+    payload = await client.request(
+        API_ID,
+        {
+            "dt": base_date.strftime("%Y%m%d"),
+            "stk_cd": ticker,
+            "amt_qty_tp": "1",  # 1: 수량
+            "trde_tp": "0",  # 0: 순매수
+            "unit_tp": "1",
+        },
+    )
 
-    tr_code = TR_INVESTOR_FLOW
-    output = OUTPUT_INVESTOR_FLOW
-
-    def __init__(self, client: KiwoomClient) -> None:
-        self._client = client
-
-    def collect(self, ticker: str, base_date: str | None = None) -> list[InvestorFlow]:
-        base = base_date or datetime.now().strftime("%Y%m%d")
-        records = self._client.request(
-            self.tr_code,
-            self.output,
-            일자=base,
-            종목코드=ticker,
-            금액수량구분="1",  # 1: 수량
-            매매구분="0",      # 0: 순매수
-            단위구분="1",
-            next="0"
+    flows: list[InvestorFlow] = []
+    for row in payload.get(ROWS_KEY) or []:
+        raw_date = str(row.get(KA10059_FIELDS["trade_date"], "")).strip()
+        if len(raw_date) != 8:
+            continue
+        flows.append(
+            InvestorFlow(
+                ticker=ticker,
+                trade_date=datetime.strptime(raw_date, "%Y%m%d").date(),
+                individual_net=parse_signed_int(row.get(KA10059_FIELDS["individual_net"])),
+                foreign_net=parse_signed_int(row.get(KA10059_FIELDS["foreign_net"])),
+                institution_net=parse_signed_int(row.get(KA10059_FIELDS["institution_net"])),
+            )
         )
-        flows = [self._to_flow(record) for record in records]
-        return [flow for flow in flows if flow is not None]
+    return flows
 
-    @staticmethod
-    def _to_flow(record: dict[str, str]) -> InvestorFlow | None:
-        trade_date = parse_date(field(record, "일자"))
-        if trade_date is None:
-            return None
-        return InvestorFlow(
-            trade_date=trade_date,
-            individual_net=parse_int(field(record, "개인투자자", "개인")),
-            foreign_net=parse_int(field(record, "외국인투자자", "외국인")),
-            institution_net=parse_int(field(record, "기관계", "기관")),
-            foreign_holding=parse_int(field(record, "외국인보유량")) or None,
-            foreign_holding_pct=parse_decimal(field(record, "외국인보유율"))
-        )
+
+def pick_flow_for_date(flows: list[InvestorFlow], trade_date: date) -> InvestorFlow | None:
+    for flow in flows:
+        if flow.trade_date == trade_date:
+            return flow
+    return None

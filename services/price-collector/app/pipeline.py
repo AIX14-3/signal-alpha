@@ -1,109 +1,88 @@
-"""Batch orchestration for the C-4 Price Collector.
-
-For each ticker the pipeline collects daily candles (OPT10081), investor flow
-(OPT10059), and the basic snapshot (OPT10001), merges them into ``ohlcv_data``
-rows, and upserts them. Each batch is bracketed by a ``collector_runs`` record.
+"""Polling pipeline: read target stocks from the DB, poll Kiwoom REST,
+persist snapshots. One failing stock never aborts the sweep.
 """
 
+from __future__ import annotations
+
+import logging
 from dataclasses import dataclass, field
+from datetime import date, datetime
 
-from app.collectors.daily_chart import DailyChartCollector
-from app.collectors.investor_flow import InvestorFlowCollector
-from app.collectors.stock_basic import StockBasicCollector
-from app.kiwoom.client import KiwoomClient
-from app.schemas.price import build_ohlcv_rows
-from app.storage.repository import OhlcvRepository
+from app.collectors.investor_flow import fetch_investor_flows, pick_flow_for_date
+from app.collectors.stock_snapshot import fetch_stock_snapshot
+from app.kiwoom.rest_client import KiwoomRestClient
+from app.schemas.snapshot import TargetStock
+from app.storage.repository import PriceSnapshotRepository
 
-
-@dataclass(frozen=True)
-class TickerResult:
-    ticker: str
-    status: str  # "ok" | "skipped" | "failed"
-    candle_count: int = 0
-    written_count: int = 0
-    error: str | None = None
+logger = logging.getLogger(__name__)
 
 
 @dataclass
-class BatchResult:
-    status: str = "success"
-    collected_count: int = 0
-    inserted_count: int = 0
-    failed_count: int = 0
-    results: list[TickerResult] = field(default_factory=list)
+class CycleStats:
+    collected: int = 0
+    stored: int = 0
+    skipped: int = 0
+    failed: int = 0
+    errors: list[str] = field(default_factory=list)
+
+    def merge(self, other: "CycleStats") -> None:
+        self.collected += other.collected
+        self.stored += other.stored
+        self.skipped += other.skipped
+        self.failed += other.failed
+        self.errors.extend(other.errors)
 
 
-class PriceCollectionPipeline:
-    def __init__(
-        self,
-        client: KiwoomClient,
-        repository: OhlcvRepository,
-        use_adjusted_price: bool = True
-    ) -> None:
-        self._repository = repository
-        self._daily = DailyChartCollector(client, use_adjusted_price)
-        self._flow = InvestorFlowCollector(client)
-        self._basic = StockBasicCollector(client)
-
-    def run(
-        self,
-        tickers: list[str],
-        base_date: str | None = None,
-        run_mode: str = "batch"
-    ) -> BatchResult:
-        run_id = self._repository.start_run(run_mode)
-        batch = BatchResult()
-        for ticker in tickers:
-            result = self._run_ticker(ticker, base_date)
-            batch.results.append(result)
-            batch.collected_count += result.candle_count
-            batch.inserted_count += result.written_count
-            if result.status == "failed":
-                batch.failed_count += 1
-
-        if batch.failed_count == len(tickers) and tickers:
-            batch.status = "failed"
-        elif batch.failed_count:
-            batch.status = "partial"
-
-        errors = [r.error for r in batch.results if r.error]
-        self._repository.finish_run(
-            run_id=run_id,
-            status=batch.status,
-            collected_count=batch.collected_count,
-            inserted_count=batch.inserted_count,
-            failed_count=batch.failed_count,
-            error_message="; ".join(errors) if errors else None
-        )
-        return batch
-
-    def _run_ticker(self, ticker: str, base_date: str | None) -> TickerResult:
+async def run_snapshot_cycle(
+    client: KiwoomRestClient,
+    repository: PriceSnapshotRepository,
+    targets: list[TargetStock],
+    captured_at: datetime,
+) -> CycleStats:
+    stats = CycleStats()
+    for target in targets:
         try:
-            stock_id = self._repository.resolve_stock_id(ticker)
-            if stock_id is None:
-                return TickerResult(
-                    ticker=ticker,
-                    status="skipped",
-                    error=f"unknown ticker {ticker}"
+            snapshot = await fetch_stock_snapshot(client, target.ticker, captured_at)
+            stats.collected += 1
+            await repository.insert_snapshot(target.stock_id, snapshot)
+            stats.stored += 1
+            if not await repository.upsert_intraday_ohlcv(target.stock_id, snapshot):
+                stats.skipped += 1
+                logger.info("%s: partial OHLC, ohlcv_data upsert skipped", target.ticker)
+        except Exception as exc:  # noqa: BLE001 - one stock must not stop the sweep
+            stats.failed += 1
+            stats.errors.append(f"{target.ticker}: {exc}")
+            logger.warning("snapshot failed for %s: %s", target.ticker, exc)
+    return stats
+
+
+async def run_investor_flow_update(
+    client: KiwoomRestClient,
+    repository: PriceSnapshotRepository,
+    targets: list[TargetStock],
+    trade_date: date,
+) -> CycleStats:
+    stats = CycleStats()
+    for target in targets:
+        try:
+            flows = await fetch_investor_flows(client, target.ticker, trade_date)
+            stats.collected += 1
+            flow = pick_flow_for_date(flows, trade_date)
+            if flow is None:
+                stats.skipped += 1
+                logger.info("%s: no confirmed flow row for %s yet", target.ticker, trade_date)
+                continue
+            if await repository.update_investor_flow(target.stock_id, flow):
+                stats.stored += 1
+            else:
+                stats.skipped += 1
+                logger.info(
+                    "%s: no ohlcv_data row for %s, flow update skipped",
+                    target.ticker,
+                    trade_date,
                 )
-
-            candles = self._daily.collect(ticker, base_date)
-            if not candles:
-                return TickerResult(ticker=ticker, status="skipped")
-
-            flows = self._flow.collect(ticker, base_date)
-            basic = self._basic.collect(ticker, base_date)
-            rows = build_ohlcv_rows(ticker, candles, flows, basic)
-            written = self._repository.upsert_ohlcv(stock_id, rows)
-            return TickerResult(
-                ticker=ticker,
-                status="ok",
-                candle_count=len(candles),
-                written_count=written
-            )
-        except Exception as exc:  # one bad ticker must not abort the batch
-            return TickerResult(
-                ticker=ticker,
-                status="failed",
-                error=f"{ticker}: {exc}"
-            )
+        except Exception as exc:  # noqa: BLE001
+            stats.failed += 1
+            stats.errors.append(f"{target.ticker}: {exc}")
+            logger.warning("flow update failed for %s: %s", target.ticker, exc)
+    return stats

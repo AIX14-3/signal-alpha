@@ -1,109 +1,75 @@
-import unittest
-from datetime import date
+import asyncio
+from datetime import date, datetime
+from decimal import Decimal
 
-from app.collectors.daily_chart import DailyChartCollector
-from app.collectors.investor_flow import InvestorFlowCollector
-from app.collectors.stock_basic import StockBasicCollector
-from app.core.constants import (
-    TR_DAILY_CHART,
-    TR_INVESTOR_FLOW,
-    TR_STOCK_BASIC
-)
-from tests.fakes import FakeKiwoomClient
+import pytest
 
+from app.collectors.investor_flow import fetch_investor_flows, pick_flow_for_date
+from app.collectors.stock_snapshot import SnapshotUnavailableError, fetch_stock_snapshot
+from app.core.market_hours import KST
+from tests.fakes import FakeRestClient, ka10001_payload, ka10059_payload
 
-class DailyChartCollectorTest(unittest.TestCase):
-    def test_parses_candles_and_skips_blank_rows(self) -> None:
-        client = FakeKiwoomClient(
-            {
-                TR_DAILY_CHART: [
-                    {
-                        "일자": "20260608",
-                        "시가": "+59000",
-                        "고가": "59900",
-                        "저가": "-58000",
-                        "현재가": "-58900",
-                        "거래량": "12,345,678",
-                        "거래대금": "725000"
-                    },
-                    {"일자": ""}  # trailing empty row
-                ]
-            }
-        )
-
-        candles = DailyChartCollector(client).collect("005930")
-
-        self.assertEqual(len(candles), 1)
-        candle = candles[0]
-        self.assertEqual(candle.trade_date, date(2026, 6, 8))
-        self.assertEqual(candle.open, 59000)
-        self.assertEqual(candle.close, 58900)  # sign dropped
-        self.assertEqual(candle.volume, 12345678)
-        self.assertEqual(candle.trading_value, 725000)
-
-    def test_sends_adjusted_price_flag(self) -> None:
-        client = FakeKiwoomClient({TR_DAILY_CHART: []})
-
-        DailyChartCollector(client, use_adjusted_price=True).collect("005930")
-
-        _, inputs = client.calls[0]
-        self.assertEqual(inputs["수정주가구분"], "1")
-        self.assertEqual(inputs["종목코드"], "005930")
+CAPTURED_AT = datetime(2026, 6, 11, 10, 30, tzinfo=KST)
 
 
-class InvestorFlowCollectorTest(unittest.TestCase):
-    def test_parses_net_flows_with_sign(self) -> None:
-        client = FakeKiwoomClient(
-            {
-                TR_INVESTOR_FLOW: [
-                    {
-                        "일자": "20260608",
-                        "개인투자자": "+1,000",
-                        "외국인투자자": "-2,500",
-                        "기관계": "+1,500",
-                        "외국인보유율": "53.12"
-                    }
-                ]
-            }
-        )
+def test_fetch_stock_snapshot_maps_spec_fields():
+    client = FakeRestClient()
+    client.payloads[("ka10001", "005930")] = ka10001_payload()
 
-        flows = InvestorFlowCollector(client).collect("005930")
+    snapshot = asyncio.run(fetch_stock_snapshot(client, "005930", CAPTURED_AT))
 
-        self.assertEqual(len(flows), 1)
-        self.assertEqual(flows[0].foreign_net, -2500)
-        self.assertEqual(flows[0].institution_net, 1500)
-        self.assertEqual(flows[0].foreign_holding_pct, 53.12)
+    assert snapshot.ticker == "005930"
+    assert snapshot.trade_date == date(2026, 6, 11)
+    assert snapshot.current_price == Decimal("74300")
+    assert snapshot.open == Decimal("73800")
+    assert snapshot.high == Decimal("74500")
+    assert snapshot.low == Decimal("73600")
+    assert snapshot.volume == 12345678
+    assert snapshot.trade_value == 915000
+    assert snapshot.market_cap == 4435000
+    assert snapshot.shares_outstanding == 5969783
+    assert snapshot.per == Decimal("13.45")
+    assert snapshot.roe == Decimal("9.81")
+    assert snapshot.has_full_ohlc()
 
 
-class StockBasicCollectorTest(unittest.TestCase):
-    def test_parses_snapshot(self) -> None:
-        client = FakeKiwoomClient(
-            {
-                TR_STOCK_BASIC: [
-                    {
-                        "현재가": "-58900",
-                        "시가총액": "3515000",
-                        "상장주수": "5969783",
-                        "PER": "12.5",
-                        "ROE": "8.9"
-                    }
-                ]
-            }
-        )
+def test_fetch_stock_snapshot_partial_ohlc_detected():
+    client = FakeRestClient()
+    client.payloads[("ka10001", "005930")] = ka10001_payload(open_pric="", high_pric="")
 
-        basic = StockBasicCollector(client).collect("005930")
+    snapshot = asyncio.run(fetch_stock_snapshot(client, "005930", CAPTURED_AT))
 
-        self.assertIsNotNone(basic)
-        assert basic is not None
-        self.assertEqual(basic.close, 58900)
-        self.assertEqual(basic.market_cap, 3515000)
-        self.assertEqual(basic.per, 12.5)
-        self.assertEqual(basic.roe, 8.9)
-
-    def test_returns_none_when_no_record(self) -> None:
-        client = FakeKiwoomClient({TR_STOCK_BASIC: []})
-        self.assertIsNone(StockBasicCollector(client).collect("005930"))
+    assert snapshot.current_price == Decimal("74300")
+    assert snapshot.open is None
+    assert not snapshot.has_full_ohlc()
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_fetch_stock_snapshot_requires_current_price():
+    client = FakeRestClient()
+    client.payloads[("ka10001", "005930")] = ka10001_payload(cur_prc="")
+
+    with pytest.raises(SnapshotUnavailableError):
+        asyncio.run(fetch_stock_snapshot(client, "005930", CAPTURED_AT))
+
+
+def test_fetch_investor_flows_parses_rows_and_signs():
+    client = FakeRestClient()
+    client.payloads[("ka10059", "005930")] = ka10059_payload()
+
+    flows = asyncio.run(fetch_investor_flows(client, "005930", date(2026, 6, 11)))
+
+    assert len(flows) == 2
+    today = pick_flow_for_date(flows, date(2026, 6, 11))
+    assert today is not None
+    assert today.individual_net == -120000
+    assert today.foreign_net == 95000
+    assert today.institution_net == 25000
+
+
+def test_pick_flow_for_missing_date_returns_none():
+    client = FakeRestClient()
+    client.payloads[("ka10059", "005930")] = ka10059_payload()
+
+    flows = asyncio.run(fetch_investor_flows(client, "005930", date(2026, 6, 11)))
+
+    assert pick_flow_for_date(flows, date(2026, 6, 9)) is None

@@ -64,7 +64,7 @@ uv run uvicorn app.main:app --reload --port 8011
 
 ## 5. 다음 단계
 
-1. REST 수집기(`test/kiwoom-collector-apikey` 작업)가 머지되면 실데이터로 검증
+1. REST 실시간 수집기(`feat/kiwoom-rest-realtime-collector`)가 머지되면 실데이터로 검증 — 단 과거 120일 백필 전까지는 누적 일수 부족으로 `insufficient_history`가 정상
 2. 최종 합산(D-1) 가중치에 PRICE를 몇 %로 넣을지 팀 결정
 3. 별도 브랜치에서 "예측 점수 vs 실제 주가" 검증 파이프라인 구축 (백테스트)
 

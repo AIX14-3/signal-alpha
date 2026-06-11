@@ -1,105 +1,97 @@
-"""In-memory fakes so the collector can be tested without Kiwoom or PostgreSQL."""
+from __future__ import annotations
 
-from app.schemas.price import OhlcvRow
-from app.schemas.sector import SectorOhlcvRow, SectorRef
-
-
-class FakeKiwoomClient:
-    """Returns canned TR records keyed by ``tr_code``."""
-
-    def __init__(self, responses: dict[str, list[dict[str, str]]]) -> None:
-        self._responses = responses
-        self.calls: list[tuple[str, dict[str, str]]] = []
-
-    def request(
-        self,
-        tr_code: str,
-        output: str,
-        **inputs: str
-    ) -> list[dict[str, str]]:
-        self.calls.append((tr_code, inputs))
-        return list(self._responses.get(tr_code, []))
+from app.schemas.snapshot import InvestorFlow, StockSnapshot, TargetStock
 
 
-class FakeOhlcvRepository:
-    """Records upserts and run lifecycle in memory."""
+def ka10001_payload(**overrides: object) -> dict:
+    payload = {
+        "return_code": 0,
+        "return_msg": "정상적으로 처리되었습니다",
+        "stk_cd": "005930",
+        "stk_nm": "삼성전자",
+        "cur_prc": "+74300",
+        "open_pric": "73800",
+        "high_pric": "+74500",
+        "low_pric": "-73600",
+        "trde_qty": "12345678",
+        "trde_prica": "915000",
+        "mac": "4435000",
+        "flo_stk": "5969783",
+        "per": "13.45",
+        "pbr": "1.32",
+        "eps": "5523",
+        "bps": "56254",
+        "roe": "9.81",
+        "roa": "6.12",
+    }
+    payload.update(overrides)
+    return payload
 
-    def __init__(self, stock_ids: dict[str, int]) -> None:
-        self._stock_ids = stock_ids
-        self.upserts: dict[int, list[OhlcvRow]] = {}
-        self.runs: list[dict[str, object]] = []
-        self.finished: list[dict[str, object]] = []
 
-    def resolve_stock_id(self, ticker: str) -> int | None:
-        return self._stock_ids.get(ticker)
-
-    def upsert_ohlcv(self, stock_id: int, rows: list[OhlcvRow]) -> int:
-        self.upserts.setdefault(stock_id, []).extend(rows)
-        return len(rows)
-
-    def start_run(self, run_mode: str) -> int:
-        run_id = len(self.runs) + 1
-        self.runs.append({"id": run_id, "run_mode": run_mode})
-        return run_id
-
-    def finish_run(
-        self,
-        run_id: int,
-        status: str,
-        collected_count: int,
-        inserted_count: int,
-        failed_count: int,
-        error_message: str | None = None
-    ) -> None:
-        self.finished.append(
+def ka10059_payload(rows: list[dict] | None = None) -> dict:
+    return {
+        "return_code": 0,
+        "return_msg": "정상적으로 처리되었습니다",
+        "stk_invsr_orgn": rows
+        if rows is not None
+        else [
             {
-                "id": run_id,
-                "status": status,
-                "collected_count": collected_count,
-                "inserted_count": inserted_count,
-                "failed_count": failed_count,
-                "error_message": error_message
-            }
-        )
-
-
-class FakeSectorRepository:
-    """Records sector_ohlcv upserts and run lifecycle in memory."""
-
-    def __init__(self, sectors: list[SectorRef]) -> None:
-        self._sectors = sectors
-        self.upserts: list[SectorOhlcvRow] = []
-        self.runs: list[dict[str, object]] = []
-        self.finished: list[dict[str, object]] = []
-
-    def list_active_sectors(self) -> list[SectorRef]:
-        return list(self._sectors)
-
-    def upsert_sector_ohlcv(self, rows: list[SectorOhlcvRow]) -> int:
-        self.upserts.extend(rows)
-        return len(rows)
-
-    def start_run(self, run_mode: str) -> int:
-        run_id = len(self.runs) + 1
-        self.runs.append({"id": run_id, "run_mode": run_mode})
-        return run_id
-
-    def finish_run(
-        self,
-        run_id: int,
-        status: str,
-        collected_count: int,
-        inserted_count: int,
-        failed_count: int,
-        error_message: str | None = None
-    ) -> None:
-        self.finished.append(
+                "dt": "20260611",
+                "ind_invsr": "-120000",
+                "frgnr_invsr": "+95000",
+                "orgn": "+25000",
+            },
             {
-                "id": run_id,
-                "status": status,
-                "collected_count": collected_count,
-                "inserted_count": inserted_count,
-                "failed_count": failed_count,
-                "error_message": error_message
-            }
-        )
+                "dt": "20260610",
+                "ind_invsr": "+10000",
+                "frgnr_invsr": "-5000",
+                "orgn": "-5000",
+            },
+        ],
+    }
+
+
+class FakeRestClient:
+    """Returns canned payloads per (api_id, ticker); raises configured errors."""
+
+    def __init__(self) -> None:
+        self.payloads: dict[tuple[str, str], dict] = {}
+        self.errors: dict[tuple[str, str], Exception] = {}
+        self.calls: list[tuple[str, dict]] = []
+
+    async def request(self, api_id: str, body: dict, *, path: str = "") -> dict:
+        self.calls.append((api_id, body))
+        ticker = str(body.get("stk_cd", ""))
+        if (api_id, ticker) in self.errors:
+            raise self.errors[(api_id, ticker)]
+        return self.payloads[(api_id, ticker)]
+
+
+class FakeRepository:
+    """In-memory PriceSnapshotRepository double."""
+
+    def __init__(self, targets: list[TargetStock]) -> None:
+        self.targets = targets
+        self.snapshots: list[tuple[int, StockSnapshot]] = []
+        self.ohlcv_upserts: list[tuple[int, StockSnapshot]] = []
+        self.flow_updates: list[tuple[int, InvestorFlow]] = []
+        self.ohlcv_rows: set[tuple[int, object]] = set()
+
+    async def list_target_stocks(self) -> list[TargetStock]:
+        return self.targets
+
+    async def insert_snapshot(self, stock_id: int, snapshot: StockSnapshot) -> None:
+        self.snapshots.append((stock_id, snapshot))
+
+    async def upsert_intraday_ohlcv(self, stock_id: int, snapshot: StockSnapshot) -> bool:
+        if not snapshot.has_full_ohlc():
+            return False
+        self.ohlcv_upserts.append((stock_id, snapshot))
+        self.ohlcv_rows.add((stock_id, snapshot.trade_date))
+        return True
+
+    async def update_investor_flow(self, stock_id: int, flow: InvestorFlow) -> bool:
+        if (stock_id, flow.trade_date) not in self.ohlcv_rows:
+            return False
+        self.flow_updates.append((stock_id, flow))
+        return True
