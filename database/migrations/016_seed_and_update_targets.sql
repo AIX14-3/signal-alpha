@@ -17,6 +17,7 @@ INSERT INTO stocks (ticker, name, market, sector) VALUES
     ('000100', '유한양행',         'KOSPI',  '제약')
 ON CONFLICT (ticker) DO UPDATE
     SET sector = EXCLUDED.sector;
+    -- is_target / short_name 은 갱신하지 않음: 이미 활성화된 기업 설정 보존
 
 -- 2. 대상 기업 활성화 및 약칭(short_name) 매핑 업데이트
 -- (이름 대신 '티커' 기준으로 일괄 처리하여 정밀도를 높입니다)
