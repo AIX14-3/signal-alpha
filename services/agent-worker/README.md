@@ -91,6 +91,15 @@ DART_PAGE_SIZE=100
 DART_FETCH_DOCUMENTS=true
 DART_MAX_RETRIES=2
 DART_RETRY_BACKOFF_SECONDS=0.5
+DART_USE_LLM=false
+DART_LLM_HIGH_IMPACT_ONLY=true
+DART_LLM_PROVIDER=gemini
+DART_LLM_MODEL=gemini-2.0-flash
+DART_LLM_TIMEOUT_SECONDS=20
+GEMINI_API_KEY=
+GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta
+OPENAI_API_KEY=
+OPENAI_BASE_URL=https://api.openai.com/v1
 ```
 
 Set `DART_FETCH_DOCUMENTS=false` to collect disclosure list metadata only.
@@ -100,6 +109,15 @@ backoff. Auth/IP/key failures such as `010`, `011`, `012`, and `901` fail withou
 Disclosure document download failures do not fail the whole list collection; the worker stores
 `document_fetch_status`, `document_error_category`, and retryability metadata in the DART raw
 detail payload.
+
+DART analysis is rule-based by default. To enable Gemini-assisted analysis for high-impact
+disclosures, set `DART_USE_LLM=true`, `DART_LLM_PROVIDER=gemini`, `DART_LLM_MODEL`, and
+`GEMINI_API_KEY`. OpenAI remains available by setting `DART_LLM_PROVIDER=openai` with
+`OPENAI_API_KEY`. The worker keeps the rule result as a fallback: invalid JSON, timeout, unsafe
+investment-advice language, or API failure stores the rule-based result with
+`analysis_source="rules_fallback"`. Successful LLM analysis stores `analysis_source="llm"`,
+`llm_model`, `prompt_ver`, `llm_confidence`, and `key_facts` in `agent_results.method_detail`.
+The prompt template is versioned at `app/prompts/dart_analysis_v1.md`.
 
 The `collect_dart` task expects `processing_queue.task_context` to include `stock_code`.
 Optional date filters use OpenDART parameter names:

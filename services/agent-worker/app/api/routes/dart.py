@@ -235,6 +235,8 @@ def _document_result_items(rows: list[Any]) -> list[dict[str, Any]]:
     for row in rows:
         analysis_item = _analysis_result_item(row)
         agent_results = analysis_item["agent_results"]
+        primary_agent = agent_results[0] if agent_results else {}
+        method_detail = _method_detail(primary_agent)
         for event in analysis_item["signal_events"]:
             items.append(
                 {
@@ -248,6 +250,11 @@ def _document_result_items(rows: list[Any]) -> list[dict[str, Any]]:
                     "base_score": analysis_item.get("base_score"),
                     "warning": analysis_item.get("warning"),
                     "agent_results": agent_results,
+                    "analysis_source": method_detail.get("analysis_source"),
+                    "llm_model": primary_agent.get("llm_model"),
+                    "prompt_ver": primary_agent.get("prompt_ver"),
+                    "llm_confidence": method_detail.get("llm_confidence"),
+                    "key_facts": method_detail.get("key_facts") or [],
                     "signal_event_id": event.get("id"),
                     "source_document_id": event.get("source_document_id"),
                     "event_type": event.get("event_type"),
@@ -261,6 +268,17 @@ def _document_result_items(rows: list[Any]) -> list[dict[str, Any]]:
                 }
             )
     return items
+
+
+def _method_detail(agent_result: dict[str, Any]) -> dict[str, Any]:
+    value = agent_result.get("method_detail")
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        return json.loads(value)
+    return dict(value)
 
 
 def _queue_summary(

@@ -14,6 +14,18 @@ class Settings:
         self.dart_fetch_documents = _env_bool("DART_FETCH_DOCUMENTS", default=True)
         self.dart_max_retries = int(getenv("DART_MAX_RETRIES", "2"))
         self.dart_retry_backoff_seconds = float(getenv("DART_RETRY_BACKOFF_SECONDS", "0.5"))
+        self.dart_use_llm = _env_bool("DART_USE_LLM", default=False)
+        self.dart_llm_high_impact_only = _env_bool("DART_LLM_HIGH_IMPACT_ONLY", default=True)
+        self.dart_llm_provider = getenv("DART_LLM_PROVIDER", "gemini").strip().lower()
+        self.dart_llm_model = getenv("DART_LLM_MODEL", "")
+        self.dart_llm_timeout_seconds = float(getenv("DART_LLM_TIMEOUT_SECONDS", "20"))
+        self.openai_api_key = getenv("OPENAI_API_KEY", "")
+        self.openai_base_url = getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+        self.gemini_api_key = getenv("GEMINI_API_KEY", "")
+        self.gemini_base_url = getenv(
+            "GEMINI_BASE_URL",
+            "https://generativelanguage.googleapis.com/v1beta",
+        )
 
 
 @lru_cache

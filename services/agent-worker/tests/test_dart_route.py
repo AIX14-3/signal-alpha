@@ -41,6 +41,13 @@ class FakeConnection:
                     {
                         "debate_method": "D-1",
                         "method_signal": "positive",
+                        "llm_model": "test-llm",
+                        "prompt_ver": "dart-llm-v1",
+                        "method_detail": {
+                            "analysis_source": "llm",
+                            "llm_confidence": 84,
+                            "key_facts": ["Revenue increased"],
+                        },
                     }
                 ],
                 "signal_events": [
@@ -167,6 +174,11 @@ class DartRouteTest(unittest.TestCase):
         self.assertEqual(item["run_key"], "DART_EVENT_501")
         self.assertEqual(item["title"], "Quarterly report")
         self.assertEqual(item["signal_direction"], "positive")
+        self.assertEqual(item["analysis_source"], "llm")
+        self.assertEqual(item["llm_model"], "test-llm")
+        self.assertEqual(item["prompt_ver"], "dart-llm-v1")
+        self.assertEqual(item["llm_confidence"], 84)
+        self.assertEqual(item["key_facts"], ["Revenue increased"])
 
     def test_delete_test_data_returns_deleted_counts(self):
         connection = FakeConnection()
