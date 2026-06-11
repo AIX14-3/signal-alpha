@@ -1,0 +1,112 @@
+# Local development compose file.
+# Production should use a managed PostgreSQL/pgvector database instead of this postgres service.
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: signal-alpha-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-signal_alpha}
+      POSTGRES_USER: ${POSTGRES_USER:-signal_alpha}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-signal_alpha_password}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-signal_alpha} -d ${POSTGRES_DB:-signal_alpha}"
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  agent-worker:
+    build:
+      context: .
+      dockerfile: ./services/agent-worker/Dockerfile
+    container_name: signal-alpha-agent-worker
+    working_dir: /workspace/services/agent-worker
+    volumes:
+      - ./services/agent-worker:/workspace/services/agent-worker
+      - ./packages/data-access:/workspace/packages/data-access
+    environment:
+      SERVICE_NAME: agent-worker
+      SERVICE_VERSION: ${SERVICE_VERSION:-0.1.0}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://signal_alpha:signal_alpha_password@postgres:5432/signal_alpha}
+      PYTHONPATH: /workspace/services/agent-worker:/workspace/packages/data-access
+      WATCHFILES_FORCE_POLLING: "true"
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_BASE_URL: ${GEMINI_BASE_URL:-https://generativelanguage.googleapis.com/v1beta}
+      DART_API_KEY: ${DART_API_KEY:-}
+      DART_BASE_URL: ${DART_BASE_URL:-https://opendart.fss.or.kr/api}
+      DART_TIMEOUT_SECONDS: ${DART_TIMEOUT_SECONDS:-10}
+      DART_PAGE_SIZE: ${DART_PAGE_SIZE:-100}
+      DART_FETCH_DOCUMENTS: ${DART_FETCH_DOCUMENTS:-true}
+      DART_MAX_RETRIES: ${DART_MAX_RETRIES:-2}
+      DART_RETRY_BACKOFF_SECONDS: ${DART_RETRY_BACKOFF_SECONDS:-0.5}
+      DART_USE_LLM: ${DART_USE_LLM:-false}
+      DART_LLM_HIGH_IMPACT_ONLY: ${DART_LLM_HIGH_IMPACT_ONLY:-true}
+      DART_LLM_PROVIDER: ${DART_LLM_PROVIDER:-gemini}
+      DART_LLM_MODEL: ${DART_LLM_MODEL:-gemini-2.0-flash}
+      DART_LLM_TIMEOUT_SECONDS: ${DART_LLM_TIMEOUT_SECONDS:-20}
+    ports:
+      - "${AGENT_WORKER_PORT:-8011}:8011"
+    command: >
+      uvicorn app.main:app --host 0.0.0.0 --port 8011 --reload
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  main-server:
+    build:
+      context: .
+      dockerfile: ./services/main-server/Dockerfile
+    container_name: signal-alpha-main-server
+    working_dir: /workspace/services/main-server
+    volumes:
+      - ./services/main-server:/workspace/services/main-server
+      - ./packages/data-access:/workspace/packages/data-access
+    environment:
+      SERVICE_NAME: main-server
+      SERVICE_VERSION: ${SERVICE_VERSION:-0.1.0}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://signal_alpha:signal_alpha_password@postgres:5432/signal_alpha}
+      PYTHONPATH: /workspace/services/main-server:/workspace/packages/data-access
+      WATCHFILES_FORCE_POLLING: "true"
+      AGENT_WORKER_BASE_URL: ${AGENT_WORKER_BASE_URL:-http://agent-worker:8011}
+    ports:
+      - "${MAIN_SERVER_PORT:-8000}:8000"
+    command: >
+      uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    depends_on:
+      postgres:
+        condition: service_healthy
+      agent-worker:
+        condition: service_started
+
+  web:
+    build:
+      context: ./web
+    container_name: signal-alpha-web
+    working_dir: /app
+    volumes:
+      - ./web:/app
+      - web-node-modules:/app/node_modules
+    environment:
+      NEXT_PUBLIC_MAIN_API_BASE_URL: ${NEXT_PUBLIC_MAIN_API_BASE_URL:-http://localhost:8000}
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    command: >
+      npm run dev -- --hostname 0.0.0.0 --port 3000
+    depends_on:
+      main-server:
+        condition: service_started
+
+volumes:
+  postgres-data:
+  web-node-modules:

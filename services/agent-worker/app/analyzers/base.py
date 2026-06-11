@@ -7,7 +7,7 @@ from app.schemas.source_result import SourceResult
 class Analyzer(Protocol):
     source: SourceType
 
-    def analyze(
+    async def analyze(
         self,
         stock_code: str,
         evidence: list[RawEvidence]

@@ -1,0 +1,116 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="800" viewBox="0 0 1240 800" font-family="'Malgun Gothic','Apple SD Gothic Neo',sans-serif">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#455A64"/>
+    </marker>
+    <marker id="arrowLight" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#B0BEC5"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1240" height="800" fill="#FFFFFF"/>
+
+  <text x="620" y="36" text-anchor="middle" font-size="20" font-weight="bold" fill="#263238">분석기 구성 — 소스별 6개 파이프라인 (1:1로 분리)</text>
+  <text x="620" y="58" text-anchor="middle" font-size="12" fill="#78909C">분석기는 1개가 아니라 소스마다 따로 존재하며, 각자 SourceResult를 만들어 토론(합산) 단계로 보냅니다 · 2026-06-11 기준</text>
+
+  <!-- 열 제목 -->
+  <text x="190" y="100" text-anchor="middle" font-size="13" font-weight="bold" fill="#455A64">① 수집기 (collectors/)</text>
+  <text x="530" y="100" text-anchor="middle" font-size="13" font-weight="bold" fill="#455A64">② 분석기 (analyzers/)</text>
+  <text x="845" y="100" text-anchor="middle" font-size="13" font-weight="bold" fill="#455A64">③ 토론(합산)</text>
+  <text x="1095" y="100" text-anchor="middle" font-size="13" font-weight="bold" fill="#455A64">④ 점수</text>
+
+  <!-- ─── DART (구현됨) ─── -->
+  <rect x="60" y="120" width="260" height="80" rx="8" fill="#F5F5F5" stroke="#78909C" stroke-width="1.5"/>
+  <text x="190" y="148" text-anchor="middle" font-size="13" font-weight="bold" fill="#37474F">DART 공시 (구현됨)</text>
+  <text x="190" y="168" text-anchor="middle" font-size="11" fill="#607D8B">collectors/dart — 공시 목록·원문 수집</text>
+  <text x="190" y="186" text-anchor="middle" font-size="11" fill="#607D8B">OpenDART API 호출</text>
+  <line x1="320" y1="160" x2="376" y2="160" stroke="#455A64" stroke-width="1.8" marker-end="url(#arrow)"/>
+  <rect x="380" y="120" width="300" height="80" rx="8" fill="#F5F5F5" stroke="#78909C" stroke-width="1.5"/>
+  <text x="530" y="148" text-anchor="middle" font-size="13" font-weight="bold" fill="#37474F">DART 분석기 (구현됨)</text>
+  <text x="530" y="168" text-anchor="middle" font-size="11" fill="#607D8B">analyzers/dart/rules.py</text>
+  <text x="530" y="186" text-anchor="middle" font-size="11" fill="#607D8B">공시 제목 분류 → 이벤트·방향·영향도</text>
+  <line x1="680" y1="160" x2="756" y2="160" stroke="#455A64" stroke-width="1.8" marker-end="url(#arrow)"/>
+
+  <!-- ─── PRICE (신규) ─── -->
+  <rect x="60" y="215" width="260" height="80" rx="8" fill="#E3F2FD" stroke="#1565C0" stroke-width="2"/>
+  <text x="190" y="243" text-anchor="middle" font-size="13" font-weight="bold" fill="#0D47A1">PRICE 주가·수급 〔이번 신규〕</text>
+  <text x="190" y="263" text-anchor="middle" font-size="11" fill="#1565C0">collectors/price — ohlcv_data DB 읽기</text>
+  <text x="190" y="281" text-anchor="middle" font-size="11" fill="#1565C0">(키움 호출은 price-collector 담당)</text>
+  <line x1="320" y1="255" x2="376" y2="255" stroke="#455A64" stroke-width="1.8" marker-end="url(#arrow)"/>
+  <rect x="380" y="215" width="300" height="80" rx="8" fill="#E3F2FD" stroke="#1565C0" stroke-width="2"/>
+  <text x="530" y="243" text-anchor="middle" font-size="13" font-weight="bold" fill="#0D47A1">PRICE 분석기 〔이번 신규〕</text>
+  <text x="530" y="263" text-anchor="middle" font-size="11" fill="#1565C0">analyzers/price — MA·RSI·거래량·수급 룰</text>
+  <text x="530" y="281" text-anchor="middle" font-size="11" fill="#1565C0">LLM 없음 · score [-1,+1]</text>
+  <line x1="680" y1="255" x2="756" y2="255" stroke="#455A64" stroke-width="1.8" marker-end="url(#arrow)"/>
+
+  <!-- ─── HIRING (수집기만 구현) ─── -->
+  <rect x="60" y="310" width="260" height="80" rx="8" fill="#F5F5F5" stroke="#78909C" stroke-width="1.5"/>
+  <text x="190" y="338" text-anchor="middle" font-size="13" font-weight="bold" fill="#37474F">HIRING 채용 (수집기 구현됨)</text>
+  <text x="190" y="358" text-anchor="middle" font-size="11" fill="#607D8B">collectors/hiring — 잡코리아·사람인 등</text>
+  <text x="190" y="376" text-anchor="middle" font-size="11" fill="#607D8B">기업 채용 페이지 크롤러 포함</text>
+  <line x1="320" y1="350" x2="376" y2="350" stroke="#B0BEC5" stroke-width="1.8" stroke-dasharray="5,4" marker-end="url(#arrowLight)"/>
+  <rect x="380" y="310" width="300" height="80" rx="8" fill="#FFFFFF" stroke="#B0BEC5" stroke-width="1.5" stroke-dasharray="5,4"/>
+  <text x="530" y="338" text-anchor="middle" font-size="13" font-weight="bold" fill="#90A4AE">HIRING 분석기 (예정)</text>
+  <text x="530" y="358" text-anchor="middle" font-size="11" fill="#90A4AE">채용 규모·직무 변화 → 시그널</text>
+  <text x="530" y="376" text-anchor="middle" font-size="11" fill="#90A4AE">analyzers/hiring — 미구현</text>
+  <line x1="680" y1="350" x2="756" y2="350" stroke="#B0BEC5" stroke-width="1.8" stroke-dasharray="5,4" marker-end="url(#arrowLight)"/>
+
+  <!-- ─── REPORT (예정) ─── -->
+  <rect x="60" y="405" width="260" height="80" rx="8" fill="#FFFFFF" stroke="#B0BEC5" stroke-width="1.5" stroke-dasharray="5,4"/>
+  <text x="190" y="433" text-anchor="middle" font-size="13" font-weight="bold" fill="#90A4AE">REPORT 증권사 리포트 (예정)</text>
+  <text x="190" y="453" text-anchor="middle" font-size="11" fill="#90A4AE">collectors/report — 자리만 생성됨</text>
+  <line x1="320" y1="445" x2="376" y2="445" stroke="#B0BEC5" stroke-width="1.8" stroke-dasharray="5,4" marker-end="url(#arrowLight)"/>
+  <rect x="380" y="405" width="300" height="80" rx="8" fill="#FFFFFF" stroke="#B0BEC5" stroke-width="1.5" stroke-dasharray="5,4"/>
+  <text x="530" y="433" text-anchor="middle" font-size="13" font-weight="bold" fill="#90A4AE">REPORT 분석기 (예정)</text>
+  <text x="530" y="453" text-anchor="middle" font-size="11" fill="#90A4AE">RAG(pgvector report_chunks) + LLM 분석 예정</text>
+  <text x="530" y="471" text-anchor="middle" font-size="11" fill="#90A4AE">유일하게 LLM을 쓰게 될 분석기</text>
+  <line x1="680" y1="445" x2="756" y2="445" stroke="#B0BEC5" stroke-width="1.8" stroke-dasharray="5,4" marker-end="url(#arrowLight)"/>
+
+  <!-- ─── DATALAB (예정) ─── -->
+  <rect x="60" y="500" width="260" height="80" rx="8" fill="#FFFFFF" stroke="#B0BEC5" stroke-width="1.5" stroke-dasharray="5,4"/>
+  <text x="190" y="528" text-anchor="middle" font-size="13" font-weight="bold" fill="#90A4AE">DATALAB 검색 트렌드 (예정)</text>
+  <text x="190" y="548" text-anchor="middle" font-size="11" fill="#90A4AE">collectors/datalab — 자리만 생성됨</text>
+  <line x1="320" y1="540" x2="376" y2="540" stroke="#B0BEC5" stroke-width="1.8" stroke-dasharray="5,4" marker-end="url(#arrowLight)"/>
+  <rect x="380" y="500" width="300" height="80" rx="8" fill="#FFFFFF" stroke="#B0BEC5" stroke-width="1.5" stroke-dasharray="5,4"/>
+  <text x="530" y="528" text-anchor="middle" font-size="13" font-weight="bold" fill="#90A4AE">DATALAB 분석기 (예정)</text>
+  <text x="530" y="548" text-anchor="middle" font-size="11" fill="#90A4AE">검색량 추이 → 관심도 시그널</text>
+  <line x1="680" y1="540" x2="756" y2="540" stroke="#B0BEC5" stroke-width="1.8" stroke-dasharray="5,4" marker-end="url(#arrowLight)"/>
+
+  <!-- ─── PATENT (예정) ─── -->
+  <rect x="60" y="595" width="260" height="80" rx="8" fill="#FFFFFF" stroke="#B0BEC5" stroke-width="1.5" stroke-dasharray="5,4"/>
+  <text x="190" y="623" text-anchor="middle" font-size="13" font-weight="bold" fill="#90A4AE">PATENT 특허 (예정·보류 검토)</text>
+  <text x="190" y="643" text-anchor="middle" font-size="11" fill="#90A4AE">collectors/patent — 자리만 생성됨</text>
+  <text x="190" y="661" text-anchor="middle" font-size="11" fill="#90A4AE">(무료 API 부재로 제외 논의 이력 있음)</text>
+  <line x1="320" y1="635" x2="376" y2="635" stroke="#B0BEC5" stroke-width="1.8" stroke-dasharray="5,4" marker-end="url(#arrowLight)"/>
+  <rect x="380" y="595" width="300" height="80" rx="8" fill="#FFFFFF" stroke="#B0BEC5" stroke-width="1.5" stroke-dasharray="5,4"/>
+  <text x="530" y="623" text-anchor="middle" font-size="13" font-weight="bold" fill="#90A4AE">PATENT 분석기 (예정·보류 검토)</text>
+  <text x="530" y="643" text-anchor="middle" font-size="11" fill="#90A4AE">출원 동향 → 기술 시그널</text>
+  <line x1="680" y1="635" x2="756" y2="635" stroke="#B0BEC5" stroke-width="1.8" stroke-dasharray="5,4" marker-end="url(#arrowLight)"/>
+
+  <!-- ─── 토론(합산) ─── -->
+  <rect x="760" y="120" width="170" height="555" rx="10" fill="#E8F5E9" stroke="#2E7D32" stroke-width="2"/>
+  <text x="845" y="330" text-anchor="middle" font-size="15" font-weight="bold" fill="#1B5E20">토론 / 합산</text>
+  <text x="845" y="352" text-anchor="middle" font-size="11" fill="#2E7D32">AgentOrchestrator</text>
+  <line x1="778" y1="368" x2="912" y2="368" stroke="#A5D6A7" stroke-width="1"/>
+  <text x="845" y="392" text-anchor="middle" font-size="11" fill="#2E7D32">소스별 SourceResult</text>
+  <text x="845" y="410" text-anchor="middle" font-size="11" fill="#2E7D32">방향 일치·충돌 비교</text>
+  <text x="845" y="428" text-anchor="middle" font-size="11" fill="#2E7D32">가중 합산 (D-1)</text>
+
+  <line x1="930" y1="397" x2="996" y2="397" stroke="#455A64" stroke-width="1.8" marker-end="url(#arrow)"/>
+
+  <!-- ─── 점수 ─── -->
+  <rect x="1000" y="355" width="200" height="85" rx="10" fill="#F3E5F5" stroke="#7B1FA2" stroke-width="2"/>
+  <text x="1100" y="383" text-anchor="middle" font-size="14" font-weight="bold" fill="#4A148C">최종 점수</text>
+  <text x="1100" y="404" text-anchor="middle" font-size="11" fill="#6A1B9A">final_signals (0~100)</text>
+  <text x="1100" y="422" text-anchor="middle" font-size="11" fill="#6A1B9A">경고 문구·근거 포함</text>
+
+  <!-- 범례 -->
+  <rect x="60" y="710" width="14" height="14" rx="3" fill="#E3F2FD" stroke="#1565C0" stroke-width="1.5"/>
+  <text x="82" y="722" font-size="12" fill="#37474F">이번 신규 (PRICE)</text>
+  <rect x="230" y="710" width="14" height="14" rx="3" fill="#F5F5F5" stroke="#78909C" stroke-width="1.5"/>
+  <text x="252" y="722" font-size="12" fill="#37474F">구현됨</text>
+  <rect x="340" y="710" width="14" height="14" rx="3" fill="#FFFFFF" stroke="#B0BEC5" stroke-width="1.5" stroke-dasharray="4,3"/>
+  <text x="362" y="722" font-size="12" fill="#37474F">예정 (미구현)</text>
+
+  <text x="620" y="762" text-anchor="middle" font-size="11" fill="#90A4AE">분석기 수: 구현 2개 (DART·PRICE) + 예정 4개 (HIRING·REPORT·DATALAB·PATENT) = SourceType 6종과 1:1 · 각 분석기는 동일한 Analyzer 인터페이스(analyzers/base.py)를 구현</text>
+</svg>

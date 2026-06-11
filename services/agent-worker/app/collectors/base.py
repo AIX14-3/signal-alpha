@@ -6,5 +6,5 @@ from app.schemas.evidence import RawEvidence, SourceType
 class Collector(Protocol):
     source: SourceType
 
-    def collect(self, stock_code: str) -> list[RawEvidence]:
+    async def collect(self, stock_code: str) -> list[RawEvidence]:
         """Collect raw evidence only; do not create direction, score, or summary."""

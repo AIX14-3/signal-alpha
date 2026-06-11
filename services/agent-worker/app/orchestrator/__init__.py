@@ -1,3 +1,12 @@
 from app.orchestrator.pipeline import AgentOrchestrator, SourcePipeline
+from app.orchestrator.queue.tasks import QueueTaskRunner
+from app.orchestrator.queue.task_types import ANALYZE_DART, COLLECT_DART, NORMALIZE_DART
 
-__all__ = ["AgentOrchestrator", "SourcePipeline"]
+__all__ = [
+    "ANALYZE_DART",
+    "COLLECT_DART",
+    "AgentOrchestrator",
+    "NORMALIZE_DART",
+    "QueueTaskRunner",
+    "SourcePipeline",
+]

@@ -1,0 +1,9 @@
+[project]
+name = "signal-core"
+version = "0.1.0"
+description = "Shared domain contracts for Signal Alpha"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
