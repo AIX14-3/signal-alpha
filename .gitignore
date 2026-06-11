@@ -85,6 +85,14 @@ celerybeat.pid
 *.aof
 *.pid
 
+# Collector generated artifacts
+services/agent-worker/keyword_reviews/
+services/agent-worker/compact_batches/
+services/agent-worker/collector_*.sql
+services/agent-worker/dl_*.sql
+services/agent-worker/dl_compact_*.sql
+services/agent-worker/apply_missing_datalab_compact.sql
+
 # Generated docs/site output
 docs/_build/
 /site
