@@ -151,12 +151,38 @@ Query stored DART analysis results:
 Invoke-RestMethod -Method Get -Uri "http://localhost:8011/internal/dart/analysis-results?stock_code=005930&analysis_date=2026-06-08"
 ```
 
+Query DART analysis results flattened by disclosure document:
+
+```powershell
+Invoke-RestMethod -Method Get -Uri "http://localhost:8011/internal/dart/document-results?stock_code=005930&analysis_date=2026-06-08"
+```
+
 Run a development E2E pass that collects, normalizes, analyzes, and returns stored DART analysis
 results:
 
 ```powershell
 $body = '{"stock_id":1,"stock_code":"005930","bgn_de":"2026-06-01","end_de":"2026-06-08","force_reprocess":true}'
 Invoke-RestMethod -Method Post -Uri "http://localhost:8011/internal/dart/e2e/run" -ContentType "application/json" -Body $body
+```
+
+E2E defaults to at most 20 normalize runs and 20 analyze runs. The response includes a
+`queue_summary` that reports whether either limit left generated tasks pending. To process all
+generated tasks in one development call, pass `run_until_idle`:
+
+```powershell
+$body = '{"stock_id":1,"stock_code":"005930","bgn_de":"2026-05-01","end_de":"2026-05-31","force_reprocess":true,"run_until_idle":true}'
+Invoke-RestMethod -Method Post -Uri "http://localhost:8011/internal/dart/e2e/run" -ContentType "application/json" -Body $body
+```
+
+Inspect or drain queued work:
+
+```powershell
+Invoke-RestMethod -Method Get -Uri "http://localhost:8011/internal/queue/tasks?stock_code=005930&task_type=normalize_dart&status=pending"
+
+$body = '{"max_runs":50}'
+Invoke-RestMethod -Method Post -Uri "http://localhost:8011/internal/queue/normalize_dart/run-batch" -ContentType "application/json" -Body $body
+
+Invoke-RestMethod -Method Post -Uri "http://localhost:8011/internal/queue/tasks/77/retry"
 ```
 
 Delete development DART test data for a stock and date range:

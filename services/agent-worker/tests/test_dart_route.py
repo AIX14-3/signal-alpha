@@ -31,7 +31,7 @@ class FakeConnection:
                 "stock_code": "005930",
                 "stock_name": "Samsung Electronics",
                 "analysis_date": date(2026, 6, 8),
-                "run_key": "DART",
+                "run_key": "DART_EVENT_501",
                 "analysis_mode": "dart_only",
                 "version": "1.0",
                 "source_signal_event_ids": [501],
@@ -46,7 +46,14 @@ class FakeConnection:
                 "signal_events": [
                     {
                         "id": 501,
+                        "source_document_id": 701,
+                        "event_type": "quarter_report",
+                        "event_date": date(2026, 6, 8),
+                        "signal_direction": "positive",
+                        "impact_level": "medium",
                         "title": "Quarterly report",
+                        "summary": "DART disclosure: Quarterly report",
+                        "evidence_url": "https://dart.fss.or.kr/dsaf001/main.do?rcpNo=1",
                     }
                 ],
             }
@@ -140,6 +147,27 @@ class DartRouteTest(unittest.TestCase):
         self.assertEqual(response.json()["items"][0]["agent_results"][0]["method_signal"], "positive")
         self.assertEqual(connection.calls[0][2], ("005930", date(2026, 6, 8), 20))
 
+    def test_list_document_analysis_results_flattens_signal_events(self):
+        connection = FakeConnection()
+        app.dependency_overrides[get_database_pool] = lambda: FakePool(connection)
+        client = TestClient(app)
+
+        response = client.get(
+            "/internal/dart/document-results",
+            params={"stock_code": "005930", "analysis_date": "2026-06-08"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["count"], 1)
+        item = payload["items"][0]
+        self.assertEqual(item["analysis_result_id"], 10)
+        self.assertEqual(item["signal_event_id"], 501)
+        self.assertEqual(item["source_document_id"], 701)
+        self.assertEqual(item["run_key"], "DART_EVENT_501")
+        self.assertEqual(item["title"], "Quarterly report")
+        self.assertEqual(item["signal_direction"], "positive")
+
     def test_delete_test_data_returns_deleted_counts(self):
         connection = FakeConnection()
         app.dependency_overrides[get_database_pool] = lambda: FakePool(connection)
@@ -193,6 +221,79 @@ class DartRouteTest(unittest.TestCase):
         self.assertEqual(payload["analyze"][0]["status"], "success")
         self.assertEqual(payload["analyze"][0]["task_id"], 301)
         self.assertEqual(payload["analysis_results"]["count"], 1)
+        self.assertEqual(payload["queue_summary"]["normalize_pending_count"], 0)
+        self.assertFalse(payload["queue_summary"]["normalize_limit_reached"])
+
+    def test_run_e2e_reports_limited_pending_tasks(self):
+        async def collect_handler(task):
+            return {"collected_count": 21, "queued_task_ids": list(range(201, 222))}
+
+        async def normalize_handler(task):
+            return {"normalized_count": 1, "analysis_task_ids": []}
+
+        connection = FakeConnection()
+        app.dependency_overrides[get_database_pool] = lambda: FakePool(connection)
+        app.dependency_overrides[get_dart_task_handler_factory] = lambda: lambda _: {
+            "collect_dart": collect_handler,
+            "normalize_dart": normalize_handler,
+            "analyze_dart": normalize_handler,
+        }
+        client = TestClient(app)
+
+        response = client.post(
+            "/internal/dart/e2e/run",
+            json={
+                "stock_id": 1,
+                "stock_code": "005930",
+                "bgn_de": "2026-05-01",
+                "end_de": "2026-05-31",
+                "max_normalize_runs": 20,
+                "max_analyze_runs": 20,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        summary = response.json()["queue_summary"]
+        self.assertEqual(summary["normalize_total_count"], 21)
+        self.assertEqual(summary["normalize_run_count"], 20)
+        self.assertEqual(summary["normalize_pending_count"], 1)
+        self.assertTrue(summary["normalize_limit_reached"])
+
+    def test_run_e2e_can_run_all_generated_tasks_until_idle(self):
+        async def collect_handler(task):
+            return {"collected_count": 21, "queued_task_ids": list(range(201, 222))}
+
+        async def normalize_handler(task):
+            return {"normalized_count": 1, "analysis_task_ids": []}
+
+        connection = FakeConnection()
+        app.dependency_overrides[get_database_pool] = lambda: FakePool(connection)
+        app.dependency_overrides[get_dart_task_handler_factory] = lambda: lambda _: {
+            "collect_dart": collect_handler,
+            "normalize_dart": normalize_handler,
+            "analyze_dart": normalize_handler,
+        }
+        client = TestClient(app)
+
+        response = client.post(
+            "/internal/dart/e2e/run",
+            json={
+                "stock_id": 1,
+                "stock_code": "005930",
+                "bgn_de": "2026-05-01",
+                "end_de": "2026-05-31",
+                "max_normalize_runs": 20,
+                "max_analyze_runs": 20,
+                "run_until_idle": True,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        summary = response.json()["queue_summary"]
+        self.assertEqual(summary["normalize_total_count"], 21)
+        self.assertEqual(summary["normalize_run_count"], 21)
+        self.assertEqual(summary["normalize_pending_count"], 0)
+        self.assertFalse(summary["normalize_limit_reached"])
 
 
 if __name__ == "__main__":
