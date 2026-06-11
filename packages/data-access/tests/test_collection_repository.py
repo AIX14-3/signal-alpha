@@ -13,7 +13,15 @@ class FakeConnection:
 
     async def fetchrow(self, sql, *args):
         self.calls.append(("fetchrow", sql, args))
-        return {"id": 20, "source_hash": args[5]}
+        if "target_results" in sql:
+            return {
+                "deleted_score_history_count": 0,
+                "deleted_final_signal_count": 0,
+                "deleted_agent_result_count": 1,
+                "deleted_analysis_result_count": 1,
+                "deleted_raw_document_count": 2,
+            }
+        return {"id": 20, "source_hash": args[5], "inserted": True}
 
     async def execute(self, sql, *args):
         self.calls.append(("execute", sql, args))
@@ -51,7 +59,9 @@ class CollectionRepositoryTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(row["source_hash"], "abc123")
+        self.assertTrue(row["inserted"])
         self.assertIn("ON CONFLICT (source_type, external_id)", connection.calls[0][1])
+        self.assertIn("(xmax = 0) AS inserted", connection.calls[0][1])
 
     async def test_replace_report_chunks_deletes_then_bulk_inserts(self):
         connection = FakeConnection()

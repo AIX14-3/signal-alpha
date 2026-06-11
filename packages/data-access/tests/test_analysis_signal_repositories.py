@@ -1,4 +1,5 @@
 import unittest
+import json
 
 from signal_alpha_data_access.repositories.analysis import AnalysisRepository
 from signal_alpha_data_access.repositories.signals import SignalRepository
@@ -11,6 +12,10 @@ class FakeConnection:
     async def fetchrow(self, sql, *args):
         self.calls.append(("fetchrow", sql, args))
         return {"id": 7, "ticker": "005930", "signal": "neutral"}
+
+    async def fetch(self, sql, *args):
+        self.calls.append(("fetch", sql, args))
+        return [{"id": 7, "ticker": "005930", "analysis_date": "2026-06-08"}]
 
 
 class AnalysisAndSignalRepositoryTest(unittest.IsolatedAsyncioTestCase):
@@ -67,6 +72,41 @@ class AnalysisAndSignalRepositoryTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertIn("ON CONFLICT (stock_id, signal_date, run_key, version)", connection.calls[0][1])
+        self.assertEqual(json.loads(connection.calls[0][2][10]), {"report": 60})
+
+    async def test_upsert_agent_result_serializes_method_detail_jsonb(self):
+        connection = FakeConnection()
+        repository = AnalysisRepository(connection)
+
+        await repository.upsert_agent_result(
+            result_id=2,
+            stock_id=1,
+            debate_method="D-1",
+            source_signal_event_ids=[10],
+            method_score=50,
+            method_signal="neutral",
+            method_detail={"source": "DART", "data_status": "partial"},
+        )
+
+        self.assertIn("INSERT INTO agent_results", connection.calls[0][1])
+        self.assertEqual(json.loads(connection.calls[0][2][6]), {"source": "DART", "data_status": "partial"})
+
+    async def test_list_dart_analysis_results_joins_stock_agent_results_and_signal_events(self):
+        connection = FakeConnection()
+        repository = AnalysisRepository(connection)
+
+        rows = await repository.list_dart_analysis_results(
+            stock_code="005930",
+            analysis_date="2026-06-08",
+        )
+
+        self.assertEqual(rows[0]["id"], 7)
+        self.assertIn("FROM analysis_results", connection.calls[0][1])
+        self.assertIn("INNER JOIN stocks", connection.calls[0][1])
+        self.assertIn("agent_results", connection.calls[0][1])
+        self.assertIn("signal_events", connection.calls[0][1])
+        self.assertIn("ar.run_key LIKE 'DART%'", connection.calls[0][1])
+        self.assertEqual(connection.calls[0][2], ("005930", "2026-06-08", 20))
 
     async def test_get_current_by_ticker_filters_to_current_published_signal(self):
         connection = FakeConnection()

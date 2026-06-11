@@ -42,10 +42,11 @@ class FakeClient:
 
 
 class FakeConnection:
-    def __init__(self, *, state_last_end_de="20260608"):
+    def __init__(self, *, state_last_end_de="20260608", raw_inserted=True):
         self.calls = []
         self.next_id = 300
         self.state_last_end_de = state_last_end_de
+        self.raw_inserted = raw_inserted
 
     async def fetchrow(self, sql, *args):
         self.calls.append(("fetchrow", sql, args))
@@ -54,6 +55,8 @@ class FakeConnection:
         if "FROM dart_corp_codes" in sql:
             return {"corp_code": "00126380", "corp_name": "삼성전자"}
         self.next_id += 1
+        if "INSERT INTO raw_documents" in sql:
+            return {"id": self.next_id, "source_hash": "hash", "inserted": self.raw_inserted}
         return {"id": self.next_id, "source_hash": "hash"}
 
     async def fetchval(self, sql, *args):
@@ -118,6 +121,31 @@ class DartCollectionTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(result["collected_count"], 1)
+
+    async def test_handler_force_reprocess_reenqueues_existing_dart_document(self):
+        connection = FakeConnection(raw_inserted=False)
+        handler = DartCollectionTaskHandler(
+            connection=connection,
+            settings=FakeSettings(),
+            client=FakeClient(),
+        )
+
+        result = await handler(
+            {
+                "id": 10,
+                "stock_id": 1,
+                "task_context": {
+                    "stock_code": "005930",
+                    "bgn_de": "20260601",
+                    "end_de": "20260608",
+                    "force_reprocess": True,
+                },
+            }
+        )
+
+        self.assertEqual(result["inserted_count"], 0)
+        self.assertEqual(result["reprocessed_count"], 1)
+        self.assertTrue(any("INSERT INTO processing_queue" in call[1] for call in connection.calls))
 
     async def test_handler_uses_collection_state_when_start_date_is_missing(self):
         connection = FakeConnection()

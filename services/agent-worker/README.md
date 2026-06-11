@@ -91,6 +91,15 @@ DART_PAGE_SIZE=100
 DART_FETCH_DOCUMENTS=true
 DART_MAX_RETRIES=2
 DART_RETRY_BACKOFF_SECONDS=0.5
+DART_USE_LLM=false
+DART_LLM_HIGH_IMPACT_ONLY=true
+DART_LLM_PROVIDER=gemini
+DART_LLM_MODEL=gemini-2.0-flash
+DART_LLM_TIMEOUT_SECONDS=20
+GEMINI_API_KEY=
+GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta
+OPENAI_API_KEY=
+OPENAI_BASE_URL=https://api.openai.com/v1
 ```
 
 Set `DART_FETCH_DOCUMENTS=false` to collect disclosure list metadata only.
@@ -100,6 +109,15 @@ backoff. Auth/IP/key failures such as `010`, `011`, `012`, and `901` fail withou
 Disclosure document download failures do not fail the whole list collection; the worker stores
 `document_fetch_status`, `document_error_category`, and retryability metadata in the DART raw
 detail payload.
+
+DART analysis is rule-based by default. To enable Gemini-assisted analysis for high-impact
+disclosures, set `DART_USE_LLM=true`, `DART_LLM_PROVIDER=gemini`, `DART_LLM_MODEL`, and
+`GEMINI_API_KEY`. OpenAI remains available by setting `DART_LLM_PROVIDER=openai` with
+`OPENAI_API_KEY`. The worker keeps the rule result as a fallback: invalid JSON, timeout, unsafe
+investment-advice language, or API failure stores the rule-based result with
+`analysis_source="rules_fallback"`. Successful LLM analysis stores `analysis_source="llm"`,
+`llm_model`, `prompt_ver`, `llm_confidence`, and `key_facts` in `agent_results.method_detail`.
+The prompt template is versioned at `app/prompts/dart_analysis_v1.md`.
 
 The `collect_dart` task expects `processing_queue.task_context` to include `stock_code`.
 Optional date filters use OpenDART parameter names:
@@ -136,6 +154,64 @@ Invoke-RestMethod -Method Post -Uri "http://localhost:8011/internal/tasks/collec
 The enqueue endpoint deduplicates by default. If an active `pending`, `running`, or `retrying`
 task already exists with the same `stock_id`, `task_type`, and `task_context`, the endpoint
 returns the existing `task_id` instead of inserting another queue row.
+
+To intentionally re-run normalization and analysis for already collected DART documents, include
+`"force_reprocess":true` in `task_context`:
+
+```powershell
+$body = '{"stock_id":1,"priority":"batch","task_context":{"stock_code":"005930","bgn_de":"20260601","end_de":"20260608","force_reprocess":true}}'
+Invoke-RestMethod -Method Post -Uri "http://localhost:8011/internal/tasks/collect_dart/enqueue" -ContentType "application/json" -Body $body
+```
+
+Query stored DART analysis results:
+
+```powershell
+Invoke-RestMethod -Method Get -Uri "http://localhost:8011/internal/dart/analysis-results?stock_code=005930&analysis_date=2026-06-08"
+```
+
+Query DART analysis results flattened by disclosure document:
+
+```powershell
+Invoke-RestMethod -Method Get -Uri "http://localhost:8011/internal/dart/document-results?stock_code=005930&analysis_date=2026-06-08"
+```
+
+Run a development E2E pass that collects, normalizes, analyzes, and returns stored DART analysis
+results:
+
+```powershell
+$body = '{"stock_id":1,"stock_code":"005930","bgn_de":"2026-06-01","end_de":"2026-06-08","force_reprocess":true}'
+Invoke-RestMethod -Method Post -Uri "http://localhost:8011/internal/dart/e2e/run" -ContentType "application/json" -Body $body
+```
+
+E2E defaults to at most 20 normalize runs and 20 analyze runs. The response includes a
+`queue_summary` that reports whether either limit left generated tasks pending. To process all
+generated tasks in one development call, pass `run_until_idle`:
+
+```powershell
+$body = '{"stock_id":1,"stock_code":"005930","bgn_de":"2026-05-01","end_de":"2026-05-31","force_reprocess":true,"run_until_idle":true}'
+Invoke-RestMethod -Method Post -Uri "http://localhost:8011/internal/dart/e2e/run" -ContentType "application/json" -Body $body
+```
+
+Inspect or drain queued work:
+
+```powershell
+Invoke-RestMethod -Method Get -Uri "http://localhost:8011/internal/queue/tasks?stock_code=005930&task_type=normalize_dart&status=pending"
+
+$body = '{"max_runs":50}'
+Invoke-RestMethod -Method Post -Uri "http://localhost:8011/internal/queue/normalize_dart/run-batch" -ContentType "application/json" -Body $body
+
+Invoke-RestMethod -Method Post -Uri "http://localhost:8011/internal/queue/tasks/77/retry"
+```
+
+Delete development DART test data for a stock and date range:
+
+```powershell
+Invoke-RestMethod -Method Delete -Uri "http://localhost:8011/internal/dart/test-data?stock_code=005930&bgn_de=2026-06-01&end_de=2026-06-30"
+```
+
+Quarterly and annual report text is scanned for basic financial figures such as revenue,
+operating profit, and net income. Extracted values are stored in `signal_metrics` as
+`KRW_million` metrics when recognizable values are present.
 
 ### DART Collection Schedule
 
