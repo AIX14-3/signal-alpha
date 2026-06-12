@@ -11,6 +11,7 @@ YoY 개선은 **같은 period_type끼리만** 비교해 이 문제를 원천 차
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 
@@ -69,11 +70,11 @@ def asof_fundamental_column(
 
 def quality_margin(panel: pd.DataFrame, fundamentals: pd.DataFrame | None = None) -> pd.Series:
     if fundamentals is None:
-        return pd.Series(pd.NA, index=panel.index, dtype="float64")
+        return pd.Series(np.nan, index=panel.index, dtype="float64")
     return _asof_join(panel, _prepare(fundamentals), "margin")
 
 
 def quality_margin_yoy(panel: pd.DataFrame, fundamentals: pd.DataFrame | None = None) -> pd.Series:
     if fundamentals is None:
-        return pd.Series(pd.NA, index=panel.index, dtype="float64")
+        return pd.Series(np.nan, index=panel.index, dtype="float64")
     return _asof_join(panel, _prepare(fundamentals), "margin_yoy")

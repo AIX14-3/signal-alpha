@@ -9,12 +9,13 @@ DART 주식총수현황(stockTotqySttus, rcept 기반 PIT) × 비수정 종가
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 
 def value_bpr(panel: pd.DataFrame, fundamentals: pd.DataFrame | None = None) -> pd.Series:
     if "market_cap" not in panel.columns or fundamentals is None:
-        return pd.Series(pd.NA, index=panel.index, dtype="float64")
+        return pd.Series(np.nan, index=panel.index, dtype="float64")
 
     from signal_alpha_harness.factors.quality import asof_fundamental_column
 
