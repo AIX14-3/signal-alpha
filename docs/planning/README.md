@@ -23,7 +23,7 @@
 
 ## 관련 문서 (구현 기준)
 
-- 아키텍처·수집 데몬: [`docs/architecture.md`](../architecture.md), [`docs/price-collector.md`](../price-collector.md), [`docs/kiwoom-rest-spec.md`](../kiwoom-rest-spec.md)
+- 아키텍처·수집 데몬: [`docs/architecture.md`](../architecture.md), [`docs/price-collector.md`](../price-collector.md), [`docs/spec/kiwoom-rest-spec.md`](../spec/kiwoom-rest-spec.md)
 - DB 상세: [`database/README.md`](../../database/README.md), [`database/erd/signal_alpha_core_erd.md`](../../database/erd/signal_alpha_core_erd.md)
 
 ## 노션 원본

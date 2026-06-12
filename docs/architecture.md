@@ -58,4 +58,4 @@ asyncio 태스크**로 돕니다 (`app/collectors/price/runner.py`,
 - 데몬은 DATABASE_URL 또는 키움 키가 비어 있으면 경고 로그 후 기동하지 않는다.
 
 상세 실행/환경 변수는 `docs/price-collector.md`,
-수집 데이터 명세는 `docs/kiwoom-rest-spec.md` 참고.
+수집 데이터 명세는 `docs/spec/kiwoom-rest-spec.md` 참고.
