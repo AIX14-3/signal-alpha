@@ -213,18 +213,20 @@ class HiringAnalyzer:
                 is_spike = relative_strength >= (HIRING_SPIKE_THRESHOLD * 100)
 
                 # Step 4: hiring_signals 테이블에 저장
-                # ⚠️ NOTE: 아래 SQL은 hiring_signals 테이블 스키마 확인 후 수정 필요
-                #          - PK가 (stock_id, observed_date) 복합키로 정의되었는지 확인
-                #          - updated_at 컬럼이 실제로 존재하는지 확인
                 await conn.execute("""
-                    INSERT INTO hiring_signals 
-                        (stock_id, observed_date, relative_strength, is_spike)
-                    VALUES 
-                        ($1, $2::DATE, $3, $4)
+                    INSERT INTO hiring_signals
+                        (stock_id, observed_date, job_count, baseline,
+                         relative_strength, is_spike)
+                    VALUES
+                        ($1, $2::DATE, $3, $4, $5, $6)
                     ON CONFLICT (stock_id, observed_date) DO UPDATE
-                    SET relative_strength = EXCLUDED.relative_strength,
-                        is_spike = EXCLUDED.is_spike
-                """, stock_id, target_date, round(relative_strength, 2), is_spike)
+                    SET job_count         = EXCLUDED.job_count,
+                        baseline          = EXCLUDED.baseline,
+                        relative_strength = EXCLUDED.relative_strength,
+                        is_spike          = EXCLUDED.is_spike
+                """, stock_id, target_date, today_count,
+                     round(expected_baseline_count, 2),
+                     round(relative_strength, 2), is_spike)
 
 
 # ============================================================================

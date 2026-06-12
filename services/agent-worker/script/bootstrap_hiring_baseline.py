@@ -1,5 +1,6 @@
 # scripts/bootstrap_hiring_baseline.py
 import asyncio
+import os
 from datetime import date, timedelta
 import asyncpg
 from app.clients.naver_datalab_client import NaverDataLabClient
@@ -7,10 +8,10 @@ from app.collectors.hiring.keyword_generator import HiringKeywordGenerator
 
 async def bootstrap_baselines(pool, datalab_client: NaverDataLabClient):
     generator = HiringKeywordGenerator()
-    
-    # 1. DB에서 수집 대상 기업 리스트 조회
+
+    # 1. DB에서 수집 대상 기업 리스트 조회 (stocks.name 컬럼 사용)
     async with pool.acquire() as conn:
-        stocks = await conn.fetch("SELECT id, company_name, short_name FROM stocks WHERE is_target = TRUE")
+        stocks = await conn.fetch("SELECT id, name, short_name FROM stocks WHERE is_target = TRUE")
     
     # 3년 전 날짜 계산
     start_date_obj = date.today() - timedelta(days=365 * 3)
@@ -21,7 +22,7 @@ async def bootstrap_baselines(pool, datalab_client: NaverDataLabClient):
 
     for stock in stocks:
         stock_id = stock["id"]
-        c_name = stock["company_name"]
+        c_name = stock["name"]
         s_name = stock["short_name"]
         
         # 2. Generator로 네이버 API 규격 키워드 그룹 변환
@@ -90,3 +91,26 @@ async def bootstrap_baselines(pool, datalab_client: NaverDataLabClient):
             
         except Exception as e:
             print(f"❌ {c_name} Baseline 생성 중 에러 발생: {e}")
+
+
+async def main() -> None:
+    """최초 1회 또는 분기 1회 실행하는 DataLab 기준선 부트스트랩 진입점."""
+    database_url = os.environ["DATABASE_URL"]
+    client_id    = os.environ["HIRING_DATALAB_CLIENT_ID"]
+    client_secret = os.environ["HIRING_DATALAB_CLIENT_SECRET"]
+
+    pool = await asyncpg.create_pool(database_url)
+    datalab_client = NaverDataLabClient(
+        client_id=client_id,
+        client_secret=client_secret,
+    )
+
+    try:
+        await bootstrap_baselines(pool, datalab_client)
+        print("✅ 전체 부트스트랩 완료")
+    finally:
+        await pool.close()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
