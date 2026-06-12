@@ -56,6 +56,21 @@ class ScoringRepository:
             score_cap_reason,
         )
 
+    async def get_latest_quant_score(self, stock_code: str) -> Any:
+        """종목의 최신 QUANT 점수 행 (stocks·analysis_results 조인)."""
+        return await self._connection.fetchrow(
+            """
+            SELECT q.*, s.ticker, a.analysis_date, a.warning, a.disclaimer
+            FROM quant_scores q
+            JOIN stocks s ON s.id = q.stock_id
+            JOIN analysis_results a ON a.id = q.result_id
+            WHERE s.ticker = $1
+            ORDER BY a.analysis_date DESC, q.id DESC
+            LIMIT 1
+            """,
+            stock_code,
+        )
+
     async def upsert_ta_score(
         self,
         *,

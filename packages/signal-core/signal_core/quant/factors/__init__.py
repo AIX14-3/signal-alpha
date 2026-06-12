@@ -18,10 +18,10 @@ from collections.abc import Callable
 
 import pandas as pd
 
-from signal_alpha_harness.factors.flow import flow_20
-from signal_alpha_harness.factors.price import lowvol_60, momentum_12_1, reversal_1m
-from signal_alpha_harness.factors.quality import quality_margin, quality_margin_yoy
-from signal_alpha_harness.factors.value import value_bpr
+from signal_core.quant.factors.flow import flow_20
+from signal_core.quant.factors.price import lowvol_60, momentum_12_1, reversal_1m
+from signal_core.quant.factors.quality import quality_margin, quality_margin_yoy
+from signal_core.quant.factors.value import value_bpr
 
 FactorFn = Callable[[pd.DataFrame, pd.DataFrame | None], pd.Series]
 

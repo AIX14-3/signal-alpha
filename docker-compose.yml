@@ -48,11 +48,12 @@ services:
     volumes:
       - ./services/agent-worker:/workspace/services/agent-worker
       - ./packages/data-access:/workspace/packages/data-access
+      - ./packages/signal-core:/workspace/packages/signal-core
     environment:
       SERVICE_NAME: agent-worker
       SERVICE_VERSION: ${SERVICE_VERSION:-0.1.0}
       DATABASE_URL: ${DATABASE_URL:-postgresql://signal_alpha:signal_alpha_password@postgres:5432/signal_alpha}
-      PYTHONPATH: /workspace/services/agent-worker:/workspace/packages/data-access
+      PYTHONPATH: /workspace/services/agent-worker:/workspace/packages/data-access:/workspace/packages/signal-core
       WATCHFILES_FORCE_POLLING: "true"
       LLM_API_KEY: ${LLM_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}

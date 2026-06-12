@@ -17,7 +17,7 @@ def value_bpr(panel: pd.DataFrame, fundamentals: pd.DataFrame | None = None) -> 
     if "market_cap" not in panel.columns or fundamentals is None:
         return pd.Series(np.nan, index=panel.index, dtype="float64")
 
-    from signal_alpha_harness.factors.quality import asof_fundamental_column
+    from signal_core.quant.factors.quality import asof_fundamental_column
 
     equity = asof_fundamental_column(panel, fundamentals, "total_equity")
     cap = panel["market_cap"].astype(float).where(panel["market_cap"] > 0)

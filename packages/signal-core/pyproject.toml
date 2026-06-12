@@ -1,8 +1,11 @@
 [project]
 name = "signal-core"
 version = "0.1.0"
-description = "Shared domain contracts for Signal Alpha"
+description = "Shared domain contracts + quant scoring engine for Signal Alpha"
 requires-python = ">=3.11"
+dependencies = [
+  "pandas>=2.0",  # quant 점수 엔진 (하네스 검증·agent-worker 서빙 공용)
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

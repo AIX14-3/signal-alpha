@@ -11,8 +11,8 @@ from dataclasses import asdict, dataclass, field
 
 import pandas as pd
 
-from signal_alpha_harness.calibration import lookup
-from signal_alpha_harness.combine import ACTIVE_FACTORS, DRIVER_LABELS
+from signal_core.quant.calibration import lookup
+from signal_core.quant.combine import ACTIVE_FACTORS, DRIVER_LABELS
 
 DEFAULT_WARNING = "본 점수는 KOSPI200 내 상대 순위이며 시장 전체가 하락하면 상위 종목도 하락할 수 있습니다."
 DEFAULT_DISCLAIMER = "본 자료는 투자 권유가 아니며, 투자 판단의 책임은 투자자 본인에게 있습니다."
@@ -33,7 +33,8 @@ class ScoreCard:
         return asdict(self)
 
 
-def _drivers(row: pd.Series) -> list[str]:
+def drivers_from_row(row: pd.Series) -> list[str]:
+    """팩터 z 컬럼들 → 사용자 표시용 드라이버 라벨 (서빙 적재 시에도 사용)."""
     labels = []
     for name in ACTIVE_FACTORS:
         z = row.get(f"z_{name}")
@@ -59,7 +60,7 @@ def build_scorecard(row: pd.Series, calibration_table: pd.DataFrame) -> ScoreCar
         score=None if withheld else int(round(float(score))),
         confidence=confidence,
         calibration=None if withheld else lookup(calibration_table, float(score)),
-        drivers=_drivers(row),
+        drivers=drivers_from_row(row),
     )
 
 

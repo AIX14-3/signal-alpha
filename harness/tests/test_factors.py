@@ -7,8 +7,8 @@ import unittest
 import numpy as np
 import pandas as pd
 
-from signal_alpha_harness.factors.price import lowvol_60, momentum_12_1, reversal_1m
-from signal_alpha_harness.factors.quality import quality_margin, quality_margin_yoy
+from signal_core.quant.factors.price import lowvol_60, momentum_12_1, reversal_1m
+from signal_core.quant.factors.quality import quality_margin, quality_margin_yoy
 
 
 def make_panel(n_days: int = 300) -> pd.DataFrame:

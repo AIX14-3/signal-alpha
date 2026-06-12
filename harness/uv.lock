@@ -880,6 +880,7 @@ dependencies = [
     { name = "pykrx" },
     { name = "requests" },
     { name = "setuptools" },
+    { name = "signal-core" },
 ]
 
 [package.dev-dependencies]
@@ -894,10 +895,22 @@ requires-dist = [
     { name = "pykrx", specifier = ">=1.0.45" },
     { name = "requests", specifier = ">=2.31" },
     { name = "setuptools", specifier = ">=68,<81" },
+    { name = "signal-core", editable = "../packages/signal-core" },
 ]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=8.0.0" }]
+
+[[package]]
+name = "signal-core"
+version = "0.1.0"
+source = { editable = "../packages/signal-core" }
+dependencies = [
+    { name = "pandas" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "pandas", specifier = ">=2.0" }]
 
 [[package]]
 name = "six"

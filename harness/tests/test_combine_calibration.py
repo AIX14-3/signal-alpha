@@ -7,10 +7,10 @@ import unittest
 import numpy as np
 import pandas as pd
 
-from signal_alpha_harness.calibration import build_calibration, lookup, monotonicity
+from signal_core.quant.calibration import build_calibration, lookup, monotonicity
 from signal_alpha_harness.combine import MIN_FACTORS_FOR_SCORE, _winsorize_zscore, add_combined_score
-from signal_alpha_harness.confidence import add_confidence, grade_row
-from signal_alpha_harness.scorecard import build_scorecard
+from signal_core.quant.confidence import add_confidence, grade_row
+from signal_core.quant.scorecard import build_scorecard
 
 
 class WinsorizeZscoreTest(unittest.TestCase):

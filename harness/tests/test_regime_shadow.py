@@ -83,7 +83,7 @@ class ShadowAppendTest(unittest.TestCase):
             second = append_predictions(path, self.make_day_rows())
             self.assertEqual(second, 0)  # 같은 거래일 재기록 거부
             self.assertEqual(recorded_trade_dates(path), {"2026-06-12"})
-            lines = [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines()]
+            lines = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
             self.assertEqual(len(lines), 2)
             self.assertIsNone(lines[1]["score"])  # C등급 보류는 null로 기록
             self.assertIn("predicted_at", lines[0])

@@ -30,7 +30,7 @@ from pathlib import Path
 import pandas as pd
 
 from signal_alpha_harness.combine import ACTIVE_FACTORS, add_combined_score
-from signal_alpha_harness.confidence import add_confidence
+from signal_core.quant.confidence import add_confidence
 from signal_alpha_harness.universe import DATA_DIR, load_universe
 
 SHADOW_PATH = DATA_DIR / "shadow" / "predictions.jsonl"

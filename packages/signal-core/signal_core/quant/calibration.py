@@ -75,3 +75,17 @@ def lookup(table: pd.DataFrame, score: float) -> dict | None:
         "p25_p75": [f"{row['p25_excess']:+.1%}", f"{row['p75_excess']:+.1%}"],
         "sample_size": int(row["n"]),
     }
+
+def load_default_table() -> pd.DataFrame:
+    """패키지에 내장된 보정표 (하네스 train 구간 산출물) 로드.
+
+    서빙(agent-worker)은 이 고정 테이블을 쓴다 — 보정표 갱신은 하네스
+    재검증(combine 게이트 통과) 후 calibration_table.json 재수출로만 한다.
+    """
+    import json
+    from pathlib import Path
+
+    payload = json.loads(
+        (Path(__file__).parent / "calibration_table.json").read_text(encoding="utf-8")
+    )
+    return pd.DataFrame(payload["buckets"])

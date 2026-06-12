@@ -24,7 +24,7 @@ from pathlib import Path
 import pandas as pd
 
 from signal_alpha_harness.backtest import DEFAULT_LOG, DEFAULT_PANEL, append_log
-from signal_alpha_harness.factors import DATA_PENDING, FACTORS
+from signal_core.quant.factors import DATA_PENDING, FACTORS
 from signal_alpha_harness.metrics import compute_metrics, permutation_pvalue
 from signal_alpha_harness.panel import add_forward_returns, load_panel
 from signal_alpha_harness.splits import chronological_split
