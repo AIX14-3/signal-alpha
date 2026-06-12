@@ -43,6 +43,30 @@ class Settings:
         self.naver_client_secret = getenv("NAVER_CLIENT_SECRET", "")
         self.naver_datalab_timeout_seconds = int(getenv("NAVER_DATALAB_TIMEOUT_SECONDS", "15"))
 
+        # ── Realtime price collector (Kiwoom REST, agent-worker 내장 데몬) ──
+        self.price_collector_enabled = _env_bool("PRICE_COLLECTOR_ENABLED", default=True)
+        # Kiwoom REST API (App Key/Secret + OAuth). Works on Linux/Docker —
+        # no Windows COM dependency. Mock domain by default because the
+        # currently issued key is a paper-trading key (expires 2026-09-06).
+        # Switch to https://api.kiwoom.com once a production key is issued.
+        self.kiwoom_app_key = getenv("KIWOOM_APP_KEY", "")
+        self.kiwoom_app_secret = getenv("KIWOOM_APP_SECRET", "")
+        self.kiwoom_api_base = getenv("KIWOOM_API_BASE", "https://mockapi.kiwoom.com").rstrip("/")
+        self.kiwoom_timeout_seconds = float(getenv("KIWOOM_TIMEOUT_SECONDS", "10"))
+        # Kiwoom enforces request-rate limits; keep a minimum gap between calls.
+        self.kiwoom_min_request_interval_sec = float(
+            getenv("KIWOOM_MIN_REQUEST_INTERVAL_SEC", "0.25")
+        )
+        # Intraday polling cadence (seconds between full target sweeps).
+        self.price_poll_interval_sec = float(getenv("PRICE_POLL_INTERVAL_SEC", "60"))
+        # Wait this long after market close before fetching confirmed
+        # investor-flow figures (they settle after the session ends).
+        self.price_flow_delay_after_close_min = int(
+            getenv("PRICE_FLOW_DELAY_AFTER_CLOSE_MIN", "30")
+        )
+        self.market_open = getenv("MARKET_OPEN", "09:00")
+        self.market_close = getenv("MARKET_CLOSE", "15:30")
+
 
 @lru_cache
 def get_settings() -> Settings:

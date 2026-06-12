@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.schemas.snapshot import InvestorFlow, StockSnapshot, TargetStock
+from app.collectors.price.schemas import InvestorFlow, StockSnapshot, TargetStock
 
 
 def ka10001_payload(**overrides: object) -> dict:

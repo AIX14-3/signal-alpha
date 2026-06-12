@@ -48,8 +48,8 @@ body: { "stk_cd": "005930" }
 | EPS / BPS | 원 | `eps` / `bps` | `eps` / `bps` |
 | ROE / ROA | % | `roe` / `roa` | `roe` / `roa` |
 
-- 매핑 상수: `services/price-collector/app/collectors/stock_snapshot.py` `KA10001_FIELDS`
-- 응답 숫자는 `+74300` 형태의 부호 접두 문자열 → 가격류는 절대값 파싱 (`app/kiwoom/parsing.py`)
+- 매핑 상수: `services/agent-worker/app/collectors/price/stock_snapshot.py` `KA10001_FIELDS`
+- 응답 숫자는 `+74300` 형태의 부호 접두 문자열 → 가격류는 절대값 파싱 (`app/collectors/price/kiwoom/parsing.py`)
 - 당일 OHLC + 현재가(종가 취급)는 `ohlcv_data` 당일 행에도 UPSERT (수급 컬럼 보존)
 
 ## 3. ka10059 · 종목별 투자자 매매동향 (장 마감 +30분, 1회)

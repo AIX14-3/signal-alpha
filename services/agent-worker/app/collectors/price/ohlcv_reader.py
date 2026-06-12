@@ -1,8 +1,8 @@
 """Read collected price history from the shared database.
 
 Per docs/architecture.md the analysis side never calls the Kiwoom API directly:
-`services/price-collector` writes `ohlcv_data`, and this collector only reads
-those rows back. The numeric series rides in ``RawEvidence.metadata["rows"]``
+the price collection daemon (``price/runner.py``) writes `ohlcv_data`, and this
+collector only reads those rows back. The numeric series rides in ``RawEvidence.metadata["rows"]``
 so the analyzer stays free of database concerns.
 """
 

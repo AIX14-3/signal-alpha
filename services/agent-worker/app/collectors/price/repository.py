@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Any
 
-from app.schemas.snapshot import InvestorFlow, StockSnapshot, TargetStock
+from app.collectors.price.schemas import InvestorFlow, StockSnapshot, TargetStock
 
 _INSERT_SNAPSHOT = """
 INSERT INTO price_snapshots (

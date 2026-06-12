@@ -16,7 +16,6 @@ members = [
     "signal-alpha-agent-worker",
     "signal-alpha-data-access",
     "signal-alpha-main-server",
-    "signal-alpha-price-collector",
     "signal-core",
 ]
 
@@ -836,11 +835,13 @@ source = { virtual = "services/agent-worker" }
 dependencies = [
     { name = "beautifulsoup4" },
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "psycopg2-binary" },
     { name = "python-dotenv" },
     { name = "selenium" },
     { name = "signal-alpha-data-access" },
     { name = "sqlalchemy" },
+    { name = "tzdata", marker = "sys_platform == 'win32'" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "webdriver-manager" },
 ]
@@ -857,6 +858,7 @@ dev = [
 requires-dist = [
     { name = "beautifulsoup4", specifier = ">=4.12.0" },
     { name = "fastapi", specifier = ">=0.115.0" },
+    { name = "httpx", specifier = ">=0.27.0" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27.0" },
     { name = "psycopg2-binary", specifier = ">=2.9.0" },
     { name = "psycopg2-binary", marker = "extra == 'dev'", specifier = ">=2.9.0" },
@@ -866,6 +868,7 @@ requires-dist = [
     { name = "signal-alpha-data-access", editable = "packages/data-access" },
     { name = "sqlalchemy", specifier = ">=2.0.0" },
     { name = "sqlalchemy", marker = "extra == 'dev'", specifier = ">=2.0.0" },
+    { name = "tzdata", marker = "sys_platform == 'win32'", specifier = ">=2024.1" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30.0" },
     { name = "webdriver-manager", specifier = ">=4.0.0" },
 ]
@@ -903,34 +906,6 @@ requires-dist = [
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27.0" },
     { name = "signal-alpha-data-access", editable = "packages/data-access" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30.0" },
-]
-provides-extras = ["dev"]
-
-[[package]]
-name = "signal-alpha-price-collector"
-version = "0.2.0"
-source = { virtual = "services/price-collector" }
-dependencies = [
-    { name = "asyncpg" },
-    { name = "httpx" },
-    { name = "python-dotenv" },
-    { name = "signal-alpha-data-access" },
-    { name = "tzdata", marker = "sys_platform == 'win32'" },
-]
-
-[package.optional-dependencies]
-dev = [
-    { name = "pytest" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "asyncpg", specifier = ">=0.29.0" },
-    { name = "httpx", specifier = ">=0.27.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
-    { name = "python-dotenv", specifier = ">=1.0.0" },
-    { name = "signal-alpha-data-access", editable = "packages/data-access" },
-    { name = "tzdata", marker = "sys_platform == 'win32'", specifier = ">=2024.1" },
 ]
 provides-extras = ["dev"]
 

@@ -14,8 +14,10 @@ that text in `RawEvidence.content` and `metadata.document_text`.
 
 ## PRICE
 
-`OhlcvReader` does not call any external API. The Kiwoom calls happen in
-`services/price-collector`, which writes `ohlcv_data`; this collector reads those rows back
+`OhlcvReader` does not call any external API. The Kiwoom calls happen in the price collection
+daemon (`price/runner.py`), a lifespan background task inside this same agent-worker service
+that polls the Kiwoom REST API during market hours and writes `price_snapshots`/`ohlcv_data`
+(see `docs/price-collector.md`). `OhlcvReader` still only reads `ohlcv_data` rows back
 through `signal_alpha_data_access` and returns a single `RawEvidence` with `source="PRICE"`,
 carrying the JSON-safe OHLCV/investor-flow rows in `metadata.rows` plus a `stale` marker when
 the latest session is older than a week.
