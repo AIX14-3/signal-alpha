@@ -1,4 +1,12 @@
-# Signal Alpha Core ERD
+# Signal Alpha ERD
+
+베이스라인 마이그레이션(`database/migrations/` 001~013) 기준 전체 테이블 관계도.
+
+> 컬럼 전체 정의의 기준은 항상 `database/migrations/` SQL입니다.
+> 이 문서는 테이블 간 관계와 핵심 컬럼(PK/FK/UNIQUE/대표 필드)만 표기합니다.
+> **새 테이블을 추가하는 마이그레이션 PR은 이 문서의 해당 Zone 블록도 함께 갱신해야 합니다** (`database/README.md` §4).
+
+## Zone A — Market (002_market.sql)
 
 ```mermaid
 erDiagram
@@ -6,189 +14,218 @@ erDiagram
         BIGINT id PK
         VARCHAR ticker UK
         VARCHAR name
-        VARCHAR market
+        VARCHAR market "KOSPI|KOSDAQ"
         VARCHAR sector
         BOOLEAN is_active
-        TIMESTAMPTZ created_at
-        TIMESTAMPTZ updated_at
+        BOOLEAN is_target "수집 대상 스위치"
+        VARCHAR short_name "DataLab 약칭"
     }
 
     ohlcv_data {
         BIGINT id PK
         BIGINT stock_id FK
-        DATE trade_date
-        NUMERIC open
-        NUMERIC high
-        NUMERIC low
-        NUMERIC close
+        DATE trade_date "UK(stock_id,trade_date)"
+        NUMERIC open_high_low_close
         BIGINT volume
-        NUMERIC adjusted_close
         BIGINT foreign_net
         BIGINT institution_net
-        NUMERIC change_pct
-        BIGINT market_cap
-        TIMESTAMPTZ created_at
     }
 
-    users {
+    fundamentals {
         BIGINT id PK
-        VARCHAR member_code UK
-        VARCHAR email UK
-        TEXT password_hash
-        VARCHAR nickname
-        BOOLEAN agreed_risk
-        BOOLEAN is_verified
-        TIMESTAMPTZ email_verified_at
-        TIMESTAMPTZ created_at
-        TIMESTAMPTZ deleted_at
+        BIGINT stock_id FK
+        DATE fiscal_date "UK(stock_id,fiscal_date,period_type)"
+        VARCHAR period_type "annual|quarter"
+        BIGINT revenue
+        NUMERIC per_pbr_roe_roa
     }
 
+    price_snapshots {
+        BIGINT id PK
+        BIGINT stock_id FK
+        TIMESTAMPTZ captured_at "UK(stock_id,captured_at)"
+        DATE trade_date
+        NUMERIC current_price
+        BIGINT volume "당일 누적"
+    }
+
+    stocks ||--o{ ohlcv_data : "stock_id"
+    stocks ||--o{ fundamentals : "stock_id"
+    stocks ||--o{ price_snapshots : "stock_id"
+```
+
+## Zone C — Collection 핵심 (003_collection_core.sql)
+
+```mermaid
+erDiagram
     collector_runs {
         BIGINT id PK
-        VARCHAR collector_type
-        VARCHAR run_mode
+        VARCHAR collector_type "DART|REPORT|HIRING|PATENT|DATALAB|PRICE"
+        VARCHAR run_mode "batch|immediate|manual"
         VARCHAR status
-        TIMESTAMPTZ started_at
-        TIMESTAMPTZ finished_at
-        INTEGER collected_count
-        INTEGER inserted_count
-        INTEGER skipped_count
-        INTEGER failed_count
-        TEXT error_message
-        TIMESTAMPTZ created_at
     }
 
     raw_documents {
         BIGINT id PK
         BIGINT stock_id FK
         BIGINT collector_run_id FK
-        VARCHAR source_type
-        VARCHAR source_name
+        VARCHAR source_type "UK(source_type,external_id)"
         VARCHAR external_id
         VARCHAR source_hash UK
-        TEXT title
-        TEXT source_url
         TIMESTAMPTZ published_at
-        VARCHAR collect_status
-        TEXT collect_error
-        TIMESTAMPTZ collected_at
-        VARCHAR collector_ver
-        TIMESTAMPTZ created_at
     }
 
     dart_raw_details {
-        BIGINT raw_document_id PK, FK
-        BIGINT stock_id FK
+        BIGINT raw_document_id PK "복합FK(raw_document_id,stock_id) CASCADE"
+        BIGINT stock_id
         VARCHAR receipt_no UK
-        VARCHAR corp_code
-        TEXT report_name
         VARCHAR disclosure_type
-        VARCHAR priority
-        VARCHAR priority_reason
-        BOOLEAN is_correction
-        VARCHAR original_receipt_no
         JSONB extra_payload
-        TIMESTAMPTZ created_at
     }
 
     report_raw_details {
-        BIGINT raw_document_id PK, FK
-        BIGINT stock_id FK
+        BIGINT raw_document_id PK "복합FK CASCADE"
+        BIGINT stock_id
         VARCHAR securities_firm
-        VARCHAR analyst_name
         DATE publish_date
-        VARCHAR investment_opinion
         INTEGER target_price
-        INTEGER previous_target_price
-        INTEGER current_price_at_publish
-        NUMERIC upside_pct
-        BOOLEAN has_pdf
-        TEXT pdf_url
-        TEXT local_file_path
-        TEXT extracted_text
-        TEXT extracted_text_path
         VARCHAR parsing_status
-        TEXT parsing_error
-        JSONB extra_payload
-        TIMESTAMPTZ created_at
     }
 
     hiring_raw_details {
-        BIGINT raw_document_id PK, FK
-        BIGINT stock_id FK
+        BIGINT raw_document_id PK "복합FK CASCADE"
+        BIGINT stock_id
         VARCHAR keyword
-        VARCHAR job_category
         INTEGER job_count
-        INTEGER previous_job_count
         NUMERIC change_pct
-        JSONB extra_payload
-        TIMESTAMPTZ created_at
     }
 
     patent_raw_details {
-        BIGINT raw_document_id PK, FK
-        BIGINT stock_id FK
+        BIGINT raw_document_id PK "복합FK CASCADE"
+        BIGINT stock_id
         VARCHAR application_no UK
-        TEXT patent_title
-        VARCHAR applicant_name
         DATE application_date
         VARCHAR tech_category
-        BOOLEAN is_new_category
-        JSONB extra_payload
-        TIMESTAMPTZ created_at
+    }
+
+    report_chunks {
+        BIGINT id PK
+        BIGINT raw_document_id FK "복합FK CASCADE, UK(raw_document_id,chunk_index)"
+        BIGINT stock_id
+        INTEGER chunk_index
+        TEXT chunk_text
+        VECTOR embedding "1024, ivfflat"
+    }
+
+    collector_runs ||--o{ raw_documents : "collector_run_id"
+    raw_documents ||--o| dart_raw_details : "raw_document_id"
+    raw_documents ||--o| report_raw_details : "raw_document_id"
+    raw_documents ||--o| hiring_raw_details : "raw_document_id"
+    raw_documents ||--o| patent_raw_details : "raw_document_id"
+    raw_documents ||--o{ report_chunks : "raw_document_id"
+```
+
+`stocks ||--o{ raw_documents` (stock_id). detail 테이블의 복합 FK `(raw_document_id, stock_id) → raw_documents(id, stock_id)`는 detail 행의 종목이 원본 문서와 일치함을 DB 차원에서 보장한다.
+
+## Zone C — DART 보조 (004_collection_dart.sql)
+
+```mermaid
+erDiagram
+    dart_corp_codes {
+        BIGINT id PK
+        BIGINT stock_id FK "nullable"
+        VARCHAR corp_code UK
+        VARCHAR ticker UK
+        VARCHAR corp_name
+        TIMESTAMPTZ synced_at
+    }
+
+    dart_collection_states {
+        BIGINT stock_id PK "FK stocks CASCADE"
+        VARCHAR ticker UK
+        DATE last_bgn_de
+        DATE last_end_de
+        BIGINT last_collector_run_id FK
+    }
+```
+
+## Zone C — DataLab (005_collection_datalab.sql) · Hiring (006_collection_hiring.sql)
+
+DataLab은 **카테고리 단위 수집**: 종목 기반 `raw_documents`를 쓰지 않고 자체 원본/상세 테이블을 사용한다.
+
+```mermaid
+erDiagram
+    datalab_categories {
+        BIGINT id PK
+        VARCHAR name UK
+        VARCHAR sector
+        BOOLEAN is_active
+    }
+
+    datalab_category_stocks {
+        BIGINT category_id PK "FK CASCADE"
+        BIGINT stock_id PK "FK stocks"
+        NUMERIC weight
+    }
+
+    datalab_category_keywords {
+        BIGINT category_id PK "FK CASCADE"
+        VARCHAR keyword PK
+        VARCHAR keyword_group
+        BOOLEAN is_active
+    }
+
+    datalab_raw_documents {
+        BIGINT id PK
+        BIGINT category_id FK
+        BIGINT collector_run_id FK
+        VARCHAR source_hash UK
+        VARCHAR external_id "UK(source_name,external_id)"
     }
 
     datalab_raw_details {
-        BIGINT raw_document_id PK, FK
-        BIGINT stock_id FK
-        VARCHAR keyword
-        VARCHAR keyword_group
+        BIGINT raw_document_id PK "FK datalab_raw_documents CASCADE"
+        BIGINT category_id FK
+        VARCHAR keyword "UK(category_id,keyword,observed_date,period_type,device,gender,age_group)"
         DATE observed_date
         NUMERIC search_index
-        NUMERIC previous_search_index
-        NUMERIC change_pct
-        VARCHAR period_type
-        VARCHAR device
-        VARCHAR gender
-        VARCHAR age_group
         BOOLEAN is_spike
-        JSONB extra_payload
-        TIMESTAMPTZ created_at
     }
 
+    hiring_baseline {
+        BIGINT id PK
+        BIGINT stock_id FK "UK, stocks CASCADE"
+        NUMERIC avg_search_volume
+        NUMERIC q1_q4_factor
+    }
+
+    datalab_categories ||--o{ datalab_category_stocks : "category_id"
+    datalab_categories ||--o{ datalab_category_keywords : "category_id"
+    datalab_categories ||--o{ datalab_raw_documents : "category_id"
+    datalab_raw_documents ||--o| datalab_raw_details : "raw_document_id"
+    datalab_categories ||--o{ datalab_raw_details : "category_id"
+```
+
+## Zone D — Processing (007_processing.sql)
+
+```mermaid
+erDiagram
     processing_queue {
         BIGINT id PK
-        BIGINT stock_id FK
+        BIGINT stock_id FK "nullable — DataLab은 카테고리 단위 인큐"
         VARCHAR task_type
         VARCHAR status
-        VARCHAR priority
-        BIGINT_ARRAY source_raw_ids
-        BIGINT_ARRAY source_signal_event_ids
-        BIGINT_ARRAY source_analysis_result_ids
+        BIGINT_ARRAY source_raw_ids "FK 미강제(배열)"
         JSONB task_context
-        SMALLINT retry_count
-        SMALLINT max_retry_count
-        TEXT error_message
-        TIMESTAMPTZ scheduled_at
-        TIMESTAMPTZ started_at
-        TIMESTAMPTZ finished_at
-        TIMESTAMPTZ created_at
-        TIMESTAMPTZ updated_at
     }
 
     source_documents {
         BIGINT id PK
-        BIGINT raw_document_id FK
-        BIGINT stock_id FK
+        BIGINT raw_document_id UK "복합FK CASCADE"
+        BIGINT stock_id
         VARCHAR source_type
-        VARCHAR source_name
-        TEXT title
-        TEXT source_url
-        TIMESTAMPTZ published_at
-        TIMESTAMPTZ collected_at
         VARCHAR reliability_level
         BOOLEAN is_official
-        TIMESTAMPTZ created_at
     }
 
     signal_events {
@@ -196,159 +233,256 @@ erDiagram
         BIGINT stock_id FK
         BIGINT source_document_id FK
         VARCHAR event_hash UK
-        VARCHAR source_type
         VARCHAR event_type
-        DATE event_date
         VARCHAR signal_direction
         VARCHAR impact_level
-        TEXT title
-        TEXT summary
-        TEXT evidence_text
-        TEXT evidence_url
-        BOOLEAN needs_review
-        TIMESTAMPTZ created_at
     }
 
     signal_metrics {
         BIGINT id PK
-        BIGINT signal_event_id FK
+        BIGINT signal_event_id FK "CASCADE, UK(signal_event_id,metric_name)"
         VARCHAR metric_name
         NUMERIC metric_value
-        VARCHAR metric_unit
-        NUMERIC previous_value
-        NUMERIC change_pct
-        DATE period_start
-        DATE period_end
-        TIMESTAMPTZ created_at
     }
 
-    analysis_requests {
+    validation_logs {
+        BIGINT id PK
+        VARCHAR target_type
+        BIGINT target_id_int "둘 중 하나만 NOT NULL"
+        UUID target_id_uuid
+        BOOLEAN passed
+    }
+
+    source_documents ||--o{ signal_events : "source_document_id"
+    signal_events ||--o{ signal_metrics : "signal_event_id"
+```
+
+## Zone B+F — User / Billing (008_users_billing_base.sql, 010_users_billing_extend.sql)
+
+```mermaid
+erDiagram
+    users {
+        BIGINT id PK
+        VARCHAR member_code UK
+        VARCHAR email UK
+        BOOLEAN agreed_risk
+        TIMESTAMPTZ deleted_at
+    }
+
+    subscription_plans {
+        BIGINT id PK
+        VARCHAR plan_type UK "free|pro|premium"
+        INTEGER max_watchlist
+    }
+
+    signal_subscriptions {
+        BIGINT id PK
+        BIGINT user_id FK "active 1건만(부분 UK)"
+        BIGINT plan_id FK
+        VARCHAR status
+    }
+
+    watchlists {
+        BIGINT id PK
+        BIGINT user_id FK "UK(user_id,stock_id)"
+        BIGINT stock_id FK
+    }
+
+    signal_journals {
         BIGINT id PK
         BIGINT user_id FK
+        BIGINT final_signal_id FK "nullable"
+        BIGINT stock_id FK
+        VARCHAR user_view
+    }
+
+    user_signal_reads {
+        BIGINT id PK
+        BIGINT user_id FK "UK(user_id,final_signal_id)"
+        BIGINT final_signal_id FK
+    }
+
+    social_accounts {
+        BIGINT id PK
+        BIGINT user_id FK "users CASCADE"
+        VARCHAR provider "UK(provider,provider_user_id)"
+        VARCHAR provider_user_id
+    }
+
+    portone_verifications {
+        BIGINT id PK
+        BIGINT user_id FK
+        VARCHAR imp_uid UK
+        VARCHAR verification_type
+    }
+
+    terms_agreements {
+        BIGINT id PK
+        BIGINT user_id FK "UK(user_id,terms_type,version)"
+        VARCHAR terms_type
+        VARCHAR version
+    }
+
+    users ||--o{ signal_subscriptions : "user_id"
+    subscription_plans ||--o{ signal_subscriptions : "plan_id"
+    users ||--o{ watchlists : "user_id"
+    users ||--o{ signal_journals : "user_id"
+    users ||--o{ user_signal_reads : "user_id"
+    users ||--o{ social_accounts : "user_id"
+    users ||--o{ portone_verifications : "user_id"
+    users ||--o{ terms_agreements : "user_id"
+```
+
+`stocks ||--o{ watchlists`, `final_signals ||--o{ signal_journals / user_signal_reads` (Zone E 참조).
+
+## Zone E — Analysis (009_analysis.sql)
+
+```mermaid
+erDiagram
+    analysis_requests {
+        BIGINT id PK
+        BIGINT user_id FK "nullable"
         BIGINT stock_id FK
         VARCHAR status
-        VARCHAR analysis_mode
-        TIMESTAMPTZ requested_at
-        TIMESTAMPTZ completed_at
-        TEXT error_message
-        INET ip_address
+        VARCHAR analysis_mode "full|dart_only|quick"
     }
 
     analysis_results {
         BIGINT id PK
-        BIGINT request_id FK
+        BIGINT request_id FK "nullable"
         BIGINT stock_id FK
-        DATE analysis_date
+        DATE analysis_date "UK(stock_id,analysis_date,analysis_mode,run_key,version)"
         VARCHAR run_key
-        BIGINT_ARRAY source_signal_event_ids
-        NUMERIC base_score
-        NUMERIC pre_xgb_score
-        NUMERIC xgb_adj
-        VARCHAR analysis_mode
-        TEXT warning
-        TEXT disclaimer
-        VARCHAR version
-        TIMESTAMPTZ created_at
+        BIGINT_ARRAY source_signal_event_ids "FK 미강제(배열)"
+        NUMERIC base_score "0~100"
+        TEXT disclaimer "법적 고지 필수"
+    }
+
+    quant_scores {
+        BIGINT id PK
+        BIGINT result_id FK "UK"
+        JSONB score_breakdown
+        VARCHAR source_agreement "HIGH|MEDIUM|LOW"
+    }
+
+    ta_scores {
+        BIGINT id PK
+        BIGINT result_id FK "UK"
+        NUMERIC ta_score
+    }
+
+    ai_scores {
+        BIGINT id PK
+        BIGINT result_id FK "UK"
+        NUMERIC dart_report_alt_scores
     }
 
     agent_results {
         BIGINT id PK
-        BIGINT result_id FK
-        BIGINT stock_id FK
-        VARCHAR debate_method
-        BIGINT_ARRAY source_signal_event_ids
+        BIGINT result_id FK "UK(result_id,debate_method)"
+        VARCHAR debate_method "D-1~D-5"
         NUMERIC method_score
-        VARCHAR method_signal
         JSONB method_detail
-        NUMERIC reliability_score
-        NUMERIC evidence_quality
-        VARCHAR llm_model
-        VARCHAR prompt_ver
-        TIMESTAMPTZ created_at
+    }
+
+    xgb_model_versions {
+        BIGINT id PK
+        VARCHAR model_version UK
+        BOOLEAN is_active "TRUE 1건만(부분 UK)"
+    }
+
+    ml_scores {
+        BIGINT id PK
+        BIGINT result_id FK "UK"
+        BIGINT model_version_id FK
+        NUMERIC calibrated_score
     }
 
     final_signals {
         BIGINT id PK
         BIGINT stock_id FK
         BIGINT analysis_result_id FK
-        DATE signal_date
+        DATE signal_date "UK(stock_id,signal_date,run_key,version)"
         VARCHAR run_key
-        VARCHAR version
-        BOOLEAN is_current
+        BOOLEAN is_current "조합당 1건(부분 UK + 트리거)"
         NUMERIC final_score
-        NUMERIC confidence
         VARCHAR signal
-        VARCHAR source_agreement
-        VARCHAR warning_level
-        JSONB score_breakdown
-        TEXT summary
-        TEXT bull_point
-        TEXT bear_point
-        TEXT disclaimer
-        BOOLEAN needs_review
-        VARCHAR min_plan_required
         BOOLEAN is_published
-        TIMESTAMPTZ published_at
-        TIMESTAMPTZ created_at
+        TEXT disclaimer "법적 고지 필수"
     }
 
-    watchlists {
+    score_history {
         BIGINT id PK
-        BIGINT user_id FK
         BIGINT stock_id FK
-        BOOLEAN notification_enabled
-        TIMESTAMPTZ created_at
+        BIGINT final_signal_id FK "nullable, 둘 중 하나 필수"
+        BIGINT analysis_result_id FK "nullable"
+        NUMERIC final_score
     }
 
-    signal_journals {
+    backtest_results {
         BIGINT id PK
-        BIGINT user_id FK
         BIGINT final_signal_id FK
         BIGINT stock_id FK
-        VARCHAR user_view
-        TEXT user_memo
-        VARCHAR decision_type
-        TEXT decision_reason
-        NUMERIC signal_score_at_time
-        VARCHAR signal_value_at_time
-        NUMERIC price_at_time
-        VARCHAR source_agreement_at_time
-        NUMERIC outcome_price
-        NUMERIC outcome_change_pct
-        TIMESTAMPTZ outcome_checked_at
-        TIMESTAMPTZ created_at
-        TIMESTAMPTZ updated_at
+        NUMERIC change_pct_5d
+        BOOLEAN is_hit
     }
 
-    stocks ||--o{ ohlcv_data : has_prices
-    stocks ||--o{ raw_documents : has_raw_documents
-    stocks ||--o{ processing_queue : queues_tasks
-    stocks ||--o{ source_documents : has_sources
-    stocks ||--o{ signal_events : has_events
-    stocks ||--o{ analysis_requests : requested_for
-    stocks ||--o{ analysis_results : analyzed_for
-    stocks ||--o{ agent_results : scored_for
-    stocks ||--o{ final_signals : publishes
-    stocks ||--o{ watchlists : watched
-    stocks ||--o{ signal_journals : journaled
-
-    users ||--o{ analysis_requests : creates
-    users ||--o{ watchlists : owns
-    users ||--o{ signal_journals : writes
-
-    collector_runs ||--o{ raw_documents : collects
-    raw_documents ||--o| dart_raw_details : has_dart_detail
-    raw_documents ||--o| report_raw_details : has_report_detail
-    raw_documents ||--o| hiring_raw_details : has_hiring_detail
-    raw_documents ||--o| patent_raw_details : has_patent_detail
-    raw_documents ||--o| datalab_raw_details : has_datalab_detail
-    raw_documents ||--o| source_documents : normalizes_to
-
-    source_documents ||--o{ signal_events : produces
-    signal_events ||--o{ signal_metrics : has_metrics
-
-    analysis_requests ||--o{ analysis_results : produces
-    analysis_results ||--o{ agent_results : has_agent_results
-    analysis_results ||--o{ final_signals : creates
-    final_signals ||--o{ signal_journals : referenced_by
+    analysis_requests ||--o{ analysis_results : "request_id"
+    analysis_results ||--o| quant_scores : "result_id"
+    analysis_results ||--o| ta_scores : "result_id"
+    analysis_results ||--o| ai_scores : "result_id"
+    analysis_results ||--o{ agent_results : "result_id"
+    analysis_results ||--o| ml_scores : "result_id"
+    xgb_model_versions ||--o{ ml_scores : "model_version_id"
+    analysis_results ||--o{ final_signals : "analysis_result_id"
+    final_signals ||--o{ score_history : "final_signal_id"
+    final_signals ||--o{ backtest_results : "final_signal_id"
 ```
+
+## Zone G — Admin (011_admin.sql)
+
+```mermaid
+erDiagram
+    admin_accounts {
+        BIGINT id PK
+        VARCHAR email UK
+        TEXT password_hash
+        BOOLEAN is_active
+    }
+
+    admin_sessions {
+        BIGINT id PK
+        BIGINT admin_id FK
+        VARCHAR session_token UK
+        TIMESTAMPTZ expires_at
+    }
+
+    admin_accounts ||--o{ admin_sessions : "admin_id"
+```
+
+## Legacy — report MVP (013_legacy_report_mvp.sql) ⚠️ 폐기 예정
+
+신규 코드 참조 금지. 공용 경로(`raw_documents` → `report_raw_details` → `report_chunks`)로 이전 후 DROP 예정.
+
+```mermaid
+erDiagram
+    report_raw {
+        BIGINT id PK
+        VARCHAR stock_code "UK(firm,date,stock_code)"
+        VARCHAR firm
+        VARCHAR date "문자열 날짜(레거시)"
+        INT target_price
+    }
+
+    report_signal {
+        BIGINT id PK
+        VARCHAR stock_code
+        VARCHAR direction
+        FLOAT score
+        JSONB opinions
+    }
+```
+
+## 시스템 테이블
+
+- `schema_migrations(filename PK, checksum, applied_at)` — `database/migrate.py`가 자동 생성·관리하는 적용 원장. 마이그레이션 파일로 만들지 않는다.

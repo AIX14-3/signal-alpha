@@ -1,4 +1,11 @@
-CREATE TABLE IF NOT EXISTS collector_runs (
+-- 003_collection_core.sql
+-- Zone C (Collection): 수집 실행 이력 + 종목 단위 원본 문서/상세.
+-- raw_documents의 uq_raw_document_stock UNIQUE(id, stock_id)는 detail 테이블의
+-- 복합 FK 대상이다 (detail 행의 stock_id가 원본 문서와 일치함을 DB 차원에서 보장).
+-- detail 테이블의 ON DELETE CASCADE: 원본 문서 삭제 시 상세도 함께 삭제.
+-- report_chunks: 리포트 PDF 청크 + pgvector 임베딩 (RAG 검색용, canonical 스키마).
+
+CREATE TABLE collector_runs (
     id BIGSERIAL PRIMARY KEY,
     collector_type VARCHAR(20) NOT NULL
         CHECK (collector_type IN ('DART', 'REPORT', 'HIRING', 'PATENT', 'DATALAB', 'PRICE')),
@@ -16,14 +23,14 @@ CREATE TABLE IF NOT EXISTS collector_runs (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_collector_runs_type_time
+CREATE INDEX idx_collector_runs_type_time
     ON collector_runs (collector_type, started_at DESC);
 
-CREATE INDEX IF NOT EXISTS idx_collector_runs_status
+CREATE INDEX idx_collector_runs_status
     ON collector_runs (status, started_at DESC)
     WHERE status != 'success';
 
-CREATE TABLE IF NOT EXISTS raw_documents (
+CREATE TABLE raw_documents (
     id BIGSERIAL PRIMARY KEY,
     stock_id BIGINT NOT NULL REFERENCES stocks(id),
     collector_run_id BIGINT REFERENCES collector_runs(id),
@@ -45,18 +52,18 @@ CREATE TABLE IF NOT EXISTS raw_documents (
     CONSTRAINT uq_raw_document_stock UNIQUE (id, stock_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_raw_doc_stock_source
+CREATE INDEX idx_raw_doc_stock_source
     ON raw_documents (stock_id, source_type, published_at DESC);
 
-CREATE INDEX IF NOT EXISTS idx_raw_doc_collect_fail
+CREATE INDEX idx_raw_doc_collect_fail
     ON raw_documents (collect_status, created_at DESC)
     WHERE collect_status != 'success';
 
-CREATE INDEX IF NOT EXISTS idx_raw_doc_run
+CREATE INDEX idx_raw_doc_run
     ON raw_documents (collector_run_id)
     WHERE collector_run_id IS NOT NULL;
 
-CREATE TABLE IF NOT EXISTS dart_raw_details (
+CREATE TABLE dart_raw_details (
     raw_document_id BIGINT PRIMARY KEY,
     stock_id BIGINT NOT NULL,
     receipt_no VARCHAR(30) NOT NULL UNIQUE,
@@ -75,16 +82,16 @@ CREATE TABLE IF NOT EXISTS dart_raw_details (
         ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_dart_stock
+CREATE INDEX idx_dart_stock
     ON dart_raw_details (stock_id);
 
-CREATE INDEX IF NOT EXISTS idx_dart_type
+CREATE INDEX idx_dart_type
     ON dart_raw_details (disclosure_type);
 
-CREATE INDEX IF NOT EXISTS idx_dart_priority
+CREATE INDEX idx_dart_priority
     ON dart_raw_details (priority);
 
-CREATE TABLE IF NOT EXISTS report_raw_details (
+CREATE TABLE report_raw_details (
     raw_document_id BIGINT PRIMARY KEY,
     stock_id BIGINT NOT NULL,
     securities_firm VARCHAR(100) NOT NULL,
@@ -110,13 +117,13 @@ CREATE TABLE IF NOT EXISTS report_raw_details (
         ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_report_detail_stock
+CREATE INDEX idx_report_detail_stock
     ON report_raw_details (stock_id, publish_date DESC);
 
-CREATE INDEX IF NOT EXISTS idx_report_detail_firm
+CREATE INDEX idx_report_detail_firm
     ON report_raw_details (securities_firm, stock_id);
 
-CREATE TABLE IF NOT EXISTS hiring_raw_details (
+CREATE TABLE hiring_raw_details (
     raw_document_id BIGINT PRIMARY KEY,
     stock_id BIGINT NOT NULL,
     keyword VARCHAR(100),
@@ -131,13 +138,13 @@ CREATE TABLE IF NOT EXISTS hiring_raw_details (
         ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_hiring_stock_keyword
+CREATE INDEX idx_hiring_stock_keyword
     ON hiring_raw_details (stock_id, keyword);
 
-CREATE INDEX IF NOT EXISTS idx_hiring_change
+CREATE INDEX idx_hiring_change
     ON hiring_raw_details (stock_id, change_pct DESC);
 
-CREATE TABLE IF NOT EXISTS patent_raw_details (
+CREATE TABLE patent_raw_details (
     raw_document_id BIGINT PRIMARY KEY,
     stock_id BIGINT NOT NULL,
     application_no VARCHAR(30) NOT NULL UNIQUE,
@@ -153,57 +160,17 @@ CREATE TABLE IF NOT EXISTS patent_raw_details (
         ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_patent_stock_date
+CREATE INDEX idx_patent_stock_date
     ON patent_raw_details (stock_id, application_date DESC);
 
-CREATE INDEX IF NOT EXISTS idx_patent_stock_tech
+CREATE INDEX idx_patent_stock_tech
     ON patent_raw_details (stock_id, tech_category);
 
-CREATE INDEX IF NOT EXISTS idx_patent_new_category
+CREATE INDEX idx_patent_new_category
     ON patent_raw_details (stock_id, is_new_category)
     WHERE is_new_category = TRUE;
 
-CREATE TABLE IF NOT EXISTS datalab_raw_details (
-    raw_document_id BIGINT PRIMARY KEY,
-    stock_id BIGINT NOT NULL,
-    keyword VARCHAR(100) NOT NULL,
-    keyword_group VARCHAR(100),
-    observed_date DATE NOT NULL,
-    search_index NUMERIC(6,2) NOT NULL,
-    previous_search_index NUMERIC(6,2),
-    change_pct NUMERIC(8,2),
-    period_type VARCHAR(10) NOT NULL DEFAULT 'daily'
-        CHECK (period_type IN ('daily', 'weekly', 'monthly')),
-    device VARCHAR(10) NOT NULL DEFAULT 'all'
-        CHECK (device IN ('pc', 'mobile', 'all')),
-    gender VARCHAR(5) NOT NULL DEFAULT 'all'
-        CHECK (gender IN ('m', 'f', 'all')),
-    age_group VARCHAR(20) NOT NULL DEFAULT 'all',
-    is_spike BOOLEAN NOT NULL DEFAULT FALSE,
-    extra_payload JSONB,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CONSTRAINT uq_datalab UNIQUE (
-        stock_id,
-        keyword,
-        observed_date,
-        period_type,
-        device,
-        gender,
-        age_group
-    ),
-    FOREIGN KEY (raw_document_id, stock_id)
-        REFERENCES raw_documents(id, stock_id)
-        ON DELETE CASCADE
-);
-
-CREATE INDEX IF NOT EXISTS idx_datalab_stock_date
-    ON datalab_raw_details (stock_id, observed_date DESC);
-
-CREATE INDEX IF NOT EXISTS idx_datalab_spike
-    ON datalab_raw_details (stock_id, is_spike)
-    WHERE is_spike = TRUE;
-
-CREATE TABLE IF NOT EXISTS report_chunks (
+CREATE TABLE report_chunks (
     id BIGSERIAL PRIMARY KEY,
     raw_document_id BIGINT NOT NULL,
     stock_id BIGINT NOT NULL,
@@ -218,5 +185,9 @@ CREATE TABLE IF NOT EXISTS report_chunks (
         ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_chunks_stock
+CREATE INDEX idx_chunks_stock
     ON report_chunks (stock_id);
+
+CREATE INDEX idx_chunks_embedding
+    ON report_chunks USING ivfflat (embedding vector_cosine_ops)
+    WITH (lists = 100);

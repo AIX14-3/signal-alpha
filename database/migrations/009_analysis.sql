@@ -1,4 +1,8 @@
-CREATE TABLE IF NOT EXISTS analysis_requests (
+-- 009_analysis.sql
+-- Zone E (Analysis): 분석 요청 → 결과 → 점수 → 최종 시그널 파이프라인.
+-- 분석 테이블의 FK는 NO ACTION(기본) — 분석 이력은 원본 삭제로 연쇄 삭제하지 않는다.
+
+CREATE TABLE analysis_requests (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT REFERENCES users(id),
     stock_id BIGINT NOT NULL REFERENCES stocks(id),
@@ -12,7 +16,7 @@ CREATE TABLE IF NOT EXISTS analysis_requests (
     ip_address INET
 );
 
-CREATE TABLE IF NOT EXISTS analysis_results (
+CREATE TABLE analysis_results (
     id BIGSERIAL PRIMARY KEY,
     request_id BIGINT REFERENCES analysis_requests(id),
     stock_id BIGINT NOT NULL REFERENCES stocks(id),
@@ -38,16 +42,16 @@ CREATE TABLE IF NOT EXISTS analysis_results (
     )
 );
 
-CREATE INDEX IF NOT EXISTS idx_analysis_stock_date
+CREATE INDEX idx_analysis_stock_date
     ON analysis_results (stock_id, analysis_date DESC);
 
-CREATE INDEX IF NOT EXISTS idx_analysis_run_key
+CREATE INDEX idx_analysis_run_key
     ON analysis_results (stock_id, analysis_date DESC, run_key);
 
-CREATE INDEX IF NOT EXISTS idx_analysis_signal_events
+CREATE INDEX idx_analysis_signal_events
     ON analysis_results USING GIN (source_signal_event_ids);
 
-CREATE TABLE IF NOT EXISTS quant_scores (
+CREATE TABLE quant_scores (
     id BIGSERIAL PRIMARY KEY,
     result_id BIGINT NOT NULL UNIQUE REFERENCES analysis_results(id),
     stock_id BIGINT NOT NULL REFERENCES stocks(id),
@@ -65,7 +69,7 @@ CREATE TABLE IF NOT EXISTS quant_scores (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS ta_scores (
+CREATE TABLE ta_scores (
     id BIGSERIAL PRIMARY KEY,
     result_id BIGINT NOT NULL UNIQUE REFERENCES analysis_results(id),
     stock_id BIGINT NOT NULL REFERENCES stocks(id),
@@ -74,7 +78,7 @@ CREATE TABLE IF NOT EXISTS ta_scores (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS ai_scores (
+CREATE TABLE ai_scores (
     id BIGSERIAL PRIMARY KEY,
     result_id BIGINT NOT NULL UNIQUE REFERENCES analysis_results(id),
     stock_id BIGINT NOT NULL REFERENCES stocks(id),
@@ -88,7 +92,7 @@ CREATE TABLE IF NOT EXISTS ai_scores (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS agent_results (
+CREATE TABLE agent_results (
     id BIGSERIAL PRIMARY KEY,
     result_id BIGINT NOT NULL REFERENCES analysis_results(id),
     stock_id BIGINT NOT NULL REFERENCES stocks(id),
@@ -107,16 +111,16 @@ CREATE TABLE IF NOT EXISTS agent_results (
     CONSTRAINT uq_agent_result_method UNIQUE (result_id, debate_method)
 );
 
-CREATE INDEX IF NOT EXISTS idx_agent_result_id
+CREATE INDEX idx_agent_result_id
     ON agent_results (result_id);
 
-CREATE INDEX IF NOT EXISTS idx_agent_method
+CREATE INDEX idx_agent_method
     ON agent_results (result_id, debate_method);
 
-CREATE INDEX IF NOT EXISTS idx_agent_source_signal_event_ids
+CREATE INDEX idx_agent_source_signal_event_ids
     ON agent_results USING GIN (source_signal_event_ids);
 
-CREATE TABLE IF NOT EXISTS xgb_model_versions (
+CREATE TABLE xgb_model_versions (
     id BIGSERIAL PRIMARY KEY,
     model_version VARCHAR(20) NOT NULL UNIQUE,
     trained_at TIMESTAMPTZ,
@@ -129,11 +133,11 @@ CREATE TABLE IF NOT EXISTS xgb_model_versions (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_xgb_active
+CREATE UNIQUE INDEX idx_xgb_active
     ON xgb_model_versions (is_active)
     WHERE is_active = TRUE;
 
-CREATE TABLE IF NOT EXISTS ml_scores (
+CREATE TABLE ml_scores (
     id BIGSERIAL PRIMARY KEY,
     result_id BIGINT NOT NULL UNIQUE REFERENCES analysis_results(id),
     stock_id BIGINT NOT NULL REFERENCES stocks(id),
@@ -145,7 +149,7 @@ CREATE TABLE IF NOT EXISTS ml_scores (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS final_signals (
+CREATE TABLE final_signals (
     id BIGSERIAL PRIMARY KEY,
     stock_id BIGINT NOT NULL REFERENCES stocks(id),
     analysis_result_id BIGINT NOT NULL REFERENCES analysis_results(id),
@@ -186,21 +190,21 @@ CREATE TABLE IF NOT EXISTS final_signals (
         )
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS uq_final_signal_current
+CREATE UNIQUE INDEX uq_final_signal_current
     ON final_signals (stock_id, signal_date, run_key)
     WHERE is_current = TRUE;
 
-CREATE INDEX IF NOT EXISTS idx_final_stock_date
+CREATE INDEX idx_final_stock_date
     ON final_signals (stock_id, signal_date DESC);
 
-CREATE INDEX IF NOT EXISTS idx_final_run_key
+CREATE INDEX idx_final_run_key
     ON final_signals (stock_id, signal_date DESC, run_key);
 
-CREATE INDEX IF NOT EXISTS idx_final_published
+CREATE INDEX idx_final_published
     ON final_signals (is_published, published_at DESC)
     WHERE is_published = TRUE;
 
-CREATE TABLE IF NOT EXISTS score_history (
+CREATE TABLE score_history (
     id BIGSERIAL PRIMARY KEY,
     stock_id BIGINT NOT NULL REFERENCES stocks(id),
     final_signal_id BIGINT REFERENCES final_signals(id),
@@ -221,14 +225,14 @@ CREATE TABLE IF NOT EXISTS score_history (
         )
 );
 
-CREATE INDEX IF NOT EXISTS idx_score_history_stock
+CREATE INDEX idx_score_history_stock
     ON score_history (stock_id, signal_date DESC, scored_at DESC);
 
-CREATE INDEX IF NOT EXISTS idx_score_history_final_signal
+CREATE INDEX idx_score_history_final_signal
     ON score_history (final_signal_id)
     WHERE final_signal_id IS NOT NULL;
 
-CREATE TABLE IF NOT EXISTS backtest_results (
+CREATE TABLE backtest_results (
     id BIGSERIAL PRIMARY KEY,
     final_signal_id BIGINT NOT NULL REFERENCES final_signals(id),
     stock_id BIGINT NOT NULL REFERENCES stocks(id),

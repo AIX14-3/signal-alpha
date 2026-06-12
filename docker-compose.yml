@@ -23,6 +23,22 @@ services:
       timeout: 5s
       retries: 10
 
+  # 일회성 마이그레이션 적용 컨테이너. 사용법: docker compose run --rm migrate
+  migrate:
+    build:
+      context: .
+      dockerfile: ./services/agent-worker/Dockerfile
+    profiles: ["tools"]
+    working_dir: /workspace
+    volumes:
+      - ./database:/workspace/database
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://signal_alpha:signal_alpha_password@postgres:5432/signal_alpha}
+    command: python database/migrate.py apply --seeds
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   agent-worker:
     build:
       context: .

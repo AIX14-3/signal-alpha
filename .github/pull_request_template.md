@@ -29,3 +29,9 @@
 - [ ] 로컬에서 서버 정상 기동 확인
 - [ ] 엔드포인트 수동 테스트 완료
 - [ ] 불필요한 로그/임시 파일 미포함
+
+## DB 변경 (해당 시) — `database/README.md` §4 절차 참고
+- [ ] `database/migrations/`에 **새 번호 파일로만** 추가 (적용된 기존 파일 수정 없음)
+- [ ] 코드에서 CREATE TABLE 실행 없음 (스키마는 마이그레이션으로만)
+- [ ] `database/README.md` §2 테이블 인벤토리 + `database/erd/` ERD 갱신
+- [ ] `uv run python database/migrate.py apply` + `database/tools/check_schema.py` 통과

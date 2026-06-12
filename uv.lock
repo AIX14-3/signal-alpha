@@ -814,6 +814,7 @@ source = { virtual = "." }
 [package.dev-dependencies]
 dev = [
     { name = "httpx" },
+    { name = "psycopg2-binary" },
     { name = "pytest" },
     { name = "ruff" },
 ]
@@ -823,6 +824,7 @@ dev = [
 [package.metadata.requires-dev]
 dev = [
     { name = "httpx", specifier = ">=0.27.0" },
+    { name = "psycopg2-binary", specifier = ">=2.9.0" },
     { name = "pytest", specifier = ">=8.0.0" },
     { name = "ruff", specifier = ">=0.14.0" },
 ]

@@ -683,6 +683,10 @@ Signal Journal 작성.
 
 ## 15. DB 스키마 초안
 
+> ⚠️ **이 섹션은 기획 단계 초안이며 현재 스키마와 다릅니다. 이 초안을 보고 테이블을 만들지 마세요.**
+> 실제 스키마의 유일한 기준은 [`database/migrations/`](../database/migrations/)이고,
+> 테이블 인벤토리·추가 절차는 [`database/README.md`](../database/README.md)를 따릅니다.
+
 ### `users`
 
 ```sql

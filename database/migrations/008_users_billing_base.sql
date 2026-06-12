@@ -1,4 +1,9 @@
-CREATE TABLE IF NOT EXISTS users (
+-- 008_users_billing_base.sql
+-- Zone B (User/Billing 기본): 회원 + 구독 플랜 마스터.
+-- analysis_requests(009)가 users를 참조하므로 분석 Zone보다 먼저 생성한다.
+-- 구독·워치리스트 등 확장 테이블은 final_signals(009) 의존이라 010에 분리.
+
+CREATE TABLE users (
     id BIGSERIAL PRIMARY KEY,
     member_code VARCHAR(20) NOT NULL UNIQUE,
     email VARCHAR(255) NOT NULL UNIQUE,
@@ -11,7 +16,7 @@ CREATE TABLE IF NOT EXISTS users (
     deleted_at TIMESTAMPTZ
 );
 
-CREATE TABLE IF NOT EXISTS subscription_plans (
+CREATE TABLE subscription_plans (
     id BIGSERIAL PRIMARY KEY,
     plan_type VARCHAR(20) NOT NULL UNIQUE,
     plan_display_name VARCHAR(50) NOT NULL,
