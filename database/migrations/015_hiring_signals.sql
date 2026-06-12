@@ -1,4 +1,4 @@
--- 022_hiring_signals.sql
+-- 015_hiring_signals.sql
 -- HiringAnalyzer 분석 결과 저장 테이블
 
 CREATE TABLE IF NOT EXISTS hiring_signals (

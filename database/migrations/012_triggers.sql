@@ -1,3 +1,8 @@
+-- 012_triggers.sql
+-- 공통 트리거.
+-- 규칙: updated_at 컬럼이 있는 모든 테이블에는 trg_<table>_updated_at 트리거를 부착한다.
+-- set_final_signal_current: 같은 (stock_id, signal_date, run_key)에서 is_current는 1행만 허용.
+
 CREATE OR REPLACE FUNCTION update_updated_at()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -6,25 +11,46 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-DROP TRIGGER IF EXISTS trg_stocks_updated_at ON stocks;
 CREATE TRIGGER trg_stocks_updated_at
 BEFORE UPDATE ON stocks
 FOR EACH ROW
 EXECUTE FUNCTION update_updated_at();
 
-DROP TRIGGER IF EXISTS trg_processing_queue_updated_at ON processing_queue;
+CREATE TRIGGER trg_dart_corp_codes_updated_at
+BEFORE UPDATE ON dart_corp_codes
+FOR EACH ROW
+EXECUTE FUNCTION update_updated_at();
+
+CREATE TRIGGER trg_dart_collection_states_updated_at
+BEFORE UPDATE ON dart_collection_states
+FOR EACH ROW
+EXECUTE FUNCTION update_updated_at();
+
+CREATE TRIGGER trg_datalab_categories_updated_at
+BEFORE UPDATE ON datalab_categories
+FOR EACH ROW
+EXECUTE FUNCTION update_updated_at();
+
+CREATE TRIGGER trg_datalab_category_keywords_updated_at
+BEFORE UPDATE ON datalab_category_keywords
+FOR EACH ROW
+EXECUTE FUNCTION update_updated_at();
+
+CREATE TRIGGER trg_hiring_baseline_updated_at
+BEFORE UPDATE ON hiring_baseline
+FOR EACH ROW
+EXECUTE FUNCTION update_updated_at();
+
 CREATE TRIGGER trg_processing_queue_updated_at
 BEFORE UPDATE ON processing_queue
 FOR EACH ROW
 EXECUTE FUNCTION update_updated_at();
 
-DROP TRIGGER IF EXISTS trg_signal_subscriptions_updated_at ON signal_subscriptions;
 CREATE TRIGGER trg_signal_subscriptions_updated_at
 BEFORE UPDATE ON signal_subscriptions
 FOR EACH ROW
 EXECUTE FUNCTION update_updated_at();
 
-DROP TRIGGER IF EXISTS trg_signal_journals_updated_at ON signal_journals;
 CREATE TRIGGER trg_signal_journals_updated_at
 BEFORE UPDATE ON signal_journals
 FOR EACH ROW
@@ -50,8 +76,6 @@ BEGIN
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
-
-DROP TRIGGER IF EXISTS trg_final_signal_current ON final_signals;
 
 CREATE TRIGGER trg_final_signal_current
 BEFORE INSERT OR UPDATE OF is_current, stock_id, signal_date, run_key

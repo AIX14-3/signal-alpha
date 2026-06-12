@@ -1,4 +1,4 @@
--- 023_hiring_sources.sql
+-- 016_hiring_sources.sql
 -- 기업별 공식 채용 사이트 크롤러 설정 테이블
 -- ticker가 Single Source of Truth: 기업 추가/변경은 이 테이블 INSERT/UPDATE만으로 처리
 

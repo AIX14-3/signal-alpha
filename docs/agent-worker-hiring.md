@@ -49,25 +49,22 @@ collector_runs          ← 실행 로그 (시작/종료/통계)
 
 ## DB 스키마 및 마이그레이션
 
-마이그레이션은 **번호 순서대로** 적용합니다.
+마이그레이션은 **번호 순서대로** 적용합니다. (001~013은 main 브랜치에 이미 적용된 기반 스키마)
 
 ```bash
-psql $DATABASE_URL -f database/migrations/014_hiring_baseline.sql
-psql $DATABASE_URL -f database/migrations/015_modify_stocks_table.sql
-psql $DATABASE_URL -f database/migrations/016_seed_and_update_targets.sql
-psql $DATABASE_URL -f database/migrations/021_hiring_raw_details_observed_date.sql
-psql $DATABASE_URL -f database/migrations/022_hiring_signals.sql
-psql $DATABASE_URL -f database/migrations/023_hiring_sources.sql
+psql $DATABASE_URL -f database/migrations/014_hiring_raw_details_observed_date.sql
+psql $DATABASE_URL -f database/migrations/015_hiring_signals.sql
+psql $DATABASE_URL -f database/migrations/016_hiring_sources.sql
 ```
 
 | 파일 | 변경 내용 |
 |------|----------|
-| `014` | `hiring_baseline` — 분기별 검색 트렌드 기준선 |
-| `015` | `stocks`에 `is_target`, `short_name` 컬럼 추가 |
-| `016` | 15개 핵심 기업 seed + `is_target=TRUE` 활성화 |
-| `021` | `hiring_raw_details`에 `observed_date DATE` 추가 |
-| `022` | `hiring_signals` — 분석 결과 저장 |
-| `023` | `hiring_sources` — 기업별 크롤러 설정 (ticker 기반 SSoT) |
+| `006` *(기존)* | `hiring_baseline` — main에 이미 포함 (`006_collection_hiring.sql`) |
+| `002` *(기존)* | `stocks.is_target`, `short_name` — main에 이미 포함 (`002_market.sql`) |
+| `seeds/001` *(기존)* | 15개 핵심 기업 seed — main에 이미 포함 (`seeds/001_seed_stocks.sql`) |
+| **`014`** | `hiring_raw_details`에 `observed_date DATE` 추가 |
+| **`015`** | `hiring_signals` — 분석 결과 저장 |
+| **`016`** | `hiring_sources` — 기업별 크롤러 설정 (ticker 기반 SSoT) |
 
 ### 핵심 테이블 요약
 
