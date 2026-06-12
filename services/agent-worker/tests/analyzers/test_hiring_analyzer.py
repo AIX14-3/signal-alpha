@@ -1,0 +1,288 @@
+"""
+test_hiring_analyzer.py
+
+HiringAnalyzer 핵심 로직 단위 테스트:
+- _get_current_quarter(): 날짜 → 분기 변환
+- _get_baseline_scale(): Phase A/B/C 3단계 fallback
+- analyze_hiring_trend(): mock asyncpg 기반 DB 흐름 검증
+- Spike 판정 임계값(150%) 경계값
+
+asyncpg 의존성 없이 unittest.IsolatedAsyncioTestCase 사용.
+"""
+from __future__ import annotations
+
+import unittest
+from unittest.mock import AsyncMock, MagicMock
+
+from app.analyzers.hiring.hiring_analyzer import (
+    HiringAnalyzer,
+    HIRING_SPIKE_THRESHOLD,
+    DEFAULT_BASELINE_SCALE,
+    MIN_ROLLING_AVG_THRESHOLD,
+)
+
+
+def _reset_cache():
+    HiringAnalyzer._baseline_cache = {}
+    HiringAnalyzer._is_cache_loaded = False
+
+
+# ── _get_current_quarter ──────────────────────────────────────────────────────
+
+class TestGetCurrentQuarter(unittest.TestCase):
+    def setUp(self):
+        self.a = HiringAnalyzer.__new__(HiringAnalyzer)
+
+    def test_q1_boundaries(self):
+        self.assertEqual(self.a._get_current_quarter("2024-01-01"), "Q1")
+        self.assertEqual(self.a._get_current_quarter("2024-03-31"), "Q1")
+
+    def test_q2_boundaries(self):
+        self.assertEqual(self.a._get_current_quarter("2024-04-01"), "Q2")
+        self.assertEqual(self.a._get_current_quarter("2024-06-30"), "Q2")
+
+    def test_q3_boundaries(self):
+        self.assertEqual(self.a._get_current_quarter("2024-07-01"), "Q3")
+        self.assertEqual(self.a._get_current_quarter("2024-09-30"), "Q3")
+
+    def test_q4_boundaries(self):
+        self.assertEqual(self.a._get_current_quarter("2024-10-01"), "Q4")
+        self.assertEqual(self.a._get_current_quarter("2024-12-31"), "Q4")
+
+
+# ── _get_baseline_scale ───────────────────────────────────────────────────────
+
+class TestGetBaselineScale(unittest.TestCase):
+    def setUp(self):
+        _reset_cache()
+        self.a = HiringAnalyzer.__new__(HiringAnalyzer)
+
+    def tearDown(self):
+        _reset_cache()
+
+    def test_phase_a_returns_rolling_avg(self):
+        """Phase A: rolling_avg ≥ MIN_ROLLING_AVG_THRESHOLD → 이동평균 반환."""
+        result = self.a._get_baseline_scale(stock_id=999, rolling_avg=MIN_ROLLING_AVG_THRESHOLD)
+        self.assertEqual(result, MIN_ROLLING_AVG_THRESHOLD)
+
+    def test_phase_a_high_value(self):
+        self.assertEqual(self.a._get_baseline_scale(stock_id=99, rolling_avg=25.0), 25.0)
+
+    def test_phase_b_uses_naver_volume(self):
+        """Phase B: Cold Start → 네이버 검색량 / 100 반환."""
+        HiringAnalyzer._baseline_cache[1] = {
+            "avg_search_volume": 60.0, "Q1": 1.0, "Q2": 1.0, "Q3": 1.0, "Q4": 1.0
+        }
+        result = self.a._get_baseline_scale(stock_id=1, rolling_avg=0.0)
+        self.assertAlmostEqual(result, 60.0 / 100.0)
+
+    def test_phase_b_no_cache_falls_to_c(self):
+        """Phase B: 캐시 없음 → Phase C 기본값 1.0."""
+        result = self.a._get_baseline_scale(stock_id=999, rolling_avg=0.0)
+        self.assertEqual(result, DEFAULT_BASELINE_SCALE)
+
+    def test_phase_c_zero_avg_search_volume(self):
+        """Phase C: avg_search_volume = 0 → 기본값 1.0."""
+        HiringAnalyzer._baseline_cache[1] = {
+            "avg_search_volume": 0.0, "Q1": 1.0, "Q2": 1.0, "Q3": 1.0, "Q4": 1.0
+        }
+        result = self.a._get_baseline_scale(stock_id=1, rolling_avg=0.0)
+        self.assertEqual(result, DEFAULT_BASELINE_SCALE)
+
+    def test_phase_a_b_boundary(self):
+        """rolling_avg == MIN_ROLLING_AVG_THRESHOLD 는 Phase A (이동평균 사용)."""
+        HiringAnalyzer._baseline_cache[1] = {
+            "avg_search_volume": 80.0, "Q1": 1.0, "Q2": 1.0, "Q3": 1.0, "Q4": 1.0
+        }
+        result = self.a._get_baseline_scale(stock_id=1, rolling_avg=MIN_ROLLING_AVG_THRESHOLD)
+        self.assertEqual(result, MIN_ROLLING_AVG_THRESHOLD)
+
+
+# ── Spike 판정 경계값 ─────────────────────────────────────────────────────────
+
+class TestSpikeDetection(unittest.TestCase):
+    """HIRING_SPIKE_THRESHOLD = 1.5 (150%) 경계값."""
+
+    @staticmethod
+    def _rs(today_count: int, base_scale: float, seasonal: float) -> float:
+        expected = base_scale * seasonal
+        if expected <= 0:
+            expected = DEFAULT_BASELINE_SCALE
+        return (today_count / expected) * 100
+
+    def test_140pct_not_spike(self):
+        rs = self._rs(14, 10.0, 1.0)
+        self.assertAlmostEqual(rs, 140.0)
+        self.assertFalse(rs >= HIRING_SPIKE_THRESHOLD * 100)
+
+    def test_150pct_is_spike(self):
+        rs = self._rs(15, 10.0, 1.0)
+        self.assertAlmostEqual(rs, 150.0)
+        self.assertTrue(rs >= HIRING_SPIKE_THRESHOLD * 100)
+
+    def test_200pct_is_spike(self):
+        rs = self._rs(20, 10.0, 1.0)
+        self.assertAlmostEqual(rs, 200.0)
+        self.assertTrue(rs >= HIRING_SPIKE_THRESHOLD * 100)
+
+    def test_seasonal_factor_reduces_strength(self):
+        """seasonal_factor 높을수록 상대 강도 낮아짐."""
+        rs_base   = self._rs(15, 10.0, 1.0)
+        rs_season = self._rs(15, 10.0, 1.2)
+        self.assertLess(rs_season, rs_base)
+
+    def test_zero_expected_falls_back_to_default(self):
+        """expected ≤ 0 → DEFAULT_BASELINE_SCALE(1.0) 대체 → 5개 = 500%."""
+        rs = self._rs(5, 0.0, 0.0)
+        self.assertAlmostEqual(rs, 500.0)
+
+
+# ── load_baselines ────────────────────────────────────────────────────────────
+
+class TestLoadBaselines(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        _reset_cache()
+
+    def tearDown(self):
+        _reset_cache()
+
+    async def test_loads_cache_from_db(self):
+        row = {
+            "stock_id": 1,
+            "avg_search_volume": 42.5,
+            "q1_factor": 1.1,
+            "q2_factor": 0.9,
+            "q3_factor": 0.8,
+            "q4_factor": 1.2,
+        }
+
+        conn = AsyncMock()
+        conn.fetch = AsyncMock(return_value=[row])
+
+        pool = MagicMock()
+        pool.acquire.return_value.__aenter__ = AsyncMock(return_value=conn)
+        pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        analyzer = HiringAnalyzer(pool)
+        await analyzer.load_baselines()
+
+        self.assertTrue(HiringAnalyzer._is_cache_loaded)
+        self.assertIn(1, HiringAnalyzer._baseline_cache)
+        cached = HiringAnalyzer._baseline_cache[1]
+        self.assertAlmostEqual(cached["avg_search_volume"], 42.5)
+        self.assertAlmostEqual(cached["Q1"], 1.1)
+        self.assertAlmostEqual(cached["Q4"], 1.2)
+
+    async def test_skips_reload_when_already_loaded(self):
+        HiringAnalyzer._is_cache_loaded = True
+        HiringAnalyzer._baseline_cache = {99: {"avg_search_volume": 10.0}}
+
+        conn = AsyncMock()
+        pool = MagicMock()
+        pool.acquire.return_value.__aenter__ = AsyncMock(return_value=conn)
+        pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        analyzer = HiringAnalyzer(pool)
+        await analyzer.load_baselines()
+
+        conn.fetch.assert_not_called()
+        self.assertIn(99, HiringAnalyzer._baseline_cache)
+
+
+# ── analyze_hiring_trend ──────────────────────────────────────────────────────
+
+class TestAnalyzeHiringTrend(unittest.IsolatedAsyncioTestCase):
+    """mock asyncpg 연결로 전체 분석 흐름 검증."""
+
+    def setUp(self):
+        _reset_cache()
+        HiringAnalyzer._is_cache_loaded = True
+        HiringAnalyzer._baseline_cache = {
+            1: {"avg_search_volume": 50.0, "Q1": 1.0, "Q2": 1.0, "Q3": 1.0, "Q4": 1.0}
+        }
+
+    def tearDown(self):
+        _reset_cache()
+
+    def _make_pool(self, scale_rows, today_rows):
+        conn = AsyncMock()
+        conn.fetch = AsyncMock(side_effect=[scale_rows, today_rows])
+        conn.execute = AsyncMock()
+
+        pool = MagicMock()
+        pool.acquire.return_value.__aenter__ = AsyncMock(return_value=conn)
+        pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
+        return pool, conn
+
+    async def test_inserts_signal_for_each_stock(self):
+        scale_row = {"stock_id": 1, "rolling_avg": 5.0}
+        today_row = {"stock_id": 1, "today_count": 8}
+        pool, conn = self._make_pool([scale_row], [today_row])
+
+        analyzer = HiringAnalyzer(pool)
+        await analyzer.analyze_hiring_trend("2024-06-15")
+
+        conn.execute.assert_called_once()
+        sql, stock_id, obs_date, job_count, *_ = conn.execute.call_args[0]
+        self.assertIn("INSERT INTO hiring_signals", sql)
+        self.assertEqual(stock_id, 1)
+        self.assertEqual(obs_date, "2024-06-15")
+        self.assertEqual(job_count, 8)
+
+    async def test_skips_stock_without_baseline(self):
+        HiringAnalyzer._baseline_cache = {}
+        today_row = {"stock_id": 1, "today_count": 5}
+        pool, conn = self._make_pool([], [today_row])
+
+        analyzer = HiringAnalyzer(pool)
+        await analyzer.analyze_hiring_trend("2024-06-15")
+
+        conn.execute.assert_not_called()
+
+    async def test_spike_at_exactly_150pct(self):
+        """15개 / rolling_avg 10.0 = 150% → is_spike=True."""
+        scale_row = {"stock_id": 1, "rolling_avg": 10.0}
+        today_row = {"stock_id": 1, "today_count": 15}
+        pool, conn = self._make_pool([scale_row], [today_row])
+
+        analyzer = HiringAnalyzer(pool)
+        await analyzer.analyze_hiring_trend("2024-06-15")
+
+        args = conn.execute.call_args[0]
+        is_spike = args[6]
+        self.assertTrue(is_spike)
+
+    async def test_no_spike_below_150pct(self):
+        """14개 / rolling_avg 10.0 = 140% → is_spike=False."""
+        scale_row = {"stock_id": 1, "rolling_avg": 10.0}
+        today_row = {"stock_id": 1, "today_count": 14}
+        pool, conn = self._make_pool([scale_row], [today_row])
+
+        analyzer = HiringAnalyzer(pool)
+        await analyzer.analyze_hiring_trend("2024-06-15")
+
+        args = conn.execute.call_args[0]
+        is_spike = args[6]
+        self.assertFalse(is_spike)
+
+    async def test_cold_start_uses_naver_fallback(self):
+        """rolling_avg 없는 기업은 네이버 검색량 기반 fallback 사용."""
+        HiringAnalyzer._baseline_cache = {
+            2: {"avg_search_volume": 40.0, "Q1": 1.0, "Q2": 1.0, "Q3": 1.0, "Q4": 1.0}
+        }
+        scale_rows = []  # Cold Start: 14일 이동평균 없음
+        today_row  = {"stock_id": 2, "today_count": 3}
+        pool, conn = self._make_pool(scale_rows, [today_row])
+
+        analyzer = HiringAnalyzer(pool)
+        await analyzer.analyze_hiring_trend("2024-06-15")
+
+        conn.execute.assert_called_once()
+        args = conn.execute.call_args[0]
+        baseline = args[4]
+        # expected = (40/100) * 1.0 = 0.4
+        self.assertAlmostEqual(baseline, 0.4)
+
+
+if __name__ == "__main__":
+    unittest.main()

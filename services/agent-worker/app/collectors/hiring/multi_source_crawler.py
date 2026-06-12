@@ -3,19 +3,14 @@ multi_source_crawler.py
 멀티소스 채용공고 수집기 (Strategy Pattern 오케스트레이터)
 
 수집 소스 (총 5계층):
-  1. 사람인 (Saramin)             — 키워드 검색 기반
-  2. 잡코리아 (Jobkorea)          — 키워드 검색 기반
-  3. recruiter.co.kr              — HL만도, 셀트리온, 유한양행
-  4. API 기반 공식 사이트          — 삼성전자, NAVER, 카카오
-  5. Selenium SPA/ATS 공식 사이트  — SK하이닉스, 크래프톤, HYBE, SM엔터테인먼트
-                                     한미반도체, 스튜디오드래곤, 삼성바이오로직스
-                                     현대자동차, 기아
+  1. 사람인 (Saramin)             — 키워드 검색 기반 (모든 is_target 기업)
+  2. 잡코리아 (Jobkorea)          — 키워드 검색 기반 (모든 is_target 기업)
+  3. official_api                  — 공식 API (driver=None, 삼성전자 등)
+  4. official_selenium             — 공식 SPA/ATS (NAVER, 카카오, SK하이닉스 등)
+  5. recruiter_kr / simple_site    — 집계/정적 사이트
 
-흐름:
-  1. Selenium WebDriver 공유 (driver_rotation_size 기업마다 교체)
-  2. 각 BaseSiteCrawler.crawl(company_name) → list[dict]
-  3. 전체 결과를 BaseCollector.insert_to_db() 로 한꺼번에 적재
-  4. source_hash 기반 중복 제거 (동일 공고가 여러 소스에서 수집돼도 1건만 적재)
+크롤러 설정은 hiring_sources 테이블에서 동적 로드:
+  기업 추가/변경 = hiring_sources INSERT/UPDATE 한 줄 (코드 수정 불필요)
 
 드라이버 로테이션 전략:
   - 헤드리스 Chrome 은 45+ 페이지 이동 후 메모리 1~2 GB 누적 → 크래시
@@ -30,36 +25,17 @@ import time
 from datetime import datetime, timezone
 
 try:
-    from base_collector import BaseCollector          # 스크립트 직접 실행
+    from base_collector import BaseCollector
 except ImportError:
-    from app.collectors.hiring.base_collector import BaseCollector  # 패키지 import
+    from app.collectors.hiring.base_collector import BaseCollector
 
 logger = logging.getLogger(__name__)
 
-# ── 크롤링 대상 기업 → 공식 사이트 크롤러 분류 ──────────────────────────────
-# recruiter.co.kr 집계 기업
-_RECRUITER_KR_COMPANIES = {"HL만도", "셀트리온", "유한양행"}
 
-# 순수 requests 기반 (driver=None) — Selenium 완전 불필요
-_REQUESTS_ONLY_COMPANIES = {"삼성전자"}
-
-# requests 1차 시도, Selenium 폴백 혼합형 — driver 전달 필요
-_REQUESTS_WITH_FALLBACK_COMPANIES = {"NAVER"}
-
-# Selenium SPA/ATS 전용 (driver 필수)
-_SELENIUM_COMPANIES = {
-    "카카오",                                    # SPA, Selenium 필수
-    "SK하이닉스", "크래프톤",
-    "HYBE", "SM엔터테인먼트",
-    "한미반도체", "스튜디오드래곤", "삼성바이오로직스",
-    "현대자동차", "기아",
-}
-
-
-def _make_crawler(company: str, driver):
-    """기업명 → 적절한 BaseSiteCrawler 인스턴스 반환."""
+def _load_crawler_registry() -> dict[str, type]:
+    """사용 가능한 크롤러 클래스 레지스트리 반환. 클래스 등록은 코드, 매핑 데이터는 DB."""
     try:
-        from sites.company import (   # 스크립트 실행 경로 (sys.path에 collectors/ 추가됨)
+        from sites.company import (
             SamsungCrawler, NaverCrawler, KakaoCrawler,
             SKHynixCrawler, KraftonCrawler,
             HybeCrawler, SMCrawler,
@@ -77,24 +53,62 @@ def _make_crawler(company: str, driver):
         )
         from app.collectors.hiring.sites import RecruiterKrCrawler
 
-    mapping = {
-        "삼성전자":         SamsungCrawler(driver=None),
-        "NAVER":            NaverCrawler(driver=driver),
-        "카카오":           KakaoCrawler(driver=driver),
-        "SK하이닉스":       SKHynixCrawler(driver=driver),
-        "크래프톤":         KraftonCrawler(driver=driver),
-        "HYBE":             HybeCrawler(driver=driver),
-        "SM엔터테인먼트":   SMCrawler(driver=driver),
-        "현대자동차":       HyundaiCrawler(driver=driver),
-        "기아":             KiaCrawler(driver=driver),
-        "HL만도":           RecruiterKrCrawler(driver=driver),
-        "셀트리온":         RecruiterKrCrawler(driver=driver),
-        "유한양행":         RecruiterKrCrawler(driver=driver),
-        "한미반도체":       SimpleSiteCrawler(driver=driver),
-        "스튜디오드래곤":   SimpleSiteCrawler(driver=driver),
-        "삼성바이오로직스": SimpleSiteCrawler(driver=driver),
+    return {
+        "SamsungCrawler":    SamsungCrawler,
+        "NaverCrawler":      NaverCrawler,
+        "KakaoCrawler":      KakaoCrawler,
+        "SKHynixCrawler":    SKHynixCrawler,
+        "KraftonCrawler":    KraftonCrawler,
+        "HybeCrawler":       HybeCrawler,
+        "SMCrawler":         SMCrawler,
+        "HyundaiCrawler":    HyundaiCrawler,
+        "KiaCrawler":        KiaCrawler,
+        "SimpleSiteCrawler": SimpleSiteCrawler,
+        "RecruiterKrCrawler": RecruiterKrCrawler,
     }
-    return mapping.get(company)
+
+
+def _build_crawler_map(db_url: str, driver) -> dict[str, object]:
+    """
+    hiring_sources + stocks 조인 → {company_name: CrawlerInstance}
+
+    crawler_type = 'official_api' → driver=None (requests 전용)
+    그 외 모든 타입                → driver 전달 (Selenium 필요)
+    """
+    from sqlalchemy import create_engine, text
+
+    engine = create_engine(db_url, echo=False, future=True)
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(text("""
+                SELECT s.name, hs.crawler_type, hs.crawler_class
+                FROM hiring_sources hs
+                JOIN stocks s ON s.id = hs.stock_id
+                WHERE hs.is_active = TRUE
+                  AND s.is_target = TRUE
+                ORDER BY s.name
+            """)).fetchall()
+    finally:
+        engine.dispose()
+
+    registry = _load_crawler_registry()
+    crawlers: dict[str, object] = {}
+
+    for row in rows:
+        company_name    = row.name
+        crawler_cls_name = row.crawler_class
+        use_driver = None if row.crawler_type == "official_api" else driver
+
+        cls = registry.get(crawler_cls_name)
+        if cls is None:
+            logger.warning("⚠️  미등록 크롤러 클래스: %s (%s) — 스킵", crawler_cls_name, company_name)
+            continue
+
+        crawlers[company_name] = cls(driver=use_driver)
+        logger.debug("  크롤러 등록: %s → %s (driver=%s)", company_name, crawler_cls_name,
+                     "None" if use_driver is None else "WebDriver")
+
+    return crawlers
 
 
 class MultiSourceCrawler(BaseCollector):
@@ -102,14 +116,17 @@ class MultiSourceCrawler(BaseCollector):
     모든 소스를 통합 수집하는 오케스트레이터.
 
     수집 대상 기업 목록은 BaseCollector.run()이 DB(is_target=TRUE)에서 동적으로 조회해
-    collect(target_companies)로 주입한다. 기업 추가/제거는 SQL UPDATE 한 줄로 처리.
+    collect(target_companies)로 주입한다.
+
+    공식 사이트 크롤러 매핑은 hiring_sources 테이블에서 로드한다.
+    기업 추가/변경은 SQL INSERT/UPDATE 한 줄로 처리 (코드 재배포 불필요).
 
     Args:
-        database_url:      PostgreSQL 연결 문자열
-        headless:          Selenium 헤드리스 모드 (기본 True)
-        use_portals:       사람인/잡코리아 포털 수집 여부 (기본 True)
-        use_official:      기업 공식 사이트 수집 여부 (기본 True)
-        rate_limit_sec:    기업 간 대기 시간 (기본 2.0s)
+        database_url:         PostgreSQL 연결 문자열
+        headless:             Selenium 헤드리스 모드 (기본 True)
+        use_portals:          사람인/잡코리아 포털 수집 여부 (기본 True)
+        use_official:         기업 공식 사이트 수집 여부 (기본 True)
+        rate_limit_sec:       기업 간 대기 시간 (기본 2.0s)
         driver_rotation_size: 몇 개 기업마다 Chrome 을 재시작할지 (기본 3).
                               헤드리스 Chrome 의 메모리 누적 크래시 방지.
                               0 또는 음수면 로테이션 비활성화.
@@ -144,8 +161,7 @@ class MultiSourceCrawler(BaseCollector):
     def _quit_driver(self) -> None:
         """
         드라이버 안전 종료 헬퍼.
-        - 이미 죽은 세션이거나 None 이면 조용히 무시 (중복 quit 방지).
-        - 로테이션과 finally 양쪽에서 이 메서드를 호출하면 중복 예외가 없음.
+        이미 죽은 세션이거나 None 이면 조용히 무시 (중복 quit 방지).
         """
         if self.driver is None:
             return
@@ -171,18 +187,24 @@ class MultiSourceCrawler(BaseCollector):
 
         드라이버 로테이션:
           driver_rotation_size(기본 3) 기업마다 Chrome 을 재시작.
-          각 크롤러 인스턴스는 루프 안에서 매번 생성되므로
-          self.driver 를 교체하면 곧바로 새 드라이버를 사용.
+          official_crawlers 는 로테이션 시 driver 참조를 갱신하기 위해 루프마다 재생성.
         """
-        # 첫 드라이버 기동
         self._setup_driver()
         all_jobs: list[dict] = []
+
+        # DB에서 공식 사이트 크롤러 맵 로드
+        official_crawlers: dict[str, object] = {}
+        if self.use_official:
+            try:
+                official_crawlers = _build_crawler_map(self.database_url, self.driver)
+                logger.info("✓ hiring_sources 로드: %d개 기업 공식 크롤러", len(official_crawlers))
+            except Exception as exc:
+                logger.warning("⚠️  hiring_sources 로드 실패 (공식 사이트 스킵): %s", exc)
 
         try:
             for idx, company in enumerate(target_companies):
 
                 # ── 드라이버 로테이션 ────────────────────────────────────────
-                # idx==0 은 이미 위에서 기동했으므로 건너뜀
                 if (
                     self.driver_rotation_size > 0
                     and idx > 0
@@ -192,8 +214,16 @@ class MultiSourceCrawler(BaseCollector):
                         "🔄 드라이버 로테이션 (기업 %d/%d, 배치 크기 %d) — 재시작 중...",
                         idx + 1, len(target_companies), self.driver_rotation_size,
                     )
-                    self._quit_driver()    # 기존 Chrome 완전 종료
-                    self._setup_driver()   # 새 Chrome 기동 (메모리 초기화)
+                    self._quit_driver()
+                    self._setup_driver()
+                    # 드라이버 교체 후 공식 크롤러 맵 재빌드 (새 driver 참조 반영)
+                    if self.use_official:
+                        try:
+                            official_crawlers = _build_crawler_map(
+                                self.database_url, self.driver
+                            )
+                        except Exception as exc:
+                            logger.warning("⚠️  크롤러 맵 재빌드 실패: %s", exc)
 
                 company_jobs: list[dict] = []
                 logger.info("─" * 60)
@@ -212,9 +242,9 @@ class MultiSourceCrawler(BaseCollector):
                             logger.warning("  ⚠️  [%s] 오류: %s", crawler.source_label, exc)
                         time.sleep(self.rate_limit_sec)
 
-                # 2) 공식 사이트 수집
+                # 2) 공식 사이트 수집 (hiring_sources DB 기반)
                 if self.use_official:
-                    official_crawler = _make_crawler(company, self.driver)
+                    official_crawler = official_crawlers.get(company)
                     if official_crawler:
                         try:
                             results = official_crawler.crawl(company)
@@ -233,7 +263,6 @@ class MultiSourceCrawler(BaseCollector):
                 all_jobs.extend(company_jobs)
 
         finally:
-            # 마지막 드라이버 정리 (_quit_driver 가 None 체크하므로 중복 호출 안전)
             self._quit_driver()
             logger.info("✓ WebDriver 최종 종료")
 
@@ -243,10 +272,7 @@ class MultiSourceCrawler(BaseCollector):
 
     # ── 파싱 (이미 표준 포맷 — 그대로 통과) ─────────────────────────────────
     def parse(self, raw_data) -> dict:
-        """
-        BaseSiteCrawler._make_record() 이 이미 표준 포맷을 반환하므로
-        필수 키가 없는 경우만 보완.
-        """
+        """BaseSiteCrawler._make_record() 이 이미 표준 포맷을 반환하므로 누락 키만 보완."""
         return {
             "source_type":     raw_data.get("source_type", "MULTI_SOURCE_WEB"),
             "company_name":    raw_data.get("company_name", ""),
