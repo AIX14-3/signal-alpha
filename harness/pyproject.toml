@@ -1,0 +1,16 @@
+[project]
+name = "signal-alpha-harness"
+version = "0.1.0"
+description = "Temporary prediction-validation harness: panel collection, backtest runner, metrics"
+requires-python = ">=3.11"
+dependencies = [
+  "pandas>=2.0",
+  "pyarrow>=15.0",  # parquet 패널 (KOSPI200 × 10년은 CSV로는 무거움)
+  "pykrx>=1.0.45",
+  "requests>=2.31",  # 유니버스 스냅샷 네이버 폴백 + DART 수집
+  "setuptools>=68,<81",  # pykrx imports pkg_resources (removed in setuptools 81+)
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
