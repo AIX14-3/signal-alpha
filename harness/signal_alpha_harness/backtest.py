@@ -37,11 +37,14 @@ def run_segment(
     dates: pd.DatetimeIndex,
     *,
     n_permutations: int,
+    thresholds: tuple[float, float] = (0.2, -0.2),
 ) -> dict:
     frame = scored[scored["trade_date"].isin(dates)]
     result: dict = {"n_days": int(frame["trade_date"].nunique())}
     for horizon in HORIZONS:
-        report = compute_metrics(frame, horizon)
+        report = compute_metrics(
+            frame, horizon, positive_threshold=thresholds[0], negative_threshold=thresholds[1]
+        )
         result[f"h{horizon}"] = asdict(report)
         if n_permutations > 0:
             result[f"h{horizon}"]["permutation_p"] = permutation_pvalue(
@@ -83,8 +86,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run the harness backtest")
     parser.add_argument("--panel", type=Path, default=DEFAULT_PANEL)
     parser.add_argument("--log", type=Path, default=DEFAULT_LOG)
+    parser.add_argument("--scorer", choices=["baseline", "quant"], default="baseline",
+                        help="quant = Phase 3 결합 점수 (0~100 백분위)")
+    parser.add_argument("--fundamentals", type=Path,
+                        default=Path(__file__).resolve().parents[1] / "data" / "fundamentals_kospi200.parquet")
     parser.add_argument("--segment", choices=["train", "valid", "final"], default="train")
     parser.add_argument("--walk-forward", action="store_true", help="train+valid 워크포워드 국면표")
+    parser.add_argument("--regimes", action="store_true", help="train+valid 국면별 IC 분해")
     parser.add_argument("--unlock-final", action="store_true")
     parser.add_argument("--permutations", type=int, default=500)
     parser.add_argument("--note", default="", help="이번 회차에서 바꾼 파라미터 1개 설명")
@@ -96,17 +104,42 @@ def main(argv: list[str] | None = None) -> int:
 
     panel = load_panel(args.panel)
     panel = add_forward_returns(panel, HORIZONS)
-    scored = add_baseline_score(panel)
+    if args.scorer == "quant":
+        from signal_alpha_harness.combine import add_combined_score
+
+        fundamentals = pd.read_parquet(args.fundamentals) if args.fundamentals.exists() else None
+        scored = add_combined_score(panel, fundamentals)
+        thresholds = (80.0, 20.0)  # 백분위 점수의 방향 콜 기준
+        scorer_name = "quant_combined"
+    else:
+        scored = add_baseline_score(panel)
+        thresholds = (0.2, -0.2)
+        scorer_name = "baseline_price_lite"
     split = chronological_split(scored["trade_date"])
 
     record = {
         "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "scorer": "baseline_price_lite",
+        "scorer": scorer_name,
         "segment": args.segment,
         "note": args.note,
         "panel": str(args.panel),
         "permutations": args.permutations,
     }
+
+    if args.regimes:
+        from signal_alpha_harness.regime import regime_ic_breakdown
+
+        tuning_dates = split.train_dates.union(split.valid_dates)
+        tuning = scored[scored["trade_date"].isin(tuning_dates)]
+        breakdown = regime_ic_breakdown(tuning, horizon=20)
+        record["segment"] = "regimes(train+valid)"
+        record["result"] = {"regimes_h20": breakdown.to_dict(orient="records")}
+        append_log(args.log, record)
+        print(breakdown.to_string(index=False))
+        bear = breakdown[breakdown["regime"] == "bear"]["mean_ic"].iloc[0]
+        print(f"\n하락장 IC 게이트: {bear if bear is not None else 'n/a'} → "
+              f"{'PASS' if bear is not None and bear > 0 else 'FAIL'}")
+        return 0
 
     if args.walk_forward:
         tuning_dates = split.train_dates.union(split.valid_dates)
@@ -117,7 +150,7 @@ def main(argv: list[str] | None = None) -> int:
                 {
                     "test_start": str(test.min().date()),
                     "test_end": str(test.max().date()),
-                    **run_segment(scored, test, n_permutations=0),
+                    **run_segment(scored, test, n_permutations=0, thresholds=thresholds),
                 }
                 for _, test in windows
             ]
@@ -133,7 +166,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     dates = segment_dates(split, args.segment, unlock_final=args.unlock_final)
-    record["result"] = run_segment(scored, dates, n_permutations=args.permutations)
+    record["result"] = run_segment(
+        scored, dates, n_permutations=args.permutations, thresholds=thresholds
+    )
     append_log(args.log, record)
     print(format_report(record))
     return 0

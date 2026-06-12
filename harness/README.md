@@ -14,6 +14,13 @@
 | `collect_panel.py` | pykrx 일봉+수급 10년 수집 → 종목 샤드 + `data/panel_kospi200.parquet` |
 | `collect_fundamentals.py` | DART 정형 재무 (2015~), **available_date(공시일)** 포함 point-in-time |
 | `panel.py` | 패널 로드 + 미래수익률(fwd_ret_N) 부착 — lookahead 차단 지점 |
+| `factors/` | 팩터 6종 순수 함수 (Phase 2 게이트: 반전·저변동·마진개선 통과) |
+| `factor_eval.py` | 팩터 단독 IC + 순열검정 게이트 러너 |
+| `combine.py` | 결합 점수 — z-score 고정 등가중 → KOSPI200 백분위 0~100 |
+| `calibration.py` | 보정표 (train 한정, 점수구간×20일 초과수익 분포) |
+| `confidence.py` / `scorecard.py` | 확신도 A/B/C + 사용자 표시용 ScoreCard |
+| `regime.py` | 시장 국면(상승/하락/횡보) 라벨 + 국면별 IC 분해 |
+| `shadow.py` | 포워드 섀도 — 매일 점수 선기록(append-only) 후 20일 뒤 대조 |
 | `splits.py` | 학습60/검증20/최종20 시간 분할 (최종 구간은 `--unlock-final` 없이 접근 불가) + 워크포워드 |
 | `metrics.py` | 지표 3종(방향 적중률 · 일별 Spearman IC · 분위 스프레드) + 순열 검정(날짜 내 셔플) |
 | `baseline_score.py` | Phase 0 배관 검증용 PRICE-lite 점수 (실분석기 연결 전 임시) |
@@ -36,8 +43,14 @@ uv run python -m signal_alpha_harness.collect_fundamentals
 # 2) 학습 구간 백테스트 (순열 검정 500회 포함)
 uv run python -m signal_alpha_harness.backtest --segment train --note "baseline"
 
-# 3) 채택 판정은 검증 구간으로
-uv run python -m signal_alpha_harness.backtest --segment valid --note "w_flow 0.15→0.2"
+# 3) 채택 판정은 검증 구간으로 (결합 점수는 --scorer quant)
+uv run python -m signal_alpha_harness.backtest --scorer quant --segment valid --note "..."
+uv run python -m signal_alpha_harness.backtest --scorer quant --walk-forward
+uv run python -m signal_alpha_harness.backtest --scorer quant --regimes
+
+# 4) 포워드 섀도 — 매 영업일 장 마감 후 (작업 스케줄러 권장, shadow.py 헤더 참고)
+uv run python -m signal_alpha_harness.shadow --record    # 기록 후 git 커밋
+uv run python -m signal_alpha_harness.shadow --evaluate  # 20영업일 경과분 대조
 
 # 워크포워드 국면표 (train+valid 내부, 반년 단위)
 uv run python -m signal_alpha_harness.backtest --walk-forward

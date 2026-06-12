@@ -2,3 +2,5 @@
 !.gitignore
 !universe_kospi200_*.csv
 !calibration.parquet
+!shadow/
+!shadow/*.jsonl

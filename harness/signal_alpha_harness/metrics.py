@@ -78,11 +78,21 @@ def daily_spearman_ic(scores: np.ndarray, returns: np.ndarray) -> np.ndarray:
     return ics
 
 
-def direction_hit_rate(frame: pd.DataFrame, horizon: int) -> tuple[float | None, int]:
-    """Hit rate over positive/negative calls only (neutral/unknown excluded)."""
+def direction_hit_rate(
+    frame: pd.DataFrame,
+    horizon: int,
+    *,
+    positive_threshold: float = POSITIVE_THRESHOLD,
+    negative_threshold: float = NEGATIVE_THRESHOLD,
+) -> tuple[float | None, int]:
+    """Hit rate over positive/negative calls only (neutral/unknown excluded).
+
+    기본 임계값(±0.2)은 [-1,1] 점수용 — 0~100 백분위 점수는 호출자가
+    (예: 80/20)으로 넘겨야 의미가 있다.
+    """
     returns = frame[f"fwd_ret_{horizon}"]
-    positive = frame["score"] >= POSITIVE_THRESHOLD
-    negative = frame["score"] <= NEGATIVE_THRESHOLD
+    positive = frame["score"] >= positive_threshold
+    negative = frame["score"] <= negative_threshold
     directional = (positive | negative) & returns.notna()
     n_directional = int(directional.sum())
     if n_directional == 0:
@@ -110,11 +120,22 @@ def quantile_spread(scores: np.ndarray, returns: np.ndarray) -> float | None:
     return float(np.mean(spreads))
 
 
-def compute_metrics(frame: pd.DataFrame, horizon: int) -> MetricsReport:
+def compute_metrics(
+    frame: pd.DataFrame,
+    horizon: int,
+    *,
+    positive_threshold: float = POSITIVE_THRESHOLD,
+    negative_threshold: float = NEGATIVE_THRESHOLD,
+) -> MetricsReport:
     scores, returns = _matrices(frame, horizon)
     ics = daily_spearman_ic(scores, returns)
     valid_ics = ics[~np.isnan(ics)]
-    hit, n_directional = direction_hit_rate(frame, horizon)
+    hit, n_directional = direction_hit_rate(
+        frame,
+        horizon,
+        positive_threshold=positive_threshold,
+        negative_threshold=negative_threshold,
+    )
     observed = frame[frame["score"].notna() & frame[f"fwd_ret_{horizon}"].notna()]
     return MetricsReport(
         horizon=horizon,
