@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator
 
 from fastapi import FastAPI, HTTPException, Request
 
 from app.core.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -22,13 +25,24 @@ async def lifespan_with_database(app: FastAPI) -> AsyncIterator[None]:
             DatabaseSettings(database_url=settings.database_url)
         )
 
-    if settings.price_collector_enabled and app.state.database_pool is not None:
-        from app.collectors.price.runner import supervise_daemon
+    if settings.price_collector_enabled:
+        if app.state.database_pool is None:
+            logger.warning(
+                "PRICE_COLLECTOR_ENABLED but DATABASE_URL is not set; "
+                "price collector will not start"
+            )
+        elif not (settings.kiwoom_app_key and settings.kiwoom_app_secret):
+            logger.warning(
+                "PRICE_COLLECTOR_ENABLED but KIWOOM_APP_KEY/KIWOOM_APP_SECRET are empty; "
+                "price collector will not start"
+            )
+        else:
+            from app.collectors.price.runner import supervise_daemon
 
-        app.state.price_collector_task = asyncio.create_task(
-            supervise_daemon(app.state.database_pool, settings),
-            name="price-collector-daemon",
-        )
+            app.state.price_collector_task = asyncio.create_task(
+                supervise_daemon(app.state.database_pool, settings),
+                name="price-collector-daemon",
+            )
 
     try:
         yield

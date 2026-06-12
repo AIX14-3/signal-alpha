@@ -9,6 +9,8 @@ from pydantic import BaseModel
 
 from app.analyzers.price.analyzer import PriceAnalyzer
 from app.collectors.price.ohlcv_reader import OhlcvReader
+from app.collectors.price.runner import run_once
+from app.core.config import Settings, get_settings
 from app.core.database import get_database_pool
 from app.orchestrator.pipeline import SourcePipeline
 
@@ -56,9 +58,7 @@ class CollectRequest(BaseModel):
 async def collect_price(
     request: CollectRequest,
     pool: Any = Depends(get_database_pool),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
-    from app.collectors.price.runner import run_once
-    from app.core.config import get_settings
-
-    stats = await run_once(pool, get_settings(), flows_only=request.mode == "flows")
+    stats = await run_once(pool, settings, flows_only=request.mode == "flows")
     return {"mode": request.mode, **asdict(stats)}

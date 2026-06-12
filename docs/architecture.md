@@ -53,7 +53,9 @@ asyncio 태스크**로 돕니다 (`app/collectors/price/runner.py`,
 - 실시간 수집은 타깃 종목에 한정한다 — 전 종목 실시간 모니터링은 후순위 확장.
 - 120일 과거 일봉 백필(ka10081)·주/월/년봉·업종 지수 수집은 후속 작업이다.
   백필 전까지 PRICE 분석기는 `insufficient_history` 상태가 정상이다.
-- agent-worker는 **단일 uvicorn 워커** 전제다 — 멀티 워커면 데몬이 중복 기동된다.
+- 데몬 중복 기동은 Postgres advisory lock으로 방지한다 — 멀티 워커/컨테이너가 떠도
+  락을 잡은 한 인스턴스만 폴링하고, 보유자가 죽으면 자동 승계된다.
+- 데몬은 DATABASE_URL 또는 키움 키가 비어 있으면 경고 로그 후 기동하지 않는다.
 
 상세 실행/환경 변수는 `docs/price-collector.md`,
 수집 데이터 명세는 `docs/kiwoom-rest-spec.md` 참고.

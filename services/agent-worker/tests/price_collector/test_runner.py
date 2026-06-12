@@ -58,6 +58,37 @@ class FakeCollectionRuns:
         self.finished.append((run_id, status))
 
 
+class _FakeAcquire:
+    def __init__(self, conn) -> None:
+        self._conn = conn
+
+    async def __aenter__(self):
+        return self._conn
+
+    async def __aexit__(self, *exc) -> bool:
+        return False
+
+
+class FakeLockConnection:
+    """pg_try_advisory_lock 호출에 고정 응답하는 커넥션 더블."""
+
+    def __init__(self, locked: bool) -> None:
+        self.locked = locked
+        self.calls = 0
+
+    async def fetchval(self, query: str, *args):
+        self.calls += 1
+        return self.locked
+
+
+class FakeLockPool:
+    def __init__(self, locked: bool = True) -> None:
+        self.connection = FakeLockConnection(locked)
+
+    def acquire(self) -> _FakeAcquire:
+        return _FakeAcquire(self.connection)
+
+
 def patch_runner(monkeypatch, repo, runs, client) -> None:
     monkeypatch.setattr(runner, "PriceSnapshotRepository", lambda pool: repo)
     monkeypatch.setattr(runner, "CollectionRepository", lambda pool: runs)
@@ -109,6 +140,23 @@ def test_run_once_without_targets_creates_no_run(monkeypatch):
     assert runs.created == []
 
 
+def test_run_once_finishes_run_even_when_cycle_raises(monkeypatch):
+    repo = FakeRepository(TARGETS)
+    runs = FakeCollectionRuns()
+    patch_runner(monkeypatch, repo, runs, FakeRestClient())
+
+    async def boom(*args, **kwargs):
+        raise RuntimeError("kiwoom exploded")
+
+    monkeypatch.setattr(runner, "run_snapshot_cycle", boom)
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(runner.run_once(None, make_settings(), flows_only=False))
+
+    # 예외로 빠져나가도 collector_runs 행이 'running'으로 남지 않는다.
+    assert runs.finished == [(1, "failed")]
+
+
 def test_supervise_restarts_after_crash(monkeypatch):
     async def scenario():
         calls = 0
@@ -125,7 +173,7 @@ def test_supervise_restarts_after_crash(monkeypatch):
         monkeypatch.setattr(runner, "run_daemon", fake_daemon)
         monkeypatch.setattr(runner, "_RESTART_DELAY_SEC", 0.01)
 
-        task = asyncio.create_task(runner.supervise_daemon(None, make_settings()))
+        task = asyncio.create_task(runner.supervise_daemon(FakeLockPool(), make_settings()))
         await asyncio.wait_for(second_call.wait(), timeout=2.0)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -145,11 +193,35 @@ def test_supervise_propagates_cancel(monkeypatch):
 
         monkeypatch.setattr(runner, "run_daemon", fake_daemon)
 
-        task = asyncio.create_task(runner.supervise_daemon(None, make_settings()))
+        task = asyncio.create_task(runner.supervise_daemon(FakeLockPool(), make_settings()))
         await asyncio.wait_for(started.wait(), timeout=2.0)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
+
+    asyncio.run(scenario())
+
+
+def test_supervise_waits_when_advisory_lock_is_held(monkeypatch):
+    async def scenario():
+        daemon_calls = 0
+
+        async def fake_daemon(pool, settings):
+            nonlocal daemon_calls
+            daemon_calls += 1
+
+        monkeypatch.setattr(runner, "run_daemon", fake_daemon)
+        monkeypatch.setattr(runner, "_RESTART_DELAY_SEC", 0.01)
+        pool = FakeLockPool(locked=False)
+
+        task = asyncio.create_task(runner.supervise_daemon(pool, make_settings()))
+        while pool.connection.calls < 3:  # 락 획득 재시도가 반복되는지 확인
+            await asyncio.sleep(0.01)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert daemon_calls == 0  # 락을 못 잡으면 폴링하지 않는다
 
     asyncio.run(scenario())
 
