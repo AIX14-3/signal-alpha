@@ -12,6 +12,7 @@ dependencies = [
   "signal-alpha-data-access",
   "sqlalchemy>=2.0.0",
   "webdriver-manager>=4.0.0",
+  "tzdata>=2024.1",
   "uvicorn[standard]>=0.30.0"
 ]
 
