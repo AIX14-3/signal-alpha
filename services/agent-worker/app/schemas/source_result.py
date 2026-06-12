@@ -16,6 +16,16 @@ class EvidenceItem:
 
 
 @dataclass(frozen=True)
+class ReportMeta:
+    """Report RAG 전용 집계 메타데이터"""
+    avg_target: float | None
+    upside_pct: float | None
+    target_trend: Literal["up", "down", "flat", "unknown"]
+    conflict_detected: bool
+    opinions: list[dict] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class SourceResult:
     source: SourceType
     stock_code: str
@@ -25,3 +35,4 @@ class SourceResult:
     evidence_items: list[EvidenceItem] = field(default_factory=list)
     risk_flags: list[str] = field(default_factory=list)
     data_status: Literal["ok", "partial", "failed"] = "ok"
+    report_meta: ReportMeta | None = None

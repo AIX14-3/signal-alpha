@@ -37,9 +37,6 @@ uv run pytest
 cd ../agent-worker
 uv run pytest
 
-cd ../price-collector
-uv run pytest
-
 cd ../../packages/data-access
 uv run pytest
 

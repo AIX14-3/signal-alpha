@@ -15,7 +15,16 @@ class QueueTaskRunner:
         self._queue_repository = ProcessingQueueRepository(connection)
 
     async def run_next(self, task_type: str) -> dict[str, Any]:
-        task = await self._queue_repository.claim_next_pending(task_type=task_type)
+        return await self.run_task(task_type)
+
+    async def run_task(self, task_type: str, *, task_id: int | None = None) -> dict[str, Any]:
+        if task_id is None:
+            task = await self._queue_repository.claim_next_pending(task_type=task_type)
+        else:
+            task = await self._queue_repository.claim_pending_by_id(
+                task_id=task_id,
+                task_type=task_type,
+            )
         if task is None:
             return {"status": "idle", "task_type": task_type}
 

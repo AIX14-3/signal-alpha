@@ -30,7 +30,7 @@
 ## 3. 자주 나올 질문
 
 **Q. 분석기가 키움 API를 직접 부르나요?**
-아니요. 키움 호출은 `services/price-collector`(수집기)만 합니다. 분석기는 수집기가 DB에 쌓아둔 `ohlcv_data`를 **읽기만** 합니다. 그래서 키움 장애·인증 문제와 분석 로직이 서로 분리됩니다.
+아니요. 키움 호출은 price 수집 데몬(agent-worker 내장, `app/collectors/price/runner.py`)만 합니다. 분석기는 수집 데몬이 DB에 쌓아둔 `ohlcv_data`를 **읽기만** 합니다. 그래서 키움 장애·인증 문제와 분석 로직이 서로 분리됩니다.
 
 **Q. 왜 이름이 KIWOOM이 아니라 PRICE인가요?**
 데이터의 본질이 "주가·수급"이기 때문입니다. 나중에 수집처를 다른 증권사로 바꿔도 분석기는 그대로 쓸 수 있습니다.
@@ -64,7 +64,7 @@ uv run uvicorn app.main:app --reload --port 8011
 
 ## 5. 다음 단계
 
-1. REST 수집기(`test/kiwoom-collector-apikey` 작업)가 머지되면 실데이터로 검증
+1. REST 실시간 수집기(`feat/kiwoom-rest-realtime-collector`)가 머지되면 실데이터로 검증 — 단 과거 120일 백필 전까지는 누적 일수 부족으로 `insufficient_history`가 정상
 2. 최종 합산(D-1) 가중치에 PRICE를 몇 %로 넣을지 팀 결정
 3. 별도 브랜치에서 "예측 점수 vs 실제 주가" 검증 파이프라인 구축 (백테스트)
 

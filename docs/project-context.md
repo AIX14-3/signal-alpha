@@ -14,6 +14,128 @@ UI, API 응답, LLM 프롬프트, 발표자료, 문구 모두 “투자 추천�
 
 ---
 
+## 0-1. 현재 구현 상태 요약
+
+> 기준일: 2026-06-12
+> 이 섹션은 현재 레포의 실제 코드 구조를 기준으로 한 최신 개발 컨텍스트입니다. 아래의 오래된 기획 초안과 충돌할 경우 이 섹션과 `README.md`, `database/migrations/`, 각 서비스 README를 우선합니다.
+
+### 현재 모노레포 구성
+
+```text
+final_project/
+  web/                    # Next.js 기반 한국어 대시보드 UI
+  services/
+    main-server/           # FastAPI 사용자 API 서버
+    agent-worker/          # FastAPI 내부 수집/분석 워커
+  packages/
+    data-access/           # DB repository 계층
+    signal-core/           # 공통 안전/계약 패키지
+  database/
+    migrations/            # 실제 DB 스키마 기준
+    docs/                  # DB 설계/책임 문서
+  docs/                    # 기획, 아키텍처, 백로그, 백테스팅 문서
+```
+
+### 현재 서비스 책임
+
+| 영역 | 현재 책임 |
+|---|---|
+| `web` | Next.js 앱 쉘, 메인 대시보드, 종목 추가 화면, 시그널 상세 화면의 한국어 UI |
+| `main-server` | 외부 사용자 API, 헬스체크, 최신 시그널 조회, 향후 관심종목/저널/작업 API의 진입점 |
+| `agent-worker` | 내부 워커 API, DART 수집/정규화/분석, Report/PRICE 분석, PRICE 가격 수집 데몬, 큐 실행, 스케줄 트리거 |
+| `data-access` | DB 접근을 repository로 캡슐화. 서비스는 SQL을 직접 흩뿌리지 않고 repository를 우선 사용 |
+| `database` | PostgreSQL + pgvector 스키마, seed, DB 테스트, 테이블 책임 문서 |
+
+### 현재 핵심 실행 흐름
+
+```text
+[DART]
+collect_dart
+  -> OpenDART corp_code/list/document.xml 조회
+  -> raw_documents + dart_raw_details 저장
+  -> normalize_dart 큐 등록
+  -> source_documents + signal_events + signal_metrics 생성
+  -> analyze_dart 큐 등록
+  -> rule 기반 SourceResult 생성
+  -> 고임팩트 공시는 선택적으로 LLM 분석
+  -> analysis_results + agent_results 저장
+
+[PRICE]
+agent-worker 내장 price collector
+  -> stocks.is_target = TRUE 종목을 Kiwoom REST로 조회
+  -> price_snapshots + ohlcv_data + collector_runs 저장
+  -> agent-worker의 PRICE analyzer가 DB 데이터를 읽어 분석
+
+[REPORT]
+Report collector/analyzer
+  -> report_raw_details / report_chunks / pgvector 기반 RAG 흐름을 사용
+  -> 리포트 원문 PDF 자체를 사용자에게 노출하지 않고 요약/근거/링크 중심으로 사용
+
+[MAIN/WEB]
+web
+  -> main-server API 호출
+  -> main-server는 최종 signal 조회/사용자 기능을 담당
+  -> agent-worker는 내부 API로만 수집/분석 작업을 수행
+```
+
+### 현재 구현된 주요 API
+
+| 서비스 | 메서드/경로 | 용도 |
+|---|---|---|
+| main-server | `GET /health` | 메인 서버 헬스체크 |
+| main-server | `GET /signals/{ticker}` | 종목별 최신 시그널 조회 |
+| agent-worker | `GET /health` | 워커 헬스체크 |
+| agent-worker | `POST /internal/tasks/{task_type}/enqueue` | `collect_dart`, `normalize_dart`, `analyze_dart` 작업 등록 |
+| agent-worker | `POST /internal/tasks/{task_type}/run` | 작업 1건 실행 |
+| agent-worker | `GET /internal/queue/tasks` | 큐 작업 목록 조회 |
+| agent-worker | `POST /internal/queue/{task_type}/run-batch` | 특정 작업 타입 배치 실행 |
+| agent-worker | `POST /internal/schedules/dart/collect` | DART 수집 스케줄 트리거 |
+| agent-worker | `POST /internal/dart/corp-codes/sync` | DART corp code 동기화 |
+| agent-worker | `GET /internal/dart/analysis-results` | DART 분석 결과 조회 |
+| agent-worker | `GET /internal/dart/document-results` | DART 문서/분석 평탄화 조회 |
+| agent-worker | `POST /internal/dart/e2e/run` | 개발용 DART 수집-정규화-분석 E2E 실행 |
+| agent-worker | `POST /internal/price/analyze/{stock_code}` | DB 기반 PRICE 분석 실행 |
+| agent-worker | `POST /agents/report` | 리포트 수집/분석 실행 |
+| agent-worker | `POST /agents/analyze` | 워커 분석 엔드포인트 |
+
+### 현재 DB 흐름
+
+실제 스키마 기준은 항상 `database/migrations/`입니다. 현재 MVP의 핵심 흐름은 다음 테이블을 중심으로 구성되어 있습니다.
+
+```text
+stocks
+  -> raw_documents
+  -> dart_raw_details / report_raw_details
+  -> report_chunks
+  -> source_documents
+  -> signal_events
+  -> signal_metrics
+  -> analysis_results
+  -> agent_results
+  -> final_signals
+```
+
+운영/큐/수집 상태는 `processing_queue`, `collector_runs`, `dart_collection_states`, `validation_logs`를 사용합니다. 가격 데이터는 `price_snapshots`, `ohlcv_data`를 사용합니다.
+
+### 현재 개발 원칙
+
+1. mock/fixture는 테스트와 실패 fallback에만 사용하고, 기능 개발은 실제 수집 데이터 흐름을 우선한다.
+2. 수집기와 분석기는 큐 작업 타입 기준으로 분리한다. DART는 `collect_dart`, `normalize_dart`, `analyze_dart`를 독립 작업으로 둔다.
+3. LLM은 고임팩트 공시나 RAG 요약처럼 필요한 지점에만 사용하고, JSON 검증 실패/타임아웃/금지 표현 감지 시 rule 기반 fallback을 사용한다.
+4. Kiwoom 가격 수집은 `agent-worker` 내장 price collector가 담당하고, PRICE analyzer는 DB만 읽는다.
+5. 사용자-facing 문구는 “추천”이 아니라 “근거 확인”, “방향성”, “추가 확인 필요”를 중심으로 작성한다.
+
+### 다음 구현 우선순위
+
+1. DART `analysis_results`/`agent_results`를 `final_signals` 집계 흐름에 연결한다.
+2. Report RAG의 실제 리포트 수집/청킹/임베딩/분석 경로를 완성한다.
+3. PRICE 수집 데이터의 과거 OHLCV backfill과 PRICE analyzer 결과 저장을 연결한다.
+4. main-server에 관심종목, 분석 실행, 최신 시그널 목록, 시그널 상세 API를 확장한다.
+5. web 대시보드에서 실제 main-server API를 연결하고, 종목 추가-상세-근거 확인 흐름을 완성한다.
+6. 충분한 시그널 이력이 쌓인 뒤 백테스팅/스코어링 검증을 진행한다.
+
+---
+
 ## 1. 브랜드 / 네이밍
 
 ### 서비스명
@@ -480,41 +602,41 @@ Signal Journal은 플랫폼이 투자 성과를 평가하거나 추천하는 기
 
 | 영역 | 스택 |
 |---|---|
-| AI / Agent | LangGraph, LangChain, GPT-4o-mini |
+| AI / Agent | Rule-based analyzer + 선택적 LLM 분석 + RAG |
+| LLM Provider | 미정. Gemini/OpenAI 등 교체 가능한 Provider 추상화로 관리 |
 | Embedding | BGE-M3, 1024 dim |
 | Vector DB | PostgreSQL + pgvector |
-| AI / Agent Backend | FastAPI |
+| Worker Backend | FastAPI |
 | Main Backend | FastAPI |
-| Frontend | Next.js + Zustand |
-| Infra | AWS EC2 t3.medium + Docker Compose |
+| Frontend | Next.js |
+| DB Access | Python repository package (`packages/data-access`) |
+| Infra | Docker Compose for local dev, 운영 DB는 별도 관리 가능 |
 | FE 배포 | Vercel |
 | CI/CD | GitHub Actions |
 
-### 권장 서버 구조
+### 현재 서버 구조
 
-복잡한 MSA가 아니라 **FastAPI 중심의 1개 메인 서버 + Agent 모듈 구조**를 권장한다.
+현재 레포는 단일 `api-server`가 아니라 **FastAPI Main Server + FastAPI Agent Worker**로 나뉘어 있다. PRICE 수집 데몬은 별도 서비스가 아니라 `agent-worker` 안에서 실행된다.
 
 ```text
-1. FastAPI Main Server
-   - 유저 관리
-   - 관심 종목 관리
-   - Signal Journal CRUD
-   - 대시보드 API
-   - signal run endpoint
-   - Agent 실행 오케스트레이션
-   - 스케줄링 / 영속성 담당
+1. services/main-server
+   - 외부 사용자 API
+   - 대시보드/시그널 조회 API
+   - 향후 관심종목, 저널, 분석 실행 요청 관리
+   - 수집/분석 로직은 직접 들고 있지 않고 agent-worker 또는 DB 결과를 사용
 
-2. Agent Module / AI Worker
-   - Agent 1, 2, 3 구현
-   - LangGraph / LangChain / LLM / RAG / 데이터 수집 담당
-   - MVP에서는 Main Server 내부 패키지로 시작 가능
-   - 실행 시간이 길어지면 별도 FastAPI worker 또는 Celery/RQ worker로 분리 가능
+2. services/agent-worker
+   - 내부 수집/정규화/분석 API
+   - DART, Report, PRICE, Alternative 계열 collector/analyzer/orchestrator
+   - Kiwoom REST 기반 PRICE 수집 데몬
+   - processing_queue 기반 작업 실행
+   - LLM/RAG/JSON 검증/fallback 처리
 ```
 
 ### 이유
 
 - Python은 AI/LLM/RAG/데이터 수집 생태계가 강함.
-- Main Server까지 FastAPI로 통일하면 Python 기반 Agent 코드와 schema를 중복 없이 공유할 수 있음.
+- Main Server와 Agent Worker를 FastAPI로 통일하면 Python 기반 schema와 repository를 공유하기 쉬움.
 - 팀 규모와 MVP 기간을 고려해 별도 Java Main Server를 두지 않고 FastAPI로 백엔드를 통일함.
 - 포트폴리오 관점에서는 “FastAPI 기반 API 서버, Agent orchestration, RAG, pgvector 연동” 경험을 명확히 보여줄 수 있음.
 
@@ -522,268 +644,196 @@ Signal Journal은 플랫폼이 투자 성과를 평가하거나 추천하는 기
 
 ## 13. 추천 레포 구조
 
-Monorepo 기준 예시.
+현재 레포 구조 기준.
 
 ```text
-signal-alpha/
+final_project/
   README.md
   docker-compose.yml
   .env.example
-
-  api-server/
-    pyproject.toml
-    app/
-      main.py
-      core/
-        config.py
-        logging.py
-        database.py
-      api/
-        routes/
-          health.py
-          watchlists.py
-          signals.py
-          journals.py
-      agents/
-        dart_watcher.py
-        report_rag.py
-        alternative_signal.py
-        debate_aggregation.py
-      collectors/
-        dart_client.py
-        naver_report_client.py
-        saramin_client.py
-        kipris_client.py
-        datalab_client.py
-      schemas/
-        common.py
-        source_result.py
-        aggregation.py
-      services/
-        embedding_service.py
-        vector_store.py
-        llm_service.py
-      prompts/
-        dart_watcher.md
-        report_rag.md
-        alternative_signal.md
-        debate_aggregation.md
-      tests/
-        test_watchlists.py
-        test_signals.py
-        test_journals.py
-        test_dart_watcher.py
-        test_aggregation.py
 
   web/
     package.json
     src/
       app/
       components/
-      stores/
       lib/
-      types/
+
+  services/
+    main-server/
+      app/
+        main.py
+        api/routes/health.py
+        api/routes/signals.py
+        core/config.py
+
+    agent-worker/
+      app/
+        main.py
+        api/routes/
+          dart.py
+          health.py
+          price.py
+          queue.py
+          report.py
+          schedules.py
+          tasks.py
+        collectors/
+          dart/
+          datalab/
+          hiring/
+          patent/
+          price/     # Kiwoom REST 기반 내장 수집 데몬 + OHLCV reader
+          report/
+        analyzers/
+          dart/
+          price/
+          report/
+        orchestrator/
+          dart/
+          queue/
+        prompts/
+
+  packages/
+    data-access/
+      app/repositories/
+    signal-core/
+
+  database/
+    migrations/
+    docs/
+    seeds/
+    tests/
+
+  docs/
+    architecture.md
+    data-flow.md
+    project-context.md
+    backlog.md
+    backtesting-plan.md
 ```
 
 ---
 
-## 14. API 설계 초안
+## 14. 현재 API 설계
 
 ### FastAPI Main Server
 
-#### `POST /agents/analyze`
+#### `GET /health`
 
-관심 종목 1개에 대해 모든 에이전트 실행. MVP에서는 Main Server 내부의 Agent 모듈을 직접 호출한다.
+메인 서버 상태 체크.
 
-Request:
+#### `GET /signals/{ticker}`
 
-```json
-{
-  "stock_code": "005930",
-  "stock_name": "삼성전자",
-  "corp_code": "00126380",
-  "run_agents": ["dart", "report", "alternative"],
-  "options": {
-    "use_llm": true,
-    "use_rag": true
-  }
-}
-```
+종목별 최신 시그널 조회. 현재는 `SignalRepository.get_current_by_ticker`를 통해 DB의 최종 시그널을 읽는다.
 
-Response:
-
-```json
-{
-  "stock_code": "005930",
-  "stock_name": "삼성전자",
-  "agent_results": {
-    "dart": {},
-    "report": {},
-    "alternative": {}
-  },
-  "aggregation": {
-    "consensus_score": 72,
-    "alignment_rate": "MEDIUM_HIGH",
-    "overall_direction": "positive",
-    "needs_review": false,
-    "summary": "공시와 리포트는 긍정 방향이나, Alternative Data는 일부 추가 확인이 필요합니다."
-  }
-}
-```
-
-#### `POST /agents/dart`
-
-DART Watcher만 실행.
-
-#### `POST /agents/report`
-
-Report RAG만 실행.
-
-#### `POST /agents/alternative`
-
-Alternative Signal만 실행.
+### FastAPI Agent Worker
 
 #### `GET /health`
 
-서버 상태 체크.
+워커 서버 상태 체크.
+
+#### `POST /internal/tasks/{task_type}/enqueue`
+
+큐 작업 등록. 현재 주요 task type은 `collect_dart`, `normalize_dart`, `analyze_dart`이다.
+
+#### `POST /internal/tasks/{task_type}/run`
+
+해당 타입의 큐 작업 1건을 즉시 실행한다.
+
+#### `GET /internal/queue/tasks`
+
+큐 작업 목록을 조회한다.
+
+#### `POST /internal/queue/{task_type}/run-batch`
+
+특정 작업 타입을 배치로 실행한다.
+
+#### `POST /internal/schedules/dart/collect`
+
+DART 수집 작업을 스케줄 기준으로 등록한다.
+
+#### `POST /internal/dart/corp-codes/sync`
+
+OpenDART corp code ZIP/XML 데이터를 동기화해 `dart_corp_codes`에 적재한다.
+
+#### `GET /internal/dart/analysis-results`
+
+DART 분석 결과를 조회한다.
+
+#### `GET /internal/dart/document-results`
+
+DART 원문/정규화/분석 결과를 개발 확인용으로 평탄화해 조회한다.
+
+#### `POST /internal/dart/e2e/run`
+
+개발 편의를 위해 DART 수집, 정규화, 분석을 한 번에 실행한다.
+
+#### `POST /internal/price/analyze/{stock_code}`
+
+DB에 적재된 가격 데이터를 기반으로 PRICE 분석을 실행한다.
+
+#### `POST /agents/report`
+
+리포트 수집/분석 흐름을 실행한다.
+
+#### `POST /agents/analyze`
+
+워커 분석 엔드포인트. 향후 main-server의 분석 실행 요청과 연결할 수 있다.
 
 ---
 
-### FastAPI Main API
+## 15. 현재 DB 스키마 기준
 
-#### `POST /api/watchlists`
+> 실제 스키마의 유일한 기준은 `database/migrations/`입니다. 아래는 개발자가 빠르게 흐름을 이해하기 위한 요약입니다.
 
-관심 종목 등록.
+### 마스터/사용자
 
-#### `GET /api/watchlists`
+- `stocks`: 종목 코드, 종목명, DART corp_code, 타깃 여부 등 종목 마스터
+- `users`: 사용자
+- `user_watchlists`: 사용자 관심종목
+- `signal_journals`: 사용자의 주관적 판단 기록
 
-사용자 관심 종목 조회.
+### 수집 원천
 
-#### `POST /api/signals/run/{stockCode}`
+- `raw_documents`: 모든 수집 원문의 공통 헤더. `source_type`, `stock_code`, `external_id`, `collected_at` 등을 저장
+- `dart_raw_details`: DART 공시 상세. `receipt_no`, 공시 제목, XML/텍스트 추출 결과, 정정 공시 관계 등을 저장
+- `report_raw_details`: 증권사 리포트 원천 메타데이터
+- `report_chunks`: RAG용 리포트 청크와 pgvector embedding
+- `collector_runs`: 수집 실행 이력
+- `dart_collection_states`: DART 증분 수집 상태
 
-특정 종목 분석 실행. 내부적으로 Agent Module / AI Worker를 호출.
+### 정규화/분석
 
-#### `GET /api/signals/latest`
+- `source_documents`: 원천 문서를 분석 가능한 표준 문서로 정규화한 결과
+- `signal_events`: 공시/리포트/가격 등에서 추출한 이벤트 단위 신호
+- `signal_metrics`: 이벤트에서 추출한 수치형/정성형 지표
+- `analysis_results`: 소스별 분석 결과
+- `agent_results`: 에이전트 실행 결과와 근거 연결
+- `final_signals`: 사용자에게 보여줄 최종 시그널
+- `validation_logs`: 정규화/분석 검증 및 fallback 로그
 
-대시보드용 최신 종목별 시그널 조회.
+### 큐/가격/확장
 
-#### `GET /api/signals/{signalId}`
+- `processing_queue`: 수집, 정규화, 분석 작업 큐
+- `price_snapshots`: 장중 가격 스냅샷
+- `ohlcv_data`: 일봉/거래량/수급 등 가격 분석 데이터
+- `backtest_results`, `score_history`, `ml_scores` 등: 백테스팅/스코어링 확장용
 
-시그널 상세 조회.
+### 현재 MVP 데이터 흐름
 
-#### `POST /api/journals`
-
-Signal Journal 작성.
-
-#### `GET /api/journals`
-
-사용자 Journal 목록 조회.
-
----
-
-## 15. DB 스키마 초안
-
-### `users`
-
-```sql
-CREATE TABLE users (
-  id BIGSERIAL PRIMARY KEY,
-  email VARCHAR(255) UNIQUE NOT NULL,
-  nickname VARCHAR(100),
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
+```text
+stocks
+  -> raw_documents
+  -> dart_raw_details / report_raw_details
+  -> report_chunks
+  -> source_documents
+  -> signal_events
+  -> signal_metrics
+  -> analysis_results
+  -> agent_results
+  -> final_signals
 ```
-
-### `stocks`
-
-```sql
-CREATE TABLE stocks (
-  stock_code VARCHAR(20) PRIMARY KEY,
-  stock_name VARCHAR(100) NOT NULL,
-  corp_code VARCHAR(20),
-  market VARCHAR(20),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-```
-
-### `watchlists`
-
-```sql
-CREATE TABLE watchlists (
-  id BIGSERIAL PRIMARY KEY,
-  user_id BIGINT NOT NULL REFERENCES users(id),
-  stock_code VARCHAR(20) NOT NULL REFERENCES stocks(stock_code),
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE(user_id, stock_code)
-);
-```
-
-### `source_results`
-
-```sql
-CREATE TABLE source_results (
-  id BIGSERIAL PRIMARY KEY,
-  stock_code VARCHAR(20) NOT NULL REFERENCES stocks(stock_code),
-  source_type VARCHAR(30) NOT NULL,
-  direction VARCHAR(30) NOT NULL,
-  score NUMERIC(5,2),
-  summary TEXT,
-  evidence JSONB NOT NULL DEFAULT '[]'::jsonb,
-  risk_flags JSONB NOT NULL DEFAULT '[]'::jsonb,
-  raw_result JSONB NOT NULL,
-  collected_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-```
-
-### `signal_snapshots`
-
-```sql
-CREATE TABLE signal_snapshots (
-  id BIGSERIAL PRIMARY KEY,
-  stock_code VARCHAR(20) NOT NULL REFERENCES stocks(stock_code),
-  consensus_score NUMERIC(5,2),
-  alignment_rate VARCHAR(30),
-  overall_direction VARCHAR(30),
-  needs_review BOOLEAN NOT NULL DEFAULT false,
-  positive_evidence JSONB NOT NULL DEFAULT '[]'::jsonb,
-  caution_evidence JSONB NOT NULL DEFAULT '[]'::jsonb,
-  summary TEXT,
-  source_result_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-```
-
-### `signal_journals`
-
-```sql
-CREATE TABLE signal_journals (
-  id BIGSERIAL PRIMARY KEY,
-  user_id BIGINT NOT NULL REFERENCES users(id),
-  signal_snapshot_id BIGINT NOT NULL REFERENCES signal_snapshots(id),
-  user_decision VARCHAR(30) NOT NULL,
-  memo TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-```
-
-### `report_chunks`
-
-```sql
-CREATE TABLE report_chunks (
-  id BIGSERIAL PRIMARY KEY,
-  stock_code VARCHAR(20) NOT NULL REFERENCES stocks(stock_code),
-  report_title TEXT,
-  firm VARCHAR(100),
-  published_at DATE,
-  chunk_text TEXT NOT NULL,
-  embedding VECTOR(1024),
-  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-```
-
-> `report_chunks.embedding`을 사용하려면 pgvector extension이 필요하다.
 
 ---
 
@@ -794,7 +844,7 @@ TypeScript / Python Pydantic 모두 아래 구조를 기준으로 맞추면 좋�
 ```ts
 type Direction = "positive" | "neutral" | "negative" | "mixed" | "unknown";
 
-type SourceType = "dart" | "report" | "alternative";
+type SourceType = "dart" | "report" | "price" | "alternative";
 
 type EvidenceItem = {
   title: string;
@@ -932,26 +982,39 @@ LLM 프롬프트에는 반드시 다음 원칙을 넣는다.
 
 ## 20. 구현 우선순위
 
-### 1차 MVP — 꼭 해야 함
+### 현재 1차 우선순위
 
-1. 종목 마스터 데이터 구성
-   - stock_code, stock_name, corp_code
-2. DART Watcher API E2E 검증
-3. Report RAG 로컬 PDF 파이프라인
-4. Alternative Signal 최소 1개 소스 구현
-   - 추천: DataLab 또는 KIPRIS 중 수집 쉬운 것부터
-5. Python FastAPI에서 `/agents/analyze` 실행
-6. FastAPI Main Server에서 Agent Module / AI Worker 호출
-7. Next.js 대시보드 카드 표시
-8. Signal Journal 작성/조회
+1. DART 수집-정규화-분석 결과를 `final_signals` 집계 흐름에 연결
+2. Report RAG 실제 데이터 파이프라인 완성
+   - 리포트 원천 수집
+   - 청킹
+   - embedding
+   - pgvector 검색
+   - 분석 결과 저장
+3. PRICE 수집 데이터 분석 연결
+   - 과거 OHLCV backfill
+   - PRICE analyzer 결과 저장
+   - DART/Report 결과와 같은 최종 시그널 모델로 통합
+4. main-server API 확장
+   - 관심종목 등록/조회
+   - 분석 실행 요청
+   - 최신 시그널 목록
+   - 시그널 상세
+   - Signal Journal
+5. web API 연동
+   - 대시보드 카드
+   - 종목 추가
+   - 소스별 근거 패널
+   - 시그널 상세
+6. 실제 수집 데이터 기반 E2E 테스트 정리
 
 ### 2차 구현
 
-1. 채용공고/특허/DataLab 3개 소스 모두 병렬 수집
-2. SSE 스트리밍으로 에이전트 실행 로그 표시
-3. source별 드릴다운 패널
-4. 원문 링크 기반 evidence 표시
-5. 스케줄링 배치
+1. KIPRIS, DataLab, 채용공고 등 Alternative 수집기 확장
+2. 수집 주기와 분석 주기 분리 설정
+3. 스케줄러 운영 정책 정리
+4. 실패/재시도/부분 성공 상태 UI 표시
+5. source별 드릴다운 패널 고도화
 6. 시그널 급변 알림
 
 ### 후순위 / 발표 후 확장
@@ -968,12 +1031,12 @@ LLM 프롬프트에는 반드시 다음 원칙을 넣는다.
 
 | 주차 | 목표 | 검증 항목 |
 |---|---|---|
-| 1주차 | 데이터 수급 검증 | DART API, 네이버 증권 크롤링, KIPRIS, DataLab 실제 호출 |
-| 2주차 | 에이전트 개별 구현 | DART / Report / Alternative 각각 단독 실행, JSON 출력 검증 |
-| 3주차 | LangGraph 통합 | Fan-out 병렬 실행, Debate Aggregation, 오류 처리 |
-| 4주차 | 대시보드 UI 연동 | Next.js 카드 UI, 드릴다운, 실시간 로그 |
-| 5주차 | 타깃 종목 3개 완성 | 삼성전자, SK하이닉스, 네이버 전체 플로우 + Signal Journal |
-| 6주차 | 발표 준비 | 데모 시나리오, 예상 질문, fallback 데이터, 디자인 정리 |
+| 1주차 | DART 실제 수집/정규화/분석 안정화 | corp_code 동기화, document.xml 텍스트 추출, queue 재시도 |
+| 2주차 | DART 결과 최종 시그널 통합 | analysis_results/agent_results/final_signals 연결 |
+| 3주차 | Report RAG 실제 데이터 연결 | 리포트 수집, 청킹, embedding, pgvector 검색, 분석 저장 |
+| 4주차 | PRICE 수집/분석 연결 | Kiwoom REST 수집, OHLCV backfill, PRICE analyzer 결과 저장 |
+| 5주차 | main-server/web E2E | 종목 추가, 분석 실행, 최신 시그널, 상세 근거, Signal Journal |
+| 6주차 | 발표/검증 정리 | 데모 시나리오, 실패 fallback, 백테스팅 기획, 운영 리스크 |
 
 ---
 
@@ -1035,34 +1098,40 @@ Signal α 프로젝트를 구현하려고 한다.
 
 우선 monorepo 구조로 다음을 만들어줘.
 
-1. api-server: FastAPI 기반 Python Main Server
+1. services/main-server: FastAPI 기반 Python Main Server
    - /health
-   - /api/watchlists
-   - /api/signals/run/{stockCode}
-   - /api/signals/latest
-   - /api/journals
-   - /agents/analyze
-   - /agents/dart
-   - /agents/report
-   - /agents/alternative
-   - Pydantic schema: SourceResult, AggregatedSignal
-   - 각 agent는 실제 수집/저장 데이터를 기반으로 동작하게 구현
-   - Debate Aggregation은 confidence 대신 consensus_score/alignment_rate 사용
-   - 금지 표현 필터를 포함
-   - watchlist CRUD
-   - signal run endpoint
-   - journal CRUD
-   - Agent Module / AI Worker를 호출하는 orchestration service
+   - /signals/{ticker}
+   - 관심종목 API
+   - 분석 실행 요청 API
+   - 최신 시그널 목록/상세 API
+   - Signal Journal API
+   - agent-worker 내부 API 호출
 
-2. web: Next.js dashboard skeleton
+2. services/agent-worker: FastAPI 기반 내부 Worker
+   - /internal/tasks/{task_type}/enqueue
+   - /internal/tasks/{task_type}/run
+   - /internal/queue/*
+   - /internal/dart/*
+   - /internal/price/analyze/{stock_code}
+   - /agents/report
+   - DART collect/normalize/analyze 작업 분리
+   - Report RAG 분석
+   - Kiwoom REST 기반 PRICE 수집 데몬 내장
+   - PRICE DB 기반 분석
+   - 각 analyzer는 실제 수집/저장 데이터를 기반으로 동작하게 구현
+   - Aggregation은 confidence 대신 consensus_score/alignment_rate 사용
+   - 금지 표현 필터를 포함
+
+3. web: Next.js dashboard skeleton
    - 관심 종목 카드
    - source별 방향성
    - positive/caution evidence
    - Signal Journal 입력 폼
 
-3. docker-compose.yml
+4. docker-compose.yml
    - postgres + pgvector
-   - api-server
+   - main-server
+   - agent-worker
    - web
 
 테스트 가능한 최소 실행 상태로 만들어줘.

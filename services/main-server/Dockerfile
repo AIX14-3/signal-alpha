@@ -14,7 +14,6 @@ COPY packages/data-access ./packages/data-access
 COPY packages/signal-core/pyproject.toml ./packages/signal-core/pyproject.toml
 COPY services/agent-worker/pyproject.toml ./services/agent-worker/pyproject.toml
 COPY services/main-server/pyproject.toml ./services/main-server/pyproject.toml
-COPY services/price-collector/pyproject.toml ./services/price-collector/pyproject.toml
 COPY services/main-server/app ./services/main-server/app
 RUN uv sync --locked --package signal-alpha-main-server --no-dev
 

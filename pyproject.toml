@@ -8,6 +8,7 @@ dependencies = []
 [dependency-groups]
 dev = [
   "httpx>=0.27.0",
+  "psycopg2-binary>=2.9.0",
   "pytest>=8.0.0",
   "ruff>=0.14.0",
 ]
@@ -21,7 +22,6 @@ members = [
   "packages/signal-core",
   "services/agent-worker",
   "services/main-server",
-  "services/price-collector",
 ]
 
 [tool.ruff]

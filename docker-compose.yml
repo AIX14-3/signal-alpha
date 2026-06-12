@@ -23,6 +23,22 @@ services:
       timeout: 5s
       retries: 10
 
+  # 일회성 마이그레이션 적용 컨테이너. 사용법: docker compose run --rm migrate
+  migrate:
+    build:
+      context: .
+      dockerfile: ./services/agent-worker/Dockerfile
+    profiles: ["tools"]
+    working_dir: /workspace
+    volumes:
+      - ./database:/workspace/database
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://signal_alpha:signal_alpha_password@postgres:5432/signal_alpha}
+    command: python database/migrate.py apply --seeds
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   agent-worker:
     build:
       context: .
@@ -39,6 +55,10 @@ services:
       PYTHONPATH: /workspace/services/agent-worker:/workspace/packages/data-access
       WATCHFILES_FORCE_POLLING: "true"
       LLM_API_KEY: ${LLM_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_BASE_URL: ${GEMINI_BASE_URL:-https://generativelanguage.googleapis.com/v1beta}
       DART_API_KEY: ${DART_API_KEY:-}
       DART_BASE_URL: ${DART_BASE_URL:-https://opendart.fss.or.kr/api}
       DART_TIMEOUT_SECONDS: ${DART_TIMEOUT_SECONDS:-10}
@@ -46,6 +66,19 @@ services:
       DART_FETCH_DOCUMENTS: ${DART_FETCH_DOCUMENTS:-true}
       DART_MAX_RETRIES: ${DART_MAX_RETRIES:-2}
       DART_RETRY_BACKOFF_SECONDS: ${DART_RETRY_BACKOFF_SECONDS:-0.5}
+      DART_USE_LLM: ${DART_USE_LLM:-false}
+      DART_LLM_HIGH_IMPACT_ONLY: ${DART_LLM_HIGH_IMPACT_ONLY:-true}
+      DART_LLM_PROVIDER: ${DART_LLM_PROVIDER:-gemini}
+      DART_LLM_MODEL: ${DART_LLM_MODEL:-gemini-2.0-flash}
+      DART_LLM_TIMEOUT_SECONDS: ${DART_LLM_TIMEOUT_SECONDS:-20}
+      # 실시간 가격 수집 데몬 (agent-worker 내장 백그라운드 태스크)
+      PRICE_COLLECTOR_ENABLED: ${PRICE_COLLECTOR_ENABLED:-true}
+      KIWOOM_APP_KEY: ${KIWOOM_APP_KEY:-}
+      KIWOOM_APP_SECRET: ${KIWOOM_APP_SECRET:-}
+      KIWOOM_API_BASE: ${KIWOOM_API_BASE:-https://mockapi.kiwoom.com}
+      KIWOOM_MIN_REQUEST_INTERVAL_SEC: ${KIWOOM_MIN_REQUEST_INTERVAL_SEC:-0.25}
+      PRICE_POLL_INTERVAL_SEC: ${PRICE_POLL_INTERVAL_SEC:-60}
+      PRICE_FLOW_DELAY_AFTER_CLOSE_MIN: ${PRICE_FLOW_DELAY_AFTER_CLOSE_MIN:-30}
     ports:
       - "${AGENT_WORKER_PORT:-8011}:8011"
     command: >

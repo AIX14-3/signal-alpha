@@ -99,6 +99,70 @@ class ProcessingQueueRepository:
             task_type,
         )
 
+    async def claim_pending_by_id(self, *, task_id: int, task_type: str) -> Any:
+        return await self._connection.fetchrow(
+            """
+            UPDATE processing_queue
+            SET
+                status = 'running',
+                started_at = NOW(),
+                updated_at = NOW()
+            WHERE id = $1
+              AND task_type = $2
+              AND status IN ('pending', 'retrying')
+              AND scheduled_at <= NOW()
+            RETURNING *
+            """,
+            task_id,
+            task_type,
+        )
+
+    async def list_tasks(
+        self,
+        *,
+        stock_code: str | None = None,
+        task_type: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+    ) -> list[Any]:
+        return await self._connection.fetch(
+            """
+            SELECT
+                processing_queue.*,
+                stocks.ticker AS stock_code,
+                stocks.name AS stock_name
+            FROM processing_queue
+            INNER JOIN stocks ON stocks.id = processing_queue.stock_id
+            WHERE ($1::VARCHAR IS NULL OR stocks.ticker = $1)
+              AND ($2::VARCHAR IS NULL OR processing_queue.task_type = $2)
+              AND ($3::VARCHAR IS NULL OR processing_queue.status = $3)
+            ORDER BY processing_queue.created_at DESC, processing_queue.id DESC
+            LIMIT $4
+            """,
+            stock_code,
+            task_type,
+            status,
+            limit,
+        )
+
+    async def retry_task(self, *, task_id: int) -> Any:
+        return await self._connection.fetchrow(
+            """
+            UPDATE processing_queue
+            SET
+                status = 'retrying',
+                error_message = NULL,
+                started_at = NULL,
+                finished_at = NULL,
+                scheduled_at = NOW(),
+                updated_at = NOW()
+            WHERE id = $1
+              AND status IN ('failed', 'skipped', 'retrying', 'pending')
+            RETURNING *
+            """,
+            task_id,
+        )
+
     async def mark_success(self, *, task_id: int) -> None:
         await self._connection.execute(
             """

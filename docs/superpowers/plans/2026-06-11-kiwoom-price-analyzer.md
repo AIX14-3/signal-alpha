@@ -10,7 +10,7 @@
 
 1. **오케스트레이터 구조** — `AgentOrchestrator`는 source별 `SourcePipeline`(collector + analyzer)을 돌려 `dict[SourceType, SourceResult]`로 합산한다 (`orchestrator/pipeline.py`). 주가 분석도 결국 하나의 source일 뿐이므로 같은 합산 흐름에 들어가야 final_signals 계산에 합류할 수 있다. 별도 서비스로 빼면 `SourceResult` 계약 공유와 결과 합산이 깨지고 배포 인프라만 늘어난다.
 2. **`dart/` 안에 넣지 않는 이유** — DART 규칙은 공시 제목 텍스트 분류(`dart/rules.py`)이고, 주가 분석은 OHLCV/수급 수치 시계열 분석이다. 입력·로직·테스트 픽스처가 전혀 달라서 패키지를 분리해야 한다.
-3. **수집기와의 경계 (중요)** — "키움 API 분석기"라는 이름이지만, **분석기는 키움 API를 직접 호출하지 않는다.** `Analyzer` 프로토콜 docstring("do not call external source APIs")과 `docs/architecture.md`의 원칙대로, 키움 호출은 `services/price-collector`(배치/REST 수집기)가 담당해 PostgreSQL `ohlcv_data` / `sector_ohlcv`에 적재하고, 분석기는 **DB만 읽는다.** 현재 진행 중인 REST 클라이언트(`price-collector/app/kiwoom/rest_client.py`) 작업은 수집 측 선행 작업이며, 분석기는 DB에 행이 있기만 하면 된다.
+3. **수집기와의 경계 (중요)** — "키움 API 분석기"라는 이름이지만, **분석기는 키움 API를 직접 호출하지 않는다.** `Analyzer` 프로토콜 docstring("do not call external source APIs")과 `docs/architecture.md`의 원칙대로, 키움 호출은 `services/price-collector`(REST 실시간 폴링 수집기)가 담당해 PostgreSQL `ohlcv_data` / `price_snapshots`에 적재하고, 분석기는 **DB만 읽는다.** REST 수집기는 `feat/kiwoom-rest-realtime-collector`에서 구현되었으며, 분석기는 DB에 행이 있기만 하면 된다.
 
 소스 타입 이름은 벤더명(KIWOOM)이 아니라 데이터 도메인 기준으로 **`PRICE`** 를 권장한다 (수집기를 나중에 한국투자증권 등으로 바꿔도 분석기는 무관해짐).
 
@@ -54,5 +54,5 @@
 
 ## 선행 조건
 
-1. `test/kiwoom-collector-apikey`에서 진행 중인 REST 수집기 작업이 머지되어 `ohlcv_data`에 실데이터가 적재될 것 (분석기 개발 자체는 픽스처로 가능하므로 병행 가능).
+1. REST 실시간 수집기(`feat/kiwoom-rest-realtime-collector`)가 머지되어 `ohlcv_data`에 실데이터가 적재될 것 (분석기 개발 자체는 픽스처로 가능하므로 병행 가능). 단, 실시간 수집만으로는 과거 이력이 없으므로 **120일 백필(후속 작업) 전까지 분석기는 `insufficient_history`가 정상**이다.
 2. score 규약([-1,1])에 대한 팀 합의 — D-1 집계 가중치(dart 0.35 / report 0.40 / alt 0.25)에 PRICE를 어떤 가중치로 넣을지는 별도 결정 필요.

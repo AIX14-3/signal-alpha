@@ -8,6 +8,10 @@ class FakeConnection:
     def __init__(self):
         self.calls = []
 
+    async def fetch(self, sql, *args):
+        self.calls.append(("fetch", sql, args))
+        return [{"id": 50, "task_type": "normalize_dart", "status": "pending"}]
+
     async def fetchval(self, sql, *args):
         self.calls.append(("fetchval", sql, args))
         return 50
@@ -95,6 +99,17 @@ class ProcessingQueueRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("FOR UPDATE SKIP LOCKED", connection.calls[0][1])
         self.assertEqual(connection.calls[0][2], ("normalize_report",))
 
+    async def test_claim_pending_by_id_restricts_to_requested_task(self):
+        connection = FakeConnection()
+        repository = ProcessingQueueRepository(connection)
+
+        row = await repository.claim_pending_by_id(task_id=77, task_type="collect_dart")
+
+        self.assertEqual(row["status"], "running")
+        self.assertIn("WHERE id = $1", connection.calls[0][1])
+        self.assertIn("task_type = $2", connection.calls[0][1])
+        self.assertEqual(connection.calls[0][2], (77, "collect_dart"))
+
     async def test_mark_success_clears_previous_error_message(self):
         connection = FakeConnection()
         repository = ProcessingQueueRepository(connection)
@@ -129,3 +144,32 @@ class ProcessingQueueRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("status = 'failed'", connection.calls[1][1])
         self.assertEqual(connection.calls[0][2], (30, "Task exceeded running timeout."))
         self.assertEqual(connection.calls[1][2], (30, 120, "Task exceeded retry timeout."))
+
+    async def test_list_tasks_filters_by_stock_task_type_and_status(self):
+        connection = FakeConnection()
+        repository = ProcessingQueueRepository(connection)
+
+        rows = await repository.list_tasks(
+            stock_code="005930",
+            task_type="normalize_dart",
+            status="pending",
+            limit=25,
+        )
+
+        self.assertEqual(rows[0]["id"], 50)
+        self.assertIn("INNER JOIN stocks", connection.calls[0][1])
+        self.assertIn("stocks.ticker = $1", connection.calls[0][1])
+        self.assertIn("processing_queue.task_type = $2", connection.calls[0][1])
+        self.assertIn("processing_queue.status = $3", connection.calls[0][1])
+        self.assertEqual(connection.calls[0][2], ("005930", "normalize_dart", "pending", 25))
+
+    async def test_retry_task_resets_failed_task_to_retrying(self):
+        connection = FakeConnection()
+        repository = ProcessingQueueRepository(connection)
+
+        row = await repository.retry_task(task_id=77)
+
+        self.assertEqual(row["status"], "running")
+        self.assertIn("status = 'retrying'", connection.calls[0][1])
+        self.assertIn("error_message = NULL", connection.calls[0][1])
+        self.assertEqual(connection.calls[0][2], (77,))

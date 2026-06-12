@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 
@@ -167,11 +168,93 @@ class AnalysisRepository:
             source_signal_event_ids,
             method_score,
             method_signal,
-            method_detail,
+            _jsonb(method_detail),
             reliability_score,
             evidence_quality,
             llm_model,
             prompt_ver,
+        )
+
+    async def list_dart_analysis_results(
+        self,
+        *,
+        stock_code: str,
+        analysis_date: Any | None = None,
+        limit: int = 20,
+    ) -> list[Any]:
+        return await self._connection.fetch(
+            """
+            SELECT
+                ar.id,
+                ar.stock_id,
+                stocks.ticker AS stock_code,
+                stocks.name AS stock_name,
+                ar.analysis_date,
+                ar.run_key,
+                ar.analysis_mode,
+                ar.version,
+                ar.source_signal_event_ids,
+                ar.base_score,
+                ar.pre_xgb_score,
+                ar.xgb_adj,
+                ar.warning,
+                ar.disclaimer,
+                ar.created_at,
+                COALESCE(agent_results.items, '[]'::JSONB) AS agent_results,
+                COALESCE(signal_events.items, '[]'::JSONB) AS signal_events
+            FROM analysis_results ar
+            INNER JOIN stocks
+                ON stocks.id = ar.stock_id
+            LEFT JOIN LATERAL (
+                SELECT jsonb_agg(
+                    jsonb_build_object(
+                        'id', agent_results.id,
+                        'debate_method', agent_results.debate_method,
+                        'method_score', agent_results.method_score,
+                        'method_signal', agent_results.method_signal,
+                        'method_detail', agent_results.method_detail,
+                        'source_signal_event_ids', agent_results.source_signal_event_ids,
+                        'reliability_score', agent_results.reliability_score,
+                        'evidence_quality', agent_results.evidence_quality,
+                        'llm_model', agent_results.llm_model,
+                        'prompt_ver', agent_results.prompt_ver,
+                        'created_at', agent_results.created_at
+                    )
+                    ORDER BY agent_results.debate_method
+                ) AS items
+                FROM agent_results
+                WHERE agent_results.result_id = ar.id
+            ) agent_results ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT jsonb_agg(
+                    jsonb_build_object(
+                        'id', signal_events.id,
+                        'source_document_id', signal_events.source_document_id,
+                        'source_type', signal_events.source_type,
+                        'event_type', signal_events.event_type,
+                        'event_date', signal_events.event_date,
+                        'signal_direction', signal_events.signal_direction,
+                        'impact_level', signal_events.impact_level,
+                        'title', signal_events.title,
+                        'summary', signal_events.summary,
+                        'evidence_url', signal_events.evidence_url,
+                        'needs_review', signal_events.needs_review
+                    )
+                    ORDER BY signal_events.event_date DESC, signal_events.id DESC
+                ) AS items
+                FROM signal_events
+                WHERE signal_events.id = ANY(ar.source_signal_event_ids)
+                  AND signal_events.source_type = 'DART'
+            ) signal_events ON TRUE
+            WHERE stocks.ticker = $1
+              AND ($2::DATE IS NULL OR ar.analysis_date = $2::DATE)
+              AND ar.run_key LIKE 'DART%'
+            ORDER BY ar.analysis_date DESC, ar.created_at DESC, ar.id DESC
+            LIMIT $3
+            """,
+            stock_code,
+            analysis_date,
+            limit,
         )
 
     async def upsert_final_signal(
@@ -253,7 +336,7 @@ class AnalysisRepository:
             signal,
             source_agreement,
             warning_level,
-            score_breakdown,
+            _jsonb(score_breakdown),
             summary,
             bull_point,
             bear_point,
@@ -263,3 +346,11 @@ class AnalysisRepository:
             is_published,
             published_at,
         )
+
+
+def _jsonb(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False)
