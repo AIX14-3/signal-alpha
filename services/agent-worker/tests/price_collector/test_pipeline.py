@@ -1,10 +1,10 @@
 import asyncio
 from datetime import date, datetime
 
-from app.core.market_hours import KST
-from app.pipeline import run_investor_flow_update, run_snapshot_cycle
-from app.schemas.snapshot import TargetStock
-from tests.fakes import FakeRepository, FakeRestClient, ka10001_payload, ka10059_payload
+from app.collectors.price.market_hours import KST
+from app.collectors.price.pipeline import run_investor_flow_update, run_snapshot_cycle
+from app.collectors.price.schemas import TargetStock
+from tests.price_collector.fakes import FakeRepository, FakeRestClient, ka10001_payload, ka10059_payload
 
 CAPTURED_AT = datetime(2026, 6, 11, 10, 30, tzinfo=KST)
 TARGETS = [

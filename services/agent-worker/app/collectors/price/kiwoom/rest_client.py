@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import httpx
 
-from app.core.rate_limiter import RateLimiter
-from app.kiwoom.auth import TokenManager
+from app.collectors.price.rate_limiter import RateLimiter
+from app.collectors.price.kiwoom.auth import TokenManager
 
 STKINFO_PATH = "/api/dostk/stkinfo"
 

@@ -4,9 +4,9 @@ import json
 import httpx
 import pytest
 
-from app.core.rate_limiter import RateLimiter
-from app.kiwoom.auth import KiwoomAuthError, TokenManager
-from app.kiwoom.rest_client import KiwoomRestClient, KiwoomRestError
+from app.collectors.price.rate_limiter import RateLimiter
+from app.collectors.price.kiwoom.auth import KiwoomAuthError, TokenManager
+from app.collectors.price.kiwoom.rest_client import KiwoomRestClient, KiwoomRestError
 
 BASE = "https://mockapi.kiwoom.com"
 

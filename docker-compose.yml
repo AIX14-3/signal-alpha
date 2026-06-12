@@ -71,6 +71,14 @@ services:
       DART_LLM_PROVIDER: ${DART_LLM_PROVIDER:-gemini}
       DART_LLM_MODEL: ${DART_LLM_MODEL:-gemini-2.0-flash}
       DART_LLM_TIMEOUT_SECONDS: ${DART_LLM_TIMEOUT_SECONDS:-20}
+      # 실시간 가격 수집 데몬 (agent-worker 내장 백그라운드 태스크)
+      PRICE_COLLECTOR_ENABLED: ${PRICE_COLLECTOR_ENABLED:-true}
+      KIWOOM_APP_KEY: ${KIWOOM_APP_KEY:-}
+      KIWOOM_APP_SECRET: ${KIWOOM_APP_SECRET:-}
+      KIWOOM_API_BASE: ${KIWOOM_API_BASE:-https://mockapi.kiwoom.com}
+      KIWOOM_MIN_REQUEST_INTERVAL_SEC: ${KIWOOM_MIN_REQUEST_INTERVAL_SEC:-0.25}
+      PRICE_POLL_INTERVAL_SEC: ${PRICE_POLL_INTERVAL_SEC:-60}
+      PRICE_FLOW_DELAY_AFTER_CLOSE_MIN: ${PRICE_FLOW_DELAY_AFTER_CLOSE_MIN:-30}
     ports:
       - "${AGENT_WORKER_PORT:-8011}:8011"
     command: >
@@ -104,32 +112,6 @@ services:
         condition: service_healthy
       agent-worker:
         condition: service_started
-
-  price-collector:
-    build:
-      context: .
-      dockerfile: ./services/price-collector/Dockerfile
-    container_name: signal-alpha-price-collector
-    working_dir: /workspace/services/price-collector
-    volumes:
-      - ./services/price-collector:/workspace/services/price-collector
-      - ./packages/data-access:/workspace/packages/data-access
-    environment:
-      SERVICE_NAME: price-collector
-      SERVICE_VERSION: ${SERVICE_VERSION:-0.1.0}
-      DATABASE_URL: ${DATABASE_URL:-postgresql://signal_alpha:signal_alpha_password@postgres:5432/signal_alpha}
-      PYTHONPATH: /workspace/services/price-collector:/workspace/packages/data-access
-      KIWOOM_APP_KEY: ${KIWOOM_APP_KEY:-}
-      KIWOOM_APP_SECRET: ${KIWOOM_APP_SECRET:-}
-      KIWOOM_API_BASE: ${KIWOOM_API_BASE:-https://mockapi.kiwoom.com}
-      PRICE_POLL_INTERVAL_SEC: ${PRICE_POLL_INTERVAL_SEC:-60}
-      PRICE_FLOW_DELAY_AFTER_CLOSE_MIN: ${PRICE_FLOW_DELAY_AFTER_CLOSE_MIN:-30}
-      KIWOOM_MIN_REQUEST_INTERVAL_SEC: ${KIWOOM_MIN_REQUEST_INTERVAL_SEC:-0.25}
-    command: >
-      python -m app.main
-    depends_on:
-      postgres:
-        condition: service_healthy
 
   web:
     build:

@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 
 import httpx
 
-from app.core.market_hours import KST
+from app.collectors.price.market_hours import KST
 
 TOKEN_PATH = "/oauth2/token"
 _REFRESH_MARGIN = timedelta(minutes=5)

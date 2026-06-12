@@ -9,9 +9,9 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from app.kiwoom.parsing import parse_decimal, parse_int, parse_price
-from app.kiwoom.rest_client import KiwoomRestClient
-from app.schemas.snapshot import StockSnapshot
+from app.collectors.price.kiwoom.parsing import parse_decimal, parse_int, parse_price
+from app.collectors.price.kiwoom.rest_client import KiwoomRestClient
+from app.collectors.price.schemas import StockSnapshot
 
 API_ID = "ka10001"
 

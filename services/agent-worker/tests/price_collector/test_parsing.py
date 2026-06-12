@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from app.kiwoom.parsing import parse_decimal, parse_int, parse_price, parse_signed_int
+from app.collectors.price.kiwoom.parsing import parse_decimal, parse_int, parse_price, parse_signed_int
 
 
 def test_parse_price_strips_direction_prefix_and_commas():

@@ -22,7 +22,6 @@ members = [
   "packages/signal-core",
   "services/agent-worker",
   "services/main-server",
-  "services/price-collector",
 ]
 
 [tool.ruff]

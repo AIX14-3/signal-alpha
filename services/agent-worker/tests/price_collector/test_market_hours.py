@@ -1,6 +1,6 @@
 from datetime import datetime, time
 
-from app.core.market_hours import (
+from app.collectors.price.market_hours import (
     KST,
     is_market_open,
     next_market_open,
