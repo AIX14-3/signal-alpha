@@ -174,13 +174,19 @@ class BaseCollector(ABC):
         """
         clean = self._clean_company_name(raw_company_name)
 
+        # 이름(name)뿐 아니라 약칭(short_name)으로도 매칭한다. 잡코리아 등은 종목을
+        # 약칭으로 표기하는 경우가 많다(예: stock 'HYBE' ↔ 공고 회사명 '하이브',
+        # 'NAVER' ↔ '네이버'). short_name 이 NULL 인 종목은 ILIKE 결과가 NULL 이라
+        # 자동으로 제외되므로 안전하다.
         row = db.execute(
             text("""
                 SELECT id, COALESCE(sector, '')
                 FROM stocks
                 WHERE name ILIKE :exact OR name ILIKE :like
+                   OR short_name ILIKE :exact OR short_name ILIKE :like
                 ORDER BY
-                    CASE WHEN name ILIKE :exact THEN 0 ELSE 1 END,
+                    CASE WHEN name ILIKE :exact OR short_name ILIKE :exact
+                         THEN 0 ELSE 1 END,
                     LENGTH(name) ASC
                 LIMIT 1
             """),
