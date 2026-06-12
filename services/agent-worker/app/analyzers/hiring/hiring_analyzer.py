@@ -69,17 +69,20 @@ class HiringAnalyzer:
         
         HiringAnalyzer._is_cache_loaded = True
 
-    def _get_current_quarter(self, target_date_str: str) -> str:
+    def _get_current_quarter(self, target_date_str) -> str:
         """
-        YYYY-MM-DD 형식의 날짜 문자열을 Q1~Q4로 변환
-        
+        날짜(str 또는 date)를 Q1~Q4로 변환
+
         Args:
-            target_date_str: "2024-06-15" 형태
-            
-        Returns:
-            "Q2" 형태의 분기 문자열
+            target_date_str: "2024-06-15" 형태의 str 또는 datetime.date 객체
         """
-        dt = datetime.strptime(target_date_str, "%Y-%m-%d")
+        from datetime import date as date_type
+        if isinstance(target_date_str, str):
+            dt = datetime.strptime(target_date_str, "%Y-%m-%d")
+        elif isinstance(target_date_str, date_type):
+            dt = datetime(target_date_str.year, target_date_str.month, target_date_str.day)
+        else:
+            dt = datetime.strptime(str(target_date_str), "%Y-%m-%d")
         quarter_num = (dt.month - 1) // 3 + 1
         return f"Q{quarter_num}"
 
@@ -158,7 +161,7 @@ class HiringAnalyzer:
             # Step 1: 지난 14일간의 총 공고 수 조회 후 14.0으로 나누어 정확한 일평균 계산 (공고 0개인 날 포함 보정)
             scale_rows = await conn.fetch("""
                 SELECT stock_id, 
-                    COUNT(id) / 14.0 as rolling_avg
+                    COUNT(raw_document_id) / 14.0 as rolling_avg
                 FROM hiring_raw_details
                 WHERE observed_date BETWEEN $1::DATE - INTERVAL '14 days' 
                                         AND $1::DATE - INTERVAL '1 day'
@@ -173,7 +176,7 @@ class HiringAnalyzer:
 
             # Step 2: 오늘 수집된 채용 공고 수 조회
             today_rows = await conn.fetch("""
-                SELECT stock_id, COUNT(id) as today_count
+                SELECT stock_id, COUNT(raw_document_id) as today_count
                 FROM hiring_raw_details
                 WHERE observed_date = $1::DATE
                 GROUP BY stock_id
@@ -184,15 +187,14 @@ class HiringAnalyzer:
                 stock_id = row["stock_id"]
                 today_count = row["today_count"]
 
-                # baseline 정보 조회 (부트스트랩 미실행 기업은 스킵)
+                # baseline 정보 조회 (없으면 Phase C: DEFAULT 값 사용)
                 baseline_factors = HiringAnalyzer._baseline_cache.get(stock_id)
-                if not baseline_factors:
-                    continue
 
-                # 현재 분기의 계절 가중치 조회
-                seasonal_factor = baseline_factors.get(
-                    current_quarter,
-                    DEFAULT_SEASONAL_FACTOR
+                # 현재 분기의 계절 가중치 조회 (Phase C면 DEFAULT_SEASONAL_FACTOR=1.0)
+                seasonal_factor = (
+                    baseline_factors.get(current_quarter, DEFAULT_SEASONAL_FACTOR)
+                    if baseline_factors
+                    else DEFAULT_SEASONAL_FACTOR
                 )
 
                 # 기준선 결정 (이동평균 또는 네이버 fallback)
