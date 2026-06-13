@@ -1,0 +1,183 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+     width="960" height="680" viewBox="0 0 960 680" font-family="Malgun Gothic, 'Malgun Gothic', sans-serif">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 z" fill="#555555"/>
+    </marker>
+    <style>
+      .title  { font-size: 22px; font-weight: 700; fill: #1a1a2e; }
+      .subttl { font-size: 12px; fill: #6b6b80; }
+      .phase  { font-size: 14px; font-weight: 700; fill: #ffffff; }
+      .head   { font-size: 13px; font-weight: 700; fill: #1a1a2e; }
+      .body   { font-size: 11.5px; fill: #2d2d3a; }
+      .mono   { font-size: 10.5px; fill: #3a3a55; font-family: Consolas, monospace; }
+      .metric { font-size: 11.5px; font-weight: 700; fill: #0a7d4d; }
+      .fail   { font-size: 11px; fill: #b04a4a; }
+      .lane   { font-size: 11px; font-weight: 700; fill: #555555; }
+      .lanesub{ font-size: 10px; fill: #888899; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="960" height="680" fill="#ffffff"/>
+
+  <!-- Title -->
+  <text x="40" y="42" class="title">Signal &#945; 퀀트 점수 엔진 — Phase 0~6 검증 파이프라인</text>
+  <text x="40" y="62" class="subttl">KOSPI200 횡단면 상대 순위 백분위 · 10년 Point-in-Time · 신뢰도 우선 설계 (가중치 튜닝 루프 없음)</text>
+
+  <!-- ===================== Phase 0~1 : Data ===================== -->
+  <g>
+    <rect x="40" y="92" width="880" height="116" rx="10" fill="#f4f7fb" stroke="#cdd6e3" stroke-width="1.2"/>
+    <rect x="40" y="92" width="150" height="116" rx="10" fill="#2f4b7c"/>
+    <rect x="178" y="92" width="12" height="116" fill="#2f4b7c"/>
+    <text x="115" y="142" class="phase" text-anchor="middle">Phase 0~1</text>
+    <text x="115" y="162" class="phase" text-anchor="middle" font-size="12">데이터 기반</text>
+
+    <!-- step boxes -->
+    <rect x="206" y="110" width="160" height="80" rx="6" fill="#ffffff" stroke="#cdd6e3"/>
+    <text x="216" y="128" class="head">유니버스</text>
+    <text x="216" y="146" class="mono">snapshot_universe.py</text>
+    <text x="216" y="163" class="body">KOSPI200 199종목</text>
+    <text x="216" y="179" class="body">(네이버 금융 폴백)</text>
+
+    <rect x="382" y="110" width="168" height="80" rx="6" fill="#ffffff" stroke="#cdd6e3"/>
+    <text x="392" y="128" class="head">가격·수급 패널</text>
+    <text x="392" y="146" class="mono">collect_panel.py</text>
+    <text x="392" y="163" class="body">447,896행 × 10년</text>
+    <text x="392" y="179" class="body">parquet (pykrx)</text>
+
+    <rect x="566" y="110" width="168" height="80" rx="6" fill="#ffffff" stroke="#cdd6e3"/>
+    <text x="576" y="128" class="head">재무 (PIT)</text>
+    <text x="576" y="146" class="mono">collect_fundamentals.py</text>
+    <text x="576" y="163" class="body">DART, available_date</text>
+    <text x="576" y="179" class="body">룩어헤드 차단</text>
+
+    <rect x="750" y="110" width="156" height="80" rx="6" fill="#ffffff" stroke="#cdd6e3"/>
+    <text x="760" y="128" class="head">L1 무결성</text>
+    <text x="760" y="146" class="body">중복·미래일·음수</text>
+    <text x="760" y="163" class="body">거래정지 지도 검증</text>
+    <text x="760" y="181" class="metric">게이트 8 passed ✓</text>
+
+    <path d="M366,150 L382,150" stroke="#555" stroke-width="1.4" marker-end="url(#arrow)"/>
+    <path d="M550,150 L566,150" stroke="#555" stroke-width="1.4" marker-end="url(#arrow)"/>
+    <path d="M734,150 L750,150" stroke="#555" stroke-width="1.4" marker-end="url(#arrow)"/>
+  </g>
+  <path d="M480,208 L480,226" stroke="#555" stroke-width="1.6" marker-end="url(#arrow)"/>
+
+  <!-- ===================== Phase 2 : Factors ===================== -->
+  <g>
+    <rect x="40" y="228" width="880" height="92" rx="10" fill="#f4f7fb" stroke="#cdd6e3" stroke-width="1.2"/>
+    <rect x="40" y="228" width="150" height="92" rx="10" fill="#3f6694"/>
+    <rect x="178" y="228" width="12" height="92" fill="#3f6694"/>
+    <text x="115" y="266" class="phase" text-anchor="middle">Phase 2</text>
+    <text x="115" y="286" class="phase" text-anchor="middle" font-size="12">팩터 선별</text>
+
+    <text x="206" y="250" class="head">팩터 6종 단독 IC 게이트 (순열검정 p&lt;0.05)</text>
+    <rect x="206" y="258" width="158" height="52" rx="6" fill="#e8f3ec" stroke="#0a7d4d"/>
+    <text x="285" y="277" class="metric" text-anchor="middle">채택 3종</text>
+    <text x="285" y="293" class="body" text-anchor="middle" font-size="10.5">reversal_1m +0.0339</text>
+    <text x="285" y="306" class="body" text-anchor="middle" font-size="10.5">lowvol_60 +0.0267 / margin_yoy +0.0182</text>
+
+    <rect x="382" y="258" width="158" height="52" rx="6" fill="#f7ecec" stroke="#b04a4a"/>
+    <text x="461" y="277" class="fail" text-anchor="middle" font-weight="700">탈락 (룩어헤드 無 방증)</text>
+    <text x="461" y="293" class="fail" text-anchor="middle">momentum_12_1 (p=.57)</text>
+    <text x="461" y="306" class="fail" text-anchor="middle">quality_margin 수준값</text>
+
+    <text x="566" y="276" class="body" font-size="10.5">팩터 정의: packages/signal-core/</text>
+    <text x="566" y="292" class="mono">signal_core/quant/factors/</text>
+    <text x="566" y="308" class="body" font-size="10.5">price.py · quality.py</text>
+  </g>
+  <path d="M480,320 L480,338" stroke="#555" stroke-width="1.6" marker-end="url(#arrow)"/>
+
+  <!-- ===================== Phase 3 : Combine ===================== -->
+  <g>
+    <rect x="40" y="340" width="880" height="100" rx="10" fill="#f4f7fb" stroke="#cdd6e3" stroke-width="1.2"/>
+    <rect x="40" y="340" width="150" height="100" rx="10" fill="#4f7faa"/>
+    <rect x="178" y="340" width="12" height="100" fill="#4f7faa"/>
+    <text x="115" y="382" class="phase" text-anchor="middle">Phase 3</text>
+    <text x="115" y="402" class="phase" text-anchor="middle" font-size="12">결합·보정</text>
+
+    <rect x="206" y="358" width="132" height="64" rx="6" fill="#ffffff" stroke="#cdd6e3"/>
+    <text x="272" y="378" class="head" text-anchor="middle">z-score</text>
+    <text x="272" y="396" class="body" text-anchor="middle">±3&#963; winsorize</text>
+    <text x="272" y="412" class="body" text-anchor="middle">등가중 합산</text>
+
+    <rect x="354" y="358" width="132" height="64" rx="6" fill="#ffffff" stroke="#cdd6e3"/>
+    <text x="420" y="378" class="head" text-anchor="middle">백분위 점수</text>
+    <text x="420" y="396" class="body" text-anchor="middle">0 ~ 100</text>
+    <text x="420" y="412" class="body" text-anchor="middle">횡단면 상대순위</text>
+
+    <rect x="502" y="358" width="132" height="64" rx="6" fill="#ffffff" stroke="#cdd6e3"/>
+    <text x="568" y="378" class="head" text-anchor="middle">보정표</text>
+    <text x="568" y="396" class="body" text-anchor="middle">10구간 실수익분포</text>
+    <text x="568" y="412" class="metric" text-anchor="middle">단조성 +0.915 ✓</text>
+
+    <rect x="650" y="358" width="132" height="64" rx="6" fill="#ffffff" stroke="#cdd6e3"/>
+    <text x="716" y="378" class="head" text-anchor="middle">확신도 등급</text>
+    <text x="716" y="396" class="body" text-anchor="middle">A / B / C</text>
+    <text x="716" y="412" class="body" text-anchor="middle">사용 팩터 수 기반</text>
+
+    <rect x="798" y="358" width="108" height="64" rx="6" fill="#e8f3ec" stroke="#0a7d4d"/>
+    <text x="852" y="378" class="metric" text-anchor="middle">결합 IC</text>
+    <text x="852" y="398" class="metric" text-anchor="middle" font-size="15">+0.0466</text>
+    <text x="852" y="414" class="body" text-anchor="middle">p = .002</text>
+
+    <path d="M338,390 L354,390" stroke="#555" stroke-width="1.4" marker-end="url(#arrow)"/>
+    <path d="M486,390 L502,390" stroke="#555" stroke-width="1.4" marker-end="url(#arrow)"/>
+    <path d="M634,390 L650,390" stroke="#555" stroke-width="1.4" marker-end="url(#arrow)"/>
+    <path d="M782,390 L798,390" stroke="#555" stroke-width="1.4" marker-end="url(#arrow)"/>
+  </g>
+  <path d="M480,440 L480,458" stroke="#555" stroke-width="1.6" marker-end="url(#arrow)"/>
+
+  <!-- ===================== Phase 4~5 : Validation ===================== -->
+  <g>
+    <rect x="40" y="460" width="880" height="92" rx="10" fill="#f4f7fb" stroke="#cdd6e3" stroke-width="1.2"/>
+    <rect x="40" y="460" width="150" height="92" rx="10" fill="#5f8fb0"/>
+    <rect x="178" y="460" width="12" height="92" fill="#5f8fb0"/>
+    <text x="115" y="498" class="phase" text-anchor="middle">Phase 4~5</text>
+    <text x="115" y="518" class="phase" text-anchor="middle" font-size="12">OOS 검증</text>
+
+    <rect x="206" y="478" width="168" height="58" rx="6" fill="#ffffff" stroke="#cdd6e3"/>
+    <text x="290" y="497" class="head" text-anchor="middle">워크포워드</text>
+    <text x="290" y="515" class="metric" text-anchor="middle">14윈도 중 11 양수</text>
+    <text x="290" y="530" class="body" text-anchor="middle">valid IC20 +0.0353 (p=.004)</text>
+
+    <rect x="390" y="478" width="168" height="58" rx="6" fill="#ffffff" stroke="#cdd6e3"/>
+    <text x="474" y="497" class="head" text-anchor="middle">국면별 IC</text>
+    <text x="474" y="515" class="metric" text-anchor="middle">bull/flat/bear 전부 양수</text>
+    <text x="474" y="530" class="body" text-anchor="middle">하락장 +0.0315 &gt; 0 ✓</text>
+
+    <rect x="574" y="478" width="332" height="58" rx="6" fill="#fff8e8" stroke="#c9a13a"/>
+    <text x="584" y="497" class="head">포워드 섀도 (진행 중)</text>
+    <text x="584" y="514" class="mono">shadow.py — 2026-06-12 가동, 199종목/일</text>
+    <text x="584" y="530" class="body">20영업일 후 --evaluate, 4~8주 누적이 최종 신뢰도 증거</text>
+  </g>
+  <path d="M480,552 L480,570" stroke="#555" stroke-width="1.6" marker-end="url(#arrow)"/>
+
+  <!-- ===================== Phase 6 : Serving ===================== -->
+  <g>
+    <rect x="40" y="572" width="880" height="78" rx="10" fill="#eef4ee" stroke="#0a7d4d" stroke-width="1.4"/>
+    <rect x="40" y="572" width="150" height="78" rx="10" fill="#0a7d4d"/>
+    <rect x="178" y="572" width="12" height="78" fill="#0a7d4d"/>
+    <text x="115" y="606" class="phase" text-anchor="middle">Phase 6</text>
+    <text x="115" y="626" class="phase" text-anchor="middle" font-size="12">서비스 통합</text>
+
+    <rect x="206" y="586" width="200" height="50" rx="6" fill="#ffffff" stroke="#0a7d4d"/>
+    <text x="306" y="605" class="head" text-anchor="middle">엔진 단일 소스</text>
+    <text x="306" y="623" class="mono" text-anchor="middle">signal_core.quant</text>
+
+    <rect x="422" y="586" width="232" height="50" rx="6" fill="#ffffff" stroke="#cdd6e3"/>
+    <text x="538" y="603" class="mono" text-anchor="middle">POST /internal/quant/run-daily</text>
+    <text x="538" y="620" class="body" text-anchor="middle">멱등 배치 → quant_scores</text>
+
+    <rect x="670" y="586" width="236" height="50" rx="6" fill="#ffffff" stroke="#cdd6e3"/>
+    <text x="788" y="603" class="mono" text-anchor="middle">GET /internal/quant/score/{code}</text>
+    <text x="788" y="620" class="body" text-anchor="middle">ScoreCard (경고·면책 포함)</text>
+
+    <path d="M406,611 L422,611" stroke="#555" stroke-width="1.4" marker-end="url(#arrow)"/>
+  </g>
+
+  <!-- 3-layer annotation -->
+  <text x="40" y="672" class="lane">3계층 구조:</text>
+  <text x="120" y="672" class="lanesub">harness (검증·재현) → signal-core (점수 엔진, 단일 진실 소스) → agent-worker (FastAPI 서빙)</text>
+</svg>
