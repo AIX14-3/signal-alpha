@@ -68,7 +68,8 @@ docker compose run --rm migrate
 DataLab은 종목이 아닌 **카테고리 단위**로 수집합니다: 원본은 `datalab_raw_documents`/`datalab_raw_details`(category_id 기반)에 저장하고, `datalab_category_stocks` 매핑으로 종목을 해석합니다. `processing_queue.stock_id`가 NULL 허용인 이유도 이것입니다.
 
 전체 ERD: [`database/erd/signal_alpha_core_erd.md`](./erd/signal_alpha_core_erd.md)
-설계 규칙 문서: [`database/docs/`](./docs/) (db_design_summary, run_key_rule, source_hash_rule, table_responsibility)
+테이블별 역할 한 줄 설명: [`database/docs/table_descriptions.md`](./docs/table_descriptions.md)
+설계 규칙 문서: [`database/docs/`](./docs/) (db_design_summary, run_key_rule, source_hash_rule, table_responsibility, table_descriptions)
 
 ## 3. 컨벤션
 
@@ -94,7 +95,7 @@ DataLab은 종목이 아닌 **카테고리 단위**로 수집합니다: 원본�
    uv run python database/migrate.py apply
    uv run python database/tools/check_schema.py
    ```
-5. **문서 동기화 (필수):** 이 README §2 표 + `database/erd/signal_alpha_core_erd.md`에 새 테이블 반영.
+5. **문서 동기화 (필수):** 이 README §2 표 + `database/erd/signal_alpha_core_erd.md`(ERD) + `database/docs/table_descriptions.md`(테이블 역할 한 줄 설명)에 새 테이블 반영.
 6. PR 체크리스트의 "DB 변경" 섹션 체크.
 7. **번호 충돌 시** (동시에 두 PR이 같은 번호 사용): 늦게 머지되는 쪽이 리넘버. 이미 로컬에 적용했다면 DB를 재생성(`docker compose down -v`)하거나 원장에서 구 파일명을 삭제 후 재적용.
 
