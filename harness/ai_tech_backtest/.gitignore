@@ -1,0 +1,7 @@
+# Generated artifacts (regenerate with run.py)
+__pycache__/
+*.pyc
+data/
+charts/
+REPORT.md
+.env
