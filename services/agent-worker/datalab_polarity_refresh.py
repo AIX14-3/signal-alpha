@@ -34,7 +34,7 @@ from typing import Any
 import asyncpg  # type: ignore[import]
 
 from datalab_polarity_keywords import REVIEW_DIR, _POLARITIES, apply_draft
-from keyword_generator import call_gemini, fetch_stock, load_env, parse_dsn
+from keyword_gen_common import call_gemini, fetch_stock, load_env, parse_dsn
 
 DEFAULT_DAYS = 365
 MAX_DISCLOSURES = 80
