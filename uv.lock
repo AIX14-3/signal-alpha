@@ -16,6 +16,7 @@ members = [
     "signal-alpha-agent-worker",
     "signal-alpha-data-access",
     "signal-alpha-main-server",
+    "signal-alpha-market-data",
     "signal-core",
 ]
 
@@ -909,6 +910,11 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30.0" },
 ]
 provides-extras = ["dev"]
+
+[[package]]
+name = "signal-alpha-market-data"
+version = "0.1.0"
+source = { virtual = "packages/market-data" }
 
 [[package]]
 name = "signal-core"
