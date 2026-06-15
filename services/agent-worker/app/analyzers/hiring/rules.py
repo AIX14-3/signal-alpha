@@ -7,12 +7,13 @@ Thresholds and weights come from ``HiringRuleConfig`` — nothing hardcoded.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Literal
 
 from app.analyzers.config import HiringRuleConfig
 from app.analyzers.hiring.indicators import HiringIndicators
 from app.analyzers.scoring import graded
 
-Direction = str  # "positive" | "neutral" | "negative" | "mixed" | "unknown"
+Direction = Literal["positive", "neutral", "negative", "mixed", "unknown"]
 
 
 @dataclass(frozen=True)

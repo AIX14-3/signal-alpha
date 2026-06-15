@@ -17,6 +17,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
+from app.analyzers.hiring.indicators import _parse_date  # shared date parser
+
 # Ordered rules: first matching function wins. Keys are matched case-insensitively
 # as substrings of the job title. Korean first (job titles are mostly Korean).
 DEFAULT_FUNCTION_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -153,12 +155,3 @@ def aggregate_sector_demand(
     )
 
 
-def _parse_date(value) -> date | None:
-    if value is None:
-        return None
-    if isinstance(value, date):
-        return value
-    try:
-        return date.fromisoformat(str(value)[:10])
-    except ValueError:
-        return None
