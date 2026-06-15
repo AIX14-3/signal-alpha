@@ -4,14 +4,20 @@
 - _instantiate_crawlers 가 registry 매핑으로 올바른 클래스를 인스턴스화하는지
 - official_api 타입은 driver=None, 그 외 타입은 driver 를 전달받는지
 - 미등록 crawler_class 는 예외 없이 스킵되는지
-- specs 1회 로드 후 driver 만 바꿔 재인스턴스화할 때 DB 재조회가 없는지
+- collect() 가 드라이버 로테이션을 여러 번 돌아도 _load_source_specs(DB 조회)는
+  1회만 호출하고, driver 교체는 _instantiate_crawlers 재호출로만 처리하는지
   (드라이버 로테이션 최적화 회귀 방지)
 """
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
-from app.collectors.hiring.multi_source_crawler import _instantiate_crawlers
+from app.collectors.hiring import multi_source_crawler
+from app.collectors.hiring.multi_source_crawler import (
+    MultiSourceCrawler,
+    _instantiate_crawlers,
+)
 
 
 class _StubCrawler:
@@ -83,6 +89,42 @@ class InstantiateCrawlersTest(unittest.TestCase):
         self.assertEqual(second["NAVER"].driver, "DRIVER_2")
         # 매 호출이 새 인스턴스를 만든다(이전 driver 참조가 남지 않음).
         self.assertIsNot(first["NAVER"], second["NAVER"])
+
+
+class CollectRotationDbReloadTest(unittest.TestCase):
+    """collect() 로테이션 루프가 DB(_load_source_specs)를 1회만 조회하는지 검증.
+
+    이 PR의 핵심 가치(드라이버 로테이션마다 hiring_sources 재조회 제거)를 실제 회귀
+    지점인 collect() 루프에서 못 박는다. 실제 Chrome/DB 없이 모듈 함수와 드라이버
+    셋업/종료를 패치해 로테이션 분기만 결정적으로 실행한다.
+    """
+
+    def test_collect_loads_specs_once_across_rotations(self):
+        specs = [_spec("NAVER", "official_selenium", "StubCrawler")]
+
+        crawler = MultiSourceCrawler(
+            database_url="postgresql://test/ignored",
+            use_portals=False,        # 포털 크롤러(네트워크)·sleep 경로 차단
+            use_official=True,
+            rate_limit_sec=0.0,
+            driver_rotation_size=1,   # 기업마다 로테이션 → idx=1,2 에서 2회 발생
+        )
+
+        with patch.object(
+            multi_source_crawler, "_load_source_specs", return_value=specs
+        ) as mock_load, patch.object(
+            multi_source_crawler, "_instantiate_crawlers", return_value={}
+        ) as mock_inst, patch.object(
+            MultiSourceCrawler, "_setup_driver", autospec=True
+        ), patch.object(
+            MultiSourceCrawler, "_quit_driver", autospec=True
+        ):
+            crawler.collect(["삼성전자", "NAVER", "카카오"])
+
+        # 핵심: 로테이션이 2번 일어나도 DB 조회는 단 1회.
+        self.assertEqual(mock_load.call_count, 1)
+        # 최초 1회 + 로테이션 2회 = driver 만 갈아끼우며 재인스턴스화.
+        self.assertEqual(mock_inst.call_count, 3)
 
 
 if __name__ == "__main__":

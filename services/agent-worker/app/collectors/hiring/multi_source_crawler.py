@@ -107,7 +107,7 @@ def _load_source_specs(db_url: str) -> list[dict]:
 def _instantiate_crawlers(
     specs: list[dict], driver, registry: dict[str, type] | None = None
 ) -> dict[str, object]:
-    """크롤러 사양 목록 → {company_name: CrawlerInstance} (순수 함수, DB 접근 없음).
+    """크롤러 사양 목록 → {company_name: CrawlerInstance} (DB 접근 없음; registry 주입 시 순수).
 
     crawler_type = 'official_api' → driver=None (requests 전용)
     그 외 모든 타입                → driver 전달 (Selenium 필요)
