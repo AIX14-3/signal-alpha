@@ -36,3 +36,7 @@ class SourceResult:
     risk_flags: list[str] = field(default_factory=list)
     data_status: Literal["ok", "partial", "failed"] = "ok"
     report_meta: ReportMeta | None = None
+    # LLM provenance: model name when an LLM contributed to this source's result
+    # (e.g. DataLab polarity classification). None for pure-rule output. Flows to
+    # agent_results.llm_model in persistence.
+    llm_model: str | None = None

@@ -69,6 +69,7 @@ class AlternativeSignalPersistence:
                 method_score=_to_100(source_result.score),
                 method_signal=_signal_value(source_result.direction),
                 method_detail=json.dumps(_method_detail(source_result), ensure_ascii=False),
+                llm_model=source_result.llm_model,
                 prompt_ver=self._config.version,
             )
             agent_result_ids.append(agent_result["id"])

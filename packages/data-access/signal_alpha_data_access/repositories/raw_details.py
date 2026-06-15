@@ -264,7 +264,9 @@ class RawDetailRepository:
                 d.age_group,
                 d.is_spike,
                 d.extra_payload,
-                COALESCE(dck.polarity, 'demand') AS polarity
+                COALESCE(dck.polarity, 'demand') AS polarity,
+                COALESCE(dck.polarity_source, 'default') AS polarity_source,
+                dck.polarity_model AS polarity_model
             FROM datalab_raw_details d
             LEFT JOIN datalab_category_keywords dck
                 ON dck.category_id = d.category_id AND dck.keyword = d.keyword

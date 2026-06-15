@@ -27,14 +27,45 @@ from typing import Any
 
 import asyncpg  # type: ignore[import]
 
-from keyword_generator import call_gemini, fetch_stock, load_env, parse_dsn
+from keyword_gen_common import call_gemini, fetch_stock, load_env, parse_dsn
 
 AGENT_ROOT = Path(__file__).resolve().parent
 REVIEW_DIR = AGENT_ROOT / "keyword_reviews"
 _POLARITIES = {"demand", "risk", "neutral"}
+_DEFAULT_CONFIDENCE = 0.5
+
+# Polarity classifies search *intent*, never a stock judgment. Reject any draft
+# whose rationale drifts into buy/sell/target-price advice (mirrors dart/llm.py).
+_PROHIBITED_ADVICE = [
+    re.compile(r"\bbuy\b", re.IGNORECASE),
+    re.compile(r"\bsell\b", re.IGNORECASE),
+    re.compile(r"\bhold\b", re.IGNORECASE),
+    re.compile(r"\btarget\s*price\b", re.IGNORECASE),
+    re.compile(r"매수"),
+    re.compile(r"매도"),
+    re.compile(r"목표가"),
+    re.compile(r"투자\s*추천"),
+]
 
 
-def build_prompt(stock: dict[str, Any]) -> str:
+def _clamp_confidence(value: Any) -> float:
+    try:
+        conf = float(value)
+    except (TypeError, ValueError):
+        return _DEFAULT_CONFIDENCE
+    return max(0.0, min(1.0, conf))
+
+
+def _check_no_advice(text: str, where: str) -> None:
+    for pattern in _PROHIBITED_ADVICE:
+        if pattern.search(text):
+            raise ValueError(
+                f"{where}: rationale에 투자 판단 문구가 포함됨({pattern.pattern!r}). "
+                "polarity는 검색 의도 분류이지 매수/매도 추천이 아니다."
+            )
+
+
+def build_prompt(stock: dict[str, Any], today: str) -> str:
     names = [stock.get(k) for k in ("name", "corp_name", "corp_name_eng", "stock_name")]
     names = [n for n in names if n]
     return f"""
@@ -42,11 +73,22 @@ You are drafting NAVER DataLab search categories with POLARITY tags for a Korean
 
 Return JSON only. No markdown.
 
+Today's date: {today}. Generate keywords that are CURRENT as of this date.
+
 Stock:
 - ticker: {stock["ticker"]}
 - names: {", ".join(names)}
 - market: {stock.get("market") or ""}
 - sector: {stock.get("sector") or ""}
+
+Recency (avoid stale model/year names):
+- Do NOT use outdated product/model names, past years, or stale version numbers.
+- For product lines with annual generations (Galaxy S/Z, iPhone, 신차 연식 등), infer
+  the generation current/upcoming as of {today} from the date — e.g. an annual line
+  whose Nth edition shipped in 2024 should be bumped to the edition expected in
+  {today[:4]}, not the older one you saw in training.
+- If unsure of the exact current model, prefer an evergreen phrase
+  (e.g. "삼성전자 신제품", "갤럭시 신제품") over a specific stale model number.
 
 Goal:
 - Generate categories whose KEYWORDS are tagged with a polarity describing what the
@@ -61,8 +103,11 @@ Rules:
 - keyword_group equals category_name.
 - Generate 3 to 5 categories. Include AT LEAST ONE category of demand keywords AND
   one category of risk keywords (e.g. "{stock['ticker']}_RISK").
-- Each category: 2 to 6 Korean keywords, each with text + polarity.
+- Each category: 2 to 6 Korean keywords, each with text + polarity + confidence + rationale.
 - Risk keywords MUST be realistic Korean search phrases people type during bad news.
+- confidence: 0.0-1.0, how sure you are of the polarity (ambiguous brand terms → low).
+- rationale: one short Korean phrase on WHY this polarity. Describe the search intent
+  only — NEVER mention buying/selling, target price, or any investment recommendation.
 - linked_stocks: this ticker with weight 1.0.
 
 JSON shape:
@@ -75,7 +120,7 @@ JSON shape:
       "sector": "...",
       "description": "...",
       "keyword_group": "...",
-      "keywords": [{{"text": "...", "polarity": "demand|risk|neutral"}}],
+      "keywords": [{{"text": "...", "polarity": "demand|risk|neutral", "confidence": 0.0, "rationale": "..."}}],
       "linked_stocks": [{{"ticker": "...", "weight": 1.0}}]
     }}
   ]
@@ -109,9 +154,16 @@ def validate_draft(draft: dict[str, Any], ticker: str) -> dict[str, Any]:
             polarity = str((kw or {}).get("polarity") or "demand").strip().lower()
             if polarity not in _POLARITIES:
                 raise ValueError(f"{name}: invalid polarity {polarity!r}")
+            rationale = str((kw or {}).get("rationale") or "").strip()
+            _check_no_advice(rationale, f"{name}/{text}")
             if text and text not in seen_kw:
                 seen_kw.add(text)
-                cleaned.append({"text": text, "polarity": polarity})
+                cleaned.append({
+                    "text": text,
+                    "polarity": polarity,
+                    "confidence": _clamp_confidence((kw or {}).get("confidence")),
+                    "rationale": rationale,
+                })
                 has_risk = has_risk or polarity == "risk"
         if not cleaned:
             raise ValueError(f"{name} has no usable keywords.")
@@ -130,6 +182,7 @@ def write_review(draft: dict[str, Any], ticker: str) -> Path:
 
 
 async def apply_draft(draft: dict[str, Any]) -> None:
+    model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
     conn = await asyncpg.connect(**parse_dsn(os.environ["DATABASE_URL"]))
     try:
         async with conn.transaction():
@@ -163,14 +216,23 @@ async def apply_draft(draft: dict[str, Any]) -> None:
                     await conn.execute(
                         """
                         INSERT INTO datalab_category_keywords (
-                            category_id, keyword, keyword_group, source, polarity, is_active
+                            category_id, keyword, keyword_group, source, polarity, is_active,
+                            polarity_source, polarity_confidence, polarity_model,
+                            polarity_rationale, polarity_classified_at
                         )
-                        VALUES ($1, $2, $3, 'gemini_reviewed', $4, TRUE)
+                        VALUES ($1, $2, $3, 'gemini_reviewed', $4, TRUE,
+                                'llm', $5, $6, $7, NOW())
                         ON CONFLICT (category_id, keyword) DO UPDATE
                         SET keyword_group = EXCLUDED.keyword_group, source = EXCLUDED.source,
-                            polarity = EXCLUDED.polarity, is_active = TRUE, updated_at = NOW()
+                            polarity = EXCLUDED.polarity, is_active = TRUE, updated_at = NOW(),
+                            polarity_source = EXCLUDED.polarity_source,
+                            polarity_confidence = EXCLUDED.polarity_confidence,
+                            polarity_model = EXCLUDED.polarity_model,
+                            polarity_rationale = EXCLUDED.polarity_rationale,
+                            polarity_classified_at = EXCLUDED.polarity_classified_at
                         """,
                         category_id, kw["text"], category["keyword_group"], kw["polarity"],
+                        kw.get("confidence"), model, kw.get("rationale") or None,
                     )
                 category["category_id"] = category_id
     finally:
@@ -190,7 +252,8 @@ async def main() -> None:
         review_path = Path(args.review_file)
     else:
         stock = await fetch_stock(args.ticker)
-        draft = validate_draft(call_gemini(build_prompt(stock)), args.ticker)
+        today = datetime.now().strftime("%Y-%m-%d")
+        draft = validate_draft(call_gemini(build_prompt(stock, today)), args.ticker)
         review_path = write_review(draft, args.ticker)
 
     n_demand = sum(1 for c in draft["categories"] for k in c["keywords"] if k["polarity"] == "demand")

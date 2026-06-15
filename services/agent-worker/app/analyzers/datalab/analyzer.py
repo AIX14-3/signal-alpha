@@ -52,11 +52,18 @@ class DataLabAnalyzer:
         if "insufficient_history" in risk_flags or "stale_data" in risk_flags:
             data_status = "partial"
 
+        # Provenance (Scope A): the rule score above is unchanged. We only surface
+        # whether an LLM classified any of these keywords' polarity, so persistence
+        # can record agent_results.llm_model and the summary can disclose it.
+        llm_model, llm_count = _llm_polarity_provenance(rows)
+
         latest = indicators.latest_observed_date or as_of.isoformat()
         summary = (
             f"{latest} 기준 최근 {self._config.lookback_days}일 검색 트렌드 {indicators.observations}건 분석: "
             f"방향 {assessment.direction}, 점수 {assessment.score:+.3f}."
         )
+        if llm_count:
+            summary += f" (LLM 분류 키워드 {llm_count}건 반영)"
         return SourceResult(
             source="DATALAB",
             stock_code=stock_code,
@@ -74,6 +81,7 @@ class DataLabAnalyzer:
             ],
             risk_flags=risk_flags,
             data_status=data_status,
+            llm_model=llm_model,
         )
 
 
@@ -83,6 +91,18 @@ def _extract_rows(evidence: list[RawEvidence]) -> list[dict]:
         if rows:
             return rows
     return []
+
+
+def _llm_polarity_provenance(rows: list[dict]) -> tuple[str | None, int]:
+    """Return (llm_model, count) for rows whose polarity was LLM-classified.
+
+    ``llm_model`` is the first non-empty ``polarity_model`` among LLM-sourced rows,
+    or None when no keyword's polarity came from the LLM lane. Pure read — it does
+    not affect indicators or the score (Scope A).
+    """
+    llm_rows = [row for row in rows if row.get("polarity_source") == "llm"]
+    model = next((row.get("polarity_model") for row in llm_rows if row.get("polarity_model")), None)
+    return model, len(llm_rows)
 
 
 def _as_of(metadata: dict) -> date:
