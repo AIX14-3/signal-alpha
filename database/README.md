@@ -45,32 +45,27 @@ docker compose run --rm migrate
 
 ## 2. 전체 Zone 구조 (테이블 인벤토리)
 
-마이그레이션 파일은 Zone 단위로 묶여 있습니다. **새 테이블을 만들기 전에 이 표에서 역할이 겹치는 테이블이 없는지 먼저 확인하세요.**
+전체 스키마는 단일 베이스라인 **`001_baseline.sql`** 한 파일에 Zone 단위로 들어 있습니다(개발 단계 통합 — 구 001~021 squash, 배경·규칙은 [`docs/migration_rules.md`](./docs/migration_rules.md)). **새 테이블을 만들기 전에 이 표에서 역할이 겹치는 테이블이 없는지 먼저 확인하세요.**
 
-| 마이그레이션 | Zone | 테이블 |
-| --- | --- | --- |
-| 001_extensions | - | (pgvector extension) |
-| 002_market | A Market | `stocks`, `ohlcv_data`, `fundamentals`, `price_snapshots` |
-| 003_collection_core | C Collection | `collector_runs`, `raw_documents`, `dart_raw_details`, `report_raw_details`, `hiring_raw_details`, `patent_raw_details`, `report_chunks` |
-| 004_collection_dart | C Collection | `dart_corp_codes`, `dart_collection_states` |
-| 005_collection_datalab | C Collection | `datalab_categories`, `datalab_category_stocks`, `datalab_category_keywords`, `datalab_raw_documents`, `datalab_raw_details` |
-| 006_collection_hiring | C Collection | `hiring_baseline` |
-| 007_processing | D Processing | `processing_queue`, `source_documents`, `signal_events`, `signal_metrics`, `validation_logs` |
-| 008_users_billing_base | B User 기본 | `users`, `subscription_plans` |
-| 009_analysis | E Analysis | `analysis_requests`, `analysis_results`, `quant_scores`, `ta_scores`, `ai_scores`, `agent_results`, `xgb_model_versions`, `ml_scores`, `final_signals`, `score_history`, `backtest_results` |
-| 010_users_billing_extend | F User 확장 | `signal_subscriptions`, `watchlists`, `signal_journals`, `user_signal_reads`, `social_accounts`, `portone_verifications`, `terms_agreements` |
-| 011_admin | G Admin | `admin_accounts`, `admin_sessions` |
-| 012_triggers | - | (트리거 함수 2종 + updated_at 트리거 일괄 부착) |
-| 013_legacy_report_mvp | Legacy | `report_raw`, `report_signal` ← **폐기 예정, 신규 참조 금지** (§7) |
-| 014_hiring_raw_details_observed_date | C Collection | (`hiring_raw_details.observed_date` 컬럼 추가) |
-| 015_hiring_signals | E Analysis | `hiring_signals` |
-| 016_hiring_sources | C Collection | `hiring_sources` |
-| 017_alternative_signals_consensus | E Analysis | (`final_signals`에 `consensus_score`/`positive_evidence`/`caution_evidence` 컬럼 추가) |
-| 018_datalab_keyword_polarity | C Collection | (`datalab_category_keywords.polarity` 컬럼 추가) |
-| 019_patent_llm_features | C Collection | (`patent_raw_details`에 `llm_features`/`llm_status` 컬럼 추가) |
-| 020_hiring_job_functions | E Analysis | `hiring_job_functions`, `hiring_job_function_stocks` |
+| Zone | 테이블 |
+| --- | --- |
+| - (extension) | (pgvector `vector` extension) |
+| A Market | `stocks`, `ohlcv_data`, `fundamentals`, `price_snapshots` |
+| C Collection 핵심 | `collector_runs`, `raw_documents`, `dart_raw_details`, `report_raw_details`, `hiring_raw_details`, `patent_raw_details`, `report_chunks` |
+| C Collection DART | `dart_corp_codes`, `dart_collection_states` |
+| C Collection DataLab | `datalab_categories`, `datalab_category_stocks`, `datalab_category_keywords`, `datalab_raw_documents`, `datalab_raw_details` |
+| C Collection Hiring | `hiring_baseline`, `hiring_signals`, `hiring_sources`, `hiring_job_functions`, `hiring_job_function_stocks` (+ `hiring_crawler_type` ENUM) |
+| D Processing | `processing_queue`, `source_documents`, `signal_events`, `signal_metrics`, `validation_logs` |
+| B User 기본 | `users`, `subscription_plans` |
+| E Analysis | `analysis_requests`, `analysis_results`, `quant_scores`, `ta_scores`, `ai_scores`, `agent_results`, `xgb_model_versions`, `ml_scores`, `final_signals`, `score_history`, `backtest_results` |
+| F User 확장 | `signal_subscriptions`, `watchlists`, `signal_journals`, `user_signal_reads`, `social_accounts`, `portone_verifications`, `terms_agreements` |
+| G Admin | `admin_accounts`, `admin_sessions` |
+| 트리거 | (트리거 함수 2종 + updated_at 트리거 일괄 부착) |
+| Legacy | `report_raw`, `report_signal` ← **폐기 예정, 신규 참조 금지** (§7) |
 
-이 외에 러너가 자동 생성하는 `schema_migrations` 원장이 있습니다. 베이스라인(001~013) 48개 테이블 + 014~020 확장(`hiring_signals`, `hiring_sources`, `hiring_job_functions`, `hiring_job_function_stocks` 4개 신규 테이블 및 컬럼 추가).
+이 외에 러너가 자동 생성하는 `schema_migrations` 원장이 있습니다. 총 **52개 테이블**.
+
+이후 스키마 변경은 `001_baseline.sql`을 수정하지 않고 `002_*.sql`부터 증분 마이그레이션으로 추가합니다 ([`docs/migration_rules.md`](./docs/migration_rules.md) §3).
 
 DataLab은 종목이 아닌 **카테고리 단위**로 수집합니다: 원본은 `datalab_raw_documents`/`datalab_raw_details`(category_id 기반)에 저장하고, `datalab_category_stocks` 매핑으로 종목을 해석합니다. `processing_queue.stock_id`가 NULL 허용인 이유도 이것입니다.
 
@@ -92,6 +87,8 @@ DataLab은 종목이 아닌 **카테고리 단위**로 수집합니다: 원본�
 | ENUM성 컬럼 | `VARCHAR + CHECK` 사용 (PostgreSQL ENUM 타입 미사용) |
 
 ## 4. 새 테이블/컬럼 추가 절차 ← 스키마 변경 시 필독
+
+> 협업 규칙·PR 체크리스트 전문은 [`docs/migration_rules.md`](./docs/migration_rules.md)에 있습니다. `001_baseline.sql`은 freeze 상태이므로 수정하지 말고 `002_*.sql`부터 증분으로 추가합니다.
 
 1. **§2 인벤토리에서 중복 확인** — 같은 역할의 테이블이 이미 있으면 재사용/확장.
 2. `database/migrations/`에서 **다음 번호**로 파일 생성: `NNN_짧은설명.sql`

@@ -1,0 +1,4 @@
+# SQL 마이그레이션은 항상 LF로 체크아웃한다.
+# migrate.py가 파일 바이트의 sha256으로 적용 원장을 검증하므로, Windows에서
+# CRLF로 체크아웃되면 checksum이 어긋나 마이그레이션이 깨진다(원장 불일치).
+*.sql text eol=lf

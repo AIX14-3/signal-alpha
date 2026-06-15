@@ -8,7 +8,7 @@ ERD 다이어그램([`../erd/signal_alpha_core_erd.md`](../erd/signal_alpha_core
 > - 워커/에이전트가 **어떤 테이블을 쓰는지**(역할→테이블 방향)는 [`table_responsibility.md`](./table_responsibility.md)를 참고하세요. 이 문서는 그 반대인 **테이블→역할** 방향입니다.
 > - **새 테이블을 추가하는 마이그레이션 PR은 이 문서에도 한 줄 설명을 반드시 추가해야 합니다** (`database/README.md` §4).
 
-총 50개 테이블 (러너가 자동 관리하는 `schema_migrations` 원장 제외).
+총 52개 테이블 (러너가 자동 관리하는 `schema_migrations` 원장 제외).
 
 ---
 
@@ -34,7 +34,7 @@ ERD 다이어그램([`../erd/signal_alpha_core_erd.md`](../erd/signal_alpha_core
 | `dart_raw_details` | DART 공시 원본 상세(접수번호·공시유형 등). `raw_documents`와 복합 FK로 1:1 |
 | `report_raw_details` | 증권사 리포트 원본 상세(증권사·목표가·발행일·파싱 상태) |
 | `hiring_raw_details` | 채용공고 원본 상세(키워드·공고 수·증감률). `stock_id` 필수 |
-| `patent_raw_details` | 특허 원본 상세(출원번호·출원일·기술 분류) |
+| `patent_raw_details` | 특허 원본 상세(출원번호·출원일·기술 분류). `llm_features`/`llm_status`로 LLM 보강(중요도) 캐시 보관 | 
 | `report_chunks` | 리포트 PDF에서 추출한 텍스트 청크 + pgvector 임베딩(VECTOR 1024, ivfflat). Report RAG 검색의 대상 |
 
 ## Zone C — DART 보조 (004_collection_dart.sql)
@@ -52,17 +52,19 @@ DataLab은 종목이 아닌 **카테고리 단위**로 수집하므로 자체 �
 | --- | --- |
 | `datalab_categories` | DataLab 검색 트렌드 수집 단위인 카테고리(섹터/테마) 마스터 |
 | `datalab_category_stocks` | 카테고리 ↔ 종목 N:M 매핑. 카테고리 트렌드를 종목으로 해석하는 가중치(`weight`) 보유 |
-| `datalab_category_keywords` | 카테고리에 속한 검색 키워드 목록(키워드 그룹 포함) |
+| `datalab_category_keywords` | 카테고리에 속한 검색 키워드 목록(키워드 그룹 포함). `polarity`(demand/risk/neutral)로 검색량 방향성 태깅 |
 | `datalab_raw_documents` | DataLab 수집 원본의 공통 메타데이터(카테고리 기반). `raw_documents`의 DataLab판 |
 | `datalab_raw_details` | 키워드·일자·세그먼트(기간/디바이스/성별/연령)별 검색지수 원본 상세. 급등 여부(`is_spike`) 포함 |
 
-## Zone C — Hiring 기준선/확장 (006, 015, 016)
+## Zone C — Hiring 기준선/확장 (006, 015, 016, 020, 021)
 
 | 테이블 | 역할 | 마이그레이션 |
 | --- | --- | --- |
 | `hiring_baseline` | 종목별 채용 검색량 계절성 기준선(평균·분기 보정 계수). 채용 급증 판정의 비교 기준 | 006 |
-| `hiring_signals` | HiringAnalyzer 분석 결과. 일자별 공고 수·기준선 대비 상대강도·급증 여부 저장 | 015 |
+| `hiring_signals` | HiringAnalyzer 분석 결과. 일자별 공고 수·기준선 대비 상대강도·급증 여부 저장. `calculation_phase`(A=14일MA/B=DataLab/C=기본값)로 분석 근거 추적 | 015, 021 |
 | `hiring_sources` | 기업별 공식 채용 사이트 크롤러 설정(크롤러 유형/클래스/URL). `(stock_id, crawler_type)` 단위, 기업 추가/변경의 Single Source of Truth | 016 |
+| `hiring_job_functions` | 직무(job function) 표준 분류 마스터(ENGINEER/SALES 등). 섹터 전반 직무 수요 전파의 기준 | 020 |
+| `hiring_job_function_stocks` | 종목 ↔ 직무 노출 가중치 N:M. peer 직무 수요를 종목으로 전파(own-momentum 보완) | 020 |
 
 ## Zone D — Processing (007_processing.sql)
 
@@ -97,7 +99,7 @@ Agent·ML의 분석 결과와 최종 시그널.
 | `agent_results` | 분석 결과의 토론 방식(D-1~D-5)별 결과(방식 점수·상세 JSON). `(result_id, debate_method)` 유니크 |
 | `xgb_model_versions` | XGBoost 보정 모델 버전 레지스트리. `is_active` 부분 유니크로 활성 모델 1개 보장 |
 | `ml_scores` | 분석 결과에 대한 ML 보정 점수(`calibrated_score`). 모델 버전 참조 |
-| `final_signals` | 사용자/프론트에 노출되는 최종 시그널. `final_score`·신호·게시 여부·법적 고지 보유. `is_current` 부분 유니크+트리거로 조합당 현재 시그널 1건 |
+| `final_signals` | 사용자/프론트에 노출되는 최종 시그널. `final_score`·신호·게시 여부·법적 고지 보유. `is_current` 부분 유니크+트리거로 조합당 현재 시그널 1건. `consensus_score`·`positive_evidence`/`caution_evidence`로 Alternative consensus 출력 |
 | `score_history` | 최종 점수 변동 이력. 시그널/분석 결과별 점수 추적 |
 | `backtest_results` | 최종 시그널의 사후 성과(5일 변화율·적중 여부) 백테스트 |
 
