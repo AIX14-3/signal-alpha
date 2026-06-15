@@ -1,36 +1,8 @@
--- 016_hiring_sources.sql
--- 기업별 공식 채용 사이트 크롤러 설정 테이블
--- ticker가 Single Source of Truth: 기업 추가/변경은 이 테이블 INSERT/UPDATE만으로 처리
-
-DO $$ BEGIN
-    CREATE TYPE hiring_crawler_type AS ENUM (
-        'portal_saramin',     -- 사람인 키워드 검색 (별도 처리, 이 테이블 불필요)
-        'portal_jobkorea',    -- 잡코리아 키워드 검색 (별도 처리, 이 테이블 불필요)
-        'official_api',       -- 공식 API 기반 (driver=None, 삼성전자)
-        'official_selenium',  -- 공식 SPA/ATS Selenium (NAVER, 카카오, SK하이닉스 등)
-        'recruiter_kr',       -- recruiter.co.kr 집계 (HL만도, 셀트리온, 유한양행)
-        'simple_site'         -- 정적/CMS 사이트 (한미반도체, 스튜디오드래곤, 삼성바이오)
-    );
-EXCEPTION WHEN duplicate_object THEN NULL;
-END $$;
-
-CREATE TABLE IF NOT EXISTS hiring_sources (
-    id            BIGSERIAL PRIMARY KEY,
-    stock_id      BIGINT NOT NULL REFERENCES stocks(id),
-    crawler_type  hiring_crawler_type NOT NULL,
-    crawler_class VARCHAR(100),      -- 사용할 크롤러 클래스명 (예: SamsungCrawler)
-    base_url      VARCHAR(500),      -- 기업 공식 채용 페이지 루트 URL
-    extra_config  JSONB,             -- CSS selector, API 파라미터 등 추가 설정
-    is_active     BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE (stock_id, crawler_type)
-);
-
-CREATE INDEX IF NOT EXISTS idx_hiring_sources_active
-    ON hiring_sources (stock_id)
-    WHERE is_active = TRUE;
-
--- ── Seed: 15개 핵심 기업 공식 사이트 크롤러 설정 (ticker 기준) ──────────────────
+-- 005_seed_hiring_sources.sql
+-- 15개 핵심 기업 공식 채용 사이트 크롤러 설정 (ticker 기준).
+-- 구 016_hiring_sources.sql 마이그레이션에 인라인이던 시드를 컨벤션대로 분리.
+-- ticker가 Single Source of Truth: 기업 추가/변경은 이 시드 INSERT/UPDATE로 처리.
+-- ON CONFLICT 기반 재실행 안전(idempotent).
 
 -- 삼성전자 (005930): 공식 API, driver 불필요
 INSERT INTO hiring_sources (stock_id, crawler_type, crawler_class, base_url)
