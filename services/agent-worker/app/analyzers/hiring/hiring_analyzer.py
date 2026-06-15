@@ -83,6 +83,14 @@ class HiringAnalyzer:
 
             HiringAnalyzer._is_cache_loaded = True
 
+    @classmethod
+    async def clear_cache(cls) -> None:
+        """분기 갱신·신규 주식 상장 시 캐시를 강제로 비워 다음 load_baselines에서 재로드."""
+        async with cls._cache_lock:
+            cls._baseline_cache.clear()
+            cls._is_cache_loaded = False
+        logger.info("HiringAnalyzer 메모리 캐시 초기화 완료")
+
     def _get_current_quarter(self, target_date_str) -> str:
         """
         날짜(str / date / datetime)를 Q1~Q4로 변환
@@ -224,6 +232,7 @@ class HiringAnalyzer:
                     round(expected_baseline_count, 2),
                     round(relative_strength, 2),
                     is_spike,
+                    phase,           # calculation_phase: 운영 디버깅 및 데이터 검증용
                 ))
 
             # Step 4: 단 한 번의 배치 쿼리로 대량 업서트 (루프 내 개별 execute 대비 수십 배 빠름)
@@ -231,14 +240,15 @@ class HiringAnalyzer:
                 await conn.executemany("""
                     INSERT INTO hiring_signals
                         (stock_id, observed_date, job_count, baseline,
-                         relative_strength, is_spike)
+                         relative_strength, is_spike, calculation_phase)
                     VALUES
-                        ($1, $2::DATE, $3, $4, $5, $6)
+                        ($1, $2::DATE, $3, $4, $5, $6, $7)
                     ON CONFLICT (stock_id, observed_date) DO UPDATE
-                    SET job_count         = EXCLUDED.job_count,
-                        baseline          = EXCLUDED.baseline,
-                        relative_strength = EXCLUDED.relative_strength,
-                        is_spike          = EXCLUDED.is_spike
+                    SET job_count          = EXCLUDED.job_count,
+                        baseline           = EXCLUDED.baseline,
+                        relative_strength  = EXCLUDED.relative_strength,
+                        is_spike           = EXCLUDED.is_spike,
+                        calculation_phase  = EXCLUDED.calculation_phase
                 """, upsert_data)
 
                 logger.info("[%s] 채용 시그널 %d건 업서트 완료", target_date, len(upsert_data))

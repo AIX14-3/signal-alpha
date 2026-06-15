@@ -88,27 +88,19 @@ class HiringAnalyzer:
             )
 
         # ── 기준선 선택 (3단계 Fallback) ────────────────────────────────────────
-        # 모든 RawEvidence row는 동일 기업·날짜이므로 기준선 값이 복제됨 → max()로 대표값 추출
-        rolling_avgs = [
-            float(e.metadata["rolling_avg_14d"])
-            for e in evidence
-            if e.metadata.get("rolling_avg_14d") is not None
-        ]
-        rolling_avg = max(rolling_avgs) if rolling_avgs else 0.0
+        # 동일 기업·날짜의 RawEvidence row는 메타데이터 값이 복제됨 → 단일 루프로 max() 추출
+        rolling_avg: float = 0.0
+        avg_search_volume: float | None = None
+        seasonal_factor: float = 1.0
 
-        search_vols = [
-            float(e.metadata["avg_search_volume"])
-            for e in evidence
-            if e.metadata.get("avg_search_volume") is not None
-        ]
-        avg_search_volume = max(search_vols) if search_vols else None
-
-        seasonal_factors = [
-            float(e.metadata["seasonal_factor"])
-            for e in evidence
-            if e.metadata.get("seasonal_factor") is not None
-        ]
-        seasonal_factor = max(seasonal_factors) if seasonal_factors else 1.0
+        for e in evidence:
+            meta = e.metadata
+            if (r := meta.get("rolling_avg_14d")) is not None:
+                rolling_avg = max(rolling_avg, float(r))
+            if (s := meta.get("avg_search_volume")) is not None:
+                avg_search_volume = max(avg_search_volume or 0.0, float(s))
+            if (f := meta.get("seasonal_factor")) is not None:
+                seasonal_factor = max(seasonal_factor, float(f))
 
         if rolling_avg >= _MIN_ROLLING_AVG:
             # Phase A: 충분한 실적 데이터 (Day 14+)
@@ -208,12 +200,15 @@ def _change_pct_to_score(change_pct: float) -> float:
 
 
 def _extract_title_keywords(job_titles: list[str], k: int = 3) -> list[str]:
-    """직무명에서 불용어 제거 후 상위 k개 키워드 반환."""
+    """직무명에서 불용어 제거 후 상위 k개 키워드 반환.
+
+    "React" / "react" / "REACT" 중복 카운팅 방지를 위해 대문자로 정규화 후 집계.
+    """
     all_words: list[str] = []
     for title in job_titles:
         words = title.replace("/", " ").replace("-", " ").split()
-        all_words.extend(
-            w.strip() for w in words
-            if w.strip().lower() not in _JOB_TITLE_STOPWORDS
-        )
+        for w in words:
+            cleaned = w.strip()
+            if cleaned.lower() not in _JOB_TITLE_STOPWORDS:
+                all_words.append(cleaned.upper())
     return [w for w, _ in Counter(all_words).most_common(k)]

@@ -281,7 +281,8 @@ class TestAnalyzeHiringTrend(unittest.IsolatedAsyncioTestCase):
         await analyzer.analyze_hiring_trend("2024-06-15")
 
         rows = self._upsert_rows(conn)
-        *_, is_spike = rows[0]
+        # rows[0] = (stock_id, date, job_count, baseline, rs, is_spike, phase)
+        _sid, _date, _count, _baseline, _rs, is_spike, _phase = rows[0]
         self.assertTrue(is_spike)
 
     async def test_no_spike_below_150pct(self):
@@ -294,7 +295,7 @@ class TestAnalyzeHiringTrend(unittest.IsolatedAsyncioTestCase):
         await analyzer.analyze_hiring_trend("2024-06-15")
 
         rows = self._upsert_rows(conn)
-        *_, is_spike = rows[0]
+        _sid, _date, _count, _baseline, _rs, is_spike, _phase = rows[0]
         self.assertFalse(is_spike)
 
     async def test_cold_start_uses_naver_fallback(self):
