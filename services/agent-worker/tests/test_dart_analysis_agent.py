@@ -1,6 +1,7 @@
 import unittest
 from datetime import date
 
+from app.agents import SourceAgentInput
 from app.agents.dart.agent import DartAnalysisAgent
 from app.analyzers.dart.llm import DartLlmAnalysis
 
@@ -48,8 +49,12 @@ class DartAnalysisAgentTest(unittest.IsolatedAsyncioTestCase):
     async def test_agent_returns_rule_result_when_llm_is_not_configured(self):
         agent = DartAnalysisAgent()
 
-        result = await agent.analyze(stock_code="005930", events=[periodic_report_event()])
+        result = await agent.analyze(
+            SourceAgentInput(source="DART", stock_code="005930", events=[periodic_report_event()])
+        )
 
+        self.assertEqual(result.source, "DART")
+        self.assertEqual(result.stock_code, "005930")
         self.assertEqual(result.direction, "neutral")
         self.assertEqual(result.score, 50)
         self.assertEqual(result.analysis_source, "rules")
@@ -62,7 +67,9 @@ class DartAnalysisAgentTest(unittest.IsolatedAsyncioTestCase):
         llm_analyzer = FakeLlmAnalyzer()
         agent = DartAnalysisAgent(llm_analyzer=llm_analyzer)
 
-        result = await agent.analyze(stock_code="005930", events=[periodic_report_event()])
+        result = await agent.analyze(
+            SourceAgentInput(source="DART", stock_code="005930", events=[periodic_report_event()])
+        )
 
         self.assertEqual(result.direction, "positive")
         self.assertEqual(result.score, 73)
@@ -76,7 +83,9 @@ class DartAnalysisAgentTest(unittest.IsolatedAsyncioTestCase):
         llm_analyzer = FakeLlmAnalyzer(fail=True)
         agent = DartAnalysisAgent(llm_analyzer=llm_analyzer)
 
-        result = await agent.analyze(stock_code="005930", events=[periodic_report_event()])
+        result = await agent.analyze(
+            SourceAgentInput(source="DART", stock_code="005930", events=[periodic_report_event()])
+        )
 
         self.assertEqual(result.direction, "neutral")
         self.assertEqual(result.score, 50)
