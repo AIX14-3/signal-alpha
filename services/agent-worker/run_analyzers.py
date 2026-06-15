@@ -62,6 +62,18 @@ def parse_dsn(dsn: str) -> dict[str, Any]:
     }
 
 
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "postgres"}
+
+
+def resolve_ssl(host: str) -> Any:
+    """SSL mode for asyncpg: managed Postgres (Supabase) needs 'require'; a local
+    Docker Postgres rejects SSL. Default by host; ``DB_SSL`` env overrides."""
+    override = os.getenv("DB_SSL")
+    if override:
+        return False if override.lower() in {"disable", "off", "false", "0", "no"} else override
+    return False if host in _LOCAL_HOSTS else "require"
+
+
 def _since(value: str | None) -> date | None:
     if not value:
         return None
@@ -142,11 +154,12 @@ async def run_once(args: argparse.Namespace) -> None:
         int(os.getenv("ANALYZER_DB_POOL_MAX", "0")) or 0,
         runtime.batch_concurrency * 2 + 2,
     )
+    params = parse_dsn(dsn)
     pool = await asyncpg.create_pool(
-        **parse_dsn(dsn),
+        **params,
         min_size=1,
         max_size=pool_max,
-        ssl="require",
+        ssl=resolve_ssl(params["host"]),
         statement_cache_size=0,
     )
     as_of = date.today()
