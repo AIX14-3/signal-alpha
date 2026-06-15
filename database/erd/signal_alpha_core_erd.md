@@ -483,6 +483,56 @@ erDiagram
     }
 ```
 
+## Zone C·E — Hiring / Alternative 확장 (014~020)
+
+베이스라인(001~013) 이후 추가된 Hiring 분석 계층과 Alternative 통합 신호 확장.
+
+```mermaid
+erDiagram
+    hiring_signals {
+        BIGINT id PK
+        BIGINT stock_id FK
+        DATE observed_date "UK(stock_id,observed_date)"
+        INTEGER job_count
+        NUMERIC relative_strength
+        BOOLEAN is_spike "레거시 일별 채용 강도 (015)"
+    }
+
+    hiring_sources {
+        BIGINT id PK
+        BIGINT stock_id FK
+        ENUM crawler_type "UK(stock_id,crawler_type) (016)"
+        VARCHAR crawler_class
+        JSONB extra_config
+        BOOLEAN is_active
+    }
+
+    hiring_job_functions {
+        BIGINT id PK
+        VARCHAR function_key UK "ENGINEER|SALES|… 안정 키 (020)"
+        VARCHAR label
+        BOOLEAN is_active
+    }
+
+    hiring_job_function_stocks {
+        BIGINT job_function_id PK,FK "→ hiring_job_functions"
+        BIGINT stock_id PK,FK "→ stocks"
+        NUMERIC weight "직군 노출 가중치 (020)"
+    }
+
+    stocks ||--o{ hiring_signals : ""
+    stocks ||--o{ hiring_sources : ""
+    stocks ||--o{ hiring_job_function_stocks : ""
+    hiring_job_functions ||--o{ hiring_job_function_stocks : ""
+```
+
+기존 테이블에 추가된 컬럼(신규 테이블 아님):
+
+- `final_signals` ← `consensus_score`, `positive_evidence`, `caution_evidence` (017). `alignment_rate`는 기존 `source_agreement`와 동일하여 컬럼 미저장(읽기 계층 alias).
+- `datalab_category_keywords` ← `polarity` (demand/risk/neutral) (018).
+- `patent_raw_details` ← `llm_features` JSONB, `llm_status` (019).
+- `hiring_raw_details` ← `observed_date` (014).
+
 ## 시스템 테이블
 
 - `schema_migrations(filename PK, checksum, applied_at)` — `database/migrate.py`가 자동 생성·관리하는 적용 원장. 마이그레이션 파일로 만들지 않는다.
