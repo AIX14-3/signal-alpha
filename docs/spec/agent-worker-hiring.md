@@ -30,12 +30,23 @@
   MultiSourceCrawler            bootstrap_hiring_baseline.py
           ↓                               ↓
   hiring_raw_details            hiring_baseline (q1~q4 가중치)
+  (extra_payload에 rolling_avg_14d /
+   avg_search_volume / seasonal_factor 포함)
           ↓
-  HiringAnalyzer (매일)
-  ├─ 14일 이동평균 + 계절 가중치 → 기대값
-  └─ (오늘 공고 수 / 기대값) × 100 → relative_strength
+  ┌───────────────────────────────────────────────┐
+  │  분석기 두 가지 — 역할이 다름                  │
+  │                                               │
+  │  hiring_analyzer.py  (배치 엔진, 매일)        │
+  │  └─ 14일 이동평균 + 계절 가중치 → 기대값      │
+  │  └─ relative_strength / is_spike 계산         │
+  │  └─ hiring_signals UPSERT (executemany)       │
+  │                                               │
+  │  analyzer.py  (Protocol 준수, 실시간)         │
+  │  └─ evidence.metadata에서 기준선 값 추출       │
+  │  └─ SourceResult 반환 (DB 쿼리 없음)          │
+  └───────────────────────────────────────────────┘
           ↓
-  hiring_signals (is_spike 포함)
+  hiring_signals (is_spike + calculation_phase 포함)
 ```
 
 **3계층 수집 저장:**
@@ -55,6 +66,7 @@ collector_runs          ← 실행 로그 (시작/종료/통계)
 psql $DATABASE_URL -f database/migrations/014_hiring_raw_details_observed_date.sql
 psql $DATABASE_URL -f database/migrations/015_hiring_signals.sql
 psql $DATABASE_URL -f database/migrations/016_hiring_sources.sql
+psql $DATABASE_URL -f database/migrations/017_hiring_signals_add_calculation_phase.sql
 ```
 
 | 파일 | 변경 내용 |
@@ -65,6 +77,7 @@ psql $DATABASE_URL -f database/migrations/016_hiring_sources.sql
 | **`014`** | `hiring_raw_details`에 `observed_date DATE` 추가 |
 | **`015`** | `hiring_signals` — 분석 결과 저장 |
 | **`016`** | `hiring_sources` — 기업별 크롤러 설정 (ticker 기반 SSoT) |
+| **`017`** | `hiring_signals.calculation_phase VARCHAR(1)` 추가 — A/B/C 계산 근거 추적 |
 
 ### 핵심 테이블 요약
 
@@ -78,7 +91,8 @@ keyword_group_name, data_start_date, data_end_date
 **`hiring_signals`** — HiringAnalyzer 일별 분석 결과
 ```
 stock_id + observed_date (UNIQUE),
-job_count, baseline, relative_strength, is_spike
+job_count, baseline, relative_strength, is_spike,
+calculation_phase  ← 'A'|'B'|'C' (분석 근거 추적용)
 ```
 
 **`hiring_sources`** — 기업별 공식 사이트 크롤러 설정
@@ -96,12 +110,24 @@ crawler_class, base_url, extra_config, is_active
 
 | 파일 | 역할 |
 |------|------|
-| `base_collector.py` | DB 적재 공통 로직 (Savepoint 격리, SHA-256 중복 방지, 계절 기준선 참조) |
+| `base_collector.py` | DB 적재 공통 로직. Savepoint 격리, SHA-256 중복 방지, `extra_payload`에 `rolling_avg_14d` / `avg_search_volume` / `seasonal_factor` 저장 |
 | `keyword_generator.py` | 기업명 → 네이버 DataLab 키워드 그룹 변환 (Pure 로직, DB 호출 없음) |
 | `multi_source_crawler.py` | 5계층 소스 통합 오케스트레이터 (포털 + 공식 사이트) |
 | `driver_utils.py` | Chrome WebDriver 팩토리 (Anti-Bot 옵션 + WebDriver Manager) |
 | `main.py` | 대화형 CLI 메뉴 (수동 실행용) |
 | `sites/` | 사이트별 크롤러 구현체 (Saramin, Jobkorea, Samsung 등) |
+
+#### `base_collector.py` — `extra_payload` 메타데이터 구조
+
+수집 완료 후 해당 기업의 기준선 데이터를 함께 저장하여 `analyzer.py`가 DB 없이 순수 연산 가능하도록 합니다.
+
+```json
+{
+  "rolling_avg_14d": 5.2,
+  "avg_search_volume": 60.0,
+  "seasonal_factor": 1.1
+}
+```
 
 #### 수집 소스 5계층
 
@@ -119,9 +145,12 @@ crawler_class, base_url, extra_config, is_active
 
 ### 분석기 (`app/analyzers/hiring/`)
 
-| 파일 | 역할 |
-|------|------|
-| `hiring_analyzer.py` | 채용 강도 분석 엔진 (asyncpg 기반, 3단계 Fallback 기준선) |
+**분석기가 두 개입니다. 역할이 다르므로 import 경로에 주의하세요.**
+
+| 파일 | import 경로 | 역할 |
+|------|------------|------|
+| `analyzer.py` | `from app.analyzers.hiring import HiringAnalyzer` | **Analyzer Protocol 준수** — `analyze(stock_code, evidence) → SourceResult`. DB 쿼리 없이 `evidence.metadata`에서 기준선 추출 후 순수 연산. 오케스트레이터·Aggregator 연동용. |
+| `hiring_analyzer.py` | `from app.analyzers.hiring.hiring_analyzer import HiringAnalyzer` | **배치 엔진** — `analyze_hiring_trend(target_date)`. asyncpg로 DB 직접 쿼리, `hiring_signals` UPSERT. 일별 크론잡 전용. |
 
 ### 스크립트 (`script/`)
 
@@ -155,7 +184,7 @@ HIRING_DATALAB_CLIENT_SECRET=
 ### 사전 조건
 
 ```bash
-# 의존성 설치
+# 의존성 설치 (Windows: tzdata 패키지 포함)
 uv sync
 
 # Chrome + ChromeDriver (WebDriver Manager가 자동 설치)
@@ -165,9 +194,11 @@ uv sync
 ### 1. 최초 초기화 (한 번만)
 
 ```bash
-# DB 마이그레이션 적용 (014 → 023 순서대로)
-psql $DATABASE_URL -f database/migrations/014_hiring_baseline.sql
-# ... (순서대로 023까지)
+# DB 마이그레이션 적용 (014 → 017 순서대로)
+psql $DATABASE_URL -f database/migrations/014_hiring_raw_details_observed_date.sql
+psql $DATABASE_URL -f database/migrations/015_hiring_signals.sql
+psql $DATABASE_URL -f database/migrations/016_hiring_sources.sql
+psql $DATABASE_URL -f database/migrations/017_hiring_signals_add_calculation_phase.sql
 
 # 네이버 DataLab 기준선 부트스트랩 (3년치 트렌드 수집, ~5분 소요)
 cd services/agent-worker
@@ -188,11 +219,12 @@ uv run python script/run_daily_hiring_pipeline.py --date 2026-06-12
 
 **파이프라인 흐름:**
 ```
-Step 1: MultiSourceCrawler.run()     ← 재시도 최대 3회, 타임아웃 3600초
+Step 1: MultiSourceCrawler.run()
   → hiring_raw_details 적재 (Savepoint 격리)
+  → extra_payload에 rolling_avg_14d / avg_search_volume / seasonal_factor 함께 저장
   ↓ (3초 대기)
-Step 2: HiringAnalyzer.analyze_hiring_trend()  ← 재시도 최대 3회
-  → hiring_signals UPSERT
+Step 2: HiringAnalyzer.analyze_hiring_trend()
+  → executemany 배치 업서트 → hiring_signals (calculation_phase 포함)
 ```
 
 로그: `logs/hiring_pipeline.log`
@@ -217,6 +249,10 @@ uv run python app/collectors/hiring/main.py
 
 ```bash
 uv run python script/bootstrap_hiring_baseline.py
+
+# FastAPI 장기 가동 환경에서 분기 갱신 후 캐시를 비워야 할 때
+# (코드 내 또는 관리자 API 라우터에서 호출)
+await HiringAnalyzer.clear_cache()
 ```
 
 ### 5. Airflow DAG 연동
@@ -242,39 +278,77 @@ task = PythonOperator(
 
 ## 채용 분석 로직 — 3단계 Fallback
 
-`HiringAnalyzer.analyze_hiring_trend(target_date)` 실행 흐름:
+### 배치 엔진 (`hiring_analyzer.py`) 실행 흐름
+
+`HiringAnalyzer.analyze_hiring_trend(target_date)` 호출 시:
 
 **Step 1.** 지난 14일 이동평균 계산
 ```sql
--- ⚠️ AVG() 대신 COUNT/14.0 사용: 공고 0건인 날은 행이 없으므로
---    AVG()는 "공고 있던 날"만 평균 → 기준선 과대평가
-SELECT stock_id, COUNT(id) / 14.0 AS rolling_avg
+-- hiring_raw_details는 공고 1건=1행 구조 (job_count 항상 1)
+-- AVG()는 공고 0건인 날(행 없음)을 분모에서 제외해 기준선 과대평가 → COUNT/14.0 사용
+SELECT stock_id, COUNT(raw_document_id) / 14.0 AS rolling_avg
 FROM hiring_raw_details
-WHERE observed_date BETWEEN :date - 14 AND :date - 1
-  AND job_count > 0
+WHERE observed_date BETWEEN :date - 14 DAYS AND :date - 1 DAY
 GROUP BY stock_id
 ```
 
-**Step 2.** 3단계 Fallback으로 기준선(Scale) 결정
+**Step 2.** 3단계 Fallback으로 기준선 결정 — `_get_baseline_scale(stock_id, rolling_avg) → (scale, phase)`
 
 | Phase | 조건 | 기준선 | 신뢰도 |
 |-------|------|--------|--------|
 | **A** — Day 14+ | `rolling_avg ≥ 1.0` | 14일 이동평균 | 높음 |
-| **B** — Cold Start | `rolling_avg < 1.0` | `avg_search_volume / 100` | 중간 |
-| **C** — 데이터 없음 | 네이버 기준선도 없음 | `1.0` (최솟값) | 낮음 |
+| **B** — Cold Start | `rolling_avg < 1.0`, DataLab 데이터 있음 | `max(avg_search_volume / 100, 0.5)` | 중간 |
+| **C** — 데이터 없음 | DataLab 데이터도 없음 | `1.0` (최솟값) | 낮음 |
+
+> **Phase B 하한선 (`MIN_PHASE_B_EXPECTED = 0.5`):**  
+> 검색량이 낮은 소형주의 `base_scale`이 0.01 수준으로 떨어지면 공고 1건에 상대강도 5,000%가 나오는 분모 폭발이 발생함. 최솟값 0.5로 통제.
+
+> **소수 건수 필터 (`MIN_TODAY_JOB_COUNT = 3`):**  
+> 0→1건 같은 일상 변동이 Spike로 오판되는 현상 방지. 오늘 공고가 3건 미만이면 분석 스킵.
 
 **Step 3.** 상대 강도 계산 및 Spike 판정
 ```python
-expected = base_scale * seasonal_factor   # seasonal_factor = q{N}_factor
+expected = base_scale * seasonal_factor
+if expected <= 0:
+    expected = DEFAULT_BASELINE_SCALE  # 0 나누기 방어
 relative_strength = (today_count / expected) * 100
-is_spike = relative_strength >= 150       # 평년 대비 150% 이상
+is_spike = relative_strength >= 150   # 평년 대비 150% 이상
 ```
 
-**Step 4.** `hiring_signals` UPSERT
+**Step 4.** `hiring_signals` 배치 업서트 (단 1회 네트워크 왕복)
 ```sql
-INSERT INTO hiring_signals (stock_id, observed_date, job_count, baseline, relative_strength, is_spike)
+-- executemany로 전체 기업을 한 번에 처리 (루프 내 개별 execute 대비 수십 배 빠름)
+INSERT INTO hiring_signals
+    (stock_id, observed_date, job_count, baseline,
+     relative_strength, is_spike, calculation_phase)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 ON CONFLICT (stock_id, observed_date) DO UPDATE SET ...
 ```
+
+### Protocol 분석기 (`analyzer.py`) 실행 흐름
+
+오케스트레이터가 `list[RawEvidence]`를 전달하면 DB 쿼리 없이 `SourceResult`를 반환합니다.
+
+```python
+result = await analyzer.analyze(stock_code="005930", evidence=[...])
+# result.direction: "positive" | "neutral" | "negative"
+# result.score: 0.0 ~ 100.0
+# result.summary: "채용 8건 (14일 평균 대비 +60.0%, Phase A), 주요 기술: ..."
+# result.data_status: "ok" | "low_confidence" | "insufficient_data" | "failed"
+```
+
+**Phase별 summary 문구:**
+
+| Phase | summary 내 기준선 표현 |
+|-------|----------------------|
+| A | `"14일 평균 대비 +X.X%"` |
+| B | `"트렌드 기준 대비 +X.X%"` |
+| C | `"기본 기준선 대비 +X.X%"` |
+
+> LLM 상위 레이어가 "Phase B인데 14일 평균 대비?" 혼란을 겪지 않도록 동적으로 생성.
+
+**`_PHASE_B_MIN_EXPECTED = 0.5` 적용:**  
+검색량 극소 기업도 `change_pct` 최대 약 ±500% 수준으로 통제. score는 ±50%p 클램핑으로 0~100점 보장됨.
 
 ---
 
@@ -308,25 +382,25 @@ portal_jobkorea    — (별도 처리, 이 테이블 불필요)
 ```bash
 cd services/agent-worker
 
-# 전체 채용 관련 테스트
+# 전체 채용 관련 테스트 (39케이스)
 uv run pytest tests/ -k "hiring" -v
 
-# HiringAnalyzer 단위 테스트 (20개 케이스, asyncpg 불필요)
+# HiringAnalyzer 단위 테스트 (23케이스, asyncpg 불필요)
 uv run pytest tests/analyzers/test_hiring_analyzer.py -v
 
-# HiringKeywordGenerator 단위 테스트 (17개 케이스)
+# HiringKeywordGenerator 단위 테스트 (16케이스)
 uv run pytest tests/test_hiring_keyword_generator.py -v
 ```
 
-**`test_hiring_analyzer.py` 커버 범위:**
+**`test_hiring_analyzer.py` 커버 범위 (23케이스):**
 
 | 클래스 | 검증 내용 |
 |--------|----------|
-| `TestGetCurrentQuarter` | 날짜 → Q1~Q4 경계값 |
-| `TestGetBaselineScale` | Phase A / B / C 전환 조건 |
-| `TestSpikeDetection` | 150% 경계값, seasonal_factor 보정 |
-| `TestLoadBaselines` | 캐시 최초 로드 / 재사용 방지 |
-| `TestAnalyzeHiringTrend` | INSERT 검증, spike 판정, Cold Start fallback |
+| `TestGetCurrentQuarter` (4) | 날짜 str / date / datetime → Q1~Q4 경계값 |
+| `TestGetBaselineScale` (7) | Phase A / B / C 전환 조건, `tuple[float, str]` 반환, Phase B 클램핑 |
+| `TestSpikeDetection` (5) | 150% 경계값, seasonal_factor 보정, expected≤0 방어 |
+| `TestLoadBaselines` (2) | 캐시 최초 로드 / 재사용 방지 (asyncio.Lock 포함) |
+| `TestAnalyzeHiringTrend` (5) | executemany 배치 업서트, spike 판정, Phase C INSERT, Cold Start fallback |
 
 > 비동기 테스트는 `unittest.IsolatedAsyncioTestCase` 사용 (`pytest-asyncio` 불필요).
 
@@ -367,13 +441,17 @@ UPDATE stocks SET is_target = TRUE WHERE ticker = '000000';
 ### Cold Start (14일 데이터 부족)
 
 처음 2주간은 Phase B(네이버 검색량 기반)로 동작하며 신뢰도가 낮습니다.  
-`bootstrap_hiring_baseline.py`를 실행했는지 확인하세요.
+`bootstrap_hiring_baseline.py`를 실행했는지 확인하세요.  
+Phase B 동작 여부는 `hiring_signals.calculation_phase = 'B'` 로 확인 가능합니다.
 
-### 파이프라인 타임아웃
+### 캐시 갱신 (FastAPI 장기 가동 환경)
 
-`run_daily_hiring_pipeline.py`의 기본 타임아웃은 단계당 3600초(1시간).  
-15개 기업 × 멀티소스 크롤링은 통상 300~600초 소요.  
-완료 후 `logs/hiring_pipeline.log`에서 단계별 소요 시간을 확인하세요.
+분기가 바뀌거나 신규 주식이 추가되어도 프로세스 재시작 전까지 메모리 캐시가 갱신되지 않습니다:
+```python
+# 관리자 API 라우터 또는 분기 전환 감지 로직에서 호출
+await HiringAnalyzer.clear_cache()
+# 다음 analyze_hiring_trend 호출 시 DB에서 최신 hiring_baseline 재로드
+```
 
 ### Windows 한글 깨짐 (대화형 실행)
 
@@ -382,3 +460,9 @@ UPDATE stocks SET is_target = TRUE WHERE ticker = '000000';
 ```powershell
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 ```
+
+### 파이프라인 타임아웃
+
+`run_daily_hiring_pipeline.py`의 기본 타임아웃은 단계당 3600초(1시간).  
+15개 기업 × 멀티소스 크롤링은 통상 300~600초 소요.  
+완료 후 `logs/hiring_pipeline.log`에서 단계별 소요 시간을 확인하세요.
