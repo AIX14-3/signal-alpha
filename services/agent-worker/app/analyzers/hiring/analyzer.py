@@ -39,8 +39,10 @@ _MOMENTUM_WEAK = -30.0     # change_pct ≤ -30% → negative
 # Phase A 진입 최소 기준 (Cold Start 판정)
 _MIN_ROLLING_AVG = 1.0
 
-# ZeroDivision 방어: 기준선이 이 값 미만이면 신뢰도 낮은 분석
-_MIN_BASELINE = 1.0
+# Phase A 최소 기대값 — 실적 기반(14일 평균)일 때 분모 하한선
+_MIN_EXPECTED_JOB = 1.0
+# Phase B ZeroDivision 방어 — 네이버 검색량 기반 분모 폭발 방지 (0.01 = "거의 0이지만 0은 아님")
+_ZERO_DIV_PROTECTION = 0.01
 
 # 최소 공고 건수 미달 시 insufficient_data 반환 (0→소수건 오탐 방지)
 _MIN_JOB_COUNT = 3
@@ -108,23 +110,25 @@ class HiringAnalyzer:
 
         if rolling_avg >= _MIN_ROLLING_AVG:
             # Phase A: 충분한 실적 데이터 (Day 14+)
-            baseline = rolling_avg
+            # _MIN_EXPECTED_JOB(1.0) 하한: rolling_avg가 0에 수렴해도 분모 안전
+            expected = max(rolling_avg * seasonal_factor, _MIN_EXPECTED_JOB)
             phase = "A"
             data_status = "ok"
         elif avg_search_volume is not None and avg_search_volume > 0:
             # Phase B: Cold Start — DataLab 검색량 기반 fallback
-            # 검색 지수(0~100)를 공고 수 스케일로 정규화 (/100)
-            baseline = avg_search_volume / 100.0
+            # 검색 지수(0~100) / 100 = 0.0~1.0 소수 스케일
+            # max(..., _ZERO_DIV_PROTECTION=0.01): 네이버 검색량이 0에 가까워도
+            # _MIN_EXPECTED_JOB(1.0)으로 올리면 Phase B와 C가 동일해지므로 미세 하한만 적용
+            base_scale = avg_search_volume / 100.0
+            expected = max(base_scale * seasonal_factor, _ZERO_DIV_PROTECTION)
             phase = "B"
             data_status = "ok"
         else:
             # Phase C: 데이터 전무 — 최소 기준값
-            baseline = _MIN_BASELINE
+            expected = _MIN_EXPECTED_JOB
             phase = "C"
             data_status = "low_confidence"
 
-        # 계절 가중치 적용 후 기대값 계산
-        expected = max(baseline * seasonal_factor, _MIN_BASELINE)
         change_pct = ((job_count - expected) / expected) * 100
 
         # ── 직무 분석 ────────────────────────────────────────────────────────────
@@ -150,8 +154,9 @@ class HiringAnalyzer:
 
         tech_str = ", ".join(top_techs) if top_techs else "없음"
         kw_str = ", ".join(top_keywords) if top_keywords else "없음"
+        _phase_label = {"A": "14일 평균 대비", "B": "트렌드 기준 대비", "C": "기본 기준선 대비"}
         summary = (
-            f"채용 {job_count}건 (14일 평균 대비 {change_pct:+.1f}%, Phase {phase}), "
+            f"채용 {job_count}건 ({_phase_label[phase]} {change_pct:+.1f}%, Phase {phase}), "
             f"주요 기술: {tech_str}, 키워드: {kw_str}"
         )
 

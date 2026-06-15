@@ -5,16 +5,24 @@ HiringAnalyzer: 채용 공고 강도 분석기
 - 최근 14일 공고 수의 이동평균으로 기준선 설정
 - Cold Start (Day 0~13) 단계에서 네이버 기반 fallback 적용
 """
+import asyncio
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 # 도메인 임계값 상수화
-HIRING_SPIKE_THRESHOLD = 1.5  # 평년 대비 150% 이상 = 급증
+HIRING_SPIKE_THRESHOLD = 1.5   # 평년 대비 150% 이상 = 급증
 DEFAULT_SEASONAL_FACTOR = 1.0  # 계절 데이터 없을 때 기본값
-DEFAULT_BASELINE_SCALE = 1.0   # 기준선 데이터 전무할 때 최소값
+DEFAULT_BASELINE_SCALE = 1.0   # 기준선 데이터 전무할 때 최소값 (Phase C)
 
 # Cold Start 판정: rolling avg가 이 값 이상이면 신뢰도 높은 실제 데이터로 판정
 MIN_ROLLING_AVG_THRESHOLD = 1.0
+
+# 오탐 방지: 오늘 공고 건수가 이 값 미만이면 분석 스킵 (0→소수건 노이즈 차단)
+MIN_TODAY_JOB_COUNT = 3
+
+# Phase B 분모 하한: 검색량이 낮은 기업의 base_scale이 0에 가까워 relative_strength가 폭발하는 것 방지
+# (예: 검색량 2 → base_scale=0.02 → 1건만 올려도 5000% → 가짜 Spike)
+MIN_PHASE_B_EXPECTED = 0.5
 
 
 class HiringAnalyzer:
@@ -30,6 +38,8 @@ class HiringAnalyzer:
     # 클래스 변수: 메모리 캐시 (FastAPI 웹서버/배치 스크립트 모두 대응)
     _baseline_cache: dict[int, dict] = {}
     _is_cache_loaded: bool = False
+    # Double-Checked Locking: 서버 최초 기동 시 동시 요청이 몰려도 DB 중복 쿼리 방지
+    _cache_lock: asyncio.Lock = asyncio.Lock()
 
     def __init__(self, pool: Any) -> None:
         """
@@ -39,35 +49,36 @@ class HiringAnalyzer:
         self._pool = pool
 
     async def load_baselines(self) -> None:
-        """
-        hiring_baseline 테이블의 모든 데이터를 메모리로 로드
-        - N+1 문제 방지
-        - 캐시 재사용 (이미 로드되었으면 스킵)
-        """
+        """hiring_baseline 테이블 전체를 메모리로 로드 (N+1 방지, 캐시 재사용)."""
         if HiringAnalyzer._is_cache_loaded:
             return
 
-        async with self._pool.acquire() as conn:
-            rows = await conn.fetch("""
-                SELECT stock_id, 
-                       avg_search_volume,  -- Cold Start fallback용
-                       q1_factor, q2_factor, q3_factor, q4_factor 
-                FROM hiring_baseline
-                WHERE avg_search_volume > 0  -- 유효한 부트스트랩 데이터만
-            """)
+        # Double-Checked Locking: 락 획득 전에 먼저 체크 → 첫 번째 코루틴만 DB 쿼리 실행
+        async with HiringAnalyzer._cache_lock:
+            if HiringAnalyzer._is_cache_loaded:
+                return
 
-            HiringAnalyzer._baseline_cache = {
-                row["stock_id"]: {
-                    "avg_search_volume": float(row["avg_search_volume"]),
-                    "Q1": float(row["q1_factor"]),
-                    "Q2": float(row["q2_factor"]),
-                    "Q3": float(row["q3_factor"]),
-                    "Q4": float(row["q4_factor"]),
+            async with self._pool.acquire() as conn:
+                rows = await conn.fetch("""
+                    SELECT stock_id,
+                           avg_search_volume,
+                           q1_factor, q2_factor, q3_factor, q4_factor
+                    FROM hiring_baseline
+                    WHERE avg_search_volume > 0
+                """)
+
+                HiringAnalyzer._baseline_cache = {
+                    row["stock_id"]: {
+                        "avg_search_volume": float(row["avg_search_volume"]),
+                        "Q1": float(row["q1_factor"]),
+                        "Q2": float(row["q2_factor"]),
+                        "Q3": float(row["q3_factor"]),
+                        "Q4": float(row["q4_factor"]),
+                    }
+                    for row in rows
                 }
-                for row in rows
-            }
-        
-        HiringAnalyzer._is_cache_loaded = True
+
+            HiringAnalyzer._is_cache_loaded = True
 
     def _get_current_quarter(self, target_date_str) -> str:
         """
@@ -88,48 +99,25 @@ class HiringAnalyzer:
         quarter_num = (dt.month - 1) // 3 + 1
         return f"Q{quarter_num}"
 
-    def _get_baseline_scale(
-        self,
-        stock_id: int,
-        rolling_avg: float
-    ) -> float:
-        """
-        2단계 Fallback 전략으로 기준선(Scale) 결정
-        
-        Phase A (Day 14+): 실제 공고 기반
-            - rolling_avg >= 1.0이면 최근 14일 이동평균 사용
-            - 신뢰도: 높음 ✓
-            
-        Phase B (Day 0~13): Cold Start 우회
-            - rolling_avg < 1.0이면 네이버 검색량 기반
-            - 검색 지수(0~100)를 상대 스케일(0~1)로 정규화
-            - 신뢰도: 중간 ⚠️
-            
-        Phase C (데이터 전무): 최소 기준
-            - 네이버 데이터도 없으면 1.0 (이후 1~2일 추이로 보정)
-            - 신뢰도: 낮음 ❌
-            
-        Args:
-            stock_id: 주식 ID
-            rolling_avg: 최근 14일 공고 수 평균 (0이면 데이터 부족)
-            
+    def _get_baseline_scale(self, stock_id: int, rolling_avg: float) -> tuple[float, str]:
+        """3단계 Fallback으로 기준선과 Phase 레이블을 함께 반환.
+
         Returns:
-            기준선 값 (1.0 ~ 100.0 범위)
+            (base_scale, phase)  phase ∈ {"A", "B", "C"}
         """
         # Phase A: 14일 이동평균 충분 → 실제 데이터 기반
         if rolling_avg >= MIN_ROLLING_AVG_THRESHOLD:
-            return rolling_avg
+            return rolling_avg, "A"
 
         # Phase B: Cold Start → 네이버 검색량 기반 fallback
         baseline = HiringAnalyzer._baseline_cache.get(stock_id)
         if baseline and baseline["avg_search_volume"] > 0:
-            # 네이버 검색 지수(0~100)를 상대 스케일로 정규화
-            # (절대값이 아닌 상대 비교용이므로 /100 처리)
-            normalized_search_volume = baseline["avg_search_volume"] / 100.0
-            return normalized_search_volume
+            normalized = baseline["avg_search_volume"] / 100.0
+            # MIN_PHASE_B_EXPECTED(0.5) 하한: 검색량이 낮은 기업도 분모가 너무 작아지지 않게 보정
+            return max(normalized, MIN_PHASE_B_EXPECTED), "B"
 
         # Phase C: 데이터 완전 부재 → 최소 기준값
-        return DEFAULT_BASELINE_SCALE
+        return DEFAULT_BASELINE_SCALE, "C"
 
     async def analyze_hiring_trend(self, target_date: str) -> None:
         """
@@ -191,24 +179,24 @@ class HiringAnalyzer:
                 stock_id = row["stock_id"]
                 today_count = row["today_count"]
 
-                # baseline 정보 조회 (없으면 Phase C: DEFAULT 값 사용)
-                baseline_factors = HiringAnalyzer._baseline_cache.get(stock_id)
+                # 소수 건수 노이즈 차단 (0→1건 같은 일상 변동이 Spike로 오판되는 현상 방지)
+                if today_count < MIN_TODAY_JOB_COUNT:
+                    continue
 
                 # 현재 분기의 계절 가중치 조회 (Phase C면 DEFAULT_SEASONAL_FACTOR=1.0)
+                baseline_factors = HiringAnalyzer._baseline_cache.get(stock_id)
                 seasonal_factor = (
                     baseline_factors.get(current_quarter, DEFAULT_SEASONAL_FACTOR)
                     if baseline_factors
                     else DEFAULT_SEASONAL_FACTOR
                 )
 
-                # 기준선 결정 (이동평균 또는 네이버 fallback)
+                # 기준선 결정 + Phase 레이블 (이동평균 → 네이버 fallback → 기본값)
                 rolling_avg = rolling_averages.get(stock_id, 0)
-                base_scale = self._get_baseline_scale(stock_id, rolling_avg)
+                base_scale, _phase = self._get_baseline_scale(stock_id, rolling_avg)
 
-                # 기대값 = 기준선 × 계절 가중치
+                # 기대값 = 기준선 × 계절 가중치 (0 나누기 방어 포함)
                 expected_baseline_count = base_scale * seasonal_factor
-
-                # Edge case: 0 나누기 방어
                 if expected_baseline_count <= 0:
                     expected_baseline_count = DEFAULT_BASELINE_SCALE
 

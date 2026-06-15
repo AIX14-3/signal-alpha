@@ -60,42 +60,63 @@ class TestGetBaselineScale(unittest.TestCase):
     def tearDown(self):
         _reset_cache()
 
+    # _get_baseline_scale 은 이제 (scale: float, phase: str) 튜플을 반환한다.
+
     def test_phase_a_returns_rolling_avg(self):
-        """Phase A: rolling_avg ≥ MIN_ROLLING_AVG_THRESHOLD → 이동평균 반환."""
-        result = self.a._get_baseline_scale(stock_id=999, rolling_avg=MIN_ROLLING_AVG_THRESHOLD)
-        self.assertEqual(result, MIN_ROLLING_AVG_THRESHOLD)
+        """Phase A: rolling_avg ≥ MIN_ROLLING_AVG_THRESHOLD → 이동평균 및 "A" 반환."""
+        scale, phase = self.a._get_baseline_scale(stock_id=999, rolling_avg=MIN_ROLLING_AVG_THRESHOLD)
+        self.assertEqual(scale, MIN_ROLLING_AVG_THRESHOLD)
+        self.assertEqual(phase, "A")
 
     def test_phase_a_high_value(self):
-        self.assertEqual(self.a._get_baseline_scale(stock_id=99, rolling_avg=25.0), 25.0)
+        scale, phase = self.a._get_baseline_scale(stock_id=99, rolling_avg=25.0)
+        self.assertEqual(scale, 25.0)
+        self.assertEqual(phase, "A")
 
     def test_phase_b_uses_naver_volume(self):
-        """Phase B: Cold Start → 네이버 검색량 / 100 반환."""
+        """Phase B: Cold Start → max(avg_search_volume/100, MIN_PHASE_B_EXPECTED) 반환."""
+        from app.analyzers.hiring.hiring_analyzer import MIN_PHASE_B_EXPECTED
         HiringAnalyzer._baseline_cache[1] = {
             "avg_search_volume": 60.0, "Q1": 1.0, "Q2": 1.0, "Q3": 1.0, "Q4": 1.0
         }
-        result = self.a._get_baseline_scale(stock_id=1, rolling_avg=0.0)
-        self.assertAlmostEqual(result, 60.0 / 100.0)
+        scale, phase = self.a._get_baseline_scale(stock_id=1, rolling_avg=0.0)
+        # 60/100 = 0.6 > MIN_PHASE_B_EXPECTED(0.5) → 0.6 반환
+        self.assertAlmostEqual(scale, max(60.0 / 100.0, MIN_PHASE_B_EXPECTED))
+        self.assertEqual(phase, "B")
+
+    def test_phase_b_low_volume_clamped(self):
+        """Phase B: 검색량이 낮아 0.4 < MIN_PHASE_B_EXPECTED(0.5) → 0.5로 클램핑."""
+        from app.analyzers.hiring.hiring_analyzer import MIN_PHASE_B_EXPECTED
+        HiringAnalyzer._baseline_cache[1] = {
+            "avg_search_volume": 40.0, "Q1": 1.0, "Q2": 1.0, "Q3": 1.0, "Q4": 1.0
+        }
+        scale, phase = self.a._get_baseline_scale(stock_id=1, rolling_avg=0.0)
+        self.assertAlmostEqual(scale, MIN_PHASE_B_EXPECTED)
+        self.assertEqual(phase, "B")
 
     def test_phase_b_no_cache_falls_to_c(self):
-        """Phase B: 캐시 없음 → Phase C 기본값 1.0."""
-        result = self.a._get_baseline_scale(stock_id=999, rolling_avg=0.0)
-        self.assertEqual(result, DEFAULT_BASELINE_SCALE)
+        """캐시 없음 → Phase C 기본값 1.0."""
+        scale, phase = self.a._get_baseline_scale(stock_id=999, rolling_avg=0.0)
+        self.assertEqual(scale, DEFAULT_BASELINE_SCALE)
+        self.assertEqual(phase, "C")
 
     def test_phase_c_zero_avg_search_volume(self):
-        """Phase C: avg_search_volume = 0 → 기본값 1.0."""
+        """avg_search_volume = 0 → Phase C 기본값 1.0."""
         HiringAnalyzer._baseline_cache[1] = {
             "avg_search_volume": 0.0, "Q1": 1.0, "Q2": 1.0, "Q3": 1.0, "Q4": 1.0
         }
-        result = self.a._get_baseline_scale(stock_id=1, rolling_avg=0.0)
-        self.assertEqual(result, DEFAULT_BASELINE_SCALE)
+        scale, phase = self.a._get_baseline_scale(stock_id=1, rolling_avg=0.0)
+        self.assertEqual(scale, DEFAULT_BASELINE_SCALE)
+        self.assertEqual(phase, "C")
 
     def test_phase_a_b_boundary(self):
         """rolling_avg == MIN_ROLLING_AVG_THRESHOLD 는 Phase A (이동평균 사용)."""
         HiringAnalyzer._baseline_cache[1] = {
             "avg_search_volume": 80.0, "Q1": 1.0, "Q2": 1.0, "Q3": 1.0, "Q4": 1.0
         }
-        result = self.a._get_baseline_scale(stock_id=1, rolling_avg=MIN_ROLLING_AVG_THRESHOLD)
-        self.assertEqual(result, MIN_ROLLING_AVG_THRESHOLD)
+        scale, phase = self.a._get_baseline_scale(stock_id=1, rolling_avg=MIN_ROLLING_AVG_THRESHOLD)
+        self.assertEqual(scale, MIN_ROLLING_AVG_THRESHOLD)
+        self.assertEqual(phase, "A")
 
 
 # ── Spike 판정 경계값 ─────────────────────────────────────────────────────────
@@ -272,7 +293,8 @@ class TestAnalyzeHiringTrend(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(is_spike)
 
     async def test_cold_start_uses_naver_fallback(self):
-        """rolling_avg 없는 기업은 네이버 검색량 기반 fallback 사용."""
+        """rolling_avg 없는 기업은 네이버 검색량 기반 fallback 사용, MIN_PHASE_B_EXPECTED로 클램핑."""
+        from app.analyzers.hiring.hiring_analyzer import MIN_PHASE_B_EXPECTED
         HiringAnalyzer._baseline_cache = {
             2: {"avg_search_volume": 40.0, "Q1": 1.0, "Q2": 1.0, "Q3": 1.0, "Q4": 1.0}
         }
@@ -286,8 +308,8 @@ class TestAnalyzeHiringTrend(unittest.IsolatedAsyncioTestCase):
         conn.execute.assert_called_once()
         args = conn.execute.call_args[0]
         baseline = args[4]
-        # expected = (40/100) * 1.0 = 0.4
-        self.assertAlmostEqual(baseline, 0.4)
+        # 40/100 = 0.4 < MIN_PHASE_B_EXPECTED(0.5) → 0.5로 클램핑됨
+        self.assertAlmostEqual(baseline, MIN_PHASE_B_EXPECTED)
 
 
 if __name__ == "__main__":
