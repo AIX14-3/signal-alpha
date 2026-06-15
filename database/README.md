@@ -62,8 +62,15 @@ docker compose run --rm migrate
 | 011_admin | G Admin | `admin_accounts`, `admin_sessions` |
 | 012_triggers | - | (트리거 함수 2종 + updated_at 트리거 일괄 부착) |
 | 013_legacy_report_mvp | Legacy | `report_raw`, `report_signal` ← **폐기 예정, 신규 참조 금지** (§7) |
+| 014_hiring_raw_details_observed_date | C Collection | (`hiring_raw_details.observed_date` 컬럼 추가) |
+| 015_hiring_signals | E Analysis | `hiring_signals` |
+| 016_hiring_sources | C Collection | `hiring_sources` |
+| 017_alternative_signals_consensus | E Analysis | (`final_signals`에 `consensus_score`/`positive_evidence`/`caution_evidence` 컬럼 추가) |
+| 018_datalab_keyword_polarity | C Collection | (`datalab_category_keywords.polarity` 컬럼 추가) |
+| 019_patent_llm_features | C Collection | (`patent_raw_details`에 `llm_features`/`llm_status` 컬럼 추가) |
+| 020_hiring_job_functions | E Analysis | `hiring_job_functions`, `hiring_job_function_stocks` |
 
-이 외에 러너가 자동 생성하는 `schema_migrations` 원장이 있습니다. 총 48개 테이블.
+이 외에 러너가 자동 생성하는 `schema_migrations` 원장이 있습니다. 베이스라인(001~013) 48개 테이블 + 014~020 확장(`hiring_signals`, `hiring_sources`, `hiring_job_functions`, `hiring_job_function_stocks` 4개 신규 테이블 및 컬럼 추가).
 
 DataLab은 종목이 아닌 **카테고리 단위**로 수집합니다: 원본은 `datalab_raw_documents`/`datalab_raw_details`(category_id 기반)에 저장하고, `datalab_category_stocks` 매핑으로 종목을 해석합니다. `processing_queue.stock_id`가 NULL 허용인 이유도 이것입니다.
 

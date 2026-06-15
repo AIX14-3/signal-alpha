@@ -279,6 +279,9 @@ class AnalysisRepository:
         min_plan_required: str = "free",
         is_published: bool = False,
         published_at: Any | None = None,
+        consensus_score: Any = None,
+        positive_evidence: Any = None,
+        caution_evidence: Any = None,
     ) -> Any:
         return await self._connection.fetchrow(
             """
@@ -301,11 +304,15 @@ class AnalysisRepository:
                 needs_review,
                 min_plan_required,
                 is_published,
-                published_at
+                published_at,
+                consensus_score,
+                positive_evidence,
+                caution_evidence
             )
             VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-                $11, $12, $13, $14, $15, $16, $17, $18, $19
+                $11, $12, $13, $14, $15, $16, $17, $18, $19,
+                $20, $21::jsonb, $22::jsonb
             )
             ON CONFLICT (stock_id, signal_date, run_key, version)
             DO UPDATE SET
@@ -323,7 +330,10 @@ class AnalysisRepository:
                 needs_review = EXCLUDED.needs_review,
                 min_plan_required = EXCLUDED.min_plan_required,
                 is_published = EXCLUDED.is_published,
-                published_at = EXCLUDED.published_at
+                published_at = EXCLUDED.published_at,
+                consensus_score = EXCLUDED.consensus_score,
+                positive_evidence = EXCLUDED.positive_evidence,
+                caution_evidence = EXCLUDED.caution_evidence
             RETURNING *
             """,
             stock_id,
@@ -345,6 +355,9 @@ class AnalysisRepository:
             min_plan_required,
             is_published,
             published_at,
+            consensus_score,
+            positive_evidence,
+            caution_evidence,
         )
 
 

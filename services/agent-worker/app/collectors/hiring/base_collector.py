@@ -174,13 +174,19 @@ class BaseCollector(ABC):
         """
         clean = self._clean_company_name(raw_company_name)
 
+        # 이름(name)뿐 아니라 약칭(short_name)으로도 매칭한다. 잡코리아 등은 종목을
+        # 약칭으로 표기하는 경우가 많다(예: stock 'HYBE' ↔ 공고 회사명 '하이브',
+        # 'NAVER' ↔ '네이버'). short_name 이 NULL 인 종목은 ILIKE 결과가 NULL 이라
+        # 자동으로 제외되므로 안전하다.
         row = db.execute(
             text("""
                 SELECT id, COALESCE(sector, '')
                 FROM stocks
                 WHERE name ILIKE :exact OR name ILIKE :like
+                   OR short_name ILIKE :exact OR short_name ILIKE :like
                 ORDER BY
-                    CASE WHEN name ILIKE :exact THEN 0 ELSE 1 END,
+                    CASE WHEN name ILIKE :exact OR short_name ILIKE :exact
+                         THEN 0 ELSE 1 END,
                     LENGTH(name) ASC
                 LIMIT 1
             """),
@@ -245,17 +251,20 @@ class BaseCollector(ABC):
         q_col = f"q{quarter[1]}_factor"
         seasonal_baseline: float | None = None
         try:
-            baseline_row = db.execute(
-                text(
-                    "SELECT avg_search_volume, q1_factor, q2_factor, q3_factor, q4_factor "
-                    "FROM hiring_baseline WHERE stock_id = :sid"
-                ),
-                {"sid": stock_id},
-            ).fetchone()
-            if baseline_row:
-                # SQLAlchemy 2.0 Row: _mapping.get()으로 문자열 변수 기반 컬럼 조회
-                q_factor = baseline_row._mapping.get(q_col) or 1.0
-                seasonal_baseline = float(baseline_row._mapping["avg_search_volume"]) * float(q_factor)
+            # 중첩 savepoint 로 격리: hiring_baseline 미생성·조회 실패가 발생해도
+            # 레코드의 외부 savepoint(트랜잭션)는 abort 되지 않고 INSERT 가 계속된다.
+            with db.begin_nested():
+                baseline_row = db.execute(
+                    text(
+                        "SELECT avg_search_volume, q1_factor, q2_factor, q3_factor, q4_factor "
+                        "FROM hiring_baseline WHERE stock_id = :sid"
+                    ),
+                    {"sid": stock_id},
+                ).fetchone()
+                if baseline_row:
+                    # SQLAlchemy 2.0 Row: _mapping.get()으로 문자열 변수 기반 컬럼 조회
+                    q_factor = baseline_row._mapping.get(q_col) or 1.0
+                    seasonal_baseline = float(baseline_row._mapping["avg_search_volume"]) * float(q_factor)
         except Exception as _baseline_err:
             logger.warning("⚠️  hiring_baseline 조회 실패 (계절 가중치 스킵): %s", _baseline_err)
 
@@ -339,6 +348,38 @@ class BaseCollector(ABC):
                 "extra_payload": json.dumps(extra_payload, ensure_ascii=False),
             },
         )
+
+        # 4) processing_queue 등록 (계약: raw_documents + detail + queue 를 한 트랜잭션에).
+        #    이 INSERT 가 실패하면 begin_nested() savepoint 가 raw/detail 까지 롤백 →
+        #    호출부에서 failed 로 집계. raw/detail 만 남고 큐가 없는 상태는 발생하지 않는다.
+        #    재실행 시에는 raw_documents 가 ON CONFLICT 로 스킵(_SkipRecord)되어
+        #    이 지점에 도달하지 않으므로 중복 큐도 생기지 않는다.
+        db.execute(
+            text("""
+                INSERT INTO processing_queue (
+                    stock_id, task_type, status, priority,
+                    source_raw_ids, task_context
+                )
+                VALUES (
+                    :stock_id, :task_type, 'pending', 'batch',
+                    :source_raw_ids ::bigint[], :task_context ::jsonb
+                )
+            """),
+            {
+                "stock_id": stock_id,
+                "task_type": f"NORMALIZE_{self.SOURCE_TYPE}",
+                "source_raw_ids": [int(raw_doc_id)],
+                "task_context": json.dumps(
+                    {
+                        "collector_run_id": run_id,
+                        "source_type": self.SOURCE_TYPE,
+                        "collector_ver": self.COLLECTOR_VER,
+                    },
+                    ensure_ascii=False,
+                ),
+            },
+        )
+
         logger.info("✓ [%s] %s",
                     self._clean_company_name(data["company_name"]), data.get("job_title"))
 

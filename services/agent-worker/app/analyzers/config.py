@@ -1,0 +1,216 @@
+"""Env-driven configuration for the Patent/DataLab analyzers and the
+Alternative aggregation harness.
+
+No thresholds, weights, lookback windows, or score-mapping constants are baked
+into the rule/aggregator code — they all live here and are overridable via
+environment variables. Tests construct these dataclasses directly with explicit
+values, so the analyzers stay pure and deterministic.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from os import getenv
+
+
+def _float(name: str, default: float) -> float:
+    raw = getenv(name)
+    return float(raw) if raw not in (None, "") else default
+
+
+def _int(name: str, default: int) -> int:
+    raw = getenv(name)
+    return int(raw) if raw not in (None, "") else default
+
+
+@dataclass(frozen=True)
+class PatentRuleConfig:
+    """Scoring parameters for the Patent analyzer."""
+
+    lookback_days: int = 365
+    min_count: int = 3
+    momentum_threshold: float = 0.5  # retained for legacy reference
+    momentum_scale: float = 0.5  # tanh knee: momentum of 50% → 0.76*weight
+    new_category_scale: float = 0.3  # tanh knee: 30% new-category ratio → 0.76*weight
+    stale_days: int = 180
+    momentum_weight: float = 0.5
+    new_category_weight: float = 0.3
+    activity_weight: float = 0.2
+    # LLM-significance component (C3). Adds a positive "quality of R&D output" signal
+    # when patents have been enriched; contributes 0 (exact fallback) when none are.
+    significance_weight: float = 0.4
+    significance_scale: float = 0.5  # tanh knee: mean significance 0.5 → 0.76*weight
+    significance_min_enriched: int = 1  # need this many enriched filings to apply
+    positive_threshold: float = 0.2
+    negative_threshold: float = -0.2
+
+    @classmethod
+    def from_env(cls) -> "PatentRuleConfig":
+        return cls(
+            lookback_days=_int("PATENT_LOOKBACK_DAYS", cls.lookback_days),
+            min_count=_int("PATENT_MIN_COUNT", cls.min_count),
+            momentum_threshold=_float("PATENT_MOMENTUM_THRESHOLD", cls.momentum_threshold),
+            momentum_scale=_float("PATENT_MOMENTUM_SCALE", cls.momentum_scale),
+            new_category_scale=_float("PATENT_NEW_CATEGORY_SCALE", cls.new_category_scale),
+            stale_days=_int("PATENT_STALE_DAYS", cls.stale_days),
+            momentum_weight=_float("PATENT_MOMENTUM_WEIGHT", cls.momentum_weight),
+            new_category_weight=_float("PATENT_NEW_CATEGORY_WEIGHT", cls.new_category_weight),
+            activity_weight=_float("PATENT_ACTIVITY_WEIGHT", cls.activity_weight),
+            significance_weight=_float("PATENT_SIGNIFICANCE_WEIGHT", cls.significance_weight),
+            significance_scale=_float("PATENT_SIGNIFICANCE_SCALE", cls.significance_scale),
+            significance_min_enriched=_int(
+                "PATENT_SIGNIFICANCE_MIN_ENRICHED", cls.significance_min_enriched
+            ),
+            positive_threshold=_float("PATENT_POSITIVE_THRESHOLD", cls.positive_threshold),
+            negative_threshold=_float("PATENT_NEGATIVE_THRESHOLD", cls.negative_threshold),
+        )
+
+
+@dataclass(frozen=True)
+class DataLabRuleConfig:
+    """Scoring parameters for the DataLab (search-trend) analyzer."""
+
+    lookback_days: int = 30
+    min_observations: int = 5
+    min_prior_observations: int = 5  # prior-window count below this suppresses momentum/change
+    momentum_threshold: float = 0.10  # retained for the small-sample guard wording only
+    momentum_scale: float = 0.30  # tanh knee: momentum of 30% → 0.76*weight
+    change_scale: float = 30.0  # tanh knee: avg change of 30%p → 0.76*weight
+    spike_threshold: float = 0.20  # retained for legacy reference
+    spike_scale: float = 0.30  # tanh knee: 30% spike share → 0.76*spike_weight
+    risk_scale: float = 0.30  # tanh knee for RISK-keyword momentum (rising risk = bearish)
+    risk_weight: float = 0.6  # max negative contribution from rising risk searches
+    stale_days: int = 14
+    momentum_weight: float = 0.6
+    spike_weight: float = 0.2
+    change_weight: float = 0.2
+    positive_threshold: float = 0.2
+    negative_threshold: float = -0.2
+
+    @classmethod
+    def from_env(cls) -> "DataLabRuleConfig":
+        return cls(
+            lookback_days=_int("DATALAB_LOOKBACK_DAYS", cls.lookback_days),
+            min_observations=_int("DATALAB_MIN_OBSERVATIONS", cls.min_observations),
+            min_prior_observations=_int("DATALAB_MIN_PRIOR_OBSERVATIONS", cls.min_prior_observations),
+            momentum_threshold=_float("DATALAB_MOMENTUM_THRESHOLD", cls.momentum_threshold),
+            momentum_scale=_float("DATALAB_MOMENTUM_SCALE", cls.momentum_scale),
+            change_scale=_float("DATALAB_CHANGE_SCALE", cls.change_scale),
+            spike_threshold=_float("DATALAB_SPIKE_THRESHOLD", cls.spike_threshold),
+            spike_scale=_float("DATALAB_SPIKE_SCALE", cls.spike_scale),
+            risk_scale=_float("DATALAB_RISK_SCALE", cls.risk_scale),
+            risk_weight=_float("DATALAB_RISK_WEIGHT", cls.risk_weight),
+            stale_days=_int("DATALAB_STALE_DAYS", cls.stale_days),
+            momentum_weight=_float("DATALAB_MOMENTUM_WEIGHT", cls.momentum_weight),
+            spike_weight=_float("DATALAB_SPIKE_WEIGHT", cls.spike_weight),
+            change_weight=_float("DATALAB_CHANGE_WEIGHT", cls.change_weight),
+            positive_threshold=_float("DATALAB_POSITIVE_THRESHOLD", cls.positive_threshold),
+            negative_threshold=_float("DATALAB_NEGATIVE_THRESHOLD", cls.negative_threshold),
+        )
+
+
+@dataclass(frozen=True)
+class HiringRuleConfig:
+    """Scoring parameters for the Hiring (job-postings) analyzer."""
+
+    lookback_days: int = 90
+    min_observations: int = 3
+    min_prior_observations: int = 5  # prior-window count below this suppresses momentum/change
+    momentum_threshold: float = 0.10  # retained for the small-sample guard wording only
+    momentum_scale: float = 0.30  # tanh knee: momentum of 30% → 0.76*weight
+    change_scale: float = 30.0  # tanh knee: avg change of 30%p → 0.76*weight
+    stale_days: int = 45
+    momentum_weight: float = 0.6
+    change_weight: float = 0.4
+    # Sector job-function demand component (C4): peer-company demand momentum for the
+    # functions this stock depends on. Contributes 0 (exact fallback) when the
+    # hiring_job_function_stocks mapping is unseeded or has no peer data.
+    sector_demand_weight: float = 0.3
+    sector_demand_scale: float = 0.30  # tanh knee: 30% sector momentum → 0.76*weight
+    positive_threshold: float = 0.2
+    negative_threshold: float = -0.2
+
+    @classmethod
+    def from_env(cls) -> "HiringRuleConfig":
+        return cls(
+            lookback_days=_int("HIRING_LOOKBACK_DAYS", cls.lookback_days),
+            min_observations=_int("HIRING_MIN_OBSERVATIONS", cls.min_observations),
+            min_prior_observations=_int("HIRING_MIN_PRIOR_OBSERVATIONS", cls.min_prior_observations),
+            momentum_threshold=_float("HIRING_MOMENTUM_THRESHOLD", cls.momentum_threshold),
+            momentum_scale=_float("HIRING_MOMENTUM_SCALE", cls.momentum_scale),
+            change_scale=_float("HIRING_CHANGE_SCALE", cls.change_scale),
+            stale_days=_int("HIRING_STALE_DAYS", cls.stale_days),
+            momentum_weight=_float("HIRING_MOMENTUM_WEIGHT", cls.momentum_weight),
+            change_weight=_float("HIRING_CHANGE_WEIGHT", cls.change_weight),
+            sector_demand_weight=_float("HIRING_SECTOR_DEMAND_WEIGHT", cls.sector_demand_weight),
+            sector_demand_scale=_float("HIRING_SECTOR_DEMAND_SCALE", cls.sector_demand_scale),
+            positive_threshold=_float("HIRING_POSITIVE_THRESHOLD", cls.positive_threshold),
+            negative_threshold=_float("HIRING_NEGATIVE_THRESHOLD", cls.negative_threshold),
+        )
+
+
+@dataclass(frozen=True)
+class AggregatorConfig:
+    """Weights and thresholds for merging source signals into one signal.
+
+    ``weights`` maps a SourceType to its raw weight. Only sources actually
+    present in a run are used, and the weights are renormalised over them — so a
+    teammate adding HIRING only needs to add ``ALT_WEIGHT_HIRING`` here.
+    """
+
+    weights: dict[str, float]
+    positive_threshold: float = 0.2
+    negative_threshold: float = -0.2
+    # confidence = (base + per_source * available_sources) * data-quality multipliers,
+    # clamped to [0, 1]. The multipliers below temper confidence by data quality so a
+    # downstream LLM is told how much to trust the score, not just the score.
+    confidence_base: float = 0.3
+    confidence_per_source: float = 0.35
+    partial_penalty: float = 0.8  # any source data_status == "partial"
+    stale_penalty: float = 0.85  # any source flagged stale_data
+    sparse_penalty: float = 0.8  # any source flagged low_base / insufficient_history
+    agreement_high_bonus: float = 1.1  # all sources agree on direction
+    agreement_low_penalty: float = 0.7  # sources conflict (positive vs negative)
+
+    @classmethod
+    def from_env(cls) -> "AggregatorConfig":
+        weights = {
+            "HIRING": _float("ALT_WEIGHT_HIRING", 0.34),
+            "PATENT": _float("ALT_WEIGHT_PATENT", 0.33),
+            "DATALAB": _float("ALT_WEIGHT_DATALAB", 0.33),
+        }
+        # Optional sources a teammate may register later. Only picked up when an
+        # explicit weight env var is set, so the default 3-source run is intact.
+        for optional in ("DART", "REPORT", "PRICE"):
+            raw = getenv(f"ALT_WEIGHT_{optional}")
+            if raw not in (None, ""):
+                weights[optional] = float(raw)
+        return cls(
+            weights=weights,
+            positive_threshold=_float("ALT_POSITIVE_THRESHOLD", cls.positive_threshold),
+            negative_threshold=_float("ALT_NEGATIVE_THRESHOLD", cls.negative_threshold),
+            confidence_base=_float("ALT_CONFIDENCE_BASE", cls.confidence_base),
+            confidence_per_source=_float("ALT_CONFIDENCE_PER_SOURCE", cls.confidence_per_source),
+            partial_penalty=_float("ALT_PARTIAL_PENALTY", cls.partial_penalty),
+            stale_penalty=_float("ALT_STALE_PENALTY", cls.stale_penalty),
+            sparse_penalty=_float("ALT_SPARSE_PENALTY", cls.sparse_penalty),
+            agreement_high_bonus=_float("ALT_AGREEMENT_HIGH_BONUS", cls.agreement_high_bonus),
+            agreement_low_penalty=_float("ALT_AGREEMENT_LOW_PENALTY", cls.agreement_low_penalty),
+        )
+
+
+@dataclass(frozen=True)
+class AnalyzerRuntimeConfig:
+    """Batch-runner knobs (concurrency, versioning)."""
+
+    version: str = "1.0"
+    batch_concurrency: int = 8
+    run_key: str = "BATCH"
+
+    @classmethod
+    def from_env(cls) -> "AnalyzerRuntimeConfig":
+        return cls(
+            version=getenv("ANALYZER_VERSION", cls.version),
+            batch_concurrency=_int("ANALYZER_BATCH_CONCURRENCY", cls.batch_concurrency),
+            run_key=getenv("ANALYZER_RUN_KEY", cls.run_key),
+        )

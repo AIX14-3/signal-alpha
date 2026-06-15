@@ -41,6 +41,241 @@ class RawDetailRepository:
             raw_document_ids,
         )
 
+    async def list_patent_details_by_stock(
+        self,
+        *,
+        stock_id: int,
+        since_date: Any | None = None,
+    ) -> list[Any]:
+        """Patent detail rows for one stock, newest first, within the window.
+
+        ``since_date`` (a date) bounds the lookback; pass None for all history.
+        """
+        return await self._connection.fetch(
+            """
+            SELECT
+                p.raw_document_id,
+                p.stock_id,
+                p.application_no,
+                p.patent_title,
+                p.applicant_name,
+                p.application_date,
+                p.tech_category,
+                p.is_new_category,
+                p.extra_payload,
+                p.llm_features,
+                p.llm_status,
+                r.title,
+                r.source_url,
+                r.published_at
+            FROM patent_raw_details p
+            INNER JOIN raw_documents r ON r.id = p.raw_document_id
+            WHERE p.stock_id = $1
+              AND ($2::date IS NULL OR p.application_date >= $2)
+            ORDER BY p.application_date DESC, p.raw_document_id DESC
+            """,
+            stock_id,
+            since_date,
+        )
+
+    async def list_unenriched_patent_details(self, *, limit: int = 200) -> list[Any]:
+        """Patent rows still awaiting LLM enrichment (``llm_status = 'pending'``).
+
+        Newest filings first so a partial batch enriches the most relevant
+        patents. ``extra_payload`` carries the abstract (``astrtCont``) the
+        enrichment tool feeds to the LLM. See migration 019.
+        """
+        return await self._connection.fetch(
+            """
+            SELECT
+                p.raw_document_id,
+                p.application_no,
+                p.patent_title,
+                p.extra_payload
+            FROM patent_raw_details p
+            WHERE p.llm_status = 'pending'
+            ORDER BY p.application_date DESC, p.raw_document_id DESC
+            LIMIT $1
+            """,
+            limit,
+        )
+
+    async def update_patent_llm_features(
+        self,
+        *,
+        raw_document_id: int,
+        features: Any | None,
+        status: str,
+    ) -> None:
+        """Cache enrichment output for one patent (one-time; application_no is immutable)."""
+        await self._connection.execute(
+            """
+            UPDATE patent_raw_details
+            SET llm_features = $2::jsonb, llm_status = $3
+            WHERE raw_document_id = $1
+            """,
+            raw_document_id,
+            _jsonb(features),
+            status,
+        )
+
+    async def list_hiring_details_by_stock(
+        self,
+        *,
+        stock_id: int,
+        since_date: Any | None = None,
+    ) -> list[Any]:
+        """Hiring detail rows for one stock, newest first, within the window.
+
+        ``hiring_raw_details`` has no own date column, so the observation date is
+        taken from the joined ``raw_documents.published_at``.
+        """
+        return await self._connection.fetch(
+            """
+            SELECT
+                h.raw_document_id,
+                h.stock_id,
+                h.keyword,
+                h.job_category,
+                h.job_count,
+                h.previous_job_count,
+                h.change_pct,
+                h.extra_payload,
+                r.title,
+                r.source_url,
+                r.published_at
+            FROM hiring_raw_details h
+            INNER JOIN raw_documents r ON r.id = h.raw_document_id
+            WHERE h.stock_id = $1
+              AND ($2::timestamptz IS NULL OR r.published_at >= $2)
+            ORDER BY r.published_at DESC, h.raw_document_id DESC
+            """,
+            stock_id,
+            since_date,
+        )
+
+    async def list_hiring_function_weights(self, stock_id: int) -> list[Any]:
+        """Function-key → weight exposure for one stock (C4, migration 020).
+
+        Empty when the stock is unmapped or the table is unseeded, which makes the
+        analyzer fall back to own-momentum only.
+        """
+        return await self._connection.fetch(
+            """
+            SELECT f.function_key, fs.weight
+            FROM hiring_job_function_stocks fs
+            INNER JOIN hiring_job_functions f ON f.id = fs.job_function_id
+            WHERE fs.stock_id = $1 AND f.is_active = TRUE
+            """,
+            stock_id,
+        )
+
+    async def list_recent_hiring_all_stocks(self, *, since_date: Any | None = None) -> list[Any]:
+        """Cross-company postings within the window for sector-demand aggregation.
+
+        Only the columns the function classifier/aggregator needs (stock_id,
+        job title keyword, count, date). The loader classifies each title to a
+        job function in code, so no function column is required here.
+        """
+        return await self._connection.fetch(
+            """
+            SELECT
+                h.stock_id,
+                h.keyword,
+                h.job_count,
+                r.published_at
+            FROM hiring_raw_details h
+            INNER JOIN raw_documents r ON r.id = h.raw_document_id
+            WHERE ($1::timestamptz IS NULL OR r.published_at >= $1)
+            """,
+            since_date,
+        )
+
+    async def get_hiring_baseline(self, stock_id: int) -> Any | None:
+        """Per-stock seasonal baseline (avg + quarterly factors), or None.
+
+        Populated by the DataLabBaselineCollector (run_baseline.py). The hiring
+        analyzer uses the quarterly factors to de-seasonalize job-count momentum;
+        a missing row simply means no seasonal correction is applied.
+        """
+        return await self._connection.fetchrow(
+            """
+            SELECT
+                stock_id,
+                avg_search_volume,
+                q1_factor,
+                q2_factor,
+                q3_factor,
+                q4_factor,
+                keyword_group_name,
+                data_start_date,
+                data_end_date
+            FROM hiring_baseline
+            WHERE stock_id = $1
+            """,
+            stock_id,
+        )
+
+    async def list_datalab_categories_for_stock(self, stock_id: int) -> list[Any]:
+        """(category_id, weight) rows mapping this stock to its DataLab themes."""
+        return await self._connection.fetch(
+            """
+            SELECT
+                dcs.category_id,
+                dcs.weight,
+                dc.name AS category_name
+            FROM datalab_category_stocks dcs
+            INNER JOIN datalab_categories dc ON dc.id = dcs.category_id
+            WHERE dcs.stock_id = $1
+              AND dc.is_active = TRUE
+            ORDER BY dcs.category_id
+            """,
+            stock_id,
+        )
+
+    async def list_datalab_details_by_category(
+        self,
+        *,
+        category_ids: list[int],
+        since_date: Any | None = None,
+    ) -> list[Any]:
+        """DataLab detail rows for the given categories within the window.
+
+        DataLab is collected by category, so detail rows carry ``category_id``
+        (not stock_id) — see migration 020.
+        """
+        if not category_ids:
+            return []
+
+        return await self._connection.fetch(
+            """
+            SELECT
+                d.raw_document_id,
+                d.category_id,
+                d.keyword,
+                d.keyword_group,
+                d.observed_date,
+                d.search_index,
+                d.previous_search_index,
+                d.change_pct,
+                d.period_type,
+                d.device,
+                d.gender,
+                d.age_group,
+                d.is_spike,
+                d.extra_payload,
+                COALESCE(dck.polarity, 'demand') AS polarity
+            FROM datalab_raw_details d
+            LEFT JOIN datalab_category_keywords dck
+                ON dck.category_id = d.category_id AND dck.keyword = d.keyword
+            WHERE d.category_id = ANY($1::BIGINT[])
+              AND ($2::date IS NULL OR d.observed_date >= $2)
+            ORDER BY d.observed_date DESC, d.raw_document_id DESC
+            """,
+            category_ids,
+            since_date,
+        )
+
     async def upsert_dart_detail(
         self,
         *,
