@@ -244,6 +244,8 @@ class BaseCollector(ABC):
         quarter = self._get_current_quarter()
         q_col = f"q{quarter[1]}_factor"
         seasonal_baseline: float | None = None
+        avg_search_volume: float | None = None
+        seasonal_factor: float | None = None
         try:
             baseline_row = db.execute(
                 text(
@@ -255,9 +257,30 @@ class BaseCollector(ABC):
             if baseline_row:
                 # SQLAlchemy 2.0 Row: _mapping.get()으로 문자열 변수 기반 컬럼 조회
                 q_factor = baseline_row._mapping.get(q_col) or 1.0
-                seasonal_baseline = float(baseline_row._mapping["avg_search_volume"]) * float(q_factor)
+                avg_search_volume = float(baseline_row._mapping["avg_search_volume"])
+                seasonal_factor = float(q_factor)
+                seasonal_baseline = avg_search_volume * seasonal_factor
         except Exception as _baseline_err:
             logger.warning("⚠️  hiring_baseline 조회 실패 (계절 가중치 스킵): %s", _baseline_err)
+
+        # 14일 이동평균 조회 — analyzer.py Phase A/B 판정에 사용
+        # 주말/공휴일 0건 포함 보정: COUNT/14.0 (AVG 대신)
+        rolling_avg_14d: float | None = None
+        try:
+            rolling_avg_14d = db.execute(
+                text("""
+                    SELECT COUNT(raw_document_id) / 14.0
+                    FROM hiring_raw_details
+                    WHERE stock_id = :sid
+                      AND observed_date BETWEEN CURRENT_DATE - INTERVAL '14 days'
+                                            AND CURRENT_DATE - INTERVAL '1 day'
+                """),
+                {"sid": stock_id},
+            ).scalar()
+            if rolling_avg_14d is not None:
+                rolling_avg_14d = float(rolling_avg_14d)
+        except Exception as _roll_err:
+            logger.warning("⚠️  rolling_avg_14d 조회 실패 (스킵): %s", _roll_err)
 
         job_link = data.get("job_link") or data.get("source_url")
         if not job_link:
@@ -317,6 +340,10 @@ class BaseCollector(ABC):
             "unique_key": data.get("unique_key"),
             "quarter": quarter,
             "seasonal_baseline": seasonal_baseline,
+            # analyzer.py Phase A/B/C 판정에 필요한 기준선 데이터
+            "rolling_avg_14d": rolling_avg_14d,      # Phase A: 14일 이동평균
+            "avg_search_volume": avg_search_volume,  # Phase B: DataLab Cold Start fallback
+            "seasonal_factor": seasonal_factor,      # 현재 분기 계절 가중치
         }
         db.execute(
             text("""

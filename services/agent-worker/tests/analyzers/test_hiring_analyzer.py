@@ -229,7 +229,8 @@ class TestAnalyzeHiringTrend(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(obs_date, "2024-06-15")
         self.assertEqual(job_count, 8)
 
-    async def test_skips_stock_without_baseline(self):
+    async def test_phase_c_no_baseline_still_inserts(self):
+        """baseline 없으면 Phase C(DEFAULT=1.0)로 분석 후 hiring_signals에 INSERT한다."""
         HiringAnalyzer._baseline_cache = {}
         today_row = {"stock_id": 1, "today_count": 5}
         pool, conn = self._make_pool([], [today_row])
@@ -237,7 +238,12 @@ class TestAnalyzeHiringTrend(unittest.IsolatedAsyncioTestCase):
         analyzer = HiringAnalyzer(pool)
         await analyzer.analyze_hiring_trend("2024-06-15")
 
-        conn.execute.assert_not_called()
+        # Phase C: baseline=1.0, relative_strength=500%, is_spike=True
+        conn.execute.assert_called_once()
+        sql, stock_id, obs_date, job_count, baseline, *_ = conn.execute.call_args[0]
+        self.assertIn("INSERT INTO hiring_signals", sql)
+        self.assertEqual(stock_id, 1)
+        self.assertAlmostEqual(float(baseline), 1.0)
 
     async def test_spike_at_exactly_150pct(self):
         """15개 / rolling_avg 10.0 = 150% → is_spike=True."""

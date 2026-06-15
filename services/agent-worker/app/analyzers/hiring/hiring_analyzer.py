@@ -71,18 +71,20 @@ class HiringAnalyzer:
 
     def _get_current_quarter(self, target_date_str) -> str:
         """
-        날짜(str 또는 date)를 Q1~Q4로 변환
+        날짜(str / date / datetime)를 Q1~Q4로 변환
 
         Args:
-            target_date_str: "2024-06-15" 형태의 str 또는 datetime.date 객체
+            target_date_str: "YYYY-MM-DD" str, datetime.date, 또는 datetime 객체
         """
         from datetime import date as date_type
-        if isinstance(target_date_str, str):
-            dt = datetime.strptime(target_date_str, "%Y-%m-%d")
+        if isinstance(target_date_str, datetime):
+            # datetime 객체 직접 수용 (시분초 포함 경우 대비)
+            dt = target_date_str
         elif isinstance(target_date_str, date_type):
             dt = datetime(target_date_str.year, target_date_str.month, target_date_str.day)
         else:
-            dt = datetime.strptime(str(target_date_str), "%Y-%m-%d")
+            # 문자열 앞 10자리(YYYY-MM-DD)만 사용 — "2026-06-15 09:30:00" 같은 포맷도 안전하게 처리
+            dt = datetime.strptime(str(target_date_str)[:10], "%Y-%m-%d")
         quarter_num = (dt.month - 1) // 3 + 1
         return f"Q{quarter_num}"
 
@@ -158,16 +160,18 @@ class HiringAnalyzer:
             #    기준선이 수배까지 과대평가됨.
             #    예: 14일 중 2일에만 각 7개 = (7+7)/2 = 7.0 (틀림)
             #        → 정정: 14개 / 14.0 = 1.0 (맞음)
-            # Step 1: 지난 14일간의 총 공고 수 조회 후 14.0으로 나누어 정확한 일평균 계산 (공고 0개인 날 포함 보정)
+            # Step 1: 지난 14일 총 공고 수 / 14.0 = 일평균
+            # hiring_raw_details 는 공고 1건=1행 구조 (job_count 항상 1).
+            # COUNT(raw_document_id) 가 총 공고 수와 동일하며, AVG() 보다 정확함.
+            # — AVG()는 공고가 없는 날(행 없음)을 분모에서 제외해 기준선을 과대평가하는 함정이 있음.
             scale_rows = await conn.fetch("""
-                SELECT stock_id, 
-                    COUNT(raw_document_id) / 14.0 as rolling_avg
+                SELECT stock_id,
+                       COUNT(raw_document_id) / 14.0 AS rolling_avg
                 FROM hiring_raw_details
-                WHERE observed_date BETWEEN $1::DATE - INTERVAL '14 days' 
+                WHERE observed_date BETWEEN $1::DATE - INTERVAL '14 days'
                                         AND $1::DATE - INTERVAL '1 day'
-                                    AND job_count > 0  -- 공고 0개인 날 제외
                 GROUP BY stock_id
-                """, target_date)
+            """, target_date)
 
             rolling_averages = {
                 row["stock_id"]: float(row["rolling_avg"]) 

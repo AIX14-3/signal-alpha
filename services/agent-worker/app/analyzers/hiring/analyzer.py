@@ -1,20 +1,29 @@
 """
-HiringAnalyzer
-==============
+HiringAnalyzer (Analyzer Protocol 준수)
+========================================
 
 채용공고 RawEvidence 목록을 분석해 SourceResult를 반환한다.
 
 설계 원칙:
-- DB 직접 쿼리 없음 — previous_job_count / change_pct 는 수집 시 hiring_raw_details에 저장됨
+- DB 직접 쿼리 없음 — 기준선 데이터는 수집 시 extra_payload에 임베드됨
 - Analyzer Protocol 준수 (app/analyzers/base.py)
-- 순수 CPU-bound 연산만 수행하므로 async 선언만으로 충분
+- 순수 CPU-bound 연산 (3단계 Fallback 포함)
+
+3단계 Fallback 기준선:
+  Phase A (rolling_avg ≥ 1.0): 14일 이동평균 × 계절 가중치
+  Phase B (rolling_avg < 1.0): DataLab 검색량 / 100 × 계절 가중치  (Cold Start)
+  Phase C (no data):           1.0 (신뢰도 낮음, data_status="low_confidence")
+
+metadata 필드 (base_collector.py가 extra_payload에 저장):
+  rolling_avg_14d    : float | None  — 14일 이동평균
+  avg_search_volume  : float | None  — 네이버 DataLab 검색 지수
+  seasonal_factor    : float | None  — 현재 분기 계절 가중치 (q{N}_factor)
 
 ⚠️ 한국어 직무명 파싱 한계:
   공백 기준 분해 → "AI연구원" 미분해. KoNLPy 도입 전까지 영문 우선.
 """
 from __future__ import annotations
 
-import json
 import logging
 from collections import Counter
 
@@ -23,8 +32,18 @@ from app.schemas.source_result import Direction, EvidenceItem, SourceResult
 
 logger = logging.getLogger(__name__)
 
-_MOMENTUM_STRONG = 30.0
-_MOMENTUM_MODERATE = 10.0
+# 방향성 판정 임계값
+_MOMENTUM_STRONG = 30.0    # change_pct ≥ +30% → positive
+_MOMENTUM_WEAK = -30.0     # change_pct ≤ -30% → negative
+
+# Phase A 진입 최소 기준 (Cold Start 판정)
+_MIN_ROLLING_AVG = 1.0
+
+# ZeroDivision 방어: 기준선이 이 값 미만이면 신뢰도 낮은 분석
+_MIN_BASELINE = 1.0
+
+# 최소 공고 건수 미달 시 insufficient_data 반환 (0→소수건 오탐 방지)
+_MIN_JOB_COUNT = 3
 
 _JOB_TITLE_STOPWORDS = {
     "engineer", "researcher", "developer", "analyst",
@@ -53,17 +72,62 @@ class HiringAnalyzer:
 
         job_count = len(evidence)
 
-        # previous_job_count는 종목 단위 전일 총계이므로 모든 row에 동일한 값이 복제됨.
-        # 누락 row가 섞여 평균을 오염시키지 않도록 None 제외 후 최댓값 하나를 대표값으로 사용.
-        prev_counts = [
-            e.metadata["previous_job_count"]
-            for e in evidence
-            if e.metadata.get("previous_job_count") is not None
-        ]
-        avg_prev = max(prev_counts) if prev_counts else 1
-        # avg_prev=0(어제 공고 0건)일 때 ZeroDivisionError 방지
-        change_pct = ((job_count - avg_prev) / max(avg_prev, 1)) * 100
+        # 최소 건수 방어 — 0→소수건 전환을 모멘텀으로 오해하는 현상 방지
+        if job_count < _MIN_JOB_COUNT:
+            return SourceResult(
+                source="HIRING",
+                stock_code=stock_code,
+                direction="unknown",
+                score=50.0,
+                summary=f"채용 {job_count}건 (최소 기준 {_MIN_JOB_COUNT}건 미달)",
+                data_status="insufficient_data",
+            )
 
+        # ── 기준선 선택 (3단계 Fallback) ────────────────────────────────────────
+        # 모든 RawEvidence row는 동일 기업·날짜이므로 기준선 값이 복제됨 → max()로 대표값 추출
+        rolling_avgs = [
+            float(e.metadata["rolling_avg_14d"])
+            for e in evidence
+            if e.metadata.get("rolling_avg_14d") is not None
+        ]
+        rolling_avg = max(rolling_avgs) if rolling_avgs else 0.0
+
+        search_vols = [
+            float(e.metadata["avg_search_volume"])
+            for e in evidence
+            if e.metadata.get("avg_search_volume") is not None
+        ]
+        avg_search_volume = max(search_vols) if search_vols else None
+
+        seasonal_factors = [
+            float(e.metadata["seasonal_factor"])
+            for e in evidence
+            if e.metadata.get("seasonal_factor") is not None
+        ]
+        seasonal_factor = max(seasonal_factors) if seasonal_factors else 1.0
+
+        if rolling_avg >= _MIN_ROLLING_AVG:
+            # Phase A: 충분한 실적 데이터 (Day 14+)
+            baseline = rolling_avg
+            phase = "A"
+            data_status = "ok"
+        elif avg_search_volume is not None and avg_search_volume > 0:
+            # Phase B: Cold Start — DataLab 검색량 기반 fallback
+            # 검색 지수(0~100)를 공고 수 스케일로 정규화 (/100)
+            baseline = avg_search_volume / 100.0
+            phase = "B"
+            data_status = "ok"
+        else:
+            # Phase C: 데이터 전무 — 최소 기준값
+            baseline = _MIN_BASELINE
+            phase = "C"
+            data_status = "low_confidence"
+
+        # 계절 가중치 적용 후 기대값 계산
+        expected = max(baseline * seasonal_factor, _MIN_BASELINE)
+        change_pct = ((job_count - expected) / expected) * 100
+
+        # ── 직무 분석 ────────────────────────────────────────────────────────────
         tech_counter: Counter[str] = Counter()
         job_titles: list[str] = []
 
@@ -85,9 +149,10 @@ class HiringAnalyzer:
         score = _change_pct_to_score(change_pct)
 
         tech_str = ", ".join(top_techs) if top_techs else "없음"
+        kw_str = ", ".join(top_keywords) if top_keywords else "없음"
         summary = (
-            f"채용 {job_count}건 (전일 대비 {change_pct:+.1f}%), "
-            f"주요 기술: {tech_str}"
+            f"채용 {job_count}건 (14일 평균 대비 {change_pct:+.1f}%, Phase {phase}), "
+            f"주요 기술: {tech_str}, 키워드: {kw_str}"
         )
 
         evidence_items = [
@@ -102,8 +167,8 @@ class HiringAnalyzer:
         ]
 
         logger.info(
-            "HiringAnalyzer %s: job=%d prev=%.1f chg=%+.1f%% dir=%s score=%.1f",
-            stock_code, job_count, avg_prev, change_pct, direction, score,
+            "HiringAnalyzer %s: job=%d expected=%.2f chg=%+.1f%% phase=%s dir=%s score=%.1f",
+            stock_code, job_count, expected, change_pct, phase, direction, score,
         )
 
         return SourceResult(
@@ -113,7 +178,7 @@ class HiringAnalyzer:
             score=score,
             summary=summary,
             evidence_items=evidence_items,
-            data_status="ok",
+            data_status=data_status,
         )
 
 
@@ -122,9 +187,9 @@ class HiringAnalyzer:
 # ──────────────────────────────────────────────────────────
 
 def _change_pct_to_direction(change_pct: float) -> Direction:
-    if change_pct >= _MOMENTUM_MODERATE:
+    if change_pct >= _MOMENTUM_STRONG:
         return "positive"
-    elif change_pct <= -_MOMENTUM_STRONG:
+    elif change_pct <= _MOMENTUM_WEAK:
         return "negative"
     return "neutral"
 
