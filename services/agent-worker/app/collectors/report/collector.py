@@ -30,11 +30,21 @@ class ReportCollector:
             cur = conn.cursor()
             cur.execute(
                 """
-                SELECT firm, date, report_type, title, pdf_url,
-                       target_price, opinion, key_rationale, raw_text_preview
-                FROM report_raw
-                WHERE stock_code = %s AND processed = true
-                ORDER BY date DESC
+                SELECT rrd.securities_firm,
+                       rrd.publish_date,
+                       rrd.report_type,
+                       rd.title,
+                       rd.source_url,
+                       rrd.target_price,
+                       rrd.investment_opinion,
+                       rrd.key_rationale,
+                       rrd.extracted_text
+                FROM raw_documents rd
+                JOIN report_raw_details rrd ON rrd.raw_document_id = rd.id
+                JOIN stocks s               ON s.id = rd.stock_id
+                WHERE s.ticker = %s
+                  AND rrd.parsing_status = 'success'
+                ORDER BY rrd.publish_date DESC
                 """,
                 (stock_code,),
             )
@@ -50,7 +60,7 @@ class ReportCollector:
             if key_rationale:
                 content_parts.append(key_rationale)
             if raw_text_preview:
-                content_parts.append(raw_text_preview)
+                content_parts.append(raw_text_preview[:500])
             evidence.append(
                 RawEvidence(
                     source="report",

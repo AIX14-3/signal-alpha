@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.core.config import get_settings
-from app.orchestrator.queue.task_types import ANALYZE_DART, COLLECT_DART, NORMALIZE_DART
+from app.orchestrator.queue.task_types import ANALYZE_DART, COLLECT_DART, NORMALIZE_DART, COLLECT_REPORT, PROCESS_REPORT
 from app.orchestrator.queue.tasks import TaskHandler
 
 
@@ -35,6 +35,8 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
             model=settings.dart_llm_model,
             timeout_seconds=settings.dart_llm_timeout_seconds,
         )
+    from app.orchestrator.report.tasks import ReportCollectTaskHandler, ReportProcessTaskHandler
+
     return {
         COLLECT_DART: DartCollectionTaskHandler(
             connection=connection,
@@ -46,4 +48,6 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
             llm_analyzer=llm_analyzer,
             llm_high_impact_only=settings.dart_llm_high_impact_only,
         ),
+        COLLECT_REPORT: ReportCollectTaskHandler(connection=connection, settings=settings),
+        PROCESS_REPORT: ReportProcessTaskHandler(connection=connection, settings=settings),
     }

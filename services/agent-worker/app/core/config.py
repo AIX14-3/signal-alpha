@@ -36,6 +36,11 @@ class Settings:
             "GEMINI_BASE_URL",
             "https://generativelanguage.googleapis.com/v1beta",
         )
+        self.aws_access_key_id = getenv("AWS_ACCESS_KEY_ID", "")
+        self.aws_secret_access_key = getenv("AWS_SECRET_ACCESS_KEY", "")
+        self.aws_region = getenv("AWS_REGION", "ap-northeast-2")
+        self.s3_report_bucket = getenv("S3_REPORT_BUCKET", "signal-alpha-reports")
+
         self.kipris_api_key = getenv("KIPRIS_API_KEY", "")
         self.kipris_timeout_seconds = int(getenv("KIPRIS_TIMEOUT_SECONDS", "15"))
         self.kipris_page_size = int(getenv("KIPRIS_PAGE_SIZE", "100"))
