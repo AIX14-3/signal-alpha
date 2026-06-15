@@ -30,14 +30,21 @@ class HiringEvidenceLoader:
             since_date=since,
         )
         factors = await self._seasonal_factors(stock_id)
-        rows = [_row(record, factors) for record in records]
+        # raw_rows: one row per posting (job_count=1 each, from base_collector).
+        # _aggregate_to_daily converts to one row per day with summed job_count so
+        # indicators.py can compute meaningful momentum (recent_avg vs prior_avg).
+        # Without this step all values are 1.0 → momentum always 0.
+        raw_rows = [_row(record, factors) for record in records]
+        rows = _aggregate_to_daily(raw_rows)
+        posting_count = sum(r.get("job_count") or 0 for r in raw_rows)
         latest = rows[0]["observed_date"] if rows else None
         sector_demand = await self._sector_demand(stock_id, as_of)
         metadata: dict[str, Any] = {
             "rows": rows,
             "as_of": as_of.isoformat(),
             "lookback_days": self._lookback_days,
-            "count": len(rows),
+            "count": len(rows),          # number of active days (indicators 기준)
+            "posting_count": posting_count,  # total individual postings
             "source_name": "HIRING",
             "sector_demand": sector_demand,
         }
@@ -45,7 +52,7 @@ class HiringEvidenceLoader:
             RawEvidence(
                 source="HIRING",
                 stock_code=stock_code,
-                title=f"{stock_code} 채용 공고 {len(rows)}건 (최근 {self._lookback_days}일)",
+                title=f"{stock_code} 채용 공고 {posting_count}건 (최근 {self._lookback_days}일)",
                 content="",
                 published_at=latest,
                 metadata=metadata,
@@ -120,6 +127,74 @@ class HiringEvidenceLoader:
 
 
 _NEUTRAL_FACTORS: dict[int, float] = {1: 1.0, 2: 1.0, 3: 1.0, 4: 1.0}
+
+
+def _aggregate_to_daily(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """개별 공고 행(job_count=1)을 일별 집계 행으로 변환.
+
+    base_collector는 공고 1건당 1행(job_count=1)을 저장한다. indicators.py는
+    일별 집계 데이터를 기대하므로, 그대로 넘기면 recent_avg ≈ prior_avg ≈ 1.0 →
+    momentum_pct 항상 0 고착. 이 함수가 같은 날짜의 공고를 job_count 합산으로
+    묶어 의미 있는 시계열 데이터로 변환한다.
+
+    change_pct: 전일 대비 증감률을 날짜 정렬 후 계산해 채운다. 이를 통해
+    indicators.py의 avg_change_pct 컴포넌트도 실제 신호를 만들 수 있다.
+
+    job_title / tech_stack: 당일 공고 전체의 값을 누적 보존해 analyzer.py의
+    키워드 서피싱(hiring_focus)이 집계 후에도 동작하게 한다.
+    """
+    if not rows:
+        return []
+
+    # 1. 날짜별 집계
+    daily: dict[str, dict[str, Any]] = {}
+    titles_by_day: dict[str, list[str]] = {}
+    techs_by_day: dict[str, list[str]] = {}
+
+    for row in rows:
+        d = row.get("observed_date")
+        if not d:
+            continue
+        d = str(d)[:10]
+
+        if d not in daily:
+            daily[d] = {
+                "observed_date": d,
+                "job_count": 0,
+                "seasonal_factor": row.get("seasonal_factor") or 1.0,
+                "change_pct": None,
+                "source_url": row.get("source_url"),
+            }
+            titles_by_day[d] = []
+            techs_by_day[d] = []
+
+        daily[d]["job_count"] += int(row.get("job_count") or 1)
+
+        if title := row.get("job_title"):
+            titles_by_day[d].append(str(title))
+        for tech in (row.get("tech_stack") or []):
+            if tech:
+                techs_by_day[d].append(str(tech))
+
+    # 2. 날짜 오름차순 정렬 후 전일 대비 change_pct 계산
+    sorted_dates = sorted(daily)
+    for i in range(1, len(sorted_dates)):
+        prev, curr = sorted_dates[i - 1], sorted_dates[i]
+        prev_count = daily[prev]["job_count"]
+        if prev_count > 0:
+            daily[curr]["change_pct"] = round(
+                (daily[curr]["job_count"] - prev_count) / prev_count * 100, 2
+            )
+
+    # 3. 내림차순(최신순) 반환 + 키워드 필드 첨부
+    result = []
+    for d in reversed(sorted_dates):
+        row_out = dict(daily[d])
+        row_out["job_title"] = titles_by_day[d][0] if titles_by_day[d] else None
+        row_out["tech_stack"] = list(dict.fromkeys(techs_by_day[d]))  # 순서 보존 중복 제거
+        result.append(row_out)
+
+    return result
 
 
 def _row(record: Any, factors: dict[int, float]) -> dict[str, Any]:
