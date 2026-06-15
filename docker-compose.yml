@@ -87,6 +87,38 @@ services:
       postgres:
         condition: service_healthy
 
+  # 신규 멀티소스 분석 harness (HIRING/PATENT/DATALAB → final_signals).
+  # run_analyzers.py 내장 루프(--loop)로 주기 실행. analyzers는 순수(LLM 미호출),
+  # 타깃 종목·임계값은 DB/env에서 옴(하드코딩 없음).
+  #
+  # opt-in 프로파일: 레거시 hiring 파이프라인(script/run_daily_hiring_pipeline.py →
+  # hiring_signals)과의 parity_hiring.py 방향 일치율 검증을 통과하기 전까지는
+  # 기본 `docker compose up`에서 제외(= final_signals 이중기록 방지). 명시적 기동:
+  #     docker compose --profile analyzer up analyzer
+  # cron/Airflow 대안: 스케줄러에서 `--loop` 없이 1회씩 실행
+  #     python run_analyzers.py            # 1 pass
+  # 검증 완료 후 단독 운영 전환 시 profiles 줄을 제거해 기본 서비스로 승격.
+  analyzer:
+    build:
+      context: .
+      dockerfile: ./services/agent-worker/Dockerfile
+    container_name: signal-alpha-analyzer
+    profiles: ["analyzer"]
+    working_dir: /workspace/services/agent-worker
+    volumes:
+      - ./services/agent-worker:/workspace/services/agent-worker
+      - ./packages/data-access:/workspace/packages/data-access
+    environment:
+      SERVICE_NAME: analyzer
+      DATABASE_URL: ${DATABASE_URL:-postgresql://signal_alpha:signal_alpha_password@postgres:5432/signal_alpha}
+      PYTHONPATH: /workspace/services/agent-worker:/workspace/packages/data-access
+    command: >
+      python run_analyzers.py --loop --interval-seconds ${ANALYZER_INTERVAL_SECONDS:-3600}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
   main-server:
     build:
       context: .
