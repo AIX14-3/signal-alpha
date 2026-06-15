@@ -54,6 +54,17 @@ cd ../agent-worker
 uv run uvicorn app.main:app --reload --port 8011
 ```
 
+### 의존성 관리 (uv 단일화)
+
+**의존성의 단일 출처는 `pyproject.toml` + `uv.lock` 입니다.** 이 레포는
+`requirements.txt`를 쓰지 않습니다(Dockerfile·로컬 모두 `uv sync --locked`).
+
+- 의존성 추가/변경: 해당 `pyproject.toml` 수정 → `uv lock` → `uv sync`.
+- 손으로 관리하는 `requirements.txt`를 다시 만들지 마세요(과거 uv.lock과 어긋나
+  asyncpg 등 누락된 전례 있음).
+- uv를 못 쓰는 외부 환경에 의존성 목록이 필요하면 그때 **생성**해서 전달하세요(커밋 X):
+  `uv export --package <service> --no-hashes --no-dev --no-emit-workspace`
+
 ## Service Boundaries
 
 - `web` calls `main-server`.
