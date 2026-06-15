@@ -228,12 +228,18 @@ class TestAnalyzeHiringTrend(unittest.IsolatedAsyncioTestCase):
     def _make_pool(self, scale_rows, today_rows):
         conn = AsyncMock()
         conn.fetch = AsyncMock(side_effect=[scale_rows, today_rows])
-        conn.execute = AsyncMock()
+        conn.executemany = AsyncMock()  # 배치 업서트 전환 후 execute → executemany
 
         pool = MagicMock()
         pool.acquire.return_value.__aenter__ = AsyncMock(return_value=conn)
         pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
         return pool, conn
+
+    def _upsert_rows(self, conn) -> list[tuple]:
+        """executemany 호출에서 실제 upsert_data 리스트를 추출하는 헬퍼."""
+        sql, rows = conn.executemany.call_args[0]
+        self.assertIn("INSERT INTO hiring_signals", sql)
+        return rows
 
     async def test_inserts_signal_for_each_stock(self):
         scale_row = {"stock_id": 1, "rolling_avg": 5.0}
@@ -243,9 +249,9 @@ class TestAnalyzeHiringTrend(unittest.IsolatedAsyncioTestCase):
         analyzer = HiringAnalyzer(pool)
         await analyzer.analyze_hiring_trend("2024-06-15")
 
-        conn.execute.assert_called_once()
-        sql, stock_id, obs_date, job_count, *_ = conn.execute.call_args[0]
-        self.assertIn("INSERT INTO hiring_signals", sql)
+        conn.executemany.assert_called_once()
+        rows = self._upsert_rows(conn)
+        stock_id, obs_date, job_count, *_ = rows[0]
         self.assertEqual(stock_id, 1)
         self.assertEqual(obs_date, "2024-06-15")
         self.assertEqual(job_count, 8)
@@ -259,10 +265,9 @@ class TestAnalyzeHiringTrend(unittest.IsolatedAsyncioTestCase):
         analyzer = HiringAnalyzer(pool)
         await analyzer.analyze_hiring_trend("2024-06-15")
 
-        # Phase C: baseline=1.0, relative_strength=500%, is_spike=True
-        conn.execute.assert_called_once()
-        sql, stock_id, obs_date, job_count, baseline, *_ = conn.execute.call_args[0]
-        self.assertIn("INSERT INTO hiring_signals", sql)
+        conn.executemany.assert_called_once()
+        rows = self._upsert_rows(conn)
+        stock_id, obs_date, job_count, baseline, *_ = rows[0]
         self.assertEqual(stock_id, 1)
         self.assertAlmostEqual(float(baseline), 1.0)
 
@@ -275,8 +280,8 @@ class TestAnalyzeHiringTrend(unittest.IsolatedAsyncioTestCase):
         analyzer = HiringAnalyzer(pool)
         await analyzer.analyze_hiring_trend("2024-06-15")
 
-        args = conn.execute.call_args[0]
-        is_spike = args[6]
+        rows = self._upsert_rows(conn)
+        *_, is_spike = rows[0]
         self.assertTrue(is_spike)
 
     async def test_no_spike_below_150pct(self):
@@ -288,8 +293,8 @@ class TestAnalyzeHiringTrend(unittest.IsolatedAsyncioTestCase):
         analyzer = HiringAnalyzer(pool)
         await analyzer.analyze_hiring_trend("2024-06-15")
 
-        args = conn.execute.call_args[0]
-        is_spike = args[6]
+        rows = self._upsert_rows(conn)
+        *_, is_spike = rows[0]
         self.assertFalse(is_spike)
 
     async def test_cold_start_uses_naver_fallback(self):
@@ -305,9 +310,9 @@ class TestAnalyzeHiringTrend(unittest.IsolatedAsyncioTestCase):
         analyzer = HiringAnalyzer(pool)
         await analyzer.analyze_hiring_trend("2024-06-15")
 
-        conn.execute.assert_called_once()
-        args = conn.execute.call_args[0]
-        baseline = args[4]
+        conn.executemany.assert_called_once()
+        rows = self._upsert_rows(conn)
+        _, _, _, baseline, *_ = rows[0]
         # 40/100 = 0.4 < MIN_PHASE_B_EXPECTED(0.5) → 0.5로 클램핑됨
         self.assertAlmostEqual(baseline, MIN_PHASE_B_EXPECTED)
 

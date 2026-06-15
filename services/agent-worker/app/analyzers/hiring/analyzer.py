@@ -41,8 +41,10 @@ _MIN_ROLLING_AVG = 1.0
 
 # Phase A 최소 기대값 — 실적 기반(14일 평균)일 때 분모 하한선
 _MIN_EXPECTED_JOB = 1.0
-# Phase B ZeroDivision 방어 — 네이버 검색량 기반 분모 폭발 방지 (0.01 = "거의 0이지만 0은 아님")
-_ZERO_DIV_PROTECTION = 0.01
+# Phase B 기대값 하한 — 0.5건 이하로 내려가지 않게 보정.
+# avg_search_volume=1 → base_scale=0.01 → change_pct=+29900% 텍스트 폭발 방지.
+# (score는 클램핑되지만 summary 문자열은 원본 값이 LLM에 전달되므로 여기서 통제 필요)
+_PHASE_B_MIN_EXPECTED = 0.5
 
 # 최소 공고 건수 미달 시 insufficient_data 반환 (0→소수건 오탐 방지)
 _MIN_JOB_COUNT = 3
@@ -117,10 +119,10 @@ class HiringAnalyzer:
         elif avg_search_volume is not None and avg_search_volume > 0:
             # Phase B: Cold Start — DataLab 검색량 기반 fallback
             # 검색 지수(0~100) / 100 = 0.0~1.0 소수 스케일
-            # max(..., _ZERO_DIV_PROTECTION=0.01): 네이버 검색량이 0에 가까워도
-            # _MIN_EXPECTED_JOB(1.0)으로 올리면 Phase B와 C가 동일해지므로 미세 하한만 적용
+            # _PHASE_B_MIN_EXPECTED=0.5 하한: 검색량이 낮아도 change_pct가 수만%로 폭발하지 않도록 통제
+            # (예: search_vol=1 → base_scale=0.01 → 3건 → +29900% → LLM 과장 유발)
             base_scale = avg_search_volume / 100.0
-            expected = max(base_scale * seasonal_factor, _ZERO_DIV_PROTECTION)
+            expected = max(base_scale * seasonal_factor, _PHASE_B_MIN_EXPECTED)
             phase = "B"
             data_status = "ok"
         else:

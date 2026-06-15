@@ -6,8 +6,11 @@ HiringAnalyzer: 채용 공고 강도 분석기
 - Cold Start (Day 0~13) 단계에서 네이버 기반 fallback 적용
 """
 import asyncio
+import logging
 from datetime import datetime
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 # 도메인 임계값 상수화
 HIRING_SPIKE_THRESHOLD = 1.5   # 평년 대비 150% 이상 = 급증
@@ -174,7 +177,9 @@ class HiringAnalyzer:
                 GROUP BY stock_id
             """, target_date)
 
-            # Step 3: 각 주식별 분석 및 저장
+            # Step 3: 각 주식별 분석 — 루프에서는 계산만, DB 저장은 Step 4에서 일괄 처리
+            upsert_data: list[tuple] = []
+
             for row in today_rows:
                 stock_id = row["stock_id"]
                 today_count = row["today_count"]
@@ -193,7 +198,7 @@ class HiringAnalyzer:
 
                 # 기준선 결정 + Phase 레이블 (이동평균 → 네이버 fallback → 기본값)
                 rolling_avg = rolling_averages.get(stock_id, 0)
-                base_scale, _phase = self._get_baseline_scale(stock_id, rolling_avg)
+                base_scale, phase = self._get_baseline_scale(stock_id, rolling_avg)
 
                 # 기대값 = 기준선 × 계절 가중치 (0 나누기 방어 포함)
                 expected_baseline_count = base_scale * seasonal_factor
@@ -206,8 +211,24 @@ class HiringAnalyzer:
                 # Spike 판정 (평년 대비 150% 이상)
                 is_spike = relative_strength >= (HIRING_SPIKE_THRESHOLD * 100)
 
-                # Step 4: hiring_signals 테이블에 저장
-                await conn.execute("""
+                logger.debug(
+                    "stock_id=%d phase=%s today=%d expected=%.2f rs=%.1f%% spike=%s",
+                    stock_id, phase, today_count, expected_baseline_count,
+                    relative_strength, is_spike,
+                )
+
+                upsert_data.append((
+                    stock_id,
+                    target_date,
+                    today_count,
+                    round(expected_baseline_count, 2),
+                    round(relative_strength, 2),
+                    is_spike,
+                ))
+
+            # Step 4: 단 한 번의 배치 쿼리로 대량 업서트 (루프 내 개별 execute 대비 수십 배 빠름)
+            if upsert_data:
+                await conn.executemany("""
                     INSERT INTO hiring_signals
                         (stock_id, observed_date, job_count, baseline,
                          relative_strength, is_spike)
@@ -218,9 +239,9 @@ class HiringAnalyzer:
                         baseline          = EXCLUDED.baseline,
                         relative_strength = EXCLUDED.relative_strength,
                         is_spike          = EXCLUDED.is_spike
-                """, stock_id, target_date, today_count,
-                     round(expected_baseline_count, 2),
-                     round(relative_strength, 2), is_spike)
+                """, upsert_data)
+
+                logger.info("[%s] 채용 시그널 %d건 업서트 완료", target_date, len(upsert_data))
 
 
 # ============================================================================
