@@ -841,7 +841,7 @@ dependencies = [
     { name = "selenium" },
     { name = "signal-alpha-data-access" },
     { name = "sqlalchemy" },
-    { name = "tzdata", marker = "sys_platform == 'win32'" },
+    { name = "tzdata" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "webdriver-manager" },
 ]
@@ -868,6 +868,7 @@ requires-dist = [
     { name = "signal-alpha-data-access", editable = "packages/data-access" },
     { name = "sqlalchemy", specifier = ">=2.0.0" },
     { name = "sqlalchemy", marker = "extra == 'dev'", specifier = ">=2.0.0" },
+    { name = "tzdata", specifier = ">=2024.1" },
     { name = "tzdata", marker = "sys_platform == 'win32'", specifier = ">=2024.1" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30.0" },
     { name = "webdriver-manager", specifier = ">=4.0.0" },

@@ -88,7 +88,7 @@ class AlternativeAggregator:
         directions = {r.direction for r in available}
         if "positive" in directions and "negative" in directions:
             return "mixed"
-        if "mixed" in directions and len(available) > 1:
+        if "mixed" in directions:
             return "mixed"
         if score >= self._config.positive_threshold:
             return "positive"

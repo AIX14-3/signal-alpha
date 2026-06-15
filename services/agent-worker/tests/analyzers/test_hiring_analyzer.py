@@ -60,42 +60,63 @@ class TestGetBaselineScale(unittest.TestCase):
     def tearDown(self):
         _reset_cache()
 
+    # _get_baseline_scale 은 이제 (scale: float, phase: str) 튜플을 반환한다.
+
     def test_phase_a_returns_rolling_avg(self):
-        """Phase A: rolling_avg ≥ MIN_ROLLING_AVG_THRESHOLD → 이동평균 반환."""
-        result = self.a._get_baseline_scale(stock_id=999, rolling_avg=MIN_ROLLING_AVG_THRESHOLD)
-        self.assertEqual(result, MIN_ROLLING_AVG_THRESHOLD)
+        """Phase A: rolling_avg ≥ MIN_ROLLING_AVG_THRESHOLD → 이동평균 및 "A" 반환."""
+        scale, phase = self.a._get_baseline_scale(stock_id=999, rolling_avg=MIN_ROLLING_AVG_THRESHOLD)
+        self.assertEqual(scale, MIN_ROLLING_AVG_THRESHOLD)
+        self.assertEqual(phase, "A")
 
     def test_phase_a_high_value(self):
-        self.assertEqual(self.a._get_baseline_scale(stock_id=99, rolling_avg=25.0), 25.0)
+        scale, phase = self.a._get_baseline_scale(stock_id=99, rolling_avg=25.0)
+        self.assertEqual(scale, 25.0)
+        self.assertEqual(phase, "A")
 
     def test_phase_b_uses_naver_volume(self):
-        """Phase B: Cold Start → 네이버 검색량 / 100 반환."""
+        """Phase B: Cold Start → max(avg_search_volume/100, MIN_PHASE_B_EXPECTED) 반환."""
+        from app.analyzers.hiring.hiring_analyzer import MIN_PHASE_B_EXPECTED
         HiringAnalyzer._baseline_cache[1] = {
             "avg_search_volume": 60.0, "Q1": 1.0, "Q2": 1.0, "Q3": 1.0, "Q4": 1.0
         }
-        result = self.a._get_baseline_scale(stock_id=1, rolling_avg=0.0)
-        self.assertAlmostEqual(result, 60.0 / 100.0)
+        scale, phase = self.a._get_baseline_scale(stock_id=1, rolling_avg=0.0)
+        # 60/100 = 0.6 > MIN_PHASE_B_EXPECTED(0.5) → 0.6 반환
+        self.assertAlmostEqual(scale, max(60.0 / 100.0, MIN_PHASE_B_EXPECTED))
+        self.assertEqual(phase, "B")
+
+    def test_phase_b_low_volume_clamped(self):
+        """Phase B: 검색량이 낮아 0.4 < MIN_PHASE_B_EXPECTED(0.5) → 0.5로 클램핑."""
+        from app.analyzers.hiring.hiring_analyzer import MIN_PHASE_B_EXPECTED
+        HiringAnalyzer._baseline_cache[1] = {
+            "avg_search_volume": 40.0, "Q1": 1.0, "Q2": 1.0, "Q3": 1.0, "Q4": 1.0
+        }
+        scale, phase = self.a._get_baseline_scale(stock_id=1, rolling_avg=0.0)
+        self.assertAlmostEqual(scale, MIN_PHASE_B_EXPECTED)
+        self.assertEqual(phase, "B")
 
     def test_phase_b_no_cache_falls_to_c(self):
-        """Phase B: 캐시 없음 → Phase C 기본값 1.0."""
-        result = self.a._get_baseline_scale(stock_id=999, rolling_avg=0.0)
-        self.assertEqual(result, DEFAULT_BASELINE_SCALE)
+        """캐시 없음 → Phase C 기본값 1.0."""
+        scale, phase = self.a._get_baseline_scale(stock_id=999, rolling_avg=0.0)
+        self.assertEqual(scale, DEFAULT_BASELINE_SCALE)
+        self.assertEqual(phase, "C")
 
     def test_phase_c_zero_avg_search_volume(self):
-        """Phase C: avg_search_volume = 0 → 기본값 1.0."""
+        """avg_search_volume = 0 → Phase C 기본값 1.0."""
         HiringAnalyzer._baseline_cache[1] = {
             "avg_search_volume": 0.0, "Q1": 1.0, "Q2": 1.0, "Q3": 1.0, "Q4": 1.0
         }
-        result = self.a._get_baseline_scale(stock_id=1, rolling_avg=0.0)
-        self.assertEqual(result, DEFAULT_BASELINE_SCALE)
+        scale, phase = self.a._get_baseline_scale(stock_id=1, rolling_avg=0.0)
+        self.assertEqual(scale, DEFAULT_BASELINE_SCALE)
+        self.assertEqual(phase, "C")
 
     def test_phase_a_b_boundary(self):
         """rolling_avg == MIN_ROLLING_AVG_THRESHOLD 는 Phase A (이동평균 사용)."""
         HiringAnalyzer._baseline_cache[1] = {
             "avg_search_volume": 80.0, "Q1": 1.0, "Q2": 1.0, "Q3": 1.0, "Q4": 1.0
         }
-        result = self.a._get_baseline_scale(stock_id=1, rolling_avg=MIN_ROLLING_AVG_THRESHOLD)
-        self.assertEqual(result, MIN_ROLLING_AVG_THRESHOLD)
+        scale, phase = self.a._get_baseline_scale(stock_id=1, rolling_avg=MIN_ROLLING_AVG_THRESHOLD)
+        self.assertEqual(scale, MIN_ROLLING_AVG_THRESHOLD)
+        self.assertEqual(phase, "A")
 
 
 # ── Spike 판정 경계값 ─────────────────────────────────────────────────────────
@@ -207,12 +228,18 @@ class TestAnalyzeHiringTrend(unittest.IsolatedAsyncioTestCase):
     def _make_pool(self, scale_rows, today_rows):
         conn = AsyncMock()
         conn.fetch = AsyncMock(side_effect=[scale_rows, today_rows])
-        conn.execute = AsyncMock()
+        conn.executemany = AsyncMock()  # 배치 업서트 전환 후 execute → executemany
 
         pool = MagicMock()
         pool.acquire.return_value.__aenter__ = AsyncMock(return_value=conn)
         pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
         return pool, conn
+
+    def _upsert_rows(self, conn) -> list[tuple]:
+        """executemany 호출에서 실제 upsert_data 리스트를 추출하는 헬퍼."""
+        sql, rows = conn.executemany.call_args[0]
+        self.assertIn("INSERT INTO hiring_signals", sql)
+        return rows
 
     async def test_inserts_signal_for_each_stock(self):
         scale_row = {"stock_id": 1, "rolling_avg": 5.0}
@@ -222,14 +249,15 @@ class TestAnalyzeHiringTrend(unittest.IsolatedAsyncioTestCase):
         analyzer = HiringAnalyzer(pool)
         await analyzer.analyze_hiring_trend("2024-06-15")
 
-        conn.execute.assert_called_once()
-        sql, stock_id, obs_date, job_count, *_ = conn.execute.call_args[0]
-        self.assertIn("INSERT INTO hiring_signals", sql)
+        conn.executemany.assert_called_once()
+        rows = self._upsert_rows(conn)
+        stock_id, obs_date, job_count, *_ = rows[0]
         self.assertEqual(stock_id, 1)
         self.assertEqual(obs_date, "2024-06-15")
         self.assertEqual(job_count, 8)
 
-    async def test_skips_stock_without_baseline(self):
+    async def test_phase_c_no_baseline_still_inserts(self):
+        """baseline 없으면 Phase C(DEFAULT=1.0)로 분석 후 hiring_signals에 INSERT한다."""
         HiringAnalyzer._baseline_cache = {}
         today_row = {"stock_id": 1, "today_count": 5}
         pool, conn = self._make_pool([], [today_row])
@@ -237,7 +265,11 @@ class TestAnalyzeHiringTrend(unittest.IsolatedAsyncioTestCase):
         analyzer = HiringAnalyzer(pool)
         await analyzer.analyze_hiring_trend("2024-06-15")
 
-        conn.execute.assert_not_called()
+        conn.executemany.assert_called_once()
+        rows = self._upsert_rows(conn)
+        stock_id, obs_date, job_count, baseline, *_ = rows[0]
+        self.assertEqual(stock_id, 1)
+        self.assertAlmostEqual(float(baseline), 1.0)
 
     async def test_spike_at_exactly_150pct(self):
         """15개 / rolling_avg 10.0 = 150% → is_spike=True."""
@@ -248,8 +280,9 @@ class TestAnalyzeHiringTrend(unittest.IsolatedAsyncioTestCase):
         analyzer = HiringAnalyzer(pool)
         await analyzer.analyze_hiring_trend("2024-06-15")
 
-        args = conn.execute.call_args[0]
-        is_spike = args[6]
+        rows = self._upsert_rows(conn)
+        # rows[0] = (stock_id, date, job_count, baseline, rs, is_spike, phase)
+        _sid, _date, _count, _baseline, _rs, is_spike, _phase = rows[0]
         self.assertTrue(is_spike)
 
     async def test_no_spike_below_150pct(self):
@@ -261,12 +294,13 @@ class TestAnalyzeHiringTrend(unittest.IsolatedAsyncioTestCase):
         analyzer = HiringAnalyzer(pool)
         await analyzer.analyze_hiring_trend("2024-06-15")
 
-        args = conn.execute.call_args[0]
-        is_spike = args[6]
+        rows = self._upsert_rows(conn)
+        _sid, _date, _count, _baseline, _rs, is_spike, _phase = rows[0]
         self.assertFalse(is_spike)
 
     async def test_cold_start_uses_naver_fallback(self):
-        """rolling_avg 없는 기업은 네이버 검색량 기반 fallback 사용."""
+        """rolling_avg 없는 기업은 네이버 검색량 기반 fallback 사용, MIN_PHASE_B_EXPECTED로 클램핑."""
+        from app.analyzers.hiring.hiring_analyzer import MIN_PHASE_B_EXPECTED
         HiringAnalyzer._baseline_cache = {
             2: {"avg_search_volume": 40.0, "Q1": 1.0, "Q2": 1.0, "Q3": 1.0, "Q4": 1.0}
         }
@@ -277,11 +311,11 @@ class TestAnalyzeHiringTrend(unittest.IsolatedAsyncioTestCase):
         analyzer = HiringAnalyzer(pool)
         await analyzer.analyze_hiring_trend("2024-06-15")
 
-        conn.execute.assert_called_once()
-        args = conn.execute.call_args[0]
-        baseline = args[4]
-        # expected = (40/100) * 1.0 = 0.4
-        self.assertAlmostEqual(baseline, 0.4)
+        conn.executemany.assert_called_once()
+        rows = self._upsert_rows(conn)
+        _, _, _, baseline, *_ = rows[0]
+        # 40/100 = 0.4 < MIN_PHASE_B_EXPECTED(0.5) → 0.5로 클램핑됨
+        self.assertAlmostEqual(baseline, MIN_PHASE_B_EXPECTED)
 
 
 if __name__ == "__main__":

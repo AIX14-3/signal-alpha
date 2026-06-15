@@ -5,16 +5,27 @@ HiringAnalyzer: 채용 공고 강도 분석기
 - 최근 14일 공고 수의 이동평균으로 기준선 설정
 - Cold Start (Day 0~13) 단계에서 네이버 기반 fallback 적용
 """
+import asyncio
+import logging
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
+
+logger = logging.getLogger(__name__)
 
 # 도메인 임계값 상수화
-HIRING_SPIKE_THRESHOLD = 1.5  # 평년 대비 150% 이상 = 급증
+HIRING_SPIKE_THRESHOLD = 1.5   # 평년 대비 150% 이상 = 급증
 DEFAULT_SEASONAL_FACTOR = 1.0  # 계절 데이터 없을 때 기본값
-DEFAULT_BASELINE_SCALE = 1.0   # 기준선 데이터 전무할 때 최소값
+DEFAULT_BASELINE_SCALE = 1.0   # 기준선 데이터 전무할 때 최소값 (Phase C)
 
 # Cold Start 판정: rolling avg가 이 값 이상이면 신뢰도 높은 실제 데이터로 판정
 MIN_ROLLING_AVG_THRESHOLD = 1.0
+
+# 오탐 방지: 오늘 공고 건수가 이 값 미만이면 분석 스킵 (0→소수건 노이즈 차단)
+MIN_TODAY_JOB_COUNT = 3
+
+# Phase B 분모 하한: 검색량이 낮은 기업의 base_scale이 0에 가까워 relative_strength가 폭발하는 것 방지
+# (예: 검색량 2 → base_scale=0.02 → 1건만 올려도 5000% → 가짜 Spike)
+MIN_PHASE_B_EXPECTED = 0.5
 
 
 class HiringAnalyzer:
@@ -30,6 +41,8 @@ class HiringAnalyzer:
     # 클래스 변수: 메모리 캐시 (FastAPI 웹서버/배치 스크립트 모두 대응)
     _baseline_cache: dict[int, dict] = {}
     _is_cache_loaded: bool = False
+    # Double-Checked Locking: 서버 최초 기동 시 동시 요청이 몰려도 DB 중복 쿼리 방지
+    _cache_lock: asyncio.Lock = asyncio.Lock()
 
     def __init__(self, pool: Any) -> None:
         """
@@ -39,95 +52,83 @@ class HiringAnalyzer:
         self._pool = pool
 
     async def load_baselines(self) -> None:
-        """
-        hiring_baseline 테이블의 모든 데이터를 메모리로 로드
-        - N+1 문제 방지
-        - 캐시 재사용 (이미 로드되었으면 스킵)
-        """
+        """hiring_baseline 테이블 전체를 메모리로 로드 (N+1 방지, 캐시 재사용)."""
         if HiringAnalyzer._is_cache_loaded:
             return
 
-        async with self._pool.acquire() as conn:
-            rows = await conn.fetch("""
-                SELECT stock_id, 
-                       avg_search_volume,  -- Cold Start fallback용
-                       q1_factor, q2_factor, q3_factor, q4_factor 
-                FROM hiring_baseline
-                WHERE avg_search_volume > 0  -- 유효한 부트스트랩 데이터만
-            """)
+        # Double-Checked Locking: 락 획득 전에 먼저 체크 → 첫 번째 코루틴만 DB 쿼리 실행
+        async with HiringAnalyzer._cache_lock:
+            if HiringAnalyzer._is_cache_loaded:
+                return
 
-            HiringAnalyzer._baseline_cache = {
-                row["stock_id"]: {
-                    "avg_search_volume": float(row["avg_search_volume"]),
-                    "Q1": float(row["q1_factor"]),
-                    "Q2": float(row["q2_factor"]),
-                    "Q3": float(row["q3_factor"]),
-                    "Q4": float(row["q4_factor"]),
+            async with self._pool.acquire() as conn:
+                rows = await conn.fetch("""
+                    SELECT stock_id,
+                           avg_search_volume,
+                           q1_factor, q2_factor, q3_factor, q4_factor
+                    FROM hiring_baseline
+                    WHERE avg_search_volume > 0
+                """)
+
+                HiringAnalyzer._baseline_cache = {
+                    row["stock_id"]: {
+                        "avg_search_volume": float(row["avg_search_volume"]),
+                        "Q1": float(row["q1_factor"]),
+                        "Q2": float(row["q2_factor"]),
+                        "Q3": float(row["q3_factor"]),
+                        "Q4": float(row["q4_factor"]),
+                    }
+                    for row in rows
                 }
-                for row in rows
-            }
-        
-        HiringAnalyzer._is_cache_loaded = True
+
+            HiringAnalyzer._is_cache_loaded = True
+
+    @classmethod
+    async def clear_cache(cls) -> None:
+        """분기 갱신·신규 주식 상장 시 캐시를 강제로 비워 다음 load_baselines에서 재로드."""
+        async with cls._cache_lock:
+            cls._baseline_cache.clear()
+            cls._is_cache_loaded = False
+        logger.info("HiringAnalyzer 메모리 캐시 초기화 완료")
 
     def _get_current_quarter(self, target_date_str) -> str:
         """
-        날짜(str 또는 date)를 Q1~Q4로 변환
+        날짜(str / date / datetime)를 Q1~Q4로 변환
 
         Args:
-            target_date_str: "2024-06-15" 형태의 str 또는 datetime.date 객체
+            target_date_str: "YYYY-MM-DD" str, datetime.date, 또는 datetime 객체
         """
         from datetime import date as date_type
-        if isinstance(target_date_str, str):
-            dt = datetime.strptime(target_date_str, "%Y-%m-%d")
+        if isinstance(target_date_str, datetime):
+            # datetime 객체 직접 수용 (시분초 포함 경우 대비)
+            dt = target_date_str
         elif isinstance(target_date_str, date_type):
             dt = datetime(target_date_str.year, target_date_str.month, target_date_str.day)
         else:
-            dt = datetime.strptime(str(target_date_str), "%Y-%m-%d")
+            # 문자열 앞 10자리(YYYY-MM-DD)만 사용 — "2026-06-15 09:30:00" 같은 포맷도 안전하게 처리
+            dt = datetime.strptime(str(target_date_str)[:10], "%Y-%m-%d")
         quarter_num = (dt.month - 1) // 3 + 1
         return f"Q{quarter_num}"
 
-    def _get_baseline_scale(
-        self,
-        stock_id: int,
-        rolling_avg: float
-    ) -> float:
-        """
-        2단계 Fallback 전략으로 기준선(Scale) 결정
-        
-        Phase A (Day 14+): 실제 공고 기반
-            - rolling_avg >= 1.0이면 최근 14일 이동평균 사용
-            - 신뢰도: 높음 ✓
-            
-        Phase B (Day 0~13): Cold Start 우회
-            - rolling_avg < 1.0이면 네이버 검색량 기반
-            - 검색 지수(0~100)를 상대 스케일(0~1)로 정규화
-            - 신뢰도: 중간 ⚠️
-            
-        Phase C (데이터 전무): 최소 기준
-            - 네이버 데이터도 없으면 1.0 (이후 1~2일 추이로 보정)
-            - 신뢰도: 낮음 ❌
-            
-        Args:
-            stock_id: 주식 ID
-            rolling_avg: 최근 14일 공고 수 평균 (0이면 데이터 부족)
-            
+    def _get_baseline_scale(self, stock_id: int, rolling_avg: float) -> tuple[float, str]:
+        """3단계 Fallback으로 기준선과 Phase 레이블을 함께 반환.
+
         Returns:
-            기준선 값 (1.0 ~ 100.0 범위)
+            (base_scale, phase)  phase ∈ {"A", "B", "C"}
         """
         # Phase A: 14일 이동평균 충분 → 실제 데이터 기반
         if rolling_avg >= MIN_ROLLING_AVG_THRESHOLD:
-            return rolling_avg
+            return rolling_avg, "A"
 
         # Phase B: Cold Start → 네이버 검색량 기반 fallback
         baseline = HiringAnalyzer._baseline_cache.get(stock_id)
         if baseline and baseline["avg_search_volume"] > 0:
-            # 네이버 검색 지수(0~100)를 상대 스케일로 정규화
-            # (절대값이 아닌 상대 비교용이므로 /100 처리)
-            normalized_search_volume = baseline["avg_search_volume"] / 100.0
-            return normalized_search_volume
+            normalized = baseline["avg_search_volume"] / 100.0
+            # MIN_PHASE_B_EXPECTED(0.5) 하한: 검색량이 낮은 기업도 분모가 너무 작아지지 않게 보정
+            return max(normalized, MIN_PHASE_B_EXPECTED), "B"
 
         # Phase C: 데이터 완전 부재 → 최소 기준값
-        return DEFAULT_BASELINE_SCALE
+        return DEFAULT_BASELINE_SCALE, "C"
 
     async def analyze_hiring_trend(self, target_date: str) -> None:
         """
@@ -158,16 +159,18 @@ class HiringAnalyzer:
             #    기준선이 수배까지 과대평가됨.
             #    예: 14일 중 2일에만 각 7개 = (7+7)/2 = 7.0 (틀림)
             #        → 정정: 14개 / 14.0 = 1.0 (맞음)
-            # Step 1: 지난 14일간의 총 공고 수 조회 후 14.0으로 나누어 정확한 일평균 계산 (공고 0개인 날 포함 보정)
+            # Step 1: 지난 14일 총 공고 수 / 14.0 = 일평균
+            # hiring_raw_details 는 공고 1건=1행 구조 (job_count 항상 1).
+            # COUNT(raw_document_id) 가 총 공고 수와 동일하며, AVG() 보다 정확함.
+            # — AVG()는 공고가 없는 날(행 없음)을 분모에서 제외해 기준선을 과대평가하는 함정이 있음.
             scale_rows = await conn.fetch("""
-                SELECT stock_id, 
-                    COUNT(raw_document_id) / 14.0 as rolling_avg
+                SELECT stock_id,
+                       COUNT(raw_document_id) / 14.0 AS rolling_avg
                 FROM hiring_raw_details
-                WHERE observed_date BETWEEN $1::DATE - INTERVAL '14 days' 
+                WHERE observed_date BETWEEN $1::DATE - INTERVAL '14 days'
                                         AND $1::DATE - INTERVAL '1 day'
-                                    AND job_count > 0  -- 공고 0개인 날 제외
                 GROUP BY stock_id
-                """, target_date)
+            """, target_date)
 
             rolling_averages = {
                 row["stock_id"]: float(row["rolling_avg"]) 
@@ -182,29 +185,31 @@ class HiringAnalyzer:
                 GROUP BY stock_id
             """, target_date)
 
-            # Step 3: 각 주식별 분석 및 저장
+            # Step 3: 각 주식별 분석 — 루프에서는 계산만, DB 저장은 Step 4에서 일괄 처리
+            upsert_data: list[tuple] = []
+
             for row in today_rows:
                 stock_id = row["stock_id"]
                 today_count = row["today_count"]
 
-                # baseline 정보 조회 (없으면 Phase C: DEFAULT 값 사용)
-                baseline_factors = HiringAnalyzer._baseline_cache.get(stock_id)
+                # 소수 건수 노이즈 차단 (0→1건 같은 일상 변동이 Spike로 오판되는 현상 방지)
+                if today_count < MIN_TODAY_JOB_COUNT:
+                    continue
 
                 # 현재 분기의 계절 가중치 조회 (Phase C면 DEFAULT_SEASONAL_FACTOR=1.0)
+                baseline_factors = HiringAnalyzer._baseline_cache.get(stock_id)
                 seasonal_factor = (
                     baseline_factors.get(current_quarter, DEFAULT_SEASONAL_FACTOR)
                     if baseline_factors
                     else DEFAULT_SEASONAL_FACTOR
                 )
 
-                # 기준선 결정 (이동평균 또는 네이버 fallback)
+                # 기준선 결정 + Phase 레이블 (이동평균 → 네이버 fallback → 기본값)
                 rolling_avg = rolling_averages.get(stock_id, 0)
-                base_scale = self._get_baseline_scale(stock_id, rolling_avg)
+                base_scale, phase = self._get_baseline_scale(stock_id, rolling_avg)
 
-                # 기대값 = 기준선 × 계절 가중치
+                # 기대값 = 기준선 × 계절 가중치 (0 나누기 방어 포함)
                 expected_baseline_count = base_scale * seasonal_factor
-
-                # Edge case: 0 나누기 방어
                 if expected_baseline_count <= 0:
                     expected_baseline_count = DEFAULT_BASELINE_SCALE
 
@@ -214,21 +219,39 @@ class HiringAnalyzer:
                 # Spike 판정 (평년 대비 150% 이상)
                 is_spike = relative_strength >= (HIRING_SPIKE_THRESHOLD * 100)
 
-                # Step 4: hiring_signals 테이블에 저장
-                await conn.execute("""
+                logger.debug(
+                    "stock_id=%d phase=%s today=%d expected=%.2f rs=%.1f%% spike=%s",
+                    stock_id, phase, today_count, expected_baseline_count,
+                    relative_strength, is_spike,
+                )
+
+                upsert_data.append((
+                    stock_id,
+                    target_date,
+                    today_count,
+                    round(expected_baseline_count, 2),
+                    round(relative_strength, 2),
+                    is_spike,
+                    phase,           # calculation_phase: 운영 디버깅 및 데이터 검증용
+                ))
+
+            # Step 4: 단 한 번의 배치 쿼리로 대량 업서트 (루프 내 개별 execute 대비 수십 배 빠름)
+            if upsert_data:
+                await conn.executemany("""
                     INSERT INTO hiring_signals
                         (stock_id, observed_date, job_count, baseline,
-                         relative_strength, is_spike)
+                         relative_strength, is_spike, calculation_phase)
                     VALUES
-                        ($1, $2::DATE, $3, $4, $5, $6)
+                        ($1, $2::DATE, $3, $4, $5, $6, $7)
                     ON CONFLICT (stock_id, observed_date) DO UPDATE
-                    SET job_count         = EXCLUDED.job_count,
-                        baseline          = EXCLUDED.baseline,
-                        relative_strength = EXCLUDED.relative_strength,
-                        is_spike          = EXCLUDED.is_spike
-                """, stock_id, target_date, today_count,
-                     round(expected_baseline_count, 2),
-                     round(relative_strength, 2), is_spike)
+                    SET job_count          = EXCLUDED.job_count,
+                        baseline           = EXCLUDED.baseline,
+                        relative_strength  = EXCLUDED.relative_strength,
+                        is_spike           = EXCLUDED.is_spike,
+                        calculation_phase  = EXCLUDED.calculation_phase
+                """, upsert_data)
+
+                logger.info("[%s] 채용 시그널 %d건 업서트 완료", target_date, len(upsert_data))
 
 
 # ============================================================================

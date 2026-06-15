@@ -106,6 +106,15 @@ class AlternativeAggregatorTest(unittest.TestCase):
         self.assertTrue(any("DATALAB" in e for e in signal.caution_evidence))
         self.assertTrue(any("소스 간 방향" in e for e in signal.caution_evidence))
 
+    def test_single_source_mixed_stays_mixed(self):
+        """단일 소스가 'mixed'를 반환하면 통합 방향도 'mixed'여야 한다.
+
+        이전: `and len(available) > 1` 가드로 인해 단일 소스 mixed가 score
+        임계값 분기로 떨어져 'neutral'로 둔갑하는 버그가 있었음.
+        """
+        signal = self.aggregator.merge([_sr("PATENT", "mixed", 0.05)])
+        self.assertEqual(signal.direction, "mixed")
+
 
 if __name__ == "__main__":
     unittest.main()
