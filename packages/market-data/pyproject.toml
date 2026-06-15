@@ -1,0 +1,10 @@
+[project]
+name = "signal-alpha-market-data"
+version = "0.1.0"
+description = "Shared market-data source abstraction (Kiwoom/Toss/DART) for Signal Alpha"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
