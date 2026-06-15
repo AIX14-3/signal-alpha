@@ -5,10 +5,10 @@ from collections.abc import Mapping
 from datetime import date, datetime, timedelta
 from typing import Any
 
+from app.agents.dart.agent import DartAnalysisAgent
 from app.analyzers.dart.financials import extract_dart_financial_metrics
-from app.analyzers.dart.llm import DartLlmAnalyzer, should_use_dart_llm
+from app.analyzers.dart.llm import DartLlmAnalyzer
 from app.analyzers.dart.rules import classify_dart_report, make_dart_event_hash
-from app.analyzers.dart.source_result import DartAnalysisResult, build_dart_analysis_result
 from app.collectors.dart.disclosure import DartCollector, DartDisclosureClient
 from app.orchestrator.persistence import CollectionPersistence
 from app.orchestrator.queue.task_types import ANALYZE_DART, NORMALIZE_DART
@@ -182,11 +182,14 @@ class DartAnalyzeTaskHandler:
         *,
         llm_analyzer: DartLlmAnalyzer | None = None,
         llm_high_impact_only: bool = True,
+        analysis_agent: DartAnalysisAgent | None = None,
     ) -> None:
         self._normalization_repository = NormalizationRepository(connection)
         self._analysis_repository = AnalysisRepository(connection)
-        self._llm_analyzer = llm_analyzer
-        self._llm_high_impact_only = llm_high_impact_only
+        self._analysis_agent = analysis_agent or DartAnalysisAgent(
+            llm_analyzer=llm_analyzer,
+            llm_high_impact_only=llm_high_impact_only,
+        )
 
     async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
         stock_id = int(task["stock_id"])
@@ -203,20 +206,12 @@ class DartAnalyzeTaskHandler:
         rows = await self._normalization_repository.list_signal_events_by_ids(signal_event_ids)
         events = [dict(row) for row in rows]
         signal_event_ids = [int(event["id"]) for event in events]
-        rule_result = build_dart_analysis_result(events)
-        result, analysis_source, llm_error = await self._analyze_with_optional_llm(
-            events=events,
-            rule_result=rule_result,
+        result = await self._analysis_agent.analyze(
             stock_code=str(task_context.get("stock_code") or ""),
+            events=events,
         )
         analysis_date = _analysis_date(events, task_context)
         run_key = _run_key(task_context)
-        llm_model = self._llm_analyzer.model if analysis_source == "llm" and self._llm_analyzer else None
-        prompt_ver = (
-            self._llm_analyzer.prompt_version
-            if analysis_source == "llm" and self._llm_analyzer
-            else "dart-rules-v1"
-        )
 
         analysis_result = await self._analysis_repository.upsert_analysis_result(
             stock_id=stock_id,
@@ -226,7 +221,7 @@ class DartAnalyzeTaskHandler:
             base_score=result.score,
             analysis_mode="dart_only",
             warning="; ".join(result.risk_flags) or None,
-            version=prompt_ver,
+            version=result.prompt_ver,
         )
         agent_result = await self._analysis_repository.upsert_agent_result(
             result_id=analysis_result["id"],
@@ -241,13 +236,13 @@ class DartAnalyzeTaskHandler:
                 "risk_flags": result.risk_flags,
                 "needs_review": result.needs_review,
                 "stock_code": task_context.get("stock_code"),
-                "analysis_source": analysis_source,
-                **({"llm_error": llm_error} if llm_error else {}),
+                "analysis_source": result.analysis_source,
+                **({"llm_error": result.llm_error} if result.llm_error else {}),
             },
             reliability_score=90,
             evidence_quality=_evidence_quality(events),
-            llm_model=llm_model,
-            prompt_ver=prompt_ver,
+            llm_model=result.llm_model,
+            prompt_ver=result.prompt_ver,
         )
         return {
             "analysis_result_id": analysis_result["id"],
@@ -256,48 +251,8 @@ class DartAnalyzeTaskHandler:
             "direction": result.direction,
             "score": result.score,
             "needs_review": result.needs_review,
-            "analysis_source": analysis_source,
+            "analysis_source": result.analysis_source,
         }
-
-    async def _analyze_with_optional_llm(
-        self,
-        *,
-        events: list[dict[str, Any]],
-        rule_result: DartAnalysisResult,
-        stock_code: str,
-    ) -> tuple[DartAnalysisResult, str, str | None]:
-        if self._llm_analyzer is None or not should_use_dart_llm(
-            events,
-            high_impact_only=self._llm_high_impact_only,
-        ):
-            return rule_result, "rules", None
-
-        try:
-            llm_result = await self._llm_analyzer.analyze(
-                events=events,
-                rule_result=rule_result,
-                stock_code=stock_code,
-            )
-        except Exception as exc:
-            return rule_result, "rules_fallback", str(exc)
-
-        return (
-            DartAnalysisResult(
-                direction=llm_result.direction,
-                score=llm_result.score,
-                summary=llm_result.summary,
-                risk_flags=llm_result.risk_flags,
-                method_detail={
-                    **rule_result.method_detail,
-                    "data_status": "partial" if llm_result.needs_review else "ok",
-                    "llm_confidence": llm_result.confidence,
-                    "key_facts": llm_result.key_facts,
-                },
-                needs_review=llm_result.needs_review,
-            ),
-            "llm",
-            None,
-        )
 
 
 def _stock_code_from_context(task_context: dict[str, Any]) -> str:
