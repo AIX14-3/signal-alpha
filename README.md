@@ -54,6 +54,21 @@ cd ../agent-worker
 uv run uvicorn app.main:app --reload --port 8011
 ```
 
+### requirements.txt (uv 미사용 환경/배포용)
+
+**의존성의 단일 출처(source of truth)는 `uv.lock`입니다.** uv를 쓰지 않는 배포
+환경/도구를 위해 서비스별 `requirements.txt`를 `uv.lock`에서 **파생 생성**해 둡니다
+(`pip install -r`로 설치 가능). 직접 수정하지 말고, 의존성이 바뀌면 아래로 재생성합니다.
+
+```powershell
+uv export --package signal-alpha-agent-worker --no-hashes --no-dev --no-emit-workspace -o services/agent-worker/requirements.txt
+uv export --package signal-alpha-main-server  --no-hashes --no-dev --no-emit-workspace -o services/main-server/requirements.txt
+```
+
+- `--no-dev`: 런타임 의존성만 (테스트/린트 제외)
+- `--no-emit-workspace`: 워크스페이스 멤버(PyPI에 없는 내부 패키지)는 제외, 그 전이 의존성만 포함
+- 각 파일 상단 주석에 생성 명령이 기록됩니다.
+
 ## Service Boundaries
 
 - `web` calls `main-server`.
