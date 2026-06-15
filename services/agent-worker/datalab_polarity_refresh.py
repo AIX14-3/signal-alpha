@@ -33,7 +33,7 @@ from typing import Any
 
 import asyncpg  # type: ignore[import]
 
-from datalab_polarity_keywords import REVIEW_DIR, _POLARITIES, apply_draft
+from datalab_polarity_keywords import REVIEW_DIR, _POLARITIES, apply_draft, prune_old_reviews
 from keyword_gen_common import call_gemini, fetch_stock, load_env, parse_dsn
 
 DEFAULT_DAYS = 365
@@ -207,6 +207,7 @@ def write_review(draft: dict[str, Any], ticker: str) -> Path:
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     path = REVIEW_DIR / f"polarity_refresh_{ticker}_{stamp}.json"
     path.write_text(json.dumps(draft, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    prune_old_reviews()
     return path
 
 

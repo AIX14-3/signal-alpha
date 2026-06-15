@@ -21,6 +21,7 @@ import asyncio
 import json
 import os
 import re
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -33,6 +34,29 @@ AGENT_ROOT = Path(__file__).resolve().parent
 REVIEW_DIR = AGENT_ROOT / "keyword_reviews"
 _POLARITIES = {"demand", "risk", "neutral"}
 _DEFAULT_CONFIDENCE = 0.5
+# Review files are disposable draft artifacts (gitignored). Each generation prunes
+# ones older than this so keyword_reviews/ does not grow unbounded. Env-overridable.
+REVIEW_RETENTION_DAYS = int(os.getenv("KEYWORD_REVIEW_RETENTION_DAYS", "7"))
+
+
+def prune_old_reviews(retention_days: int = REVIEW_RETENTION_DAYS) -> list[str]:
+    """Delete review JSON files older than ``retention_days`` (best-effort).
+
+    Cleanup must never break draft generation, so a stat/unlink error on any single
+    file is skipped. ``retention_days <= 0`` disables pruning. Returns names removed.
+    """
+    if retention_days <= 0 or not REVIEW_DIR.exists():
+        return []
+    cutoff = time.time() - retention_days * 86400
+    removed: list[str] = []
+    for path in REVIEW_DIR.glob("polarity_*.json"):
+        try:
+            if path.stat().st_mtime < cutoff:
+                path.unlink()
+                removed.append(path.name)
+        except OSError:
+            continue
+    return removed
 
 # Polarity classifies search *intent*, never a stock judgment. Reject any draft
 # whose rationale drifts into buy/sell/target-price advice (mirrors dart/llm.py).
@@ -178,6 +202,7 @@ def write_review(draft: dict[str, Any], ticker: str) -> Path:
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     path = REVIEW_DIR / f"polarity_{ticker}_{stamp}.json"
     path.write_text(json.dumps(draft, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    prune_old_reviews()
     return path
 
 
