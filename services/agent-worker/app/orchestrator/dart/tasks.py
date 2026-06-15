@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from datetime import date, datetime, timedelta
 from typing import Any
 
+from app.agents import SourceAgentInput
 from app.agents.dart.agent import DartAnalysisAgent
 from app.analyzers.dart.financials import extract_dart_financial_metrics
 from app.analyzers.dart.llm import DartLlmAnalyzer
@@ -207,8 +208,15 @@ class DartAnalyzeTaskHandler:
         events = [dict(row) for row in rows]
         signal_event_ids = [int(event["id"]) for event in events]
         result = await self._analysis_agent.analyze(
-            stock_code=str(task_context.get("stock_code") or ""),
-            events=events,
+            SourceAgentInput(
+                source="DART",
+                stock_code=str(task_context.get("stock_code") or ""),
+                stock_id=stock_id,
+                analysis_date=_analysis_date(events, task_context),
+                run_key=_run_key(task_context),
+                events=events,
+                context=task_context,
+            )
         )
         analysis_date = _analysis_date(events, task_context)
         run_key = _run_key(task_context)
