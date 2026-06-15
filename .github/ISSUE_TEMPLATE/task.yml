@@ -1,0 +1,45 @@
+name: "✅ Task (작업 단위)"
+description: "Kick-off 아래의 개별 작업. 시작하는 사람이 self-assign."
+title: "[Task] <영역>: <작업>"
+labels: ["task"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        시작 시 **본인을 Assignee로 지정**하고 Project Status를 `In Progress`로 옮기세요.
+        PR 본문에 `Closes #이슈번호`를 넣으면 머지 시 자동 `Done`.
+  - type: dropdown
+    id: area
+    attributes:
+      label: 영역 (Area)
+      options:
+        - dart
+        - report
+        - hiring
+        - datalab
+        - patent
+        - price (kiwoom)
+        - aggregator
+        - web
+        - db-infra
+        - other
+    validations:
+      required: true
+  - type: input
+    id: kickoff
+    attributes:
+      label: 연결된 Kick-off 이슈
+      placeholder: "#이슈번호"
+  - type: textarea
+    id: detail
+    attributes:
+      label: 작업 내용
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 완료 기준
+      value: |
+        - [ ]
+        - [ ]
