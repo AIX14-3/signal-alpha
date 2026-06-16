@@ -31,7 +31,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "packages" / "data-
 from app.aggregator import AlternativeAggregator
 from app.analyzers.config import AggregatorConfig, AnalyzerRuntimeConfig
 from app.analyzers.registry import build_registry
-from app.orchestrator.alternative.tasks import AlternativeAnalyzeTaskHandler
+from app.orchestrator.alternative.tasks import (
+    AlternativeAnalyzeTaskHandler,
+    analysis_task_context,
+)
 from app.orchestrator.queue.task_types import ANALYZE_ALTERNATIVE
 from app.orchestrator.queue.tasks import QueueTaskRunner
 
@@ -184,7 +187,10 @@ async def run_once(args: argparse.Namespace) -> None:
                     stock_id=int(target["stock_id"]),
                     task_type=ANALYZE_ALTERNATIVE,
                     priority="batch",
-                    task_context={"as_of": as_of_str, "stock_code": target["ticker"]},
+                    # Canonical key (as_of only) so this dedupes against the
+                    # normalize-side producer; the handler resolves ticker from
+                    # stock_id. Including stock_code here would defeat dedupe.
+                    task_context=analysis_task_context(as_of_str),
                     dedupe=True,
                 )
 

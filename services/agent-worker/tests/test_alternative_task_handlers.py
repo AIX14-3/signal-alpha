@@ -15,6 +15,7 @@ from app.orchestrator.alternative.tasks import (
     HiringNormalizeTaskHandler,
     PatentNormalizeTaskHandler,
     _as_of_str,
+    analysis_task_context,
 )
 from app.schemas.source_result import SourceResult
 
@@ -186,6 +187,45 @@ class AsOfStrTest(unittest.TestCase):
         self.assertEqual(_as_of_str("2026-06-16T09:30:00"), "2026-06-16")
         self.assertEqual(_as_of_str(date(2026, 6, 16)), "2026-06-16")
         self.assertEqual(_as_of_str(datetime(2026, 6, 16, 9, 30)), "2026-06-16")
+        self.assertEqual(_as_of_str("20260616"), "2026-06-16")  # YYYYMMDD digits
+
+    def test_defaults_blank_to_today(self):
+        today = date.today().isoformat()
+        self.assertEqual(_as_of_str(None), today)
+        self.assertEqual(_as_of_str(""), today)
+
+    def test_rejects_unparseable_input(self):
+        # Garbage fails fast rather than silently producing a bogus dedupe key.
+        with self.assertRaises(ValueError):
+            _as_of_str("not-a-date")
+
+
+class AnalysisTaskContextTest(unittest.TestCase):
+    def test_canonical_key_is_as_of_only(self):
+        self.assertEqual(analysis_task_context("2026-06-16"), {"as_of": "2026-06-16"})
+
+    def test_carries_no_stock_identity(self):
+        # Regression for the cross-producer dedupe bug: the key must be
+        # stock-agnostic (no stock_code/ticker) so run_analyzers.py and the
+        # normalize handlers build IS-NOT-DISTINCT-FROM-identical contexts.
+        ctx = analysis_task_context("2026-06-16")
+        self.assertNotIn("stock_code", ctx)
+        self.assertNotIn("ticker", ctx)
+
+
+class EnqueueDedupeContextTest(unittest.IsolatedAsyncioTestCase):
+    async def test_normalize_enqueue_context_has_no_stock_identity(self):
+        # The normalize-side producer must use the canonical {"as_of"} key so it
+        # dedupes against run_analyzers.py (which also omits stock_code).
+        conn = FakeConnection(rows=[HIRING_ROW])
+        handler = HiringNormalizeTaskHandler(conn)
+        await handler(
+            {"id": 1, "stock_id": 1, "source_raw_ids": [10],
+             "task_context": {"as_of": "2026-06-16"}}
+        )
+        serialized_context = conn._enqueue_inserts()[0][2][6]
+        self.assertIn('"as_of": "2026-06-16"', serialized_context)
+        self.assertNotIn("stock_code", serialized_context)
 
 
 class HiringNormalizeHandlerTest(unittest.IsolatedAsyncioTestCase):
