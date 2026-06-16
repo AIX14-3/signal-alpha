@@ -37,9 +37,3 @@ CREATE INDEX idx_sec_filings_cik_form
 
 CREATE INDEX idx_sec_filings_filing_date
     ON sec_filings (filing_date DESC);
-
--- updated_at 자동 갱신 트리거 (database/README §3 컨벤션: updated_at 컬럼 → trg_<table>_updated_at)
-CREATE TRIGGER trg_sec_filings_updated_at
-BEFORE UPDATE ON sec_filings
-FOR EACH ROW
-EXECUTE FUNCTION update_updated_at();
