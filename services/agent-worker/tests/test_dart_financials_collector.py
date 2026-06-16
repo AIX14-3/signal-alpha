@@ -2,6 +2,7 @@ import unittest
 
 from app.collectors.dart.disclosure import DartApiError
 from app.collectors.dart.financials_api import (
+    DartFinancialsClient,
     DartFinancialsCollector,
     _fiscal_period,
     _period_label,
@@ -96,6 +97,43 @@ class DartFinancialsCollectorTest(unittest.IsolatedAsyncioTestCase):
     async def test_error_status_raises(self):
         with self.assertRaises(DartApiError):
             await self._collect({"CFS": {"status": "020", "message": "rate limit"}})
+
+
+class _QueuedJsonClient(DartFinancialsClient):
+    """_get_json 응답을 큐로 주입해 클라이언트 재시도 로직만 검증한다."""
+
+    def __init__(self, responses, **kwargs):
+        super().__init__(
+            api_key="k", retry_backoff_seconds=0, min_request_interval_sec=0, **kwargs
+        )
+        self._responses = list(responses)
+        self.json_calls = 0
+
+    def _get_json(self, url):
+        self.json_calls += 1
+        return self._responses.pop(0)
+
+
+class DartFinancialsClientRetryTest(unittest.IsolatedAsyncioTestCase):
+    async def test_retries_body_rate_limit_status_then_succeeds(self):
+        client = _QueuedJsonClient(
+            [{"status": "020", "message": "rate limit"}, _ok_response([_REVENUE_ROW])]
+        )
+        response = await client.fetch_financials(
+            corp_code="00126380", bsns_year=2025, reprt_code="11011", fs_div="CFS"
+        )
+        self.assertEqual(response["status"], "000")
+        self.assertEqual(client.json_calls, 2)  # 020 → 재시도 → 000
+
+    async def test_raises_after_retries_exhausted(self):
+        client = _QueuedJsonClient(
+            [{"status": "020"}, {"status": "020"}], max_retries=1
+        )
+        with self.assertRaises(DartApiError):
+            await client.fetch_financials(
+                corp_code="00126380", bsns_year=2025, reprt_code="11011", fs_div="CFS"
+            )
+        self.assertEqual(client.json_calls, 2)  # max_retries=1 → 2회 시도 후 포기
 
 
 class FinancialsHelpersTest(unittest.TestCase):

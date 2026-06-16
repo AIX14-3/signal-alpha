@@ -42,15 +42,16 @@ class DartFinancialsSyncService:
         self._current_year = current_year or date.today().year
 
     def _target_years(self) -> list[int]:
-        # 사업보고서 공시는 연초에 직전 연도분이 나오므로 직전 연도부터 N년 소급.
-        latest = self._current_year - 1
-        return [latest - offset for offset in range(self._lookback_years)]
+        # 당해연도부터 N년 소급. 당해연도 사업보고서(11011)는 아직 미공시라 013(빈값)으로
+        # 안전 처리되지만, 당해연도 분기/반기 보고서는 이렇게 해야 수집된다(누락 방지).
+        return [self._current_year - offset for offset in range(self._lookback_years)]
 
     async def sync_ticker(self, *, stock_code: str, stock_id: int | None = None) -> dict[str, Any]:
+        years = self._target_years()
         upserted = 0
         fetched = 0
         empty: list[str] = []
-        for bsns_year in self._target_years():
+        for bsns_year in years:
             for reprt_code in self._reprt_codes:
                 facts = await self._collector.collect(
                     stock_code=stock_code,
@@ -67,9 +68,11 @@ class DartFinancialsSyncService:
                 upserted += await self._repository.upsert_facts(facts)
         return {
             "ticker": stock_code,
-            "years": self._target_years(),
+            "years": years,
             "reprt_codes": list(self._reprt_codes),
             "fetched_count": fetched,
             "upserted_count": upserted,
+            # 수집됐지만 필수키 누락으로 리포지토리에서 폐기된 행 수(조용한 유실 가시화).
+            "skipped_count": fetched - upserted,
             "empty_periods": empty,
         }

@@ -33,6 +33,10 @@ class Settings:
         self.dart_financials_fs_priority = _env_list(
             "DART_FINANCIALS_FS_PRIORITY", default=["CFS", "OFS"]
         )
+        # OpenDART 분당 호출 제한 대비 요청 간 최소 간격(초).
+        self.dart_financials_min_request_interval_sec = float(
+            getenv("DART_FINANCIALS_MIN_REQUEST_INTERVAL_SEC", "0.2")
+        )
         self.dart_use_llm = _env_bool("DART_USE_LLM", default=False)
         self.dart_llm_high_impact_only = _env_bool("DART_LLM_HIGH_IMPACT_ONLY", default=True)
         self.dart_llm_provider = getenv("DART_LLM_PROVIDER", "gemini").strip().lower()

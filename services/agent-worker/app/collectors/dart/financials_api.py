@@ -17,14 +17,22 @@ from typing import Any, Protocol
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-# 형제 모듈(collectors/dart)의 에러 타입·매핑 재사용 — DART 수집 전반 일관성 유지.
-from app.collectors.dart.disclosure import DartApiError, _to_dart_error
+# 형제 모듈(collectors/dart)의 에러 타입·재시도 분류 재사용 — DART 수집 전반 일관성 유지.
+from app.collectors.dart.disclosure import (
+    DartApiError,
+    _retryable_status_error,
+    _to_dart_error,
+)
+from app.collectors.price.rate_limiter import RateLimiter
 
 FINANCIALS_PATH = "fnlttSinglAcntAll.json"
 
 # reprt_code → 기간 라벨 접미사 / 누적 여부.
 _REPRT_SUFFIX = {"11013": "Q1", "11012": "H1", "11014": "Q3", "11011": "FY"}
 _ANNUAL_REPRT = "11011"
+
+# OpenDART 호출 제한 대비 기본 요청 간격(초). SEC fair-access(0.2)와 동일 보수값.
+_DEFAULT_MIN_REQUEST_INTERVAL_SEC = 0.2
 
 
 class DartFinancialsClient:
@@ -36,12 +44,14 @@ class DartFinancialsClient:
         timeout_seconds: int = 10,
         max_retries: int = 2,
         retry_backoff_seconds: float = 0.5,
+        min_request_interval_sec: float = 0.0,
     ) -> None:
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
         self._timeout_seconds = timeout_seconds
         self._max_retries = max_retries
         self._retry_backoff_seconds = retry_backoff_seconds
+        self._limiter = RateLimiter(min_request_interval_sec)
 
     def build_url(self, *, corp_code: str, bsns_year: int, reprt_code: str, fs_div: str) -> str:
         query = urlencode(
@@ -69,7 +79,18 @@ class DartFinancialsClient:
             reprt_code=reprt_code,
             fs_div=fs_div,
         )
-        return await self._with_retry(lambda: asyncio.to_thread(self._get_json, url))
+
+        async def request() -> dict[str, Any]:
+            await self._limiter.wait()
+            response = await asyncio.to_thread(self._get_json, url)
+            # 본문 status가 재시도 가능(020 rate-limit, 800/900 서비스장애)이면
+            # 재시도 루프가 받도록 다시 던진다. (DartDisclosureClient와 동일 패턴)
+            retry_error = _retryable_status_error(response)
+            if retry_error:
+                raise retry_error
+            return response
+
+        return await self._with_retry(request)
 
     async def _with_retry(self, request: Any) -> Any:
         last_error: Exception | None = None
@@ -106,11 +127,14 @@ class DartFinancialsCollector:
         corp_code_repository: CorpCodeRepository,
         client: DartFinancialsClient | None = None,
         fs_priority: tuple[str, ...] = ("CFS", "OFS"),
+        min_request_interval_sec: float = _DEFAULT_MIN_REQUEST_INTERVAL_SEC,
     ) -> None:
         if not api_key:
             raise DartApiError("DART API key is required.")
         self._corp_code_repository = corp_code_repository
-        self._client = client or DartFinancialsClient(api_key=api_key)
+        self._client = client or DartFinancialsClient(
+            api_key=api_key, min_request_interval_sec=min_request_interval_sec
+        )
         self._fs_priority = fs_priority
 
     async def collect(
