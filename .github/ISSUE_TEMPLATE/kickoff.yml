@@ -14,18 +14,22 @@ body:
     id: area
     attributes:
       label: 영역 (Area)
-      description: 어떤 개발 부분인지 (담당자가 아니라 '무엇'을 분류)
+      description: 어떤 개발 부분인지 (담당자가 아니라 '무엇'을 분류). Project의 Area 필드 옵션과 동일.
       options:
         - dart
         - report
         - hiring
         - datalab
         - patent
-        - price (kiwoom)
+        - price
         - aggregator
         - web
         - db-infra
-        - other
+        - main-server
+        - worker
+        - qa
+        - infra
+        - docs
     validations:
       required: true
   - type: textarea
