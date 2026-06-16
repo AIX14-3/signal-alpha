@@ -1,7 +1,7 @@
 """AlternativeAggregator — the diagram's "통합기 (합치는 자)".
 
 Pure merge logic only: no LLM, no DB, no external calls. Takes the per-source
-``SourceResult`` list the AlternativeAgent collected and produces one
+``SourceResult`` list the analyze handler collected and produces one
 ``AlternativeSignal``. Works for any number of sources — only the sources
 actually present (and not failed) are blended, with weights renormalised over
 them, so registering a new source needs no change here.
