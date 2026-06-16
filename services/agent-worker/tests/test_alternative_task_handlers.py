@@ -1,0 +1,336 @@
+import sys
+import unittest
+from datetime import date, datetime
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "packages" / "data-access"))
+
+from app.analyzers.hiring.normalize_rules import classify_hiring_posting
+from app.analyzers.patent.normalize_rules import classify_patent_filing
+from app.analyzers.registry import SourceRegistration
+from app.orchestrator.alternative.tasks import (
+    AlternativeAnalyzeTaskHandler,
+    DataLabNormalizeRouteHandler,
+    HiringNormalizeTaskHandler,
+    PatentNormalizeTaskHandler,
+    _as_of_str,
+)
+from app.schemas.source_result import SourceResult
+
+
+class FakeConnection:
+    """Records SQL calls; fetch returns the configured rows, ids auto-increment."""
+
+    def __init__(self, rows=None, ticker="005930"):
+        self.calls = []
+        self.next_id = 400
+        self.rows = rows if rows is not None else []
+        self.ticker = ticker
+
+    async def fetch(self, sql, *args):
+        self.calls.append(("fetch", sql, args))
+        return self.rows
+
+    async def fetchrow(self, sql, *args):
+        self.calls.append(("fetchrow", sql, args))
+        self.next_id += 1
+        return {"id": self.next_id}
+
+    async def fetchval(self, sql, *args):
+        self.calls.append(("fetchval", sql, args))
+        if "FROM processing_queue" in sql:  # dedupe lookup → no existing task
+            return None
+        if "SELECT ticker FROM stocks" in sql:
+            return self.ticker
+        self.next_id += 1
+        return self.next_id
+
+    async def execute(self, sql, *args):
+        self.calls.append(("execute", sql, args))
+        return "OK"
+
+    def _inserts(self, table):
+        return [c for c in self.calls if f"INSERT INTO {table}" in c[1]]
+
+    def _enqueue_inserts(self):
+        return [
+            c for c in self.calls
+            if c[0] == "fetchval" and "INSERT INTO processing_queue" in c[1]
+        ]
+
+
+HIRING_ROW = {
+    "raw_document_id": 10,
+    "stock_id": 1,
+    "source_type": "HIRING",
+    "source_name": "카카오",
+    "external_id": "https://jobs.example/123",
+    "title": "백엔드 엔지니어",
+    "source_url": "https://jobs.example/123",
+    "published_at": datetime(2026, 6, 8),
+    "collected_at": datetime(2026, 6, 8),
+    "keyword": "백엔드 엔지니어",
+    "job_category": "IT",
+    "job_count": 1,
+    "previous_job_count": None,
+    "change_pct": None,
+    "extra_payload": {"signal_strength": 0.7, "tech_stack": ["python"]},
+}
+
+PATENT_ROW = {
+    "raw_document_id": 20,
+    "stock_id": 2,
+    "source_type": "PATENT",
+    "source_name": "KIPRIS",
+    "title": "반도체 패키징 방법",
+    "source_url": "https://kipris.example/app/4420260001",
+    "published_at": datetime(2026, 6, 1),
+    "collected_at": datetime(2026, 6, 1),
+    "application_no": "4420260001",
+    "patent_title": "반도체 패키징 방법",
+    "applicant_name": "삼성전자",
+    "application_date": date(2026, 6, 1),
+    "tech_category": "Semiconductors",
+    "is_new_category": True,
+    "extra_payload": {},
+}
+
+
+class NormalizeRulesTest(unittest.TestCase):
+    def test_hiring_posting_is_positive_demand_signal(self):
+        c = classify_hiring_posting(HIRING_ROW)
+        self.assertEqual(c.event_type, "hiring_posting")
+        self.assertEqual(c.signal_direction, "positive")
+        self.assertEqual(c.impact_level, "high")  # signal_strength 0.7
+
+    def test_hiring_low_impact_without_strength(self):
+        c = classify_hiring_posting({**HIRING_ROW, "extra_payload": {}})
+        self.assertEqual(c.impact_level, "low")
+
+    def test_patent_new_category_is_medium_impact(self):
+        c = classify_patent_filing(PATENT_ROW)
+        self.assertEqual(c.event_type, "patent_new_category")
+        self.assertEqual(c.impact_level, "medium")
+
+    def test_patent_plain_filing_is_low_impact(self):
+        c = classify_patent_filing({**PATENT_ROW, "is_new_category": False})
+        self.assertEqual(c.event_type, "patent_filing")
+        self.assertEqual(c.impact_level, "low")
+
+
+class AsOfStrTest(unittest.TestCase):
+    def test_normalizes_to_yyyy_mm_dd(self):
+        self.assertEqual(_as_of_str("2026-06-16T09:30:00"), "2026-06-16")
+        self.assertEqual(_as_of_str(date(2026, 6, 16)), "2026-06-16")
+        self.assertEqual(_as_of_str(datetime(2026, 6, 16, 9, 30)), "2026-06-16")
+
+
+class HiringNormalizeHandlerTest(unittest.IsolatedAsyncioTestCase):
+    async def test_normalizes_and_enqueues_analysis(self):
+        conn = FakeConnection(rows=[HIRING_ROW])
+        handler = HiringNormalizeTaskHandler(conn)
+
+        result = await handler(
+            {"id": 1, "stock_id": 1, "source_raw_ids": [10], "task_context": {"as_of": "2026-06-16"}}
+        )
+
+        self.assertEqual(result["normalized_count"], 1)
+        self.assertTrue(conn._inserts("source_documents"))
+        self.assertTrue(conn._inserts("signal_metrics"))
+        self.assertTrue(conn._inserts("validation_logs"))
+        event_call = conn._inserts("signal_events")[0]
+        self.assertEqual(event_call[2][4], "hiring_posting")   # event_type
+        self.assertEqual(event_call[2][6], "positive")         # signal_direction
+
+        enqueues = conn._enqueue_inserts()
+        self.assertEqual(len(enqueues), 1)
+        self.assertEqual(enqueues[0][2][1], "ANALYZE_ALTERNATIVE")  # task_type
+        self.assertIn('"as_of": "2026-06-16"', enqueues[0][2][6])   # serialized context
+
+    async def test_dedupes_enqueue_per_stock(self):
+        row_b = {**HIRING_ROW, "raw_document_id": 11, "external_id": "https://jobs.example/124"}
+        conn = FakeConnection(rows=[HIRING_ROW, row_b])  # same stock_id=1
+        handler = HiringNormalizeTaskHandler(conn)
+
+        await handler({"id": 1, "stock_id": 1, "source_raw_ids": [10, 11], "task_context": {}})
+
+        self.assertEqual(len(conn._enqueue_inserts()), 1)  # one task for the stock
+
+    async def test_accepts_postgres_array_literal_raw_ids(self):
+        conn = FakeConnection(rows=[HIRING_ROW])
+        handler = HiringNormalizeTaskHandler(conn)
+        await handler({"id": 1, "stock_id": 1, "source_raw_ids": "{10}", "task_context": "{}"})
+        self.assertEqual(conn.calls[0][2], ([10],))
+
+
+class PatentNormalizeHandlerTest(unittest.IsolatedAsyncioTestCase):
+    async def test_marks_official_high_reliability_and_application_date(self):
+        conn = FakeConnection(rows=[PATENT_ROW])
+        handler = PatentNormalizeTaskHandler(conn)
+
+        result = await handler(
+            {"id": 2, "stock_id": 2, "source_raw_ids": [20], "task_context": {"as_of": "2026-06-16"}}
+        )
+
+        self.assertEqual(result["normalized_count"], 1)
+        doc_call = conn._inserts("source_documents")[0]
+        self.assertEqual(doc_call[2][8], "high")   # reliability_level
+        self.assertTrue(doc_call[2][9])            # is_official
+        event_call = conn._inserts("signal_events")[0]
+        self.assertEqual(event_call[2][4], "patent_new_category")
+        self.assertEqual(event_call[2][5], date(2026, 6, 1))  # event_date = application_date
+        self.assertEqual(len(conn._enqueue_inserts()), 1)
+
+
+class DataLabRouteHandlerTest(unittest.IsolatedAsyncioTestCase):
+    async def test_routes_category_to_mapped_stocks(self):
+        conn = FakeConnection(rows=[{"stock_id": 1, "weight": 1.0}, {"stock_id": 3, "weight": 0.5}])
+        handler = DataLabNormalizeRouteHandler(conn)
+
+        result = await handler(
+            {"id": 3, "stock_id": None, "task_context": {"category_id": 5, "as_of": "2026-06-16"}}
+        )
+
+        self.assertEqual(result["routed_count"], 2)
+        enqueues = conn._enqueue_inserts()
+        self.assertEqual(len(enqueues), 2)
+        self.assertEqual({e[2][0] for e in enqueues}, {1, 3})  # stock_ids
+        self.assertTrue(all(e[2][1] == "ANALYZE_ALTERNATIVE" for e in enqueues))
+
+    async def test_skips_without_category_id(self):
+        conn = FakeConnection()
+        handler = DataLabNormalizeRouteHandler(conn)
+        result = await handler({"id": 3, "stock_id": None, "task_context": {}})
+        self.assertEqual(result["routed_count"], 0)
+        self.assertEqual(result["skipped_reason"], "category_id_required")
+        self.assertFalse(conn._enqueue_inserts())
+
+
+class _FakeLoader:
+    def __init__(self, source):
+        self.source = source
+
+    async def load(self, *, stock_id, stock_code, as_of):
+        return []
+
+
+class _FakeAnalyzer:
+    def __init__(self, source, direction, score):
+        self.source = source
+        self._direction = direction
+        self._score = score
+
+    async def analyze(self, stock_code, evidence):
+        return SourceResult(
+            source=self.source,
+            stock_code=stock_code,
+            direction=self._direction,
+            score=self._score,
+            summary=f"{self.source} ok",
+            data_status="ok",
+        )
+
+
+def _registration(source, direction, score):
+    return SourceRegistration(
+        source=source,
+        debate_method="D-1" if source == "HIRING" else "D-2",
+        analyzer=_FakeAnalyzer(source, direction, score),
+        loader_factory=lambda repo, s=source: _FakeLoader(s),
+    )
+
+
+class AlternativeAnalyzeHandlerTest(unittest.IsolatedAsyncioTestCase):
+    async def test_runs_sources_and_persists_signal(self):
+        conn = FakeConnection()
+        handler = AlternativeAnalyzeTaskHandler(
+            conn,
+            registrations=[
+                _registration("HIRING", "positive", 0.5),
+                _registration("PATENT", "positive", 0.3),
+            ],
+        )
+
+        result = await handler(
+            {"id": 4, "stock_id": 1, "task_context": {"as_of": "2026-06-16", "stock_code": "005930"}}
+        )
+
+        self.assertEqual(result["analyzed_count"], 2)
+        self.assertEqual(sorted(result["available_sources"]), ["HIRING", "PATENT"])
+        self.assertTrue(conn._inserts("analysis_results"))
+        self.assertTrue(conn._inserts("agent_results"))
+        self.assertTrue(conn._inserts("final_signals"))
+
+    async def test_isolates_failing_source(self):
+        class _BoomAnalyzer:
+            source = "DATALAB"
+
+            async def analyze(self, stock_code, evidence):
+                raise RuntimeError("boom")
+
+        boom = SourceRegistration(
+            source="DATALAB",
+            debate_method="D-3",
+            analyzer=_BoomAnalyzer(),
+            loader_factory=lambda repo: _FakeLoader("DATALAB"),
+        )
+        conn = FakeConnection()
+        handler = AlternativeAnalyzeTaskHandler(
+            conn,
+            registrations=[_registration("HIRING", "positive", 0.5), boom],
+        )
+
+        result = await handler(
+            {"id": 4, "stock_id": 1, "task_context": {"as_of": "2026-06-16", "stock_code": "005930"}}
+        )
+
+        self.assertEqual(result["analyzed_count"], 2)
+        self.assertEqual(result["available_sources"], ["HIRING"])  # DATALAB failed → excluded
+
+
+class HandlerRegistrationTest(unittest.IsolatedAsyncioTestCase):
+    async def test_build_task_handlers_registers_alternative_types(self):
+        from app.orchestrator.queue.handlers import build_task_handlers
+        from app.orchestrator.queue.task_types import (
+            ANALYZE_ALTERNATIVE,
+            NORMALIZE_DATALAB,
+            NORMALIZE_HIRING,
+            NORMALIZE_PATENT,
+        )
+
+        handlers = build_task_handlers(FakeConnection())
+        for task_type in (NORMALIZE_HIRING, NORMALIZE_PATENT, NORMALIZE_DATALAB, ANALYZE_ALTERNATIVE):
+            self.assertIn(task_type, handlers)
+
+    async def test_runner_no_longer_skips_alternative_task(self):
+        # Regression for #117: an Alt task with a registered handler runs instead
+        # of being mark_skipped("No handler registered").
+        from app.orchestrator.queue.tasks import QueueTaskRunner
+        from app.orchestrator.queue.task_types import NORMALIZE_HIRING
+
+        class _ClaimConnection(FakeConnection):
+            async def fetchrow(self, sql, *args):
+                if "UPDATE processing_queue" in sql or "next_task" in sql:
+                    return {
+                        "id": 1,
+                        "stock_id": 1,
+                        "task_type": NORMALIZE_HIRING,
+                        "source_raw_ids": [10],
+                        "task_context": {"as_of": "2026-06-16"},
+                        "retry_count": 0,
+                        "max_retry_count": 3,
+                    }
+                return await super().fetchrow(sql, *args)
+
+        claim_conn = _ClaimConnection(rows=[HIRING_ROW])
+        runner = QueueTaskRunner(claim_conn, {NORMALIZE_HIRING: HiringNormalizeTaskHandler(claim_conn)})
+        result = await runner.run_task(NORMALIZE_HIRING)
+
+        self.assertEqual(result["status"], "success")
+        self.assertFalse(
+            any("status = 'skipped'" in c[1] for c in claim_conn.calls if c[0] == "execute")
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

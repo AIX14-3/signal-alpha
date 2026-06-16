@@ -4,7 +4,6 @@ POST /agents/report  — Report RAG 단독 실행
 POST /agents/analyze — 전체 에이전트 실행 (현재 report만, 추후 dart/alternative 추가)
 """
 import dataclasses
-from typing import Annotated
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field

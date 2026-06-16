@@ -5,8 +5,8 @@ from collections.abc import Mapping
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from app.agents import SourceAgentInput
-from app.agents.dart.agent import DartAnalysisAgent
+from app.agents import SourceAgentInput, SourceAnalysisAgent
+from app.agents.dart.graph import DartAnalysisGraphAgent
 from app.analyzers.dart.financials import extract_dart_financial_metrics
 from app.analyzers.dart.llm import DartLlmAnalyzer
 from app.analyzers.dart.rules import classify_dart_report, make_dart_event_hash
@@ -183,11 +183,11 @@ class DartAnalyzeTaskHandler:
         *,
         llm_analyzer: DartLlmAnalyzer | None = None,
         llm_high_impact_only: bool = True,
-        analysis_agent: DartAnalysisAgent | None = None,
+        analysis_agent: SourceAnalysisAgent | None = None,
     ) -> None:
         self._normalization_repository = NormalizationRepository(connection)
         self._analysis_repository = AnalysisRepository(connection)
-        self._analysis_agent = analysis_agent or DartAnalysisAgent(
+        self._analysis_agent = analysis_agent or DartAnalysisGraphAgent(
             llm_analyzer=llm_analyzer,
             llm_high_impact_only=llm_high_impact_only,
         )
