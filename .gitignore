@@ -47,8 +47,9 @@ develop-eggs/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+# 루트로 앵커: web/src/lib 같은 프런트엔드 소스까지 삼키지 않도록 한다.
+/lib/
+/lib64/
 parts/
 sdist/
 var/
