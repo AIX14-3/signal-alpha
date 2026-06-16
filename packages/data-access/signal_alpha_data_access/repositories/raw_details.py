@@ -41,6 +41,93 @@ class RawDetailRepository:
             raw_document_ids,
         )
 
+    async def list_hiring_details_by_raw_ids(self, raw_document_ids: list[int]) -> list[Any]:
+        """Hiring detail rows joined to their raw_documents, for the Normalizer.
+
+        Mirrors ``list_dart_documents_by_raw_ids``: the normalize handler reads the
+        rows the collector just enqueued (by ``source_raw_ids``) and converts each
+        into a ``source_document`` + ``signal_event``.
+        """
+        if not raw_document_ids:
+            return []
+
+        return await self._connection.fetch(
+            """
+            SELECT
+                raw_documents.id AS raw_document_id,
+                raw_documents.stock_id,
+                raw_documents.source_type,
+                raw_documents.source_name,
+                raw_documents.external_id,
+                raw_documents.title,
+                raw_documents.source_url,
+                raw_documents.published_at,
+                raw_documents.collected_at,
+                h.keyword,
+                h.job_category,
+                h.job_count,
+                h.previous_job_count,
+                h.change_pct,
+                h.extra_payload
+            FROM hiring_raw_details h
+            INNER JOIN raw_documents
+                ON raw_documents.id = h.raw_document_id
+            WHERE h.raw_document_id = ANY($1::BIGINT[])
+            ORDER BY raw_documents.published_at DESC, raw_documents.id DESC
+            """,
+            raw_document_ids,
+        )
+
+    async def list_patent_details_by_raw_ids(self, raw_document_ids: list[int]) -> list[Any]:
+        """Patent detail rows joined to their raw_documents, for the Normalizer."""
+        if not raw_document_ids:
+            return []
+
+        return await self._connection.fetch(
+            """
+            SELECT
+                raw_documents.id AS raw_document_id,
+                raw_documents.stock_id,
+                raw_documents.source_type,
+                raw_documents.source_name,
+                raw_documents.title,
+                raw_documents.source_url,
+                raw_documents.published_at,
+                raw_documents.collected_at,
+                p.application_no,
+                p.patent_title,
+                p.applicant_name,
+                p.application_date,
+                p.tech_category,
+                p.is_new_category,
+                p.extra_payload
+            FROM patent_raw_details p
+            INNER JOIN raw_documents
+                ON raw_documents.id = p.raw_document_id
+            WHERE p.raw_document_id = ANY($1::BIGINT[])
+            ORDER BY raw_documents.published_at DESC, raw_documents.id DESC
+            """,
+            raw_document_ids,
+        )
+
+    async def list_stocks_for_datalab_category(self, category_id: int) -> list[Any]:
+        """Active stock_ids mapped to a DataLab category (datalab_category_stocks).
+
+        DataLab raw has no ``raw_documents``/``stock_id`` anchor, so the route
+        handler resolves category → stock here to enqueue per-stock analysis.
+        """
+        return await self._connection.fetch(
+            """
+            SELECT dcs.stock_id, dcs.weight
+            FROM datalab_category_stocks dcs
+            INNER JOIN stocks s ON s.id = dcs.stock_id
+            WHERE dcs.category_id = $1
+              AND s.is_active = TRUE
+            ORDER BY dcs.stock_id
+            """,
+            category_id,
+        )
+
     async def list_patent_details_by_stock(
         self,
         *,

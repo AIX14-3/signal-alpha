@@ -3,12 +3,26 @@ from __future__ import annotations
 from typing import Any
 
 from app.core.config import get_settings
-from app.orchestrator.queue.task_types import ANALYZE_DART, COLLECT_DART, NORMALIZE_DART
+from app.orchestrator.queue.task_types import (
+    ANALYZE_ALTERNATIVE,
+    ANALYZE_DART,
+    COLLECT_DART,
+    NORMALIZE_DART,
+    NORMALIZE_DATALAB,
+    NORMALIZE_HIRING,
+    NORMALIZE_PATENT,
+)
 from app.orchestrator.queue.tasks import TaskHandler
 
 
 def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
     from app.analyzers.dart.llm import DartLlmAnalyzer, GeminiGenerateContentClient, OpenAiChatClient
+    from app.orchestrator.alternative.tasks import (
+        AlternativeAnalyzeTaskHandler,
+        DataLabNormalizeRouteHandler,
+        HiringNormalizeTaskHandler,
+        PatentNormalizeTaskHandler,
+    )
     from app.orchestrator.dart.tasks import (
         DartAnalyzeTaskHandler,
         DartCollectionTaskHandler,
@@ -46,4 +60,9 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
             llm_analyzer=llm_analyzer,
             llm_high_impact_only=settings.dart_llm_high_impact_only,
         ),
+        # Alternative sources (hiring/patent/datalab) — converged onto the queue.
+        NORMALIZE_HIRING: HiringNormalizeTaskHandler(connection),
+        NORMALIZE_PATENT: PatentNormalizeTaskHandler(connection),
+        NORMALIZE_DATALAB: DataLabNormalizeRouteHandler(connection),
+        ANALYZE_ALTERNATIVE: AlternativeAnalyzeTaskHandler(connection),
     }

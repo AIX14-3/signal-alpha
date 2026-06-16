@@ -80,3 +80,42 @@ class RawDetailRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rows[0]["receipt_no"], "202606080001")
         self.assertIn("INNER JOIN raw_documents", connection.calls[0][1])
         self.assertEqual(connection.calls[0][2], ([1, 2],))
+
+    async def test_list_hiring_details_by_raw_ids_joins_raw_documents(self):
+        connection = FakeConnection()
+        repository = RawDetailRepository(connection)
+
+        await repository.list_hiring_details_by_raw_ids([1, 2])
+
+        self.assertIn("FROM hiring_raw_details", connection.calls[0][1])
+        self.assertIn("INNER JOIN raw_documents", connection.calls[0][1])
+        self.assertEqual(connection.calls[0][2], ([1, 2],))
+
+    async def test_list_hiring_details_by_raw_ids_empty_short_circuits(self):
+        connection = FakeConnection()
+        repository = RawDetailRepository(connection)
+
+        rows = await repository.list_hiring_details_by_raw_ids([])
+
+        self.assertEqual(rows, [])
+        self.assertEqual(connection.calls, [])
+
+    async def test_list_patent_details_by_raw_ids_joins_raw_documents(self):
+        connection = FakeConnection()
+        repository = RawDetailRepository(connection)
+
+        await repository.list_patent_details_by_raw_ids([3])
+
+        self.assertIn("FROM patent_raw_details", connection.calls[0][1])
+        self.assertIn("INNER JOIN raw_documents", connection.calls[0][1])
+        self.assertEqual(connection.calls[0][2], ([3],))
+
+    async def test_list_stocks_for_datalab_category_filters_active(self):
+        connection = FakeConnection()
+        repository = RawDetailRepository(connection)
+
+        await repository.list_stocks_for_datalab_category(5)
+
+        self.assertIn("FROM datalab_category_stocks", connection.calls[0][1])
+        self.assertIn("s.is_active = TRUE", connection.calls[0][1])
+        self.assertEqual(connection.calls[0][2], (5,))
