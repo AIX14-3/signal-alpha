@@ -3,6 +3,7 @@ from signal_alpha_data_access.repositories.analysis import AnalysisRepository
 from signal_alpha_data_access.repositories.backtests import BacktestRepository
 from signal_alpha_data_access.repositories.collection import CollectionRepository
 from signal_alpha_data_access.repositories.dart import DartRepository
+from signal_alpha_data_access.repositories.dead_letter import DeadLetterRepository
 from signal_alpha_data_access.repositories.market_data import MarketDataRepository
 from signal_alpha_data_access.repositories.normalization import NormalizationRepository
 from signal_alpha_data_access.repositories.observability import ObservabilityRepository
@@ -22,6 +23,7 @@ __all__ = [
     "BacktestRepository",
     "CollectionRepository",
     "DartRepository",
+    "DeadLetterRepository",
     "MarketDataRepository",
     "NormalizationRepository",
     "ObservabilityRepository",

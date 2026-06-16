@@ -219,6 +219,16 @@ erDiagram
         JSONB task_context
     }
 
+    dead_letter {
+        BIGINT id PK
+        BIGINT processing_queue_id FK "UK — 멱등 아카이브 (005)"
+        BIGINT stock_id FK "nullable"
+        VARCHAR task_type
+        JSONB task_context "replay payload"
+        TIMESTAMPTZ replayed_at "nullable"
+        BIGINT replayed_task_id FK "재등록된 큐 태스크"
+    }
+
     source_documents {
         BIGINT id PK
         BIGINT raw_document_id UK "복합FK CASCADE"
@@ -255,6 +265,7 @@ erDiagram
 
     source_documents ||--o{ signal_events : "source_document_id"
     signal_events ||--o{ signal_metrics : "signal_event_id"
+    processing_queue ||--o| dead_letter : "processing_queue_id (종착 실패 격리)"
 ```
 
 ## Zone B+F — User / Billing (008_users_billing_base.sql, 010_users_billing_extend.sql)
