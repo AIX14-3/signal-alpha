@@ -2,6 +2,7 @@ from fastapi import FastAPI
 
 from app.api.routes.report import router as report_router
 from app.api.routes.dart import router as dart_router
+from app.api.routes.dead_letter import router as dead_letter_router
 from app.api.routes.health import router as health_router
 from app.api.routes.observability import router as observability_router
 from app.api.routes.price import router as price_router
@@ -25,6 +26,7 @@ def create_app() -> FastAPI:
     app.include_router(dart_router)
     app.include_router(price_router)
     app.include_router(queue_router)
+    app.include_router(dead_letter_router)
     app.include_router(observability_router)
     app.include_router(schedules_router)
     app.include_router(tasks_router)

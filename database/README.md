@@ -55,7 +55,7 @@ docker compose run --rm migrate
 | C Collection DART | `dart_corp_codes`, `dart_collection_states` |
 | C Collection DataLab | `datalab_categories`, `datalab_category_stocks`, `datalab_category_keywords`, `datalab_raw_documents`, `datalab_raw_details` |
 | C Collection Hiring | `hiring_baseline`, `hiring_signals`, `hiring_sources`, `hiring_job_functions`, `hiring_job_function_stocks` (+ `hiring_crawler_type` ENUM) |
-| D Processing | `processing_queue`, `source_documents`, `signal_events`, `signal_metrics`, `validation_logs` |
+| D Processing | `processing_queue`, `dead_letter`, `source_documents`, `signal_events`, `signal_metrics`, `validation_logs` |
 | B User 기본 | `users`, `subscription_plans` |
 | E Analysis | `analysis_requests`, `analysis_results`, `quant_scores`, `ta_scores`, `ai_scores`, `agent_results`, `xgb_model_versions`, `ml_scores`, `final_signals`, `score_history`, `backtest_results` |
 | F User 확장 | `signal_subscriptions`, `watchlists`, `signal_journals`, `user_signal_reads`, `social_accounts`, `portone_verifications`, `terms_agreements` |
@@ -63,7 +63,7 @@ docker compose run --rm migrate
 | 트리거 | (트리거 함수 2종 + updated_at 트리거 일괄 부착) |
 | Legacy | `report_raw`, `report_signal` ← **폐기 예정, 신규 참조 금지** (§7) |
 
-이 외에 러너가 자동 생성하는 `schema_migrations` 원장이 있습니다. 총 **52개 테이블**.
+이 외에 러너가 자동 생성하는 `schema_migrations` 원장이 있습니다. 총 **53개 테이블**.
 
 이후 스키마 변경은 `001_baseline.sql`을 수정하지 않고 `002_*.sql`부터 증분 마이그레이션으로 추가합니다 ([`docs/migration_rules.md`](./docs/migration_rules.md) §3).
 

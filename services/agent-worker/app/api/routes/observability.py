@@ -13,20 +13,32 @@ router = APIRouter(prefix="/internal/stats", tags=["stats"])
 
 @router.get("/queue")
 async def queue_stats(pool: Any = Depends(get_database_pool)) -> dict[str, Any]:
-    """processing_queue 적체 현황 — task_type×status 매트릭스 + status별 합계."""
-    from signal_alpha_data_access.repositories import ObservabilityRepository
+    """processing_queue 적체 현황 — task_type×status 매트릭스 + status별 합계.
+    종착 실패 격리(dead_letter) 카운트도 함께 노출(Phase 2 DLQ)."""
+    from signal_alpha_data_access.repositories import (
+        DeadLetterRepository,
+        ObservabilityRepository,
+    )
 
     async with pool.acquire() as connection:
         rows = await ObservabilityRepository(connection).queue_stats()
+        dead_letter_rows = await DeadLetterRepository(connection).dead_letter_stats()
 
     items = [dict(row) for row in rows]
     totals_by_status: dict[str, int] = defaultdict(int)
     for item in items:
         totals_by_status[item["status"]] += int(item["count"])
+
+    dead_letter_items = [dict(row) for row in dead_letter_rows]
     return {
         "total": sum(totals_by_status.values()),
         "totals_by_status": dict(totals_by_status),
         "items": items,
+        "dead_letter": {
+            "total": sum(int(d["total"]) for d in dead_letter_items),
+            "unreplayed": sum(int(d["unreplayed"]) for d in dead_letter_items),
+            "items": dead_letter_items,
+        },
     }
 
 

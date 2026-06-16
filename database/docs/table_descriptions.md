@@ -8,7 +8,7 @@ ERD 다이어그램([`../erd/signal_alpha_core_erd.md`](../erd/signal_alpha_core
 > - 워커/에이전트가 **어떤 테이블을 쓰는지**(역할→테이블 방향)는 [`table_responsibility.md`](./table_responsibility.md)를 참고하세요. 이 문서는 그 반대인 **테이블→역할** 방향입니다.
 > - **새 테이블을 추가하는 마이그레이션 PR은 이 문서에도 한 줄 설명을 반드시 추가해야 합니다** (`database/README.md` §4).
 
-총 52개 테이블 (러너가 자동 관리하는 `schema_migrations` 원장 제외).
+총 53개 테이블 (러너가 자동 관리하는 `schema_migrations` 원장 제외).
 
 ---
 
@@ -77,6 +77,7 @@ raw 계층을 정규화 계층으로 변환하는 처리 영역.
 | `signal_events` | 정규화된 시그널 이벤트(이벤트 유형·방향·임팩트). Agent 분석의 기본 입력 단위. `event_hash`로 중복 방지 |
 | `signal_metrics` | 시그널 이벤트에 딸린 정량 지표(name-value). 수치 데이터의 DB 고정값 |
 | `validation_logs` | 정규화/분석 단계의 검증 결과 로그. 배열 FK를 강제 못하는 source trace를 검증·기록 |
+| `dead_letter` | 종착 실패(재시도 소진/timeout) `processing_queue` 태스크의 격리 아카이브 + replay 원장. `processing_queue_id` 유니크로 멱등 아카이브, `replayed_at`/`replayed_task_id`로 재등록 이력 (005_dead_letter.sql, Phase 2 DLQ) |
 
 ## Zone B — User 기본 (008_users_billing_base.sql)
 
