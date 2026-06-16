@@ -57,7 +57,16 @@
 | L5 엔티티·관계 | corp_code·발주처 그래프 | ⬜ 예정 |
 | L6 백테스트 패널 | 이벤트 ⨯ price forward return | ⬜ 예정 |
 
+상세 스펙: L1 → `docs/spec/dart-l1-financials-spec.md`, **L2~L6 → `docs/spec/data-layers-l2-l10-spec.md`**.
 → SEC(해외)도 동일 레이어 모델을 `source:"sec"`로 따른다(`해외공시_데이터수집_계획.md`).
+
+**확장 비전(미구현, 방향 고정용)** — 상세는 위 L2~L10 스펙 Part B:
+| 레이어 | 내용 | 기술 |
+|---|---|---|
+| L7 멀티스텝 추론·시나리오 | 멀티섹션 RAG → 구조화 thesis | LangGraph(게이트 §8) |
+| L8 예측·ML | 공시 시퀀스·부실 조기경보·어닝 예측 | sklearn/XGBoost (LangChain 아님) |
+| L9 인과추론(선택) | 이벤트 인과 검증·업종 클러스터 | DiD/통제군 |
+| L10 자율 thesis·멀티모달 | 전 소스 통합 Bear/Base/Bull | 멀티에이전트+ML, 가드레일 필수 |
 
 ---
 
