@@ -232,6 +232,13 @@ async def run_once(args: argparse.Namespace) -> None:
 
         print("-" * 60)
         print(f"SUMMARY {summary}")
+        attempted = summary["processed"] + summary["error"]
+        success_rate = (summary["processed"] / attempted * 100) if attempted else 0.0
+        print(
+            f"📊 분석 성공률 {success_rate:.1f}% "
+            f"(성공 {summary['processed']} / 시도 {attempted} · "
+            f"신호발행 {summary['published']} · 데이터없음 {summary['no_data']} · 오류 {summary['error']})"
+        )
     finally:
         await pool.close()
 

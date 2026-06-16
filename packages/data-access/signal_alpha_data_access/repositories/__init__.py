@@ -5,6 +5,7 @@ from signal_alpha_data_access.repositories.collection import CollectionRepositor
 from signal_alpha_data_access.repositories.dart import DartRepository
 from signal_alpha_data_access.repositories.market_data import MarketDataRepository
 from signal_alpha_data_access.repositories.normalization import NormalizationRepository
+from signal_alpha_data_access.repositories.observability import ObservabilityRepository
 from signal_alpha_data_access.repositories.processing_queue import ProcessingQueueRepository
 from signal_alpha_data_access.repositories.raw_details import RawDetailRepository
 from signal_alpha_data_access.repositories.report_chunks import ReportChunkRepository
@@ -23,6 +24,7 @@ __all__ = [
     "DartRepository",
     "MarketDataRepository",
     "NormalizationRepository",
+    "ObservabilityRepository",
     "ProcessingQueueRepository",
     "RawDetailRepository",
     "ReportChunkRepository",
