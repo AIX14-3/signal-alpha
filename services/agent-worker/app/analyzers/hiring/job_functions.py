@@ -27,6 +27,16 @@ from app.analyzers.hiring.indicators import _parse_date  # shared date parser
 # (it owns the ai/ml/데이터 needles that used to sit in ENGINEER). ENGINEER still
 # precedes MANUFACTURING so "생산기술 엔지니어" stays ENGINEER (the "엔지니어" intent
 # wins over the "생산" domain) — see test_hiring_job_functions.
+#
+# TODO(taxonomy): this is an intentionally COARSE, curated set (~10 functions),
+# not a full directory of every market job. It is tuned to the sectors the tracked
+# stocks span today (반도체/AI/플랫폼/자동차/바이오/엔터/경영지원). When the tracked
+# universe expands into NEW sectors, round it out toward the standard top-level
+# 직군 set — likely 금융/핀테크, 의료/헬스케어, 물류/유통, 게임, 교육, 서비스/운영.
+# Driver: add a bucket only when real postings show a meaningful cluster falling to
+# None or mis-bucketing (evidence-based, not speculative). Each new function needs
+# all three: a needle rule here + a hiring_job_functions row + a
+# hiring_job_function_stocks mapping (an unmapped function produces no signal).
 DEFAULT_FUNCTION_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("DATA_AI", ("ai", "ml", "머신러닝", "딥러닝", "인공지능", "데이터", "사이언티스트",
                  "data scientist", "nlp")),
