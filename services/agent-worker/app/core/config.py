@@ -56,6 +56,12 @@ class Settings:
         self.naver_client_secret = getenv("NAVER_CLIENT_SECRET", "")
         self.naver_datalab_timeout_seconds = int(getenv("NAVER_DATALAB_TIMEOUT_SECONDS", "15"))
 
+        # ── Hiring 크롤러 resilience (공용 fetch 헬퍼: sites/http.py) ──
+        # 일시적 timeout·5xx·커넥션오류를 지수 백오프로 재시도한다(4xx는 비재시도).
+        self.hiring_timeout_seconds = float(getenv("HIRING_TIMEOUT_SECONDS", "10"))
+        self.hiring_max_retries = int(getenv("HIRING_MAX_RETRIES", "2"))
+        self.hiring_retry_backoff_seconds = float(getenv("HIRING_RETRY_BACKOFF_SECONDS", "0.5"))
+
         # ── SEC EDGAR (해외/미국 공시 수집) ──
         # SEC는 연락처가 담긴 User-Agent를 요구한다(없으면 차단). 운영 시 팀 공용 주소로 교체.
         self.sec_user_agent = getenv(

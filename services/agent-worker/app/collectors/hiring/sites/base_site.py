@@ -23,6 +23,7 @@ DB 적재 로직은 없음 — 순수 크롤링/파싱만 담당.
 from __future__ import annotations
 
 import logging
+import random
 import time
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
@@ -136,6 +137,26 @@ class BaseSiteCrawler(ABC):
         )
 
     def _safe_get(self, url: str, wait_sec: float = 1.5) -> None:
-        """페이지 이동 후 대기."""
-        self.driver.get(url)
-        time.sleep(wait_sec)
+        """페이지 이동 후 대기. 일시적 드라이버/네트워크 오류는 지수 백오프로 재시도."""
+        from selenium.common.exceptions import WebDriverException
+
+        from app.core.config import get_settings
+
+        cfg = get_settings()
+        retries = max(0, cfg.hiring_max_retries)
+        backoff = cfg.hiring_retry_backoff_seconds
+
+        for attempt in range(retries + 1):
+            try:
+                self.driver.get(url)
+                time.sleep(wait_sec)
+                return
+            except WebDriverException as exc:
+                if attempt >= retries:
+                    raise
+                sleep_s = backoff * (2 ** attempt) + random.uniform(0, backoff * 0.1)
+                logger.warning(
+                    "_safe_get 재시도 %d/%d (%.2fs 후): %s — %s",
+                    attempt + 1, retries, sleep_s, url, exc,
+                )
+                time.sleep(sleep_s)

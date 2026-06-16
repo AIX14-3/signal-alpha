@@ -30,7 +30,7 @@ class SamsungCrawler(BaseSiteCrawler):
 
     def crawl(self, company_name: str) -> list[dict]:
         """Samsung Careers JSON API 호출 (최대 3페이지)."""
-        import requests
+        from ..http import get as http_get
 
         jobs: list[dict] = []
         headers = {
@@ -40,10 +40,7 @@ class SamsungCrawler(BaseSiteCrawler):
 
         for page in range(1, 4):  # 최대 3페이지
             try:
-                resp = requests.get(
-                    _API.format(page=page), headers=headers, timeout=10
-                )
-                resp.raise_for_status()
+                resp = http_get(_API.format(page=page), headers=headers)
                 data = resp.json()
 
                 items = (
