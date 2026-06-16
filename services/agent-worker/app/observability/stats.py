@@ -37,6 +37,22 @@ def failure_rate(collected: int, failed: int) -> float | None:
     return failed / collected
 
 
+def calculate_run_status(inserted: int, skipped: int, failed: int) -> str:
+    """collector_runs.status 판정 — usable(inserted|skipped) / failed 기반 3분기.
+
+    A skip is NOT a failure (see module docstring): usable = inserted | skipped.
+      - failed == 0 & usable        → "success"
+      - failed > 0  & usable        → "partial"
+      - 전건 실패(0,0,>0) 또는 빈 런(0,0,0) → "failed"
+    """
+    has_usable = inserted > 0 or skipped > 0
+    if failed == 0 and has_usable:
+        return "success"
+    if failed > 0 and has_usable:
+        return "partial"
+    return "failed"
+
+
 @dataclass(frozen=True)
 class RunStats:
     """Internal value object for one run's counts + derived rates.

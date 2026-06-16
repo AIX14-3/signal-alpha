@@ -44,7 +44,6 @@ base_collector.py
 from __future__ import annotations
 
 import datetime
-import hashlib
 import json
 import logging
 import zoneinfo
@@ -52,6 +51,9 @@ from abc import ABC, abstractmethod
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
+
+from app.observability import calculate_run_status
+from app.utils.hash_utils import make_source_hash
 
 _KST = zoneinfo.ZoneInfo("Asia/Seoul")
 
@@ -145,11 +147,6 @@ class BaseCollector(ABC):
         for pattern in ["(주)", "주식회사", "㈜", "(유)", "(재)"]:
             cleaned = cleaned.replace(pattern, "")
         return " ".join(cleaned.split()).strip()  # 연속 공백 1칸으로
-
-    @staticmethod
-    def _source_hash(seed: str) -> str:
-        """seed(unique_key 또는 job_link) → SHA-256 hex 64자. source_hash UNIQUE 충족."""
-        return hashlib.sha256(seed.encode("utf-8")).hexdigest()
 
     @staticmethod
     def _get_current_quarter() -> str:
@@ -299,7 +296,7 @@ class BaseCollector(ABC):
                 "stype": self.SOURCE_TYPE,
                 "source_name": self._clean_company_name(data["company_name"])[:100],
                 "external_id": job_link[:200],
-                "source_hash": self._source_hash(seed),
+                "source_hash": make_source_hash(self.SOURCE_TYPE, seed),
                 "title": data["job_title"],
                 "source_url": job_link,
                 "published_at": posting_date,
@@ -411,7 +408,7 @@ class BaseCollector(ABC):
                     logger.error("❌ %s: %s", data.get("company_name"), exc)
 
             # 모든 savepoint 처리 후 최종 상태 반영 + 단 1회 commit
-            status = "success" if failed == 0 else "partial"
+            status = calculate_run_status(inserted, skipped, failed)
             self._finish_collector_run(db, run_id, status, inserted, skipped, failed)
             db.commit()
 

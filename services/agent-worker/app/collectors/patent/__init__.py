@@ -13,6 +13,7 @@ import asyncpg.exceptions  # type: ignore[import]
 
 from app.clients.kipris_client import KiprisClient, KiprisPatentRecord, _default_end_date, _default_start_date
 from app.collectors.patent.applicant_aliases import build_applicant_aliases as _build_applicant_aliases
+from app.observability import calculate_run_status as _run_status
 from app.utils.hash_utils import make_source_hash
 
 logger = logging.getLogger(__name__)
@@ -280,14 +281,6 @@ def _parse_date(value: str | None, *, application_no: str | None = None) -> date
             value,
         )
         return date.today()
-
-
-def _run_status(inserted: int, skipped: int, failed: int) -> str:
-    if failed == 0 and (inserted > 0 or skipped > 0):
-        return "success"
-    if (inserted > 0 or skipped > 0) and failed > 0:
-        return "partial"
-    return "failed"
 
 
 async def _create_run(conn: Any) -> int:
