@@ -30,6 +30,18 @@ from app.baseline.hiring_baseline_builder import DataLabBaselineCollector, resol
 from run_collectors import load_env, parse_dsn
 
 
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "postgres"}
+
+
+def resolve_ssl(host: str) -> Any:
+    """SSL mode for asyncpg: managed Postgres (Supabase) needs 'require'; a local
+    Docker Postgres rejects SSL. Default by host; ``DB_SSL`` env overrides."""
+    override = os.getenv("DB_SSL")
+    if override:
+        return False if override.lower() in {"disable", "off", "false", "0", "no"} else override
+    return False if host in _LOCAL_HOSTS else "require"
+
+
 async def fetch_baseline_targets(conn: asyncpg.Connection, ticker: str | None) -> list[dict[str, Any]]:
     rows = await conn.fetch(
         """
@@ -57,11 +69,12 @@ async def run_once(args: argparse.Namespace) -> None:
     years = args.years if args.years is not None else int(os.getenv("BASELINE_YEARS", "3"))
     min_months = int(os.getenv("BASELINE_MIN_MONTHS_PER_QUARTER", "2"))
 
+    params = parse_dsn(dsn)
     pool = await asyncpg.create_pool(
-        **parse_dsn(dsn),
+        **params,
         min_size=1,
         max_size=max(2, int(os.getenv("COLLECTOR_DB_POOL_MAX", "5"))),
-        ssl="require",
+        ssl=resolve_ssl(params["host"]),
         statement_cache_size=0,
     )
     try:
