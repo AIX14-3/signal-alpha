@@ -61,6 +61,26 @@ class Settings:
         self.hiring_timeout_seconds = float(getenv("HIRING_TIMEOUT_SECONDS", "10"))
         self.hiring_max_retries = int(getenv("HIRING_MAX_RETRIES", "2"))
         self.hiring_retry_backoff_seconds = float(getenv("HIRING_RETRY_BACKOFF_SECONDS", "0.5"))
+        # ── Hiring 크롤러 anti-block (UA 로테이션 + 429/403 적응형 백오프) ──
+        # 데스크톱 전용 UA 풀(모바일 금지 — m.* 모바일 레이아웃이 파싱을 깨뜨림).
+        self.hiring_ua_pool = _env_list(
+            "HIRING_UA_POOL",
+            default=[
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
+                "(KHTML, like Gecko) Version/17.2 Safari/605.1.15",
+            ],
+        )
+        # 429 Retry-After/지수 백오프의 상한(초) — 악성/비정상 대기로 워커가 무한 수면하는 것 방어.
+        self.hiring_rate_limit_max_backoff_seconds = float(
+            getenv("HIRING_RATE_LIMIT_MAX_BACKOFF_SECONDS", "30")
+        )
 
         # ── SEC EDGAR (해외/미국 공시 수집) ──
         # SEC는 연락처가 담긴 User-Agent를 요구한다(없으면 차단). 운영 시 팀 공용 주소로 교체.

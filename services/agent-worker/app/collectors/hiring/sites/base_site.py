@@ -137,7 +137,12 @@ class BaseSiteCrawler(ABC):
         )
 
     def _safe_get(self, url: str, wait_sec: float = 1.5) -> None:
-        """페이지 이동 후 대기. 일시적 드라이버/네트워크 오류는 지수 백오프로 재시도."""
+        """페이지 이동 후 대기. 일시적 드라이버/네트워크 오류는 지수 백오프로 재시도.
+
+        UA 주의: Selenium UA는 드라이버 생성 시점에 고정되므로(driver_utils) 이 재시도는
+        동일 UA로 백오프만 한다. UA 로테이션은 드라이버 로테이션 주기에 일어난다
+        (requests 경로는 sites/http.py가 매 시도마다 UA를 교체).
+        """
         from selenium.common.exceptions import WebDriverException
 
         from app.core.config import get_settings
