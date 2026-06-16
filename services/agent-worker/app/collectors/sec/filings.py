@@ -17,6 +17,7 @@ from typing import Any
 import httpx
 
 from app.collectors.sec.cik_map import format_cik10, parse_ticker_map
+from app.collectors.sec.targets import default_target_tickers
 from app.core.config import Settings, get_settings
 
 _SUBMISSIONS_PATH = "/submissions/CIK{cik10}.json"
@@ -171,6 +172,28 @@ class SecEdgarClient:
         if cik is None:
             return []  # 비상장/미국 외 → 빈 결과 (호출측에서 우회 수집 결정)
         return self.fetch_filings_by_cik(cik, ticker, forms=forms, limit=limit)
+
+    def resolve_target_tickers(self) -> list[str]:
+        """수집 대상 티커. 설정(SEC_TARGET_TICKERS)이 있으면 그것을, 없으면 기본 유니버스."""
+        return self._settings.sec_target_tickers or default_target_tickers()
+
+    def fetch_target_filings(
+        self,
+        *,
+        tickers: list[str] | None = None,
+        forms: Iterable[str] | None = None,
+        limit: int = 50,
+    ) -> dict[str, list[SecFiling]]:
+        """대상 유니버스 전체의 공시를 수집한다. 티커→CIK 매핑은 1회만 로드한다.
+
+        비상장/미국 외 등 CIK 미발견 티커는 빈 리스트로 반환된다(호출측에서 우회 결정).
+        """
+        target_tickers = tickers if tickers is not None else self.resolve_target_tickers()
+        cik_map = self.load_ticker_to_cik()
+        return {
+            ticker: self.fetch_filings(ticker, forms=forms, limit=limit, cik_map=cik_map)
+            for ticker in target_tickers
+        }
 
     def close(self) -> None:
         if self._owns_client:

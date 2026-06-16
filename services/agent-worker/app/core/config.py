@@ -61,6 +61,9 @@ class Settings:
             "SEC_FORM_WHITELIST",
             default=["8-K", "10-K", "10-Q", "4", "SC 13D", "SC 13G", "20-F", "6-K"],
         )
+        # 수집 대상 기업(티커, 쉼표 구분). 빈 값이면 collectors/sec/targets.py의
+        # 기본 유니버스(AI 선도주 보드)를 사용한다. 나중에 DB로 옮길 수 있다.
+        self.sec_target_tickers = _env_list("SEC_TARGET_TICKERS", default=[])
 
         # ── Realtime price collector (Kiwoom REST, agent-worker 내장 데몬) ──
         self.price_collector_enabled = _env_bool("PRICE_COLLECTOR_ENABLED", default=True)

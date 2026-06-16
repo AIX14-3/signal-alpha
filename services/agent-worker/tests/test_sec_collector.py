@@ -5,8 +5,11 @@ import httpx
 from app.collectors.sec import (
     SecEdgarClient,
     build_document_url,
+    default_target_tickers,
+    listed_targets,
     parse_recent_filings,
     parse_ticker_map,
+    target_by_ticker,
 )
 from app.core.config import Settings
 
@@ -106,6 +109,45 @@ class SecEdgarClientTest(unittest.TestCase):
         with SecEdgarClient(_fast_settings(), client=_mock_client()) as client:
             mapping = client.load_ticker_to_cik()
         self.assertEqual(mapping["AMD"], 2488)
+
+    def test_fetch_target_filings_maps_each_ticker(self):
+        with SecEdgarClient(_fast_settings(), client=_mock_client()) as client:
+            result = client.fetch_target_filings(
+                tickers=["NVDA", "AMD", "OPENAI"], forms={"10-Q"}, limit=5
+            )
+        self.assertEqual(set(result.keys()), {"NVDA", "AMD", "OPENAI"})
+        self.assertEqual(len(result["NVDA"]), 1)  # 상장 → 수신
+        self.assertEqual(result["OPENAI"], [])  # 비상장 → 빈 결과
+
+    def test_resolve_target_tickers_uses_settings_override(self):
+        settings = _fast_settings()
+        settings.sec_target_tickers = ["NVDA"]
+        with SecEdgarClient(settings, client=_mock_client()) as client:
+            self.assertEqual(client.resolve_target_tickers(), ["NVDA"])
+
+    def test_resolve_target_tickers_falls_back_to_default_universe(self):
+        settings = _fast_settings()
+        settings.sec_target_tickers = []
+        with SecEdgarClient(settings, client=_mock_client()) as client:
+            self.assertEqual(client.resolve_target_tickers(), default_target_tickers())
+
+
+class TargetUniverseTest(unittest.TestCase):
+    def test_default_target_tickers_listed_only(self):
+        tickers = default_target_tickers()
+        self.assertIn("NVDA", tickers)
+        self.assertIn("MSFT", tickers)
+        self.assertIn("TSM", tickers)
+        # 비상장은 기본 대상에서 제외
+        self.assertNotIn("OPENAI", tickers)
+
+    def test_listed_targets_are_all_listed(self):
+        self.assertTrue(all(t.listed for t in listed_targets()))
+
+    def test_target_by_ticker_lookup(self):
+        self.assertEqual(target_by_ticker("nvda").name, "NVIDIA")
+        self.assertFalse(target_by_ticker("OPENAI").listed)
+        self.assertIsNone(target_by_ticker("UNKNOWN"))
 
 
 if __name__ == "__main__":
