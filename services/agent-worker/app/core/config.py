@@ -24,6 +24,15 @@ class Settings:
         self.dart_fetch_documents = _env_bool("DART_FETCH_DOCUMENTS", default=True)
         self.dart_max_retries = int(getenv("DART_MAX_RETRIES", "2"))
         self.dart_retry_backoff_seconds = float(getenv("DART_RETRY_BACKOFF_SECONDS", "0.5"))
+        # ── L1 정형 재무 수집 (fnlttSinglAcntAll → dart_financial_facts) ──
+        self.dart_financials_lookback_years = int(getenv("DART_FINANCIALS_LOOKBACK_YEARS", "3"))
+        self.dart_financials_reprt_codes = _env_list(
+            "DART_FINANCIALS_REPRT_CODES",
+            default=["11011", "11012", "11013", "11014"],
+        )
+        self.dart_financials_fs_priority = _env_list(
+            "DART_FINANCIALS_FS_PRIORITY", default=["CFS", "OFS"]
+        )
         self.dart_use_llm = _env_bool("DART_USE_LLM", default=False)
         self.dart_llm_high_impact_only = _env_bool("DART_LLM_HIGH_IMPACT_ONLY", default=True)
         self.dart_llm_provider = getenv("DART_LLM_PROVIDER", "gemini").strip().lower()
