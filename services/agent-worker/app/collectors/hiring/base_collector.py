@@ -50,15 +50,13 @@ import logging
 import zoneinfo
 from abc import ABC, abstractmethod
 
-_KST = zoneinfo.ZoneInfo("Asia/Seoul")
-
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
+_KST = zoneinfo.ZoneInfo("Asia/Seoul")
+
+# 라이브러리 모듈은 logging.basicConfig 를 호출하지 않는다(호스트 앱 로깅 설정을
+# 덮어쓰는 부작용 방지). 로깅 핸들러/레벨 설정은 진입점(main.py, 파이프라인 스크립트)이 담당.
 logger = logging.getLogger(__name__)
 
 

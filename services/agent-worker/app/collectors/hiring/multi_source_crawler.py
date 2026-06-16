@@ -22,7 +22,10 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import datetime, timezone
+import zoneinfo
+from datetime import datetime
+
+_KST = zoneinfo.ZoneInfo("Asia/Seoul")
 
 try:
     from base_collector import BaseCollector
@@ -68,12 +71,12 @@ def _load_crawler_registry() -> dict[str, type]:
     }
 
 
-def _build_crawler_map(db_url: str, driver) -> dict[str, object]:
-    """
-    hiring_sources + stocks 조인 → {company_name: CrawlerInstance}
+def _load_source_specs(db_url: str) -> list[dict]:
+    """hiring_sources + stocks 조인 → 크롤러 사양(spec) 목록.
 
-    crawler_type = 'official_api' → driver=None (requests 전용)
-    그 외 모든 타입                → driver 전달 (Selenium 필요)
+    DB 조회는 driver 와 무관(매핑 데이터는 불변)하므로, 드라이버 로테이션 때마다
+    다시 조회하지 않도록 인스턴스화(_instantiate_crawlers)와 분리한다.
+    collect()는 루프 진입 전 1회만 이 함수를 호출한다.
     """
     from sqlalchemy import create_engine, text
 
@@ -91,13 +94,35 @@ def _build_crawler_map(db_url: str, driver) -> dict[str, object]:
     finally:
         engine.dispose()
 
-    registry = _load_crawler_registry()
+    return [
+        {
+            "company_name": row.name,
+            "crawler_type": row.crawler_type,
+            "crawler_class": row.crawler_class,
+        }
+        for row in rows
+    ]
+
+
+def _instantiate_crawlers(
+    specs: list[dict], driver, registry: dict[str, type] | None = None
+) -> dict[str, object]:
+    """크롤러 사양 목록 → {company_name: CrawlerInstance} (DB 접근 없음; registry 주입 시 순수).
+
+    crawler_type = 'official_api' → driver=None (requests 전용)
+    그 외 모든 타입                → driver 전달 (Selenium 필요)
+
+    registry 를 주입하면(테스트용) 그것을 사용하고, 없으면 기본 레지스트리를 로드한다.
+    드라이버 로테이션 시 동일 specs 로 driver 만 바꿔 재호출한다.
+    """
+    if registry is None:
+        registry = _load_crawler_registry()
     crawlers: dict[str, object] = {}
 
-    for row in rows:
-        company_name    = row.name
-        crawler_cls_name = row.crawler_class
-        use_driver = None if row.crawler_type == "official_api" else driver
+    for spec in specs:
+        company_name = spec["company_name"]
+        crawler_cls_name = spec["crawler_class"]
+        use_driver = None if spec["crawler_type"] == "official_api" else driver
 
         cls = registry.get(crawler_cls_name)
         if cls is None:
@@ -192,11 +217,14 @@ class MultiSourceCrawler(BaseCollector):
         self._setup_driver()
         all_jobs: list[dict] = []
 
-        # DB에서 공식 사이트 크롤러 맵 로드
+        # hiring_sources 사양은 driver 와 무관하므로 루프 진입 전 1회만 DB 조회.
+        # 로테이션 시에는 _instantiate_crawlers 로 driver 만 갈아끼운다(DB 재조회 없음).
+        source_specs: list[dict] = []
         official_crawlers: dict[str, object] = {}
         if self.use_official:
             try:
-                official_crawlers = _build_crawler_map(self.database_url, self.driver)
+                source_specs = _load_source_specs(self.database_url)
+                official_crawlers = _instantiate_crawlers(source_specs, self.driver)
                 logger.info("✓ hiring_sources 로드: %d개 기업 공식 크롤러", len(official_crawlers))
             except Exception as exc:
                 logger.warning("⚠️  hiring_sources 로드 실패 (공식 사이트 스킵): %s", exc)
@@ -216,14 +244,14 @@ class MultiSourceCrawler(BaseCollector):
                     )
                     self._quit_driver()
                     self._setup_driver()
-                    # 드라이버 교체 후 공식 크롤러 맵 재빌드 (새 driver 참조 반영)
-                    if self.use_official:
+                    # 드라이버 교체 후 새 driver 참조로 재인스턴스화 (DB 재조회 없이 캐시된 specs 재사용)
+                    if self.use_official and source_specs:
                         try:
-                            official_crawlers = _build_crawler_map(
-                                self.database_url, self.driver
+                            official_crawlers = _instantiate_crawlers(
+                                source_specs, self.driver
                             )
                         except Exception as exc:
-                            logger.warning("⚠️  크롤러 맵 재빌드 실패: %s", exc)
+                            logger.warning("⚠️  크롤러 재인스턴스화 실패: %s", exc)
 
                 company_jobs: list[dict] = []
                 logger.info("─" * 60)
@@ -285,5 +313,5 @@ class MultiSourceCrawler(BaseCollector):
             "tech_stack":      raw_data.get("tech_stack") or [],
             "story":           raw_data.get("story"),
             "signal_strength": raw_data.get("signal_strength"),
-            "posting_date":    raw_data.get("posting_date") or datetime.now(timezone.utc).isoformat(),
+            "posting_date":    raw_data.get("posting_date") or datetime.now(_KST).isoformat(),
         }
