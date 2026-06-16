@@ -47,6 +47,22 @@ def load_env() -> None:
             os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "postgres"}
+
+
+def resolve_ssl(host: str) -> Any:
+    """SSL mode for asyncpg.connect.
+
+    Managed Postgres (Supabase) needs ``ssl='require'``; a local Docker Postgres
+    rejects SSL upgrades. Default by host so local testing works without flags;
+    ``DB_SSL`` overrides (e.g. ``DB_SSL=disable`` / ``DB_SSL=require``).
+    """
+    override = os.getenv("DB_SSL")
+    if override:
+        return False if override.lower() in {"disable", "off", "false", "0", "no"} else override
+    return False if host in _LOCAL_HOSTS else "require"
+
+
 def parse_dsn(dsn: str) -> dict[str, Any]:
     match = re.match(
         r"^postgres(?:ql)?://(?P<user>[^:]+):(?P<password>.*)@"
@@ -106,7 +122,8 @@ async def main() -> None:
     dsn = os.getenv("DATABASE_URL", "")
     if not dsn:
         raise RuntimeError("DATABASE_URL is required.")
-    conn = await asyncpg.connect(**parse_dsn(dsn), ssl="require", statement_cache_size=0)
+    params = parse_dsn(dsn)
+    conn = await asyncpg.connect(**params, ssl=resolve_ssl(params["host"]), statement_cache_size=0)
     try:
         function_ids = {} if args.dry_run else await upsert_functions(conn)
         stocks = await conn.fetch(

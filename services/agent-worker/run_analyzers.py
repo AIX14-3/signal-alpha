@@ -31,7 +31,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "packages" / "data-
 from app.aggregator import AlternativeAggregator
 from app.analyzers.config import AggregatorConfig, AnalyzerRuntimeConfig
 from app.analyzers.registry import build_registry
-from app.orchestrator.alternative.tasks import AlternativeAnalyzeTaskHandler
+from app.orchestrator.alternative.tasks import (
+    AlternativeAnalyzeTaskHandler,
+    analysis_task_context,
+)
 from app.orchestrator.queue.task_types import ANALYZE_ALTERNATIVE
 from app.orchestrator.queue.tasks import QueueTaskRunner
 
@@ -64,6 +67,18 @@ def parse_dsn(dsn: str) -> dict[str, Any]:
         "port": int(match.group("port")),
         "database": match.group("db"),
     }
+
+
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "postgres"}
+
+
+def resolve_ssl(host: str) -> Any:
+    """SSL mode for asyncpg: managed Postgres (Supabase) needs 'require'; a local
+    Docker Postgres rejects SSL. Default by host; ``DB_SSL`` env overrides."""
+    override = os.getenv("DB_SSL")
+    if override:
+        return False if override.lower() in {"disable", "off", "false", "0", "no"} else override
+    return False if host in _LOCAL_HOSTS else "require"
 
 
 def _since(value: str | None) -> date | None:
@@ -149,11 +164,12 @@ async def run_once(args: argparse.Namespace) -> None:
         int(os.getenv("ANALYZER_DB_POOL_MAX", "0")) or 0,
         runtime.batch_concurrency * 2 + 2,
     )
+    params = parse_dsn(dsn)
     pool = await asyncpg.create_pool(
-        **parse_dsn(dsn),
+        **params,
         min_size=1,
         max_size=pool_max,
-        ssl="require",
+        ssl=resolve_ssl(params["host"]),
         statement_cache_size=0,
     )
     as_of = date.today()
@@ -184,7 +200,10 @@ async def run_once(args: argparse.Namespace) -> None:
                     stock_id=int(target["stock_id"]),
                     task_type=ANALYZE_ALTERNATIVE,
                     priority="batch",
-                    task_context={"as_of": as_of_str, "stock_code": target["ticker"]},
+                    # Canonical key (as_of only) so this dedupes against the
+                    # normalize-side producer; the handler resolves ticker from
+                    # stock_id. Including stock_code here would defeat dedupe.
+                    task_context=analysis_task_context(as_of_str),
                     dedupe=True,
                 )
 

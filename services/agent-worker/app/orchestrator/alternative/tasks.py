@@ -465,25 +465,34 @@ class AlternativeAnalyzeTaskHandler:
 # Helpers
 # ---------------------------------------------------------------------------
 
+def analysis_task_context(as_of: str) -> dict[str, Any]:
+    """Canonical ANALYZE_ALTERNATIVE dedupe key, shared by every producer.
+
+    enqueue(dedupe=True) matches stock_id separately and compares task_context
+    with IS NOT DISTINCT FROM, so the context must carry ONLY the stable as_of
+    (YYYY-MM-DD) and nothing stock-specific (e.g. stock_code/ticker). Every
+    producer (run_analyzers.py and _enqueue_analysis_for_stocks) builds its
+    context here so the same stock+day always yields an identical key and
+    dedupes to one task; diverging the shape between producers silently defeats
+    the dedupe and piles up duplicate analysis tasks.
+    """
+    return {"as_of": as_of}
+
+
 async def _enqueue_analysis_for_stocks(
     *,
     queue_repository: ProcessingQueueRepository,
     stock_ids: list[int],
     as_of: str,
 ) -> list[int]:
-    """Enqueue one deduped ANALYZE_ALTERNATIVE per distinct stock.
-
-    dedupe=True compares task_context with IS NOT DISTINCT FROM, so the as_of
-    MUST be a stable YYYY-MM-DD string (see _as_of_str) — otherwise same-stock,
-    same-day tasks would not dedupe and pile up.
-    """
+    """Enqueue one deduped ANALYZE_ALTERNATIVE per distinct stock."""
     task_ids: list[int] = []
     for stock_id in dict.fromkeys(stock_ids):  # distinct, order-preserving
         task_id = await queue_repository.enqueue(
             stock_id=stock_id,
             task_type=ANALYZE_ALTERNATIVE,
             priority="batch",
-            task_context={"as_of": as_of},
+            task_context=analysis_task_context(as_of),
             dedupe=True,
         )
         task_ids.append(task_id)
