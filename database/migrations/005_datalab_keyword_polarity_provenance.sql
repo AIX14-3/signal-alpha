@@ -1,4 +1,4 @@
--- 003_datalab_keyword_polarity_provenance.sql
+-- 005_datalab_keyword_polarity_provenance.sql
 -- DataLab polarity 분류 출처(provenance) 기록 컬럼 추가.
 --
 -- 배경: datalab_category_keywords.polarity(018)는 누가·얼마나 확신하고 분류했는지

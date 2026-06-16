@@ -1,4 +1,4 @@
--- 002_fix_final_signal_current_trigger.sql
+-- 004_fix_final_signal_current_trigger.sql
 -- final_signals 멱등 재실행 버그 수정 (set_final_signal_current 트리거).
 --
 -- 증상: 같은 (stock_id, signal_date, run_key, version)로 upsert를 재실행하면
