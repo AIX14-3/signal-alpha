@@ -42,7 +42,12 @@ jobs:
             }
 
             // 브랜치명에서 area 추론 (존재하는 라벨만 부착)
-            const known = ['dart','hiring','report','datalab','patent','price','aggregator','web'];
+            // Project의 Area 단일선택 옵션 14개와 동일하게 유지할 것.
+            // 긴 이름 우선(db-infra가 infra보다, main-server가 server류보다 먼저 매칭)되게 정렬.
+            const known = [
+              'dart','report','hiring','datalab','patent','price','aggregator','web',
+              'db-infra','main-server','worker','qa','infra','docs',
+            ].sort((a, b) => b.length - a.length);
             const hit = known.find((a) => branch.toLowerCase().includes(a));
             const labels = ['kickoff', ...(hit ? [`area:${hit}`] : [])];
 
