@@ -19,6 +19,7 @@ package = false
 [tool.uv.workspace]
 members = [
   "packages/data-access",
+  "packages/market-data",
   "packages/signal-core",
   "services/agent-worker",
   "services/main-server",

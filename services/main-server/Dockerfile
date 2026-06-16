@@ -12,6 +12,7 @@ COPY --from=uv /uv /uvx /bin/
 COPY pyproject.toml uv.lock .python-version ./
 COPY packages/data-access ./packages/data-access
 COPY packages/signal-core/pyproject.toml ./packages/signal-core/pyproject.toml
+COPY packages/market-data/pyproject.toml ./packages/market-data/pyproject.toml
 COPY services/agent-worker/pyproject.toml ./services/agent-worker/pyproject.toml
 COPY services/main-server/pyproject.toml ./services/main-server/pyproject.toml
 COPY services/main-server/app ./services/main-server/app
