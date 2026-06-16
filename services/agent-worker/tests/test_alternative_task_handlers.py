@@ -187,6 +187,17 @@ class AsOfStrTest(unittest.TestCase):
         self.assertEqual(_as_of_str("2026-06-16T09:30:00"), "2026-06-16")
         self.assertEqual(_as_of_str(date(2026, 6, 16)), "2026-06-16")
         self.assertEqual(_as_of_str(datetime(2026, 6, 16, 9, 30)), "2026-06-16")
+        self.assertEqual(_as_of_str("20260616"), "2026-06-16")  # YYYYMMDD digits
+
+    def test_defaults_blank_to_today(self):
+        today = date.today().isoformat()
+        self.assertEqual(_as_of_str(None), today)
+        self.assertEqual(_as_of_str(""), today)
+
+    def test_rejects_unparseable_input(self):
+        # Garbage fails fast rather than silently producing a bogus dedupe key.
+        with self.assertRaises(ValueError):
+            _as_of_str("not-a-date")
 
 
 class AnalysisTaskContextTest(unittest.TestCase):
