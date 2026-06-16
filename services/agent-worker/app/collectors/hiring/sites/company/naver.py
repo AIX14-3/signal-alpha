@@ -21,7 +21,7 @@ class NaverCrawler(BaseSiteCrawler):
 
     def crawl(self, company_name: str) -> list[dict]:
         """NAVER 채용 공고 수집 (HTML SSR 파싱 기법 적용)."""
-        import requests
+        from ..http import get as http_get
 
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -35,10 +35,9 @@ class NaverCrawler(BaseSiteCrawler):
 
         jobs: list[dict] = []
         try:
-            # 1차 시도: requests
-            resp = requests.get(_LIST_URL, params=params, headers=headers, timeout=10)
-            resp.raise_for_status()
-            
+            # 1차 시도: requests (retry/backoff 적용)
+            resp = http_get(_LIST_URL, params=params, headers=headers)
+
             soup = BeautifulSoup(resp.text, "html.parser")
             jobs = self._parse_html_elements(soup, company_name)
 
