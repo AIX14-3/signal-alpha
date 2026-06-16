@@ -58,6 +58,7 @@
 | L6 백테스트 패널 | 이벤트 ⨯ price forward return | ⬜ 예정 |
 
 상세 스펙: L1 → `docs/spec/dart-l1-financials-spec.md`, **L2~L6 → `docs/spec/data-layers-l2-l10-spec.md`**.
+토대 원칙(PIT·feature store·평가지표·DQ) + L1~L10 워크플로우 → `docs/spec/data-foundations-and-l1-l10-workflow.md`.
 → SEC(해외)도 동일 레이어 모델을 `source:"sec"`로 따른다(`해외공시_데이터수집_계획.md`).
 
 **확장 비전(미구현, 방향 고정용)** — 상세는 위 L2~L10 스펙 Part B:
