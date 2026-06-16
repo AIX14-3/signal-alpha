@@ -110,14 +110,15 @@ Disclosure document download failures do not fail the whole list collection; the
 `document_fetch_status`, `document_error_category`, and retryability metadata in the DART raw
 detail payload.
 
-DART analysis is rule-based by default. To enable Gemini-assisted analysis for high-impact
-disclosures, set `DART_USE_LLM=true`, `DART_LLM_PROVIDER=gemini`, `DART_LLM_MODEL`, and
-`GEMINI_API_KEY`. OpenAI remains available by setting `DART_LLM_PROVIDER=openai` with
-`OPENAI_API_KEY`. The worker keeps the rule result as a fallback: invalid JSON, timeout, unsafe
-investment-advice language, or API failure stores the rule-based result with
-`analysis_source="rules_fallback"`. Successful LLM analysis stores `analysis_source="llm"`,
-`llm_model`, `prompt_ver`, `llm_confidence`, and `key_facts` in `agent_results.method_detail`.
-The prompt template is versioned at `app/prompts/dart_analysis_v1.md`.
+DART analysis runs through a LangGraph-based `DartAnalysisGraphAgent` that validates input, calls
+the DART source agent, and records graph metadata in `agent_results.method_detail`. Analysis is
+rule-based by default. To enable Gemini-assisted analysis for high-impact disclosures, set
+`DART_USE_LLM=true`, `DART_LLM_PROVIDER=gemini`, `DART_LLM_MODEL`, and `GEMINI_API_KEY`. OpenAI
+remains available by setting `DART_LLM_PROVIDER=openai` with `OPENAI_API_KEY`. The worker keeps the
+rule result as a fallback: invalid JSON, timeout, unsafe investment-advice language, or API failure
+stores the rule-based result with `analysis_source="rules_fallback"`. Successful LLM analysis stores
+`analysis_source="llm"`, `llm_model`, `prompt_ver`, `llm_confidence`, and `key_facts` in
+`agent_results.method_detail`. The prompt template is versioned at `app/prompts/dart_analysis_v1.md`.
 
 The `collect_dart` task expects `processing_queue.task_context` to include `stock_code`.
 Optional date filters use OpenDART parameter names:

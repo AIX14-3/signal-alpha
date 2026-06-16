@@ -1,6 +1,6 @@
 # Source Agent 공통 계약 스펙
 
-> 기준일: 2026-06-15
+> 기준일: 2026-06-16
 > 대상: `services/agent-worker/app/agents`
 > 목적: DART, Report, PRICE, Alternative 분석 Agent를 같은 입출력 계약으로 맞추고, 이후 LangGraph node로 연결하기 위한 공통 기준을 정의한다.
 
@@ -22,7 +22,7 @@
 | Normalizer | raw 문서를 `source_documents`, `signal_events`, `signal_metrics`로 변환 | 최종 분석 결과 저장 |
 | Source Agent | 정규화 이벤트/evidence를 읽어 source별 방향성, 점수, 리스크, method detail 생성 | 외부 수집 API 호출 |
 | Orchestrator/TaskHandler | 큐 실행, DB 조회, Agent 호출, `analysis_results`/`agent_results` 저장 | source별 판단 로직 직접 보유 |
-| LangGraph workflow | 여러 Source Agent 실행 순서와 집계 흐름 관리 | 개별 source 분석 룰 직접 구현 |
+| LangGraph workflow | Source Agent 실행 순서, 조건부 실행, 검증/fallback 흐름 관리 | 개별 source 분석 룰 직접 구현 |
 
 ---
 
@@ -75,10 +75,10 @@ class SourceAnalysisAgent(Protocol):
 
 ## 4. DART 적용 방식
 
-`DartAnalysisAgent`는 `SourceAnalysisAgent` 계약을 따른다.
+`DartAnalysisGraphAgent`는 `SourceAnalysisAgent` 계약을 따르며, 내부 node에서 `DartAnalysisAgent`를 호출한다.
 
 ```python
-result = await DartAnalysisAgent(...).analyze(
+result = await DartAnalysisGraphAgent(...).analyze(
     SourceAgentInput(
         source="DART",
         stock_code="005930",
@@ -91,14 +91,28 @@ result = await DartAnalysisAgent(...).analyze(
 )
 ```
 
-DART Agent 내부 책임:
+DART LangGraph 흐름:
+
+```text
+validate_input
+  -> analyze
+  -> validate_output
+```
+
+각 node 책임:
+
+- `validate_input`: source, stock code, event 입력을 검증하고 실패 시 `data_status="failed"` 결과를 만든다.
+- `analyze`: 기존 `DartAnalysisAgent`를 호출해 rule 기반 또는 선택적 LLM 분석을 수행한다.
+- `validate_output`: `method_detail.graph`, `method_detail.graph_nodes`를 추가해 실행 경로를 남긴다.
+
+`DartAnalysisAgent` 내부 책임:
 
 - `build_dart_analysis_result(events)`로 rule 기반 결과 생성
 - `should_use_dart_llm()`으로 LLM 사용 여부 판단
 - LLM 성공 시 `analysis_source="llm"`과 `key_facts`, `llm_confidence`를 `method_detail`에 포함
 - LLM 실패 시 rule 결과로 fallback하고 `analysis_source="rules_fallback"`, `llm_error` 반환
 
-`DartAnalyzeTaskHandler`는 `SourceAgentInput`을 만들고 Agent를 호출한 뒤 기존처럼 `analysis_results`, `agent_results`에 저장한다.
+`DartAnalyzeTaskHandler`는 `SourceAgentInput`을 만들고 기본값으로 `DartAnalysisGraphAgent`를 호출한 뒤 기존처럼 `analysis_results`, `agent_results`에 저장한다.
 
 ---
 
@@ -111,7 +125,7 @@ ReportAnalysisAgent.analyze(SourceAgentInput) -> SourceAgentOutput
 PriceAnalysisAgent.analyze(SourceAgentInput) -> SourceAgentOutput
 ```
 
-LangGraph 도입 시 각 node는 `SourceAgentInput`을 구성해 Agent를 호출하고, `SourceAgentOutput`을 graph state에 누적한다.
+DART는 먼저 LangGraph 기반 graph runner를 적용했다. Report/PRICE 확장 시에도 각 node는 `SourceAgentInput`을 구성해 Agent를 호출하고, `SourceAgentOutput`을 graph state에 누적한다.
 
 ```text
 load_context
@@ -131,5 +145,5 @@ load_context
 - DB 마이그레이션 없음
 - 외부 API 경로 변경 없음
 - Report/PRICE Agent 전환은 후속 작업
-- LangGraph workflow 구현은 후속 작업
+- 다중 source LangGraph workflow 구현은 후속 작업
 - `SourceResult` 제거 또는 대체 없음
