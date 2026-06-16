@@ -44,6 +44,10 @@ jobs:
         run: uv run pytest
         working-directory: packages/signal-core
 
+      - name: Pytest - market-data
+        run: uv run pytest
+        working-directory: packages/market-data
+
   web:
     name: Web typecheck, build & test
     runs-on: ubuntu-latest
