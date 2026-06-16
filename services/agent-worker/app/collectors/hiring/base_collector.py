@@ -415,9 +415,17 @@ class BaseCollector(ABC):
             self._finish_collector_run(db, run_id, status, inserted, skipped, failed)
             db.commit()
 
+            # 구조화 성공률 요약 (가시성 Phase 1) — collected = inserted+skipped+failed
+            from app.observability import RunStats, format_run_summary
+
+            run_stats = RunStats.from_counts(
+                collected=inserted + skipped + failed,
+                inserted=inserted,
+                skipped=skipped,
+                failed=failed,
+            )
             logger.info("=" * 70)
-            logger.info("✅ 적재 완료 | 신규 %d · 중복/스킵 %d · 실패 %d (상태 %s)",
-                        inserted, skipped, failed, status.upper())
+            logger.info(format_run_summary(self.SOURCE_TYPE, run_stats))
             logger.info("=" * 70)
             return inserted
 
