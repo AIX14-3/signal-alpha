@@ -2,8 +2,8 @@
 
 One entry per registered source ties together its pure analyzer, the loader that
 feeds it from the DB, the aggregation weight (via config), and the ``debate_method``
-code it persists under. The AlternativeAgent iterates this list — adding a source
-(e.g. HIRING, by a teammate) is a single ``SourceRegistration`` append, no agent
+code it persists under. The analyze handler iterates this list — adding a source
+(e.g. HIRING, by a teammate) is a single ``SourceRegistration`` append, no handler
 or aggregator change.
 """
 
