@@ -8,20 +8,28 @@ Signal α — Report RAG 데이터 수집용
   - 유형: Earnings Review / Event Note / Company Report / Earnings Preview
   - 기간: 2025.07.01 ~ 2025.09.30
 """
+from __future__ import annotations
 
 import json
 import sys
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import TYPE_CHECKING
 from urllib.parse import urljoin
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-import pandas as pd
 import requests
 from bs4 import BeautifulSoup
+
+# pandas는 legacy CLI/배치 경로(collect_all / save_results / print_summary / __main__)에서만
+# 쓴다. 자동화 경로(collect_stock)는 쓰지 않으므로 모듈 최상단 import를 두지 않는다.
+# (agent-worker 컨테이너에 pandas 미선언 → 최상단 import 시 핸들러 빌드가 ImportError)
+# 타입 힌트용 이름만 정적 분석에 노출하고 런타임 import는 collect_all 내부에서 지연 수행.
+if TYPE_CHECKING:
+    import pandas as pd
 
 # ──────────────────────────────────────────
 # 설정값
@@ -286,7 +294,9 @@ def collect_all(
     max_pages: int = 20,
     date_start: datetime | None = None,
     date_end: datetime | None = None,
-) -> pd.DataFrame:
+) -> "pd.DataFrame":
+    import pandas as pd  # legacy 배치 경로 전용 — 지연 import
+
     all_reports = []
 
     for stock_name, stock_code in STOCKS.items():

@@ -32,7 +32,7 @@ class ReportCollector:
                 """
                 SELECT rrd.securities_firm,
                        rrd.publish_date,
-                       rrd.report_type,
+                       rrd.extra_payload,
                        rd.title,
                        rd.source_url,
                        rrd.target_price,
@@ -55,7 +55,10 @@ class ReportCollector:
 
         evidence = []
         for row in rows:
-            firm, date, report_type, title, pdf_url, target_price, opinion, key_rationale, raw_text_preview = row
+            firm, date, extra_payload, title, pdf_url, target_price, opinion, key_rationale, raw_text_preview = row
+            if isinstance(extra_payload, str):
+                extra_payload = json.loads(extra_payload) if extra_payload else {}
+            report_type = (extra_payload or {}).get("report_type", "")
             content_parts = []
             if key_rationale:
                 content_parts.append(key_rationale)

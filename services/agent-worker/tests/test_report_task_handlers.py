@@ -1,0 +1,182 @@
+import sys
+import unittest
+from datetime import datetime
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "packages" / "data-access"))
+
+from app.agents.base import SourceAgentOutput
+from app.embeddings.provider import EMBEDDING_DIM, set_embedding_provider
+from app.orchestrator.report import tasks as report_tasks
+from app.orchestrator.report.tasks import (
+    ReportAnalyzeTaskHandler,
+    ReportCollectTaskHandler,
+    ReportEmbedTaskHandler,
+)
+
+
+class FakeProvider:
+    async def embed(self, texts):
+        return [[0.5] * EMBEDDING_DIM for _ in texts]
+
+
+# ── embed_report ────────────────────────────────────────────────
+class EmbedHandlerConn:
+    def __init__(self, parsing_status="success", s3_key="reports/005930/x.pdf"):
+        self._status = parsing_status
+        self._s3_key = s3_key
+        self.inserts = []
+
+    async def fetchrow(self, sql, *args):
+        return {"stock_id": 1, "s3_key": self._s3_key, "parsing_status": self._status}
+
+    async def execute(self, sql, *args):
+        if "INSERT INTO report_chunks" in sql:
+            self.inserts.append(args)
+
+
+class ReportEmbedTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        set_embedding_provider(FakeProvider())
+        self._orig_extract = report_tasks.extract_text
+        report_tasks.extract_text = lambda b: ("문단입니다. " * 250)
+
+    def tearDown(self):
+        set_embedding_provider(None)
+        report_tasks.extract_text = self._orig_extract
+
+    async def test_embeds_full_text_and_inserts_chunks(self):
+        conn = EmbedHandlerConn()
+        handler = ReportEmbedTaskHandler(connection=conn, settings=None)
+        handler._s3.download_pdf = lambda key: b"%PDF-fake"
+
+        result = await handler({"task_context": {"raw_document_id": 42}})
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(len(conn.inserts), result["chunks"])
+        # 마지막 인자(embedding)는 1024차원 pgvector 문자열
+        emb = conn.inserts[0][-1]
+        self.assertTrue(isinstance(emb, str) and emb.startswith("["))
+        self.assertEqual(emb.count(",") + 1, EMBEDDING_DIM)
+        # chunk_index 순차
+        self.assertEqual([a[2] for a in conn.inserts], list(range(len(conn.inserts))))
+
+    async def test_not_ready_when_parsing_incomplete(self):
+        conn = EmbedHandlerConn(parsing_status="pending", s3_key=None)
+        handler = ReportEmbedTaskHandler(connection=conn, settings=None)
+        result = await handler({"task_context": {"raw_document_id": 7}})
+        self.assertEqual(result["status"], "not_ready")
+        self.assertEqual(conn.inserts, [])
+
+
+# ── analyze_report ──────────────────────────────────────────────
+class AnalyzeHandlerConn:
+    def __init__(self):
+        self.upserts = []
+
+    async def fetch(self, sql, *args):
+        if "report_raw_details" in sql:
+            return [
+                {"investment_opinion": "Buy", "target_price": 90000},
+                {"investment_opinion": "Buy", "target_price": 100000},
+                {"investment_opinion": "Hold", "target_price": None},
+            ]
+        return []
+
+    async def fetchrow(self, sql, *args):
+        if "INSERT INTO analysis_results" in sql:
+            self.upserts.append("analysis_results")
+            return {"id": 100}
+        if "INSERT INTO agent_results" in sql:
+            self.upserts.append("agent_results")
+            return {"id": 200}
+        return None
+
+
+class FakeAgent:
+    async def analyze(self, input_data):
+        self.received = input_data
+        return SourceAgentOutput(
+            source="REPORT",
+            stock_code=input_data.stock_code,
+            direction="positive",
+            score=68.0,
+            summary="OK",
+            risk_flags=["risk1"],
+            method_detail={"coverage": {"firms": ["a", "b", "c"]}, "evidence_chunks": [{"raw_document_id": 1}]},
+            needs_review=False,
+            data_status="ok",
+            analysis_source="llm",
+            llm_model="m",
+            prompt_ver="report-rag-v1",
+        )
+
+
+class ReportAnalyzeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
+    async def test_builds_quant_and_persists_analysis_and_agent_results(self):
+        conn = AnalyzeHandlerConn()
+        agent = FakeAgent()
+        handler = ReportAnalyzeTaskHandler(connection=conn, settings=None, analysis_agent=agent)
+
+        result = await handler(
+            {"stock_id": 1, "task_context": {"stock_code": "005930", "run_key": "REPORT"}}
+        )
+
+        self.assertEqual(result["analysis_result_id"], 100)
+        self.assertEqual(result["agent_result_id"], 200)
+        self.assertEqual(result["direction"], "positive")
+        # 저장 순서: analysis_results → agent_results
+        self.assertEqual(conn.upserts, ["analysis_results", "agent_results"])
+        # 정량 집계: 평균 목표주가, 의견 충돌 감지
+        quant = result["report_quant"]
+        self.assertEqual(quant["report_count"], 3)
+        self.assertEqual(quant["avg_target"], 95000)
+        self.assertTrue(quant["conflict_detected"])
+        # agent에 정량이 context로 주입됐는지
+        self.assertEqual(agent.received.context["report_quant"]["avg_target"], 95000)
+
+
+# ── collect_report 날짜 해석 ─────────────────────────────────────
+class ReportCollectDateResolutionTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self._orig = report_tasks.collect_stock
+        self.captured = {}
+
+        def _fake_collect_stock(**kwargs):
+            self.captured.update(kwargs)
+            return []  # 빈 결과 → _save_to_db/enqueue 미수행
+
+        report_tasks.collect_stock = _fake_collect_stock
+
+    def tearDown(self):
+        report_tasks.collect_stock = self._orig
+
+    async def test_absolute_dates_take_priority(self):
+        handler = ReportCollectTaskHandler(connection=object(), settings=None)
+        await handler(
+            {
+                "stock_id": 1,
+                "task_context": {
+                    "stock_code": "005930",
+                    "date_start": "2025-01-01",
+                    "date_end": "2025-12-31",
+                    "max_pages": 100,
+                },
+            }
+        )
+        self.assertEqual(self.captured["date_start"], datetime(2025, 1, 1))
+        self.assertEqual(self.captured["date_end"], datetime(2025, 12, 31))
+        self.assertEqual(self.captured["max_pages"], 100)
+
+    async def test_days_back_fallback(self):
+        handler = ReportCollectTaskHandler(connection=object(), settings=None)
+        await handler(
+            {"stock_id": 1, "task_context": {"stock_code": "005930", "days_back": 7}}
+        )
+        delta = self.captured["date_end"] - self.captured["date_start"]
+        self.assertEqual(delta.days, 7)
+        self.assertEqual(self.captured["max_pages"], 20)
+
+
+if __name__ == "__main__":
+    unittest.main()

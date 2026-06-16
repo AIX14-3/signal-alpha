@@ -29,6 +29,11 @@ class Settings:
         self.dart_llm_provider = getenv("DART_LLM_PROVIDER", "gemini").strip().lower()
         self.dart_llm_model = getenv("DART_LLM_MODEL", "")
         self.dart_llm_timeout_seconds = float(getenv("DART_LLM_TIMEOUT_SECONDS", "20"))
+        # Report RAG agent LLM 종합 — provider/key는 아래 openai/gemini 공유 설정 재사용.
+        self.report_use_llm = _env_bool("REPORT_USE_LLM", default=False)
+        self.report_llm_provider = getenv("REPORT_LLM_PROVIDER", "gemini").strip().lower()
+        self.report_llm_model = getenv("REPORT_LLM_MODEL", "")
+        self.report_llm_timeout_seconds = float(getenv("REPORT_LLM_TIMEOUT_SECONDS", "20"))
         self.openai_api_key = getenv("OPENAI_API_KEY", "")
         self.openai_base_url = getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
         self.gemini_api_key = getenv("GEMINI_API_KEY", "")
