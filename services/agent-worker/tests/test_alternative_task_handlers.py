@@ -1,4 +1,3 @@
-import json
 import sys
 import unittest
 from datetime import date, datetime
@@ -308,8 +307,6 @@ class HandlerRegistrationTest(unittest.IsolatedAsyncioTestCase):
         # of being mark_skipped("No handler registered").
         from app.orchestrator.queue.tasks import QueueTaskRunner
         from app.orchestrator.queue.task_types import NORMALIZE_HIRING
-
-        conn = FakeConnection(rows=[HIRING_ROW])
 
         class _ClaimConnection(FakeConnection):
             async def fetchrow(self, sql, *args):
