@@ -48,6 +48,18 @@ class ClassifyTests(unittest.TestCase):
         self.assertEqual(classify_job_function("드라마 프로듀서"), "CREATIVE")
         self.assertEqual(classify_job_function("신약 임상 연구원"), "RESEARCH")
 
+    def test_research_role_beats_bare_dev_needle(self):
+        # A research ROLE must not be hijacked by the bare 개발 needle: "신약 개발 연구원"
+        # is a 연구원 (RESEARCH), not ENGINEER. Regression for the two-tier ENGINEER split.
+        self.assertEqual(classify_job_function("신약 개발 연구원"), "RESEARCH")
+        self.assertEqual(classify_job_function("선행 개발 연구원"), "RESEARCH")
+
+    def test_engineer_intent_preserved_over_research_words(self):
+        # The explicit 엔지니어 role still wins over research domain words, so we did NOT
+        # simply move RESEARCH ahead of ENGINEER: "선행개발 엔지니어" stays ENGINEER.
+        self.assertEqual(classify_job_function("선행개발 엔지니어"), "ENGINEER")
+        self.assertEqual(classify_job_function("연구소 플랫폼 엔지니어"), "ENGINEER")
+
     def test_unmatched_is_none(self):
         self.assertIsNone(classify_job_function("점성술사"))
         self.assertIsNone(classify_job_function(None))
