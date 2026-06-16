@@ -28,6 +28,7 @@ from typing import Any, Callable, Sequence
 
 from app.aggregator import AlternativeAggregator
 from app.analyzers.config import AnalyzerRuntimeConfig
+from app.analyzers.datalab.normalize_rules import classify_datalab_observation
 from app.analyzers.hiring.normalize_rules import classify_hiring_posting
 from app.analyzers.patent.normalize_rules import classify_patent_filing
 from app.analyzers.registry import SourceRegistration, build_registry
@@ -219,44 +220,151 @@ class PatentNormalizeTaskHandler(_AltNormalizeBase):
         ]
 
 
-class DataLabNormalizeRouteHandler:
-    """Routes DataLab normalize tasks to per-stock analysis without normalizing.
+class DataLabNormalizeTaskHandler:
+    """NORMALIZE_DATALAB — promotes DataLab raw to source_documents/signal_events.
 
-    DataLab raw lives in ``datalab_raw_documents`` (no ``raw_documents`` row, and
-    ``processing_queue.stock_id`` is NULL), so a ``source_documents`` FK cannot be
-    anchored — signal_events normalization for DataLab is a follow-up issue. This
-    handler still consumes the queue row (no more orphans) by resolving the
-    task's ``category_id`` to its mapped stocks and enqueuing ANALYZE_ALTERNATIVE.
+    DataLab differs structurally from hiring/patent (so it does not subclass
+    ``_AltNormalizeBase``):
+      - raw lives in ``datalab_raw_documents`` (NOT ``raw_documents``), so it
+        anchors via the generic external anchor ``external_ref_type='datalab_raw_documents'``
+        + ``external_ref_id=datalab_raw_documents.id`` (migration 004).
+      - one observation fans out to N stocks via ``datalab_category_stocks``, so
+        each raw row produces one source_document + signal_event PER mapped stock.
+
+    The task carries ``source_raw_ids`` = [datalab_raw_documents.id]; the loader
+    resolves each row's ``category_id`` → mapped stocks. After normalization it
+    enqueues one deduped ANALYZE_ALTERNATIVE per distinct stock (same as
+    hiring/patent), keeping the windowed cross-source analysis path intact.
     """
+
+    SOURCE_TYPE = "DATALAB"
+    SOURCE_NAME_DEFAULT = "NAVER_DATALAB"
+    RELIABILITY_LEVEL = "medium"
+    IS_OFFICIAL = False
+    EXTERNAL_REF_TYPE = "datalab_raw_documents"
 
     def __init__(self, connection: Any) -> None:
         self._connection = connection
         self._raw_detail_repository = RawDetailRepository(connection)
+        self._normalization_repository = NormalizationRepository(connection)
         self._queue_repository = ProcessingQueueRepository(connection)
 
     async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
         task_context = _task_context(task.get("task_context"))
         as_of = _as_of_str(task_context.get("as_of"))
-        category_id = task_context.get("category_id")
-        if category_id is None:
-            return {
-                "routed_count": 0,
-                "analysis_task_ids": [],
-                "skipped_reason": "category_id_required",
-            }
+        raw_document_ids = _source_raw_ids(task.get("source_raw_ids"))
+        rows = await self._raw_detail_repository.list_datalab_details_by_raw_ids(raw_document_ids)
 
-        rows = await self._raw_detail_repository.list_stocks_for_datalab_category(int(category_id))
-        stock_ids = [int(row["stock_id"]) for row in rows]
+        signal_event_ids: list[int] = []
+        stock_ids: list[int] = []
+        normalized_count = 0
+        # Cache category → mapped stocks: a task often carries many observations of
+        # the same category (different dates), so resolve each mapping only once.
+        category_stocks: dict[int, list[Any]] = {}
+        for row in rows:
+            raw_document_id = int(row["raw_document_id"])
+            category_id = int(row["category_id"])
+            # category → mapped stocks (fan-out). One observation may map to many.
+            if category_id not in category_stocks:
+                category_stocks[category_id] = (
+                    await self._raw_detail_repository.list_stocks_for_datalab_category(category_id)
+                )
+            mapped = category_stocks[category_id]
+            classification = classify_datalab_observation(row)
+            for mapped_row in mapped:
+                stock_id = int(mapped_row["stock_id"])
+                source_document = (
+                    await self._normalization_repository.upsert_external_source_document(
+                        external_ref_type=self.EXTERNAL_REF_TYPE,
+                        external_ref_id=raw_document_id,
+                        stock_id=stock_id,
+                        source_type=self.SOURCE_TYPE,
+                        source_name=str(row.get("source_name") or self.SOURCE_NAME_DEFAULT),
+                        title=self._title(row),
+                        source_url=row.get("source_url"),
+                        published_at=row["published_at"],
+                        collected_at=row["collected_at"],
+                        reliability_level=self.RELIABILITY_LEVEL,
+                        is_official=self.IS_OFFICIAL,
+                    )
+                )
+                signal_event = await self._normalization_repository.upsert_signal_event(
+                    stock_id=stock_id,
+                    source_document_id=source_document["id"],
+                    # event_hash unique per (observation, stock) — the fan-out key.
+                    event_hash=make_source_hash(
+                        self.SOURCE_TYPE, f"{raw_document_id}|{stock_id}"
+                    ),
+                    source_type=self.SOURCE_TYPE,
+                    event_type=classification.event_type,
+                    event_date=_to_date(row["observed_date"]),
+                    signal_direction=classification.signal_direction,
+                    impact_level=classification.impact_level,
+                    title=self._title(row),
+                    summary=self._summary(row),
+                    evidence_text=self._evidence_text(row),
+                    evidence_url=row.get("source_url"),
+                    needs_review=classification.needs_review,
+                )
+                signal_event_ids.append(int(signal_event["id"]))
+                stock_ids.append(stock_id)
+                for metric in self._metrics(row):
+                    await self._normalization_repository.upsert_signal_metric(
+                        signal_event_id=int(signal_event["id"]),
+                        **metric,
+                    )
+                await self._normalization_repository.record_validation_log(
+                    target_type="signal_event",
+                    target_id_int=int(signal_event["id"]),
+                    validation_type="source_trace",
+                    passed=True,
+                    message=(
+                        f"Normalized from datalab_raw_documents.id={raw_document_id} "
+                        f"category_id={category_id}"
+                    ),
+                )
+                normalized_count += 1
+
         analysis_task_ids = await _enqueue_analysis_for_stocks(
             queue_repository=self._queue_repository,
             stock_ids=stock_ids,
             as_of=as_of,
         )
         return {
-            "routed_count": len(stock_ids),
-            "stock_ids": stock_ids,
+            "normalized_count": normalized_count,
+            "signal_event_ids": signal_event_ids,
             "analysis_task_ids": analysis_task_ids,
         }
+
+    def _title(self, row: Mapping[str, Any]) -> str:
+        return str(row.get("title") or row.get("keyword") or self.SOURCE_TYPE)
+
+    def _summary(self, row: Mapping[str, Any]) -> str:
+        keyword = row.get("keyword")
+        observed = row.get("observed_date")
+        return f"DataLab search trend for '{keyword}' on {observed}"
+
+    def _evidence_text(self, row: Mapping[str, Any]) -> str:
+        parts = [
+            str(p)
+            for p in (row.get("keyword"), row.get("keyword_group"), row.get("period_type"))
+            if p
+        ]
+        return " / ".join(dict.fromkeys(parts)) or self.SOURCE_TYPE
+
+    def _metrics(self, row: Mapping[str, Any]) -> list[dict[str, Any]]:
+        search_index = row.get("search_index")
+        if search_index is None:
+            return []
+        return [
+            {
+                "metric_name": "datalab_search_index",
+                "metric_value": search_index,
+                "metric_unit": "index",
+                "previous_value": row.get("previous_search_index"),
+                "change_pct": row.get("change_pct"),
+            }
+        ]
 
 
 class AlternativeAnalyzeTaskHandler:

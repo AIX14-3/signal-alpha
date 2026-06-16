@@ -130,6 +130,20 @@ raw_documents + detail tables
 -> validation_logs
 ```
 
+### source_documents 앵커 (raw 추적)
+
+`source_documents`는 정규화 행이 어떤 raw에서 나왔는지 두 가지 방식으로 앵커합니다 (`004_datalab_source_anchor.sql`):
+
+| 소스 | 앵커 | 카디널리티 |
+| --- | --- | --- |
+| DART / REPORT / HIRING / PATENT | `raw_document_id` → `raw_documents(id, stock_id)` (복합 FK) | raw 1건 = 종목 1개 (1:1) |
+| DataLab (및 향후 비-`raw_documents` 소스) | `external_ref_type` + `external_ref_id` (범용 외부 앵커) | 관측 1건 → 종목 N개 (1:N fan-out) |
+
+- `chk_source_doc_anchor`: 두 앵커 방식 중 **정확히 하나만** 채워집니다.
+- DataLab은 `external_ref_type='datalab_raw_documents'`, `external_ref_id=datalab_raw_documents.id`로 앵커하고, `datalab_category_stocks` 매핑으로 종목별 행이 fan-out 됩니다 (`uq_source_doc_external` 부분 유니크가 멱등 보장).
+- **무결성은 현재 soft 참조(D-soft)** — `external_ref_*`는 선언적 FK가 아니며 존재 보장은 Normalize 핸들러 책임입니다. mock 단계에서 데이터 소스가 자주 추가/삭제/수정되어도 `datalab_raw_documents`를 자유롭게 재생성할 수 있게 한 의도적 선택입니다.
+- **운영 승격 시 업그레이드 경로(D-trigger):** 소스 셋이 안정화되면 다음 마이그레이션에서 `external_ref_type`별 존재를 검증하는 `BEFORE INSERT OR UPDATE` 트리거로 강화합니다(새 소스 = CASE 분기 한 줄, 컬럼/제약 변경 없음). 전체 트리거 예시는 `004_datalab_source_anchor.sql` 헤더 주석에 있습니다.
+
 Agent는 정규화된 `source_documents`, `signal_events`, `signal_metrics`를 조회해 분석합니다. 분석 결과는 `analysis_results`에 대표 단위로 저장하고, 방식별 결과는 `agent_results`에 저장합니다.
 
 ```text

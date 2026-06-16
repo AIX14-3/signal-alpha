@@ -19,7 +19,7 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
     from app.analyzers.dart.llm import DartLlmAnalyzer, GeminiGenerateContentClient, OpenAiChatClient
     from app.orchestrator.alternative.tasks import (
         AlternativeAnalyzeTaskHandler,
-        DataLabNormalizeRouteHandler,
+        DataLabNormalizeTaskHandler,
         HiringNormalizeTaskHandler,
         PatentNormalizeTaskHandler,
     )
@@ -63,6 +63,6 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
         # Alternative sources (hiring/patent/datalab) — converged onto the queue.
         NORMALIZE_HIRING: HiringNormalizeTaskHandler(connection),
         NORMALIZE_PATENT: PatentNormalizeTaskHandler(connection),
-        NORMALIZE_DATALAB: DataLabNormalizeRouteHandler(connection),
+        NORMALIZE_DATALAB: DataLabNormalizeTaskHandler(connection),
         ANALYZE_ALTERNATIVE: AlternativeAnalyzeTaskHandler(connection),
     }
