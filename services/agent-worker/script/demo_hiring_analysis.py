@@ -5,7 +5,7 @@
 import asyncio
 import os
 import sys
-from datetime import date, datetime
+from datetime import date
 
 import asyncpg
 from dotenv import load_dotenv
@@ -104,14 +104,14 @@ async def run_demo(target_date: date | None = None):
     if spike_companies:
         print(f"       Spike 기업: {', '.join(spike_companies)}")
 
-    print(f"\n[Phase 설명]")
-    print(f"  Phase A: 14일 이동평균 ≥ 1.0   → 실제 데이터 기반 (신뢰 높음)")
-    print(f"  Phase B: 14일 이동평균 < 1.0    → DataLab 검색량 기반 (Cold Start)")
-    print(f"  Phase C: baseline 없음          → 기본값 1.0 적용 (신뢰 낮음)")
-    print(f"  Spike 기준: 상대강도 ≥ 150%")
+    print("\n[Phase 설명]")
+    print("  Phase A: 14일 이동평균 ≥ 1.0   → 실제 데이터 기반 (신뢰 높음)")
+    print("  Phase B: 14일 이동평균 < 1.0    → DataLab 검색량 기반 (Cold Start)")
+    print("  Phase C: baseline 없음          → 기본값 1.0 적용 (신뢰 낮음)")
+    print("  Spike 기준: 상대강도 ≥ 150%")
 
     await pool.close()
-    print(f"\n결과는 hiring_signals 테이블에도 저장됩니다.")
+    print("\n결과는 hiring_signals 테이블에도 저장됩니다.")
     print(f"  SELECT * FROM hiring_signals WHERE observed_date = '{target_date}';\n")
 
 

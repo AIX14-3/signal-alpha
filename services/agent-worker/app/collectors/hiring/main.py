@@ -36,7 +36,6 @@ sys.path.insert(0, str(_COLLECTORS_DIR))
 from keyword_generator import HiringKeywordGenerator  # noqa: E402
 from mock_collector import MockCollector               # noqa: E402
 from multi_source_crawler import MultiSourceCrawler   # noqa: E402
-from web_crawler import WebCrawler                     # noqa: E402  # noqa: F401 (public API)
 
 logging.basicConfig(
     level=logging.INFO,
