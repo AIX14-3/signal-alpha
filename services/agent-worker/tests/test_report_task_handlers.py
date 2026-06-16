@@ -73,6 +73,7 @@ class ReportEmbedTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
 class AnalyzeHandlerConn:
     def __init__(self):
         self.upserts = []
+        self.method_signal = None
 
     async def fetch(self, sql, *args):
         if "report_raw_details" in sql:
@@ -89,17 +90,23 @@ class AnalyzeHandlerConn:
             return {"id": 100}
         if "INSERT INTO agent_results" in sql:
             self.upserts.append("agent_results")
+            # upsert_agent_result: $1 result_id, $2 stock_id, $3 debate_method,
+            # $4 source_signal_event_ids, $5 method_score, $6 method_signal
+            self.method_signal = args[5]
             return {"id": 200}
         return None
 
 
 class FakeAgent:
+    def __init__(self, direction="positive"):
+        self._direction = direction
+
     async def analyze(self, input_data):
         self.received = input_data
         return SourceAgentOutput(
             source="REPORT",
             stock_code=input_data.stock_code,
-            direction="positive",
+            direction=self._direction,
             score=68.0,
             summary="OK",
             risk_flags=["risk1"],
@@ -132,8 +139,21 @@ class ReportAnalyzeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(quant["report_count"], 3)
         self.assertEqual(quant["avg_target"], 95000)
         self.assertTrue(quant["conflict_detected"])
-        # agent에 정량이 context로 주입됐는지
+        # method_signal은 허용값(positive). agent에 정량이 context로 주입됐는지
+        self.assertEqual(conn.method_signal, "positive")
         self.assertEqual(agent.received.context["report_quant"]["avg_target"], 95000)
+
+    async def test_unknown_direction_is_mapped_to_neutral_for_method_signal(self):
+        # agent_results.method_signal CHECK는 unknown 불가 → neutral로 매핑돼야 함
+        conn = AnalyzeHandlerConn()
+        handler = ReportAnalyzeTaskHandler(
+            connection=conn, settings=None, analysis_agent=FakeAgent(direction="unknown")
+        )
+        result = await handler(
+            {"stock_id": 1, "task_context": {"stock_code": "005930"}}
+        )
+        self.assertEqual(conn.method_signal, "neutral")
+        self.assertEqual(result["direction"], "unknown")  # method_detail/반환은 원본 유지
 
 
 # ── collect_report 날짜 해석 ─────────────────────────────────────

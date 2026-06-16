@@ -309,7 +309,7 @@ class ReportAnalyzeTaskHandler:
             debate_method="D-1",
             source_signal_event_ids=[],
             method_score=result.score,
-            method_signal=result.direction,
+            method_signal=_method_signal(result.direction),
             method_detail={
                 **result.method_detail,
                 "summary": result.summary,
@@ -360,6 +360,13 @@ class ReportAnalyzeTaskHandler:
             # 표본 작아 통계적 신뢰는 낮지만, 서로 다른 의견이 섞이면 conflict로 표시.
             "conflict_detected": len(opinions) > 1,
         }
+
+
+def _method_signal(direction: str) -> str:
+    """agent_results.method_signal CHECK는 positive/negative/neutral/mixed만 허용한다.
+    agent는 fallback/판정불가 시 'unknown'을 내므로 DART(_agent_signal)와 동일하게 neutral로 매핑.
+    """
+    return direction if direction in {"positive", "negative", "neutral", "mixed"} else "neutral"
 
 
 def _report_analysis_date(task_context: dict[str, Any]) -> date:

@@ -117,7 +117,13 @@ class ReportAnalysisAgentTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(parsed["direction"], "unknown")
         self.assertEqual(parsed["score"], 80.0)
+        # confidence 0.4(확률)는 100점 척도로 환산
         self.assertEqual(parsed["confidence"], 40.0)
+
+    def test_parser_keeps_low_integer_score_without_rescaling(self):
+        # score=1은 '100점 중 1점'인 유효 값 → 100으로 반전되면 안 된다
+        parsed = parse_report_llm_response('{"direction":"negative","summary":"x","score":1}')
+        self.assertEqual(parsed["score"], 1.0)
 
 
 if __name__ == "__main__":

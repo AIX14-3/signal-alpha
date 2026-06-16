@@ -259,12 +259,14 @@ def parse_report_llm_response(response_text: str) -> dict[str, Any]:
 
     return {
         "direction": direction,
+        # score는 0~100 정수 스케일. 1은 '100점 중 1점'인 유효 값이므로 0~1 환산을 적용하지 않는다.
         "score": _bounded_score(payload.get("score")),
         "summary": summary.strip(),
         "key_rationale": _string_list(payload.get("key_rationale")),
         "risk_flags": _string_list(payload.get("risk_flags")),
         "needs_review": bool(payload.get("needs_review")),
-        "confidence": _bounded_score(payload.get("confidence")),
+        # confidence는 모델이 0~1 확률로 줄 수 있어 그 경우만 100점 척도로 환산(DART와 동일).
+        "confidence": _bounded_score(payload.get("confidence"), allow_fraction=True),
     }
 
 
@@ -282,12 +284,12 @@ def _loads_json_object(response_text: str) -> dict[str, Any]:
     return payload
 
 
-def _bounded_score(value: Any) -> float:
+def _bounded_score(value: Any, *, allow_fraction: bool = False) -> float:
     try:
         number = float(value)
     except (TypeError, ValueError):
         return 50.0
-    if 0 < number <= 1:  # 0~1 확률로 오면 100점 척도로
+    if allow_fraction and 0 < number <= 1:  # 0~1 확률로 온 경우만 100점 척도로
         number *= 100
     return float(max(0.0, min(100.0, number)))
 
