@@ -3,6 +3,7 @@ from datetime import date, datetime, timezone
 
 from app.observability.stats import (
     RunStats,
+    calculate_run_status,
     failure_rate,
     format_run_summary,
     ingest_success_rate,
@@ -27,6 +28,25 @@ class RateMathTest(unittest.TestCase):
     def test_all_success(self):
         self.assertAlmostEqual(ingest_success_rate(10, 10, 0), 1.0)
         self.assertAlmostEqual(failure_rate(10, 0), 0.0)
+
+
+class CalculateRunStatusTest(unittest.TestCase):
+    def test_success_when_no_failures_and_has_usable(self):
+        self.assertEqual(calculate_run_status(5, 0, 0), "success")
+        self.assertEqual(calculate_run_status(0, 5, 0), "success")  # skip-only is success
+        self.assertEqual(calculate_run_status(3, 2, 0), "success")
+
+    def test_partial_when_some_usable_and_some_failed(self):
+        self.assertEqual(calculate_run_status(3, 0, 1), "partial")
+        self.assertEqual(calculate_run_status(0, 3, 1), "partial")
+
+    def test_failed_when_all_records_failed(self):
+        # 전건 치명적 실패는 partial 이 아니라 failed.
+        self.assertEqual(calculate_run_status(0, 0, 5), "failed")
+
+    def test_failed_when_empty_run(self):
+        # 아무것도 수집/적재하지 못한 빈 런은 success 가 아니라 failed.
+        self.assertEqual(calculate_run_status(0, 0, 0), "failed")
 
 
 class RunStatsTest(unittest.TestCase):

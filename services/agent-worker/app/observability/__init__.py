@@ -1,5 +1,6 @@
 from app.observability.stats import (
     RunStats,
+    calculate_run_status,
     failure_rate,
     format_run_summary,
     ingest_success_rate,
@@ -8,6 +9,7 @@ from app.observability.stats import (
 
 __all__ = [
     "RunStats",
+    "calculate_run_status",
     "failure_rate",
     "format_run_summary",
     "ingest_success_rate",
