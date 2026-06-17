@@ -70,9 +70,15 @@ class _FakeRepo:
     def __init__(self, rows):
         self._rows = rows
         self.updates = []
+        self.last_raw_document_ids = "unset"
 
-    async def list_unenriched_patent_details(self, *, limit):
-        return self._rows[:limit]
+    async def list_unenriched_patent_details(self, *, limit, raw_document_ids=None):
+        self.last_raw_document_ids = raw_document_ids
+        rows = self._rows
+        if raw_document_ids is not None:
+            wanted = set(raw_document_ids)
+            rows = [r for r in rows if r["raw_document_id"] in wanted]
+        return rows[:limit]
 
     async def update_patent_llm_features(self, *, raw_document_id, features, status):
         self.updates.append((raw_document_id, features, status))
@@ -115,6 +121,20 @@ class EnricherRunTests(unittest.IsolatedAsyncioTestCase):
         stats = await PatentEnricher(repo, client).run()
         self.assertEqual(stats["failed"], 1)
         self.assertEqual(repo.updates[0], (3, None, "failed"))
+
+    async def test_raw_document_ids_scopes_the_worklist(self):
+        # Two pending patents; the ENRICH_PATENT path enriches only the named id.
+        repo = _FakeRepo(
+            [
+                {"raw_document_id": 10, "patent_title": "A", "extra_payload": {"astrtCont": "a"}},
+                {"raw_document_id": 11, "patent_title": "B", "extra_payload": {"astrtCont": "b"}},
+            ]
+        )
+        client = _FakeClient(result={"significance": 0.5})
+        stats = await PatentEnricher(repo, client, raw_document_ids=[10]).run()
+        self.assertEqual(stats["total"], 1)
+        self.assertEqual(repo.last_raw_document_ids, [10])
+        self.assertEqual([u[0] for u in repo.updates], [10])
 
 
 class _MissingColumnError(Exception):

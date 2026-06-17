@@ -61,9 +61,11 @@ C2 작업을 끝내기 위해 사용자 승인 하에 다음을 prod에 적용:
 - **`database/tools/check_schema.py`를 prod에 쓰면 안 된다** — 대상 서버에
   `CREATE DATABASE/DROP DATABASE signal_alpha_schema_check`를 실행한다(매니지드 Supabase에서
   실패/위험). 로컬 Docker 전용 도구다.
-- **C3 특허 농축(`run_patent_enrichment.py`) 차단** — `patent_raw_details.llm_features`/
+- **C3 특허 농축(큐 task `ENRICH_PATENT`) 차단** — `patent_raw_details.llm_features`/
   `llm_status`가 prod에 없어 동작 불가. 019가 스쿼시 baseline 안에 있어 **따로 적용할 마이그
-  파일이 없다** → 003처럼 깔끔히 못 고친다.
+  파일이 없다** → 003처럼 깔끔히 못 고친다. (농축은 큐 파이프라인 NORMALIZE_PATENT →
+  ENRICH_PATENT → ANALYZE_ALTERNATIVE로 편입됨; 컬럼이 없으면 ENRICH 단계가 실패해
+  분석은 count-based로만 진행.)
 - piecemeal 핸드패치(에러 날 때마다 컬럼 ALTER)는 whack-a-mole이고 거버넌스 위반
   (`database/README.md §3/§4`).
 

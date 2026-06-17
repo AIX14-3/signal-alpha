@@ -28,12 +28,14 @@ from typing import Any, Callable, Sequence
 
 from app.aggregator import AlternativeAggregator
 from app.analyzers.config import AnalyzerRuntimeConfig
+from app.core.config import get_settings
+from app.enrichment.patent_features import PatentEnricher
 from app.analyzers.datalab.normalize_rules import classify_datalab_observation
 from app.analyzers.hiring.normalize_rules import classify_hiring_posting
 from app.analyzers.patent.normalize_rules import classify_patent_filing
 from app.analyzers.registry import SourceRegistration, build_registry
 from app.orchestrator.alternative_persistence import AlternativeSignalPersistence
-from app.orchestrator.queue.task_types import ANALYZE_ALTERNATIVE
+from app.orchestrator.queue.task_types import ANALYZE_ALTERNATIVE, ENRICH_PATENT
 from app.schemas.source_result import SourceResult
 from app.utils.hash_utils import make_source_hash
 from signal_alpha_data_access.repositories import (
@@ -140,16 +142,35 @@ class _AltNormalizeBase:
                 message=f"Normalized from raw_document_id={row['raw_document_id']}",
             )
 
-        analysis_task_ids = await _enqueue_analysis_for_stocks(
-            queue_repository=self._queue_repository,
+        followup_task_ids = await self._enqueue_followups(
             stock_ids=stock_ids,
+            raw_document_ids=[int(row["raw_document_id"]) for row in rows],
             as_of=as_of,
         )
         return {
             "normalized_count": len(rows),
             "signal_event_ids": signal_event_ids,
-            "analysis_task_ids": analysis_task_ids,
+            "analysis_task_ids": followup_task_ids,
         }
+
+    async def _enqueue_followups(
+        self,
+        *,
+        stock_ids: list[int],
+        raw_document_ids: list[int],
+        as_of: str,
+    ) -> list[int]:
+        """Enqueue what runs after normalization. Default: the per-stock analysis.
+
+        PATENT overrides this to insert an LLM enrichment step (ENRICH_PATENT)
+        ahead of analysis; ``raw_document_ids`` are the rows this task just
+        normalized, so enrichment is scoped to them.
+        """
+        return await _enqueue_analysis_for_stocks(
+            queue_repository=self._queue_repository,
+            stock_ids=stock_ids,
+            as_of=as_of,
+        )
 
 
 class HiringNormalizeTaskHandler(_AltNormalizeBase):
@@ -218,6 +239,40 @@ class PatentNormalizeTaskHandler(_AltNormalizeBase):
                 "metric_unit": "count",
             }
         ]
+
+    async def _enqueue_followups(
+        self,
+        *,
+        stock_ids: list[int],
+        raw_document_ids: list[int],
+        as_of: str,
+    ) -> list[int]:
+        """Insert LLM enrichment before analysis: enqueue ENRICH_PATENT per stock.
+
+        Each ENRICH_PATENT carries the just-normalized ``raw_document_ids`` and
+        enqueues the per-stock ANALYZE_ALTERNATIVE once enrichment is cached, so
+        the patent score is built on the freshly extracted significance features.
+        With nothing normalized there is nothing to enrich, so fall back to the
+        plain analysis enqueue (keeps an empty run from stalling the pipeline).
+        """
+        if not raw_document_ids:
+            return await _enqueue_analysis_for_stocks(
+                queue_repository=self._queue_repository,
+                stock_ids=stock_ids,
+                as_of=as_of,
+            )
+        task_ids: list[int] = []
+        for stock_id in dict.fromkeys(stock_ids):  # distinct, order-preserving
+            task_id = await self._queue_repository.enqueue(
+                stock_id=stock_id,
+                task_type=ENRICH_PATENT,
+                priority="batch",
+                source_raw_ids=raw_document_ids,
+                task_context={"as_of": as_of, "source_type": "PATENT"},
+                dedupe=True,
+            )
+            task_ids.append(task_id)
+        return task_ids
 
 
 class DataLabNormalizeTaskHandler:
@@ -365,6 +420,85 @@ class DataLabNormalizeTaskHandler:
                 "change_pct": row.get("change_pct"),
             }
         ]
+
+
+class PatentEnrichTaskHandler:
+    """ENRICH_PATENT — LLM significance enrichment between normalize and analyze.
+
+    Enriches only the patents named in ``source_raw_ids`` (the rows the matching
+    NORMALIZE_PATENT task just promoted), caches the features in
+    ``patent_raw_details.llm_features``, then enqueues the per-stock
+    ANALYZE_ALTERNATIVE so analysis runs on the freshly extracted significance.
+
+    Best-effort by design: when no Gemini key is configured (or the client cannot
+    be built) it skips the LLM step and still enqueues analysis, so the pipeline
+    degrades to the count-based patent score instead of stalling. This is the
+    enrichment boundary — NOT a collector (collectors never call an LLM) and NOT
+    an analyzer (analyzers only read the cache).
+    """
+
+    def __init__(
+        self,
+        connection: Any,
+        *,
+        client: Any | None = None,
+        client_factory: Callable[[], Any] | None = None,
+        batch_limit: int = 200,
+    ) -> None:
+        self._connection = connection
+        self._raw_detail_repository = RawDetailRepository(connection)
+        self._queue_repository = ProcessingQueueRepository(connection)
+        self._client = client
+        self._client_factory = client_factory
+        self._batch_limit = batch_limit
+
+    async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
+        task_context = _task_context(task.get("task_context"))
+        as_of = _as_of_str(task_context.get("as_of"))
+        raw_document_ids = _source_raw_ids(task.get("source_raw_ids"))
+        stock_ids = [int(task["stock_id"])] if task.get("stock_id") is not None else []
+
+        client = self._resolve_client()
+        stats = {"total": 0, "success": 0, "failed": 0, "skipped": 0}
+        if client is not None and raw_document_ids:
+            enricher = PatentEnricher(
+                self._raw_detail_repository,
+                client,
+                batch_limit=self._batch_limit,
+                raw_document_ids=raw_document_ids,
+            )
+            stats = await enricher.run()
+
+        analysis_task_ids = await _enqueue_analysis_for_stocks(
+            queue_repository=self._queue_repository,
+            stock_ids=stock_ids,
+            as_of=as_of,
+        )
+        return {
+            "enriched": stats,
+            "llm_skipped": client is None,
+            "analysis_task_ids": analysis_task_ids,
+        }
+
+    def _resolve_client(self) -> Any | None:
+        """The injected client, else a lazily-built Gemini client, else None.
+
+        Returns None (enrichment disabled, analysis still runs) when no key is
+        configured or the client raises on construction, so a missing key never
+        sinks the pipeline.
+        """
+        if self._client is not None:
+            return self._client
+        if self._client_factory is not None:
+            return self._client_factory()
+        if not get_settings().gemini_api_key:
+            return None
+        try:
+            from app.clients.gemini_client import GeminiJsonClient
+
+            return GeminiJsonClient(api_key=get_settings().gemini_api_key)
+        except Exception:  # noqa: BLE001 — missing key/transport: degrade, don't stall
+            return None
 
 
 class AlternativeAnalyzeTaskHandler:
