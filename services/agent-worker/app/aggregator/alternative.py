@@ -9,9 +9,13 @@ them, so registering a new source needs no change here.
 
 from __future__ import annotations
 
+import logging
+
 from app.analyzers.config import AggregatorConfig
 from app.schemas.alternative_signal import AlternativeSignal
 from app.schemas.source_result import Direction, SourceResult
+
+logger = logging.getLogger(__name__)
 
 
 class AlternativeAggregator:
@@ -78,7 +82,15 @@ class AlternativeAggregator:
     def _weighted_score(self, available: list[SourceResult]) -> float:
         weights = [self._config.weights.get(r.source, 0.0) for r in available]
         total = sum(weights)
-        if total <= 0:  # no configured weights → equal blend
+        if total <= 0:
+            # Intentional equal-blend fallback (keeps the score valid for current
+            # callers), but warned: all source weights being 0/unconfigured is a
+            # misconfiguration we must not silently mask as a valid weighted run.
+            logger.warning(
+                "AlternativeAggregator: all source weights are 0/unconfigured for "
+                "sources %s — falling back to equal blend. Check AggregatorConfig.weights.",
+                [r.source for r in available],
+            )
             weights = [1.0] * len(available)
             total = float(len(available))
         weighted = sum(r.score * w for r, w in zip(available, weights))
