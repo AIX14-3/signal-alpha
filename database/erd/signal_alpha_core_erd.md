@@ -539,7 +539,7 @@ erDiagram
         JSONB record_payload "parse된 dict (replay-data)"
         TEXT raw_payload "원본 HTML/JSON, nullable (replay-reparse)"
         TIMESTAMPTZ replayed_at "nullable"
-        BIGINT replayed_run_id FK "재적재 run (012, Phase 4)"
+        BIGINT replayed_run_id FK "재적재 run (013, Phase 4)"
     }
 
     stocks ||--o{ hiring_signals : ""
