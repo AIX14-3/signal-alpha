@@ -10,8 +10,7 @@ timeout/재시도/백오프/UA 풀/캡은 Settings(HIRING_* env)로 제어한다
 
 스레드 안전성: hiring 수집 경로는 순차 실행(기업 1개씩, 단일 Selenium 드라이버
 로테이션, rate-limit)이라 모듈 레벨 Session 싱글턴이 안전하다. 향후 동시(멀티스레드)
-크롤을 도입하면 Session을 threading.local로 관리하도록 전환한다
-(SecFilingsClient가 인스턴스당 httpx.Client를 보유하는 것과 동일 취지).
+크롤을 도입하면 Session을 threading.local로 관리하도록 전환한다.
 """
 
 from __future__ import annotations

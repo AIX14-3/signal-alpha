@@ -1,7 +1,25 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
+
+# SQLSTATE 42703 = undefined_column. The prod DB may be stale and lack the
+# patent LLM columns (``llm_features`` / ``llm_status``) added in migration 019
+# (now folded into 001_baseline). The three patent-LLM methods below degrade
+# gracefully when those columns are absent instead of crashing the analyzer.
+_UNDEFINED_COLUMN_SQLSTATE = "42703"
+
+
+def _is_undefined_column(error: Exception) -> bool:
+    """True when a DB error is a missing-column error (SQLSTATE 42703).
+
+    Matches by ``sqlstate`` so it works whether the driver surfaces it as
+    ``asyncpg.exceptions.UndefinedColumnError`` or any other PostgresError.
+    """
+    return getattr(error, "sqlstate", None) == _UNDEFINED_COLUMN_SQLSTATE
 
 
 class RawDetailRepository:
@@ -137,33 +155,73 @@ class RawDetailRepository:
         """Patent detail rows for one stock, newest first, within the window.
 
         ``since_date`` (a date) bounds the lookback; pass None for all history.
+
+        On a stale prod schema missing the ``llm_features`` / ``llm_status``
+        columns (SQLSTATE 42703) this falls back to a query that omits them and
+        supplies ``llm_features=NULL`` / ``llm_status=NULL`` placeholders so the
+        row shape is unchanged for callers.
         """
-        return await self._connection.fetch(
-            """
-            SELECT
-                p.raw_document_id,
-                p.stock_id,
-                p.application_no,
-                p.patent_title,
-                p.applicant_name,
-                p.application_date,
-                p.tech_category,
-                p.is_new_category,
-                p.extra_payload,
-                p.llm_features,
-                p.llm_status,
-                r.title,
-                r.source_url,
-                r.published_at
-            FROM patent_raw_details p
-            INNER JOIN raw_documents r ON r.id = p.raw_document_id
-            WHERE p.stock_id = $1
-              AND ($2::date IS NULL OR p.application_date >= $2)
-            ORDER BY p.application_date DESC, p.raw_document_id DESC
-            """,
-            stock_id,
-            since_date,
-        )
+        try:
+            return await self._connection.fetch(
+                """
+                SELECT
+                    p.raw_document_id,
+                    p.stock_id,
+                    p.application_no,
+                    p.patent_title,
+                    p.applicant_name,
+                    p.application_date,
+                    p.tech_category,
+                    p.is_new_category,
+                    p.extra_payload,
+                    p.llm_features,
+                    p.llm_status,
+                    r.title,
+                    r.source_url,
+                    r.published_at
+                FROM patent_raw_details p
+                INNER JOIN raw_documents r ON r.id = p.raw_document_id
+                WHERE p.stock_id = $1
+                  AND ($2::date IS NULL OR p.application_date >= $2)
+                ORDER BY p.application_date DESC, p.raw_document_id DESC
+                """,
+                stock_id,
+                since_date,
+            )
+        except Exception as error:  # noqa: BLE001 — narrowed below by SQLSTATE
+            if not _is_undefined_column(error):
+                raise
+            logger.warning(
+                "patent_raw_details lacks llm_features/llm_status (stale prod "
+                "schema); falling back without LLM columns for stock_id=%s",
+                stock_id,
+            )
+            return await self._connection.fetch(
+                """
+                SELECT
+                    p.raw_document_id,
+                    p.stock_id,
+                    p.application_no,
+                    p.patent_title,
+                    p.applicant_name,
+                    p.application_date,
+                    p.tech_category,
+                    p.is_new_category,
+                    p.extra_payload,
+                    NULL AS llm_features,
+                    NULL AS llm_status,
+                    r.title,
+                    r.source_url,
+                    r.published_at
+                FROM patent_raw_details p
+                INNER JOIN raw_documents r ON r.id = p.raw_document_id
+                WHERE p.stock_id = $1
+                  AND ($2::date IS NULL OR p.application_date >= $2)
+                ORDER BY p.application_date DESC, p.raw_document_id DESC
+                """,
+                stock_id,
+                since_date,
+            )
 
     async def list_unenriched_patent_details(
         self,
@@ -182,10 +240,30 @@ class RawDetailRepository:
         NORMALIZE_PATENT just promoted); pass None for the global batch sweep.
         Already-enriched rows in the set are skipped by the ``pending`` filter,
         so re-running a task is a no-op.
+
+        On a stale prod schema missing ``llm_status`` (SQLSTATE 42703) there is
+        nothing to enrich, so this returns an empty list and logs a warning.
         """
-        if raw_document_ids is not None:
-            if not raw_document_ids:
-                return []
+        try:
+            if raw_document_ids is not None:
+                if not raw_document_ids:
+                    return []
+                return await self._connection.fetch(
+                    """
+                    SELECT
+                        p.raw_document_id,
+                        p.application_no,
+                        p.patent_title,
+                        p.extra_payload
+                    FROM patent_raw_details p
+                    WHERE p.llm_status = 'pending'
+                      AND p.raw_document_id = ANY($1::bigint[])
+                    ORDER BY p.application_date DESC, p.raw_document_id DESC
+                    LIMIT $2
+                    """,
+                    raw_document_ids,
+                    limit,
+                )
             return await self._connection.fetch(
                 """
                 SELECT
@@ -195,27 +273,19 @@ class RawDetailRepository:
                     p.extra_payload
                 FROM patent_raw_details p
                 WHERE p.llm_status = 'pending'
-                  AND p.raw_document_id = ANY($1::bigint[])
                 ORDER BY p.application_date DESC, p.raw_document_id DESC
-                LIMIT $2
+                LIMIT $1
                 """,
-                raw_document_ids,
                 limit,
             )
-        return await self._connection.fetch(
-            """
-            SELECT
-                p.raw_document_id,
-                p.application_no,
-                p.patent_title,
-                p.extra_payload
-            FROM patent_raw_details p
-            WHERE p.llm_status = 'pending'
-            ORDER BY p.application_date DESC, p.raw_document_id DESC
-            LIMIT $1
-            """,
-            limit,
-        )
+        except Exception as error:  # noqa: BLE001 — narrowed below by SQLSTATE
+            if not _is_undefined_column(error):
+                raise
+            logger.warning(
+                "patent_raw_details lacks llm_status (stale prod schema); "
+                "no patents to enrich, returning empty batch"
+            )
+            return []
 
     async def update_patent_llm_features(
         self,
@@ -224,17 +294,31 @@ class RawDetailRepository:
         features: Any | None,
         status: str,
     ) -> None:
-        """Cache enrichment output for one patent (one-time; application_no is immutable)."""
-        await self._connection.execute(
-            """
-            UPDATE patent_raw_details
-            SET llm_features = $2::jsonb, llm_status = $3
-            WHERE raw_document_id = $1
-            """,
-            raw_document_id,
-            _jsonb(features),
-            status,
-        )
+        """Cache enrichment output for one patent (one-time; application_no is immutable).
+
+        On a stale prod schema missing ``llm_features`` / ``llm_status``
+        (SQLSTATE 42703) this is a no-op with a logged warning — the cache
+        simply cannot be written until the schema catches up.
+        """
+        try:
+            await self._connection.execute(
+                """
+                UPDATE patent_raw_details
+                SET llm_features = $2::jsonb, llm_status = $3
+                WHERE raw_document_id = $1
+                """,
+                raw_document_id,
+                _jsonb(features),
+                status,
+            )
+        except Exception as error:  # noqa: BLE001 — narrowed below by SQLSTATE
+            if not _is_undefined_column(error):
+                raise
+            logger.warning(
+                "patent_raw_details lacks llm_features/llm_status (stale prod "
+                "schema); skipping LLM cache write for raw_document_id=%s",
+                raw_document_id,
+            )
 
     async def list_hiring_details_by_stock(
         self,

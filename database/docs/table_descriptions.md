@@ -65,6 +65,7 @@ DataLab은 종목이 아닌 **카테고리 단위**로 수집하므로 자체 �
 | `hiring_sources` | 기업별 공식 채용 사이트 크롤러 설정(크롤러 유형/클래스/URL). `(stock_id, crawler_type)` 단위, 기업 추가/변경의 Single Source of Truth | 016 |
 | `hiring_job_functions` | 직무(job function) 표준 분류 마스터(ENGINEER/SALES 등). 섹터 전반 직무 수요 전파의 기준 | 020 |
 | `hiring_job_function_stocks` | 종목 ↔ 직무 노출 가중치 N:M. peer 직무 수요를 종목으로 전파(own-momentum 보완) | 020 |
+| `hiring_quarantine` | 3c 게이트/`_insert_one` 오류로 `failed` 거부된 크롤 레코드의 격리 보관 + replay 원장. `record_payload`(parse된 dict, replay-data용)·`raw_payload`(원본 HTML/JSON, 하이브리드 크롤러만 채움, replay-reparse용)·`replayed_at`/`replayed_run_id`. 부분손상 backfill(전면개편 0건은 Phase 5 소관) | 012, Phase 4 |
 
 ## Zone D — Processing (007_processing.sql)
 

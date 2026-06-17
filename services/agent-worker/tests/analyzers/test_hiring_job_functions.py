@@ -60,6 +60,30 @@ class ClassifyTests(unittest.TestCase):
         self.assertEqual(classify_job_function("선행개발 엔지니어"), "ENGINEER")
         self.assertEqual(classify_job_function("연구소 플랫폼 엔지니어"), "ENGINEER")
 
+    def test_game_ai_is_data_ai_but_plain_game_dev_is_engineer(self):
+        # Game disambiguation (2-tier idiom): genuine AI/ML-in-games is DATA_AI…
+        self.assertEqual(classify_job_function("게임 AI 엔지니어"), "DATA_AI")
+        self.assertEqual(classify_job_function("Game AI Engineer"), "DATA_AI")
+        self.assertEqual(classify_job_function("게임 NPC AI 개발자"), "DATA_AI")
+        self.assertEqual(classify_job_function("Game ML for matchmaking"), "DATA_AI")
+        # …but a plain game-dev role that merely contains "game" stays ENGINEER.
+        self.assertEqual(classify_job_function("게임 클라이언트 개발자"), "ENGINEER")
+        self.assertEqual(classify_job_function("게임 서버 개발자"), "ENGINEER")
+        self.assertEqual(classify_job_function("게임 개발자"), "ENGINEER")
+
+    def test_game_dev_not_misrouted_by_incidental_ai_substring(self):
+        # The short DATA_AI needle "ai" must not substring-match inside unrelated words
+        # (m-AI-ntenance, ret-AI-l) and drag a plain game-dev title into DATA_AI.
+        self.assertEqual(classify_job_function("Game Maintenance Engineer"), "ENGINEER")
+        self.assertEqual(classify_job_function("Live Game Maintainer"), "ENGINEER")
+        self.assertEqual(classify_job_function("retail game seller"), "ENGINEER")
+
+    def test_non_game_ai_titles_unchanged(self):
+        # Game disambiguation must not regress ordinary AI/ML titles with no "game" word.
+        self.assertEqual(classify_job_function("AI/머신러닝 연구원"), "DATA_AI")
+        self.assertEqual(classify_job_function("데이터 사이언티스트"), "DATA_AI")
+        self.assertEqual(classify_job_function("NLP 엔지니어"), "DATA_AI")
+
     def test_unmatched_is_none(self):
         self.assertIsNone(classify_job_function("점성술사"))
         self.assertIsNone(classify_job_function(None))

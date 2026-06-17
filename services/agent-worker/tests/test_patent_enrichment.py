@@ -137,5 +137,86 @@ class EnricherRunTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([u[0] for u in repo.updates], [10])
 
 
+class _MissingColumnError(Exception):
+    """Stand-in for asyncpg.exceptions.UndefinedColumnError (SQLSTATE 42703)."""
+
+    sqlstate = "42703"
+
+
+class _StaleSchemaConnection:
+    """Fake asyncpg connection: first SELECT/UPDATE referencing the llm_* columns
+    raises 42703; the no-llm fallback query (or a no-op) succeeds.
+
+    Detection is by SQL text containing ``llm_`` so the fallback variants — which
+    only emit ``NULL AS llm_features`` — are treated as healthy.
+    """
+
+    def __init__(self):
+        self.fetch_calls = []
+        self.execute_calls = []
+
+    @staticmethod
+    def _references_real_llm_column(sql: str) -> bool:
+        # The fallback selects literal "NULL AS llm_features"; real refs read p.llm_*.
+        return "p.llm_features" in sql or "p.llm_status" in sql or "llm_status = " in sql
+
+    async def fetch(self, sql, *args):
+        self.fetch_calls.append(sql)
+        if self._references_real_llm_column(sql):
+            raise _MissingColumnError("column p.llm_status does not exist")
+        return [{"raw_document_id": 1, "llm_features": None, "llm_status": None}]
+
+    async def execute(self, sql, *args):
+        self.execute_calls.append(sql)
+        if self._references_real_llm_column(sql):
+            raise _MissingColumnError("column llm_status does not exist")
+        return "UPDATE 1"
+
+
+class StalePatentSchemaGuardTests(unittest.IsolatedAsyncioTestCase):
+    """L1 guard: patent LLM methods degrade gracefully when prod lacks the
+    migration-019 ``llm_features`` / ``llm_status`` columns (SQLSTATE 42703)."""
+
+    def _repo(self, conn):
+        import sys
+
+        sys.path.insert(0, "packages/data-access")
+        from signal_alpha_data_access.repositories.raw_details import RawDetailRepository
+
+        return RawDetailRepository(conn)
+
+    async def test_list_by_stock_falls_back_with_null_placeholders(self):
+        conn = _StaleSchemaConnection()
+        rows = await self._repo(conn).list_patent_details_by_stock(stock_id=7)
+        # Two fetches: the real query (42703) then the fallback that succeeds.
+        self.assertEqual(len(conn.fetch_calls), 2)
+        self.assertEqual(rows[0]["llm_features"], None)
+        self.assertEqual(rows[0]["llm_status"], None)
+
+    async def test_list_unenriched_returns_empty_batch(self):
+        conn = _StaleSchemaConnection()
+        rows = await self._repo(conn).list_unenriched_patent_details(limit=50)
+        self.assertEqual(rows, [])
+
+    async def test_update_is_noop_when_columns_missing(self):
+        conn = _StaleSchemaConnection()
+        # Must not raise; the cache write is silently skipped.
+        await self._repo(conn).update_patent_llm_features(
+            raw_document_id=3, features={"significance": 0.5}, status="success"
+        )
+        self.assertEqual(len(conn.execute_calls), 1)
+
+    async def test_non_42703_errors_still_propagate(self):
+        class _OtherError(Exception):
+            sqlstate = "08006"  # connection_failure — not a missing column
+
+        class _Conn:
+            async def fetch(self, sql, *args):
+                raise _OtherError("boom")
+
+        with self.assertRaises(_OtherError):
+            await self._repo(_Conn()).list_patent_details_by_stock(stock_id=1)
+
+
 if __name__ == "__main__":
     unittest.main()
