@@ -3,7 +3,9 @@ hyundai_kia.py
 현대자동차 / 기아 공식 채용 사이트 크롤러 (Selenium ATS)
 
     현대자동차 : https://talent.hyundai.com/apply/applyList.hc
-    기아        : https://career.kia.com/job/jobs.kc
+    기아        : https://career.kia.com/apply/applyList.kc  (국내 본사 공고 목록)
+
+    ※ career.kia.com/job/jobs.kc 는 권역 선택 허브(공고 아님)라 applyList.kc 로 정정(#175).
 """
 
 from __future__ import annotations
@@ -24,7 +26,7 @@ _HYUNDAI_BASE = "https://talent.hyundai.com"
 _HYUNDAI_LIST = f"{_HYUNDAI_BASE}/apply/applyList.hc"
 
 _KIA_BASE = "https://career.kia.com"
-_KIA_LIST = f"{_KIA_BASE}/job/jobs.kc"
+_KIA_LIST = f"{_KIA_BASE}/apply/applyList.kc"  # 국내 본사 공고 목록(권역 허브 jobs.kc → 정정, #175)
 
 
 # ── 현대자동차 ────────────────────────────────────────────────────────────────
@@ -118,7 +120,7 @@ class HyundaiCrawler(BaseSiteCrawler):
 class KiaCrawler(BaseSiteCrawler):
     source_label = "KIA_CAREERS"
 
-    def crawl(self, company_name: str) -> list[dict]:
+    def crawl(self, company_name: str) -> list:
         from bs4 import BeautifulSoup
         from selenium.common.exceptions import TimeoutException
         from selenium.webdriver.common.by import By
@@ -126,85 +128,72 @@ class KiaCrawler(BaseSiteCrawler):
         self._safe_get(_KIA_LIST, wait_sec=3)
 
         try:
+            # 공고가 있으면 #applyList 의 li, 없으면 #applyNoneList 로 렌더 완료 판정
             self._wait_for(
                 By.CSS_SELECTOR,
-                ".job-list li, .recruit-list li, table.board tbody tr, [class*='job-item']",
+                "#applyList > li, #applyNoneList",
                 timeout=10,
             )
         except TimeoutException:
             logger.info("ℹ️  기아: 공고 목록 로딩 실패")
             return []
 
-        self._click_more_button(max_clicks=5)
+        time.sleep(1.5)  # 비동기 데이터 렌더링 안정성을 위해 소폭 확장
+        raw_html = self.driver.page_source
+        soup = BeautifulSoup(raw_html, "html.parser")
+        return self._parse_kia(company_name, soup, raw_html)
 
-        soup = BeautifulSoup(self.driver.page_source, "html.parser")
-        return self._parse_kia(company_name, soup)
+    def _extract_kia_url(self, li_tag: Tag) -> str:
+        """공고 li 의 data-* 속성으로 상세 페이지 GET URL 을 조립(그룹/일반 분기).
 
-    def _click_more_button(self, max_clicks: int = 5) -> None:
-        """더보기/Load More 버튼 클릭."""
-        from selenium.common.exceptions import NoSuchElementException, ElementNotInteractableException
-        from selenium.webdriver.common.by import By
+        현대와 동일 ATS 지만 그룹공고도 applyView.kc 로 이동한다(ntcGroupNo>0 → isGroup).
+        """
+        ntc_group_no = (li_tag.get("data-ntcgroupno") or "").strip()
+        if ntc_group_no.isdigit() and int(ntc_group_no) > 0:
+            return f"{_KIA_BASE}/apply/applyView.kc?ntcGroupNo={ntc_group_no}"
 
-        clicked = 0
-        for _ in range(max_clicks):
-            try:
-                btn = self.driver.find_element(
-                    By.XPATH,
-                    "//button[contains(text(), '더보기') or contains(text(), 'More') "
-                    "or contains(@class, 'btn-more') or contains(@class, 'load-more')]",
-                )
-                btn.click()
-                time.sleep(1.5)
-                clicked += 1
-            except (NoSuchElementException, ElementNotInteractableException):
-                break
-        if clicked:
-            logger.debug("기아 더보기 %d회 클릭", clicked)
-
-    def _parse_kia(self, company_name: str, soup) -> list[dict]:
-        """기아 ATS 목록 파싱."""
-        jobs: list[dict] = []
-
-        items = (
-            soup.select(".job-list li")
-            or soup.select(".recruit-list li")
-            or soup.select("[class*='job-item']")
+        recu_yy = (li_tag.get("data-recuyy") or "").strip()
+        recu_type = (li_tag.get("data-recutype") or "").strip()
+        recu_cls = (li_tag.get("data-recucls") or "").strip()
+        return (
+            f"{_KIA_BASE}/apply/applyView.kc"
+            f"?recuYy={recu_yy}&recuType={recu_type}&recuCls={recu_cls}"
         )
-        if items:
-            for item in items:
-                try:
-                    link_el = item.find("a")
-                    title_el = item.find(["strong", "h3", "h4", "p"])
-                    if not (link_el or title_el):
-                        continue
-                    title = (title_el or link_el).get_text(strip=True)
-                    if not title or len(title) < 3:
-                        continue
-                    url = self.normalize_url(
-                        (link_el.get("href", "") if link_el else ""), _KIA_BASE
-                    )
-                    date_el = item.find(
-                        lambda t: t.name in ("span", "em") and "date" in (t.get("class") or [""])[0].lower()
-                    )
-                    deadline = date_el.get_text(strip=True) if date_el else None
-                    jobs.append(self._make_record(company_name, title, url, closing_date=deadline))
-                except Exception as exc:
-                    logger.debug("기아 list 파싱 오류: %s", exc)
 
-        if not jobs:
-            for row in soup.select("table tbody tr"):
-                try:
-                    link_el = row.find("a")
-                    if not link_el:
-                        continue
-                    title = link_el.get_text(strip=True)
-                    if not title or len(title) < 3:
-                        continue
-                    url = self.normalize_url(link_el.get("href", ""), _KIA_BASE)
-                    cells = row.find_all("td")
-                    deadline = cells[-1].get_text(strip=True) if len(cells) >= 3 else None
-                    jobs.append(self._make_record(company_name, title, url, closing_date=deadline))
-                except Exception as exc:
-                    logger.debug("기아 table 파싱 오류: %s", exc)
+    def _parse_kia(self, company_name: str, soup, raw_html: str | None = None) -> list:
+        """기아 채용관(applyList.kc, ul#applyList) 목록 파싱.
+
+        공고 li(``#applyList > li``)의 직무명은 ``h3.tit``, 상세 URL 인자는 data-* 속성에 있다.
+        부문/직무/지역/고용형태는 ``ul.work__list`` 에서 추출해 job_description 에 보존한다.
+        각 건을 CollectorResult 로 감싸 raw_payload·source_label 을 보존(4b reparse 호환).
+        공고가 없으면(#applyNoneList) 빈 리스트를 반환한다.
+        """
+        from ...base_collector import CollectorResult
+
+        jobs: list = []
+        for li in soup.select("#applyList > li"):
+            try:
+                tit = li.select_one("h3.tit")
+                title = tit.get_text(strip=True) if tit else ""
+                if not title:
+                    continue
+
+                url = self._extract_kia_url(li)
+
+                # 부문/직무/지역/고용형태(work__list) → " / " 로 합쳐 설명에 보존
+                meta = [w.get_text(strip=True) for w in li.select("ul.work__list > li")]
+                description = " / ".join(m for m in meta if m) or None
+
+                jobs.append(
+                    CollectorResult(
+                        data=self._make_record(
+                            company_name, title, url, job_description=description
+                        ),
+                        raw_payload=raw_html,
+                        source_label=self.source_label,
+                    )
+                )
+            except Exception as exc:
+                logger.debug("기아 applyList 파싱 오류: %s", exc)
 
         return jobs
