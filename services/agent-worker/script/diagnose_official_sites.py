@@ -30,16 +30,17 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from app.collectors.hiring.sites.company.hyundai_kia import _HYUNDAI_LIST, _KIA_LIST
 from app.collectors.hiring.sites.company.krafton import _JOBS as KRAFTON_JOBS
 from app.collectors.hiring.sites.company.naver import _LIST_URL as NAVER_URL
+from app.collectors.hiring.sites.company.sk_hynix import _LIST as SK_HYNIX_LIST
 from app.collectors.hiring.user_agents import pick_ua
 
 # (label, url, content_type, selenium_hint)
-# 죽은 엔드포인트 4종(SAMSUNG/SK_HYNIX/HYBE/SM)은 사용자가 브라우저로 확인한 새 URL을
-# **직접 명시**한다(아직 크롤러 상수에 없어 import 불가). selector 검증 후 크롤러 상수에
-# 반영하며 import(SSOT)로 되돌린다. 나머지(NAVER/HYUNDAI/KIA/KRAFTON)는 크롤러 import 유지.
+# 죽은 엔드포인트(SAMSUNG/HYBE/SM)는 사용자가 브라우저로 확인한 새 URL을 **직접 명시**한다
+# (아직 크롤러 상수에 없어 import 불가). selector 검증 후 크롤러 상수에 반영하며 import(SSOT)로
+# 되돌린다. SK_HYNIX 는 검증 완료되어 _LIST(SSOT) import 로 환원(#175/#233).
 TARGETS: list[tuple[str, str, str, bool]] = [
     ("SAMSUNG_ELECTRONICS", "https://www.samsungcareers.com/hr", "html", True),    # careers.samsung.com DNS죽음
     ("NAVER", f"{NAVER_URL}?pageNo=1", "html", True),
-    ("SK_HYNIX", "https://talent.skhynix.com/hub/ko/apply/job", "html", True),     # api/v1/jobs Error
+    ("SK_HYNIX", SK_HYNIX_LIST, "html", True),
     ("HYUNDAI", _HYUNDAI_LIST, "html", True),
     ("KIA", _KIA_LIST, "html", True),
     ("HYBE", "https://careers.hybecorp.com/ko/career", "html", True),             # /ko/jobs 404

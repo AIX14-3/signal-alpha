@@ -1,0 +1,63 @@
+<!--
+  SK하이닉스 채용관(talent.skhynix.com/hub/ko/apply/job) 발췌 픽스처.
+  diagnostics/SK_HYNIX_RENDERED.html 의 '지원 직무' 본문 영역을 조상(.summary-box-item →
+  .jobs-list-container → .job-list-asset → .accordion-body → .job-list-wrapper)까지 보존하여 발췌.
+  - .list-item > a[/hub/ko/job/introduce?id=N] 3건은 실데이터(id=1070/1071/1072)
+  - 네비 메뉴의 bare introduce 링크(?id 없음)는 파서가 제외해야 하므로 1건 포함
+  - 모집중 사이드바(.recruit-lnb-item.ing)/예정(coming-soon) 골격도 일부 보존
+-->
+<div class="recruit-lnb">
+  <div class="accordion-list recruit-lnb-item ing active">
+    <button class="lnb-list-header accordion-header" data-type="6">
+      <div class="text">6월 모집 중 공고</div>
+    </button>
+    <div class="accordion-body lnb-list-body" style="display:block">
+      <button class="lnb-list-asset active" data-id="R261349" type="button">
+        [6월] Talent hy-way 신입 (이천/분당/청주)
+      </button>
+    </div>
+  </div>
+  <div class="accordion-list recruit-lnb-item coming-soon">
+    <button class="lnb-list-header accordion-header" data-type="7">
+      <div class="text">7월 모집 예정 공고</div>
+    </button>
+    <div class="accordion-body lnb-list-body"></div>
+  </div>
+</div>
+
+<nav class="gnb">
+  <a href="/hub/ko/job/introduce">채용공고</a>
+</nav>
+
+<div class="summary-box-wrapper">
+  <div class="summary-box-item">
+    <div class="box-title">지원 직무</div>
+    <div class="jobs-list-container accordion-container solo">
+      <div class="job-list-asset accordion-list">
+        <button class="job-title accordion-header" type="button"><span>Tech R&amp;D</span></button>
+        <div class="accordion-body">
+          <div class="job-list-wrapper">
+            <div class="list-item">
+              <a href="/hub/ko/job/introduce?id=1070">
+                <div class="title-area"><div class="title">설계</div></div>
+                <div class="typo"><img alt="" src="/hub/static/images/typo-icon/icon-typo-sample.png"></div>
+              </a>
+            </div>
+            <div class="list-item">
+              <a href="/hub/ko/job/introduce?id=1071">
+                <div class="title-area"><div class="title">소자</div></div>
+                <div class="typo"><img alt="" src="/hub/static/images/typo-icon/icon-typo-sample.png"></div>
+              </a>
+            </div>
+            <div class="list-item">
+              <a href="/hub/ko/job/introduce?id=1072">
+                <div class="title-area"><div class="title">R&amp;D 공정</div></div>
+                <div class="typo"><img alt="" src="/hub/static/images/typo-icon/icon-typo-sample.png"></div>
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
