@@ -137,7 +137,7 @@ def classify(title: str, body: str, labels: list[str]) -> Decision:
     title = title or ""
     body = body or ""
 
-    label_areas = {l[len("area:"):] for l in labels if l.startswith("area:")}
+    label_areas = {lbl[len("area:"):] for lbl in labels if lbl.startswith("area:")}
     label_areas &= set(AREA_OPTIONS)  # 유효 옵션만
 
     # 단일 area 라벨 → 작성자 분류를 그대로 신뢰(최우선).
