@@ -40,6 +40,27 @@ from app.analyzers.hiring.indicators import _parse_date  # shared date parser
 # None or mis-bucketing (evidence-based, not speculative). Each new function needs
 # all three: a needle rule here + a hiring_job_functions row + a
 # hiring_job_function_stocks mapping (an unmapped function produces no signal).
+# Game disambiguation (2-tier idiom, same shape as the ENGINEER split above).
+#
+# "game"/"게임" alone must NOT force DATA_AI. Two traps motivate this:
+#   1. A genuine game-AI/ML role ("게임 AI 엔지니어", "ML for NPC/matchmaking") IS data/AI
+#      work and belongs in DATA_AI.
+#   2. A plain game-dev role ("게임 클라이언트 개발자", "Game Maintenance Engineer") is just
+#      ENGINEER — but the very short DATA_AI needle "ai" substring-matches incidental words
+#      like m-AI-ntenance / ret-AI-l / det-AI-l, wrongly pulling those into DATA_AI.
+#
+# So before the generic rules run we special-case game titles: if a game title carries a
+# genuine AI/ML token it is DATA_AI, otherwise it stays ENGINEER and is shielded from the
+# bare "ai"/"ml" substring needles. Non-game titles are untouched (fall through to the
+# generic rules below, where "ai"/"ml" still own real AI/ML titles).
+_GAME_NEEDLES: tuple[str, ...] = ("게임", "game")
+# Genuine AI/ML signal *as a token*, not a stray substring. Word-boundary-ish: the needle
+# must sit between non-letters (or string edges) so "maintenance"/"retail" do not count.
+_GAME_AI_TOKENS: tuple[str, ...] = (
+    "ai", "ml", "머신러닝", "딥러닝", "인공지능", "사이언티스트", "data scientist",
+    "nlp", "npc", "매치메이킹", "matchmaking", "강화학습", "reinforcement",
+)
+
 DEFAULT_FUNCTION_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("DATA_AI", ("ai", "ml", "머신러닝", "딥러닝", "인공지능", "데이터", "사이언티스트",
                  "data scientist", "nlp")),
@@ -76,6 +97,40 @@ LABELS: dict[str, str] = {
 }
 
 
+def _token_present(needle: str, text: str) -> bool:
+    """True if ``needle`` appears in ``text`` bounded by non-letters / string edges.
+
+    Guards the very short AI/ML tokens ("ai", "ml") from matching inside unrelated
+    words (m-ai-ntenance, ret-ai-l, HT-ml). Korean has no casing/word breaks, so a
+    Korean needle is treated as a plain substring (the ASCII-letter boundary check
+    only constrains ASCII needles).
+    """
+    start = 0
+    while True:
+        idx = text.find(needle, start)
+        if idx == -1:
+            return False
+        before = text[idx - 1] if idx > 0 else ""
+        after = text[idx + len(needle)] if idx + len(needle) < len(text) else ""
+        if not (before.isascii() and before.isalpha()) and not (
+            after.isascii() and after.isalpha()
+        ):
+            return True
+        start = idx + 1
+
+
+def _classify_game(text: str) -> str | None:
+    """Disambiguate game titles: genuine AI/ML-in-games → DATA_AI, else ENGINEER.
+
+    Returns None for non-game titles so the caller falls through to the generic rules.
+    """
+    if not any(needle in text for needle in _GAME_NEEDLES):
+        return None
+    if any(_token_present(token, text) for token in _GAME_AI_TOKENS):
+        return "DATA_AI"
+    return "ENGINEER"
+
+
 def classify_job_function(
     keyword: str | None,
     *,
@@ -85,6 +140,12 @@ def classify_job_function(
     if not keyword:
         return None
     text = keyword.casefold()
+    # Game disambiguation runs first so "game" alone never forces DATA_AI (see _GAME_*).
+    # Only applies when the default taxonomy is in use; a custom ``rules`` set opts out.
+    if rules is DEFAULT_FUNCTION_RULES:
+        game = _classify_game(text)
+        if game is not None:
+            return game
     for function_key, needles in rules:
         if any(needle in text for needle in needles):
             return function_key
