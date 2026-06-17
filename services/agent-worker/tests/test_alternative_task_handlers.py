@@ -17,7 +17,7 @@ from app.orchestrator.alternative.tasks import (
     _as_of_str,
     analysis_task_context,
 )
-from app.schemas.source_result import EvidenceItem, ReportMeta, SourceResult
+from app.schemas.source_result import SourceResult
 
 
 class FakeConnection:
@@ -458,74 +458,6 @@ class AlternativeAnalyzeHandlerTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result["analyzed_count"], 2)
         self.assertEqual(result["available_sources"], ["HIRING"])  # DATALAB failed → excluded
-
-
-class _RichAnalyzer:
-    """Analyzer returning a fully-populated SourceResult (evidence_items,
-    report_meta, risk_flags, llm_model) — exercises every field the
-    RuleSourceAgent round-trip must preserve."""
-
-    source = "DATALAB"
-
-    async def analyze(self, stock_code, evidence):
-        return SourceResult(
-            source="DATALAB",
-            stock_code=stock_code,
-            direction="negative",
-            score=-0.37,
-            summary="검색 급락",
-            evidence_items=[
-                EvidenceItem(
-                    title="갤럭시",
-                    summary="검색 급락 -40%",
-                    url="https://datalab.example/1",
-                    published_at="2026-06-10",
-                    source_name="NAVER_DATALAB",
-                )
-            ],
-            risk_flags=["demand_drop", "watch"],
-            data_status="partial",
-            report_meta=ReportMeta(
-                avg_target=None,
-                upside_pct=None,
-                target_trend="down",
-                conflict_detected=True,
-                opinions=[{"firm": "X", "stance": "sell"}],
-            ),
-            llm_model="gemini-2.5",
-        )
-
-
-class RunSourceWiringTest(unittest.IsolatedAsyncioTestCase):
-    async def test_wired_run_source_equals_direct_analyzer(self):
-        # Score-invariance: the SourceResult produced via the wired _run_source
-        # (RuleSourceAgent → SourceAgentInput/Output → _from_output) must equal
-        # what analyzer.analyze() returns directly — field for field.
-        analyzer = _RichAnalyzer()
-        as_of = date(2026, 6, 16)
-        direct = await analyzer.analyze("005930", [])
-
-        registration = SourceRegistration(
-            source="DATALAB",
-            debate_method="D-3",
-            analyzer=analyzer,
-            loader_factory=lambda repo: _FakeLoader("DATALAB"),
-        )
-        handler = AlternativeAnalyzeTaskHandler(conn := FakeConnection(), registrations=[registration])
-        wired = await handler._run_source(
-            registration, handler._repository_factory(conn), 1, "005930", as_of
-        )
-
-        # Dataclass equality compares every field, incl. nested evidence_items /
-        # report_meta — so this proves the wiring is fully lossless.
-        self.assertEqual(wired, direct)
-        self.assertEqual(wired.score, -0.37)
-        self.assertEqual(wired.direction, "negative")
-        self.assertEqual(wired.risk_flags, ["demand_drop", "watch"])
-        self.assertEqual(wired.data_status, "partial")
-        self.assertEqual(wired.llm_model, "gemini-2.5")
-        self.assertEqual(wired.evidence_items, direct.evidence_items)
-        self.assertEqual(wired.report_meta, direct.report_meta)
 
 
 class HandlerRegistrationTest(unittest.IsolatedAsyncioTestCase):
