@@ -26,6 +26,8 @@ from collections.abc import Mapping
 from datetime import date, datetime
 from typing import Any, Callable, Sequence
 
+from app.agents.base import SourceAgentInput, SourceAgentOutput
+from app.agents.rule_source_agent import RuleSourceAgent
 from app.aggregator import AlternativeAggregator
 from app.analyzers.config import AnalyzerRuntimeConfig
 from app.core.config import get_settings
@@ -36,7 +38,7 @@ from app.analyzers.patent.normalize_rules import classify_patent_filing
 from app.analyzers.registry import SourceRegistration, build_registry
 from app.orchestrator.alternative_persistence import AlternativeSignalPersistence
 from app.orchestrator.queue.task_types import ANALYZE_ALTERNATIVE, ENRICH_PATENT
-from app.schemas.source_result import SourceResult
+from app.schemas.source_result import EvidenceItem, ReportMeta, SourceResult
 from app.utils.hash_utils import make_source_hash
 from signal_alpha_data_access.repositories import (
     NormalizationRepository,
@@ -572,7 +574,21 @@ class AlternativeAnalyzeTaskHandler:
         try:
             loader = registration.build_loader(repository)
             evidence = await loader.load(stock_id=stock_id, stock_code=stock_code, as_of=as_of)
-            return await registration.analyzer.analyze(stock_code, evidence)
+            # Drive the analyzer through the SourceAgentInput/Output contract via the
+            # transparent RuleSourceAgent adapter, then convert back to SourceResult.
+            # The adapter is a pure field mapping — scores/directions/flags are
+            # unchanged vs. calling analyzer.analyze() directly (see _from_output).
+            agent = RuleSourceAgent(registration.analyzer)
+            output = await agent.analyze(
+                SourceAgentInput(
+                    source=registration.source,
+                    stock_code=stock_code,
+                    stock_id=stock_id,
+                    analysis_date=as_of,
+                    evidence=evidence,
+                )
+            )
+            return _from_output(output)
         except Exception as exc:  # one source failing must not sink the others
             return SourceResult(
                 source=registration.source,
@@ -598,6 +614,35 @@ class AlternativeAnalyzeTaskHandler:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _from_output(output: SourceAgentOutput) -> SourceResult:
+    """Convert a ``SourceAgentOutput`` back to the ``SourceResult`` the aggregator
+    consumes — the exact inverse of ``RuleSourceAgent._to_output``.
+
+    The adapter is a transparent field mapping: it carries ``score``, ``direction``,
+    ``summary``, ``risk_flags``, ``llm_model``, and ``data_status`` straight through,
+    and flattens ``evidence_items`` / ``report_meta`` into ``method_detail`` as plain
+    dicts. Here we rebuild those dataclasses from ``method_detail`` so the resulting
+    ``SourceResult`` is field-for-field identical to what ``analyzer.analyze``
+    returned — keeping Alternative end-to-end scores invariant.
+    """
+    detail = output.method_detail
+    raw_items = detail.get("evidence_items") or []
+    evidence_items = [EvidenceItem(**item) for item in raw_items]
+    report_meta = detail.get("report_meta")
+    return SourceResult(
+        source=output.source,
+        stock_code=output.stock_code,
+        direction=output.direction,
+        score=output.score,
+        summary=output.summary,
+        evidence_items=evidence_items,
+        risk_flags=list(output.risk_flags),
+        data_status=output.data_status,
+        report_meta=ReportMeta(**report_meta) if report_meta is not None else None,
+        llm_model=output.llm_model,
+    )
+
 
 def analysis_task_context(as_of: str) -> dict[str, Any]:
     """Canonical ANALYZE_ALTERNATIVE dedupe key, shared by every producer.
