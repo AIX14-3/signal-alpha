@@ -531,10 +531,22 @@ erDiagram
         NUMERIC weight "직군 노출 가중치 (020)"
     }
 
+    hiring_quarantine {
+        BIGINT id PK
+        BIGINT collector_run_id FK "nullable"
+        VARCHAR source_label "replay-reparse 파서 매핑"
+        VARCHAR violation_reason "거부/오류 사유"
+        JSONB record_payload "parse된 dict (replay-data)"
+        TEXT raw_payload "원본 HTML/JSON, nullable (replay-reparse)"
+        TIMESTAMPTZ replayed_at "nullable"
+        BIGINT replayed_run_id FK "재적재 run (012, Phase 4)"
+    }
+
     stocks ||--o{ hiring_signals : ""
     stocks ||--o{ hiring_sources : ""
     stocks ||--o{ hiring_job_function_stocks : ""
     hiring_job_functions ||--o{ hiring_job_function_stocks : ""
+    collector_runs ||--o{ hiring_quarantine : "collector_run_id (크롤 실패 격리)"
 ```
 
 기존 테이블에 추가된 컬럼(신규 테이블 아님):
