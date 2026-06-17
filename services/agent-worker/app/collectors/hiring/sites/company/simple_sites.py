@@ -44,42 +44,44 @@ class SimpleSiteCrawler(BaseSiteCrawler):
 
     source_label = "COMPANY_STATIC"
 
-    def crawl(self, company_name: str) -> list[dict]:
+    def crawl(self, company_name: str) -> list:
         if company_name not in _SIMPLE_SITES:
             return []
         url, label, parser_name = _SIMPLE_SITES[company_name]
         self.source_label = label
-        soup = self._fetch_soup(url)
+        # Phase 4b: 원본 HTML(raw_html)을 함께 받아 파서에 전달 → 격리 시 raw_payload 보존.
+        soup, raw_html = self._fetch_soup(url)
         if soup is None:
             return []
         parser = getattr(self, parser_name)
-        return parser(company_name, url, soup)
+        return parser(company_name, url, soup, raw_html)
 
     def _fetch_soup(self, url: str):
-        """requests → BeautifulSoup, 실패 시 Selenium 폴백."""
+        """requests → (BeautifulSoup, 원본 HTML), 실패 시 Selenium 폴백. 실패 시 (None, None)."""
         from bs4 import BeautifulSoup
         try:
             from ..http import get as http_get
             # User-Agent는 http_get이 풀에서 로테이션 주입한다.
             resp = http_get(url)
-            return BeautifulSoup(resp.text, "html.parser")
+            return BeautifulSoup(resp.text, "html.parser"), resp.text
         except Exception as exc:
             logger.debug("requests 실패(%s) → Selenium 폴백: %s", url, exc)
 
         # Selenium 폴백
         if self.driver is None:
             logger.warning("⚠️  Selenium driver 없음, %s 스킵", url)
-            return None
+            return None, None
         try:
             self._safe_get(url, wait_sec=2)
-            return BeautifulSoup(self.driver.page_source, "html.parser")
+            page = self.driver.page_source
+            return BeautifulSoup(page, "html.parser"), page
         except Exception as exc:
             logger.error("Selenium 폴백 실패(%s): %s", url, exc)
-            return None
+            return None, None
 
     # ── 한미반도체 ───────────────────────────────────────────────────────────────
-    def _parse_hanmi(self, company: str, base_url: str, soup) -> list[dict]:
-        """한미반도체 채용 페이지 파싱 (HTML CMS)."""
+    def _parse_hanmi(self, company: str, base_url: str, soup, raw_html=None) -> list[dict]:
+        """한미반도체 채용 페이지 파싱 (HTML CMS). (legacy dict — raw_html 미사용)"""
         jobs: list[dict] = []
         # 공고 목록: 테이블 또는 ul.board-list
         for row in (
@@ -104,8 +106,8 @@ class SimpleSiteCrawler(BaseSiteCrawler):
         return jobs
 
     # ── 스튜디오드래곤 ───────────────────────────────────────────────────────────
-    def _parse_studio_dragon(self, company: str, base_url: str, soup) -> list[dict]:
-        """스튜디오드래곤 채용 페이지 파싱."""
+    def _parse_studio_dragon(self, company: str, base_url: str, soup, raw_html=None) -> list[dict]:
+        """스튜디오드래곤 채용 페이지 파싱. (legacy dict — raw_html 미사용)"""
         jobs: list[dict] = []
         for item in (
             soup.select(".talent-list li")
@@ -128,25 +130,49 @@ class SimpleSiteCrawler(BaseSiteCrawler):
         return jobs
 
     # ── 삼성바이오로직스 ─────────────────────────────────────────────────────────
-    def _parse_samsung_bio(self, company: str, base_url: str, soup) -> list[dict]:
+    # 안내 메뉴(공고 아님) 식별용 휴리스틱 블랙리스트(제목 casefold 부분일치).
+    # ⚠️ 임시 1차 — 현재 selector(a[href*='career'] 등)가 광범위해 메뉴를 오파싱한다.
+    #    정밀 컨테이너 selector 는 raw_payload 실HTML 확보 후 후속(#175 종결).
+    #    href 의 'career' 경로는 검사하지 않는다(실공고 URL 도 /careers/ 라 과소수집 방지).
+    _MENU_BLOCKLIST = {
+        "faq", "복지", "다양성", "사내복지", "자기개발",
+        "채용절차", "채용안내", "채용지원", "careers", "welfare", "benefit",
+    }
+
+    def _parse_samsung_bio(self, company: str, base_url: str, soup, raw_html=None) -> list:
+        """삼성바이오로직스 채용 페이지 파싱 (Phase 4b — CollectorResult 전환).
+
+        각 레코드를 CollectorResult 로 감싸 원본 HTML(raw_html)을 보존한다 → 게이트 거부/
+        오류 시 hiring_quarantine 에 raw_payload 로 격리되어, selector 수정 후
+        replay-reparse(유실 제로 backfill)가 가능해진다.
         """
-        삼성바이오로직스 채용 안내 페이지 파싱.
-        공고 목록 직접 노출 여부 불확실 → 링크가 있으면 수집, 없으면 안내 페이지 자체를 1건으로 저장.
-        """
-        jobs: list[dict] = []
+        from ...base_collector import CollectorResult
+
+        results: list = []
         for link_el in soup.select("a[href*='career'], a[href*='recruit'], a[href*='job']"):
             title = link_el.get_text(strip=True)
             if not title or len(title) < 4:
                 continue
+            # 휴리스틱: 안내 메뉴 제목은 공고가 아니므로 제외(1차 — 정밀 selector 는 후속).
+            if any(tok in title.casefold() for tok in self._MENU_BLOCKLIST):
+                continue
             url = self.normalize_url(link_el.get("href", ""), base_url)
-            jobs.append(self._make_record(company, title, url))
-
-        if not jobs:
-            # 공고 링크 없음 → 채용 안내 페이지 1건 등록 (공고 집계용)
-            jobs.append(self._make_record(
-                company,
-                "삼성바이오로직스 채용 안내",
-                base_url,
-                job_description="공식 채용 안내 페이지. 개별 공고는 사이트 직접 확인 요망.",
+            results.append(CollectorResult(
+                data=self._make_record(company, title, url),
+                raw_payload=raw_html,
+                source_label=self.source_label,
             ))
-        return jobs
+
+        if not results:
+            # 공고 링크 없음 → 채용 안내 페이지 1건 등록 (공고 집계용)
+            results.append(CollectorResult(
+                data=self._make_record(
+                    company,
+                    "삼성바이오로직스 채용 안내",
+                    base_url,
+                    job_description="공식 채용 안내 페이지. 개별 공고는 사이트 직접 확인 요망.",
+                ),
+                raw_payload=raw_html,
+                source_label=self.source_label,
+            ))
+        return results
