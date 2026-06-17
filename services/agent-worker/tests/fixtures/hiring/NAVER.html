@@ -1,0 +1,58 @@
+<!--
+  NAVER 채용관(recruit.navercorp.com/rcrt/list.do) 발췌 픽스처.
+  diagnostics/NAVER_RENDERED.html 의 ul.card_list 영역을 조상 보존하여 발췌(카드는 SSR).
+  - li.card_item 2건은 실데이터(annoId 30004975 / 30005036)
+  - 상세 링크는 a.card_link[onclick="show('annoId')"] (href는 #n) — show()는 /rcrt/view.do 로 submit
+  - card_module 의 share()/copyUrl() 링크에도 annoId가 있으나 파서는 show()만 잡아야 함(미수집 검증용)
+  - 3번째 li.card_item.disabled 는 마감 공고 제외 경로 커버를 위해 가공
+-->
+<ul class="card_list">
+  <li class="card_item ">
+    <a href="#n" class="card_link" onclick="show('30004975')">
+      <h4 class="card_title">[NAVER] 2026 NAVER 하계 인턴십 : 비즈니스 트랙 (체험형)</h4>
+      <dl class="card_info">
+        <dt class="blind">모집 부서</dt>
+        <dd class="info_text">Service &amp; Business</dd>
+        <dt class="blind">모집 경력</dt>
+        <dd class="info_text">신입</dd>
+        <dt class="blind">모집 기간</dt>
+        <dd class="info_text">2026.06.12 ~ 2026.06.22</dd>
+      </dl>
+    </a>
+    <div class="card_module">
+      <button class="btn_save " onclick="setIntrst(this,'30004975')">Save</button>
+      <div class="layer_popup copy">
+        <ul>
+          <li><a href="javascript:share('blog','30004975','[NAVER] 2026 NAVER 하계 인턴십');" class="social blog"><span>네이버 블로그</span></a></li>
+          <li><a href="javascript:share('linked','30004975','[NAVER] 2026 NAVER 하계 인턴십');" class="social linked"><span>링크드인</span></a></li>
+        </ul>
+        <button class="link_type" onclick="copyUrl('30004975');">URL 복사</button>
+      </div>
+    </div>
+  </li>
+  <li class="card_item ">
+    <a href="#n" class="card_link" onclick="show('30005036')">
+      <h4 class="card_title">[NAVER] 경영관리 담당(FP&amp;A) (경력)</h4>
+      <dl class="card_info">
+        <dt class="blind">모집 부서</dt>
+        <dd class="info_text">Corporate</dd>
+        <dt class="blind">모집 경력</dt>
+        <dd class="info_text">경력</dd>
+        <dt class="blind">모집 기간</dt>
+        <dd class="info_text">상시</dd>
+      </dl>
+    </a>
+    <div class="card_module">
+      <button class="link_type" onclick="copyUrl('30005036');">URL 복사</button>
+    </div>
+  </li>
+  <li class="card_item disabled">
+    <a href="#n" class="card_link" onclick="show('30000001')">
+      <h4 class="card_title">[NAVER] 마감된 공고 예시</h4>
+      <dl class="card_info">
+        <dt class="blind">모집 기간</dt>
+        <dd class="info_text">2026.01.01 ~ 2026.01.31</dd>
+      </dl>
+    </a>
+  </li>
+</ul>
