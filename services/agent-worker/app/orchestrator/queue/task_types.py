@@ -2,6 +2,11 @@ COLLECT_DART = "collect_dart"
 NORMALIZE_DART = "normalize_dart"
 ANALYZE_DART = "analyze_dart"
 
+COLLECT_REPORT = "collect_report"
+PROCESS_REPORT = "process_report"
+EMBED_REPORT = "embed_report"
+ANALYZE_REPORT = "analyze_report"
+
 # Alternative sources (hiring/patent/datalab). The values MUST match the strings
 # the collectors enqueue verbatim: BaseCollector / DataLabCollector / PatentCollector
 # all enqueue f"NORMALIZE_{SOURCE_TYPE}" with an UPPERCASE source type, so these

@@ -7,11 +7,17 @@ pdf_direct_url → data/reports/{종목폴더}/{파일명}.pdf 자동 다운로�
   python pdf_downloader.py                # 전체 다운로드
   python pdf_downloader.py --incremental  # 이미 있는 파일 스킵
 """
+from __future__ import annotations
+
 import argparse
 import json
 import sys
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.collectors.report.s3_client import ReportS3Client
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
@@ -58,6 +64,26 @@ def make_filename(report: dict) -> str:
     date_str = report.get("date", "").replace(".", "")   # "2025.07.14" → "20250714"
     type_code = REPORT_TYPE_CODE.get(report.get("report_type", ""), "cr")
     return f"{firm_code}_{date_str}_{type_code}.pdf"
+
+
+def make_s3_key(stock_code: str, filename: str) -> str:
+    return f"reports/{stock_code}/{filename}"
+
+
+def download_and_upload(url: str, s3_key: str, s3_client: ReportS3Client) -> bool:
+    """PDF URL → S3 업로드. 성공 시 True 반환."""
+    try:
+        resp = requests.get(url, headers=HEADERS, timeout=30, stream=True)
+        if resp.status_code != 200:
+            return False
+        pdf_bytes = b"".join(resp.iter_content(chunk_size=8192))
+        if len(pdf_bytes) < 1024:
+            return False
+        s3_client.upload_pdf(pdf_bytes, s3_key)
+        return True
+    except Exception as e:
+        print(f"    오류: {e}")
+        return False
 
 
 def download_pdf(url: str, dest: Path) -> bool:

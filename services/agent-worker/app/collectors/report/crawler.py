@@ -8,20 +8,28 @@ Signal α — Report RAG 데이터 수집용
   - 유형: Earnings Review / Event Note / Company Report / Earnings Preview
   - 기간: 2025.07.01 ~ 2025.09.30
 """
+from __future__ import annotations
 
 import json
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
+from typing import TYPE_CHECKING
 from urllib.parse import urljoin
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-import pandas as pd
 import requests
 from bs4 import BeautifulSoup
+
+# pandas는 legacy CLI/배치 경로(collect_all / save_results / print_summary / __main__)에서만
+# 쓴다. 자동화 경로(collect_stock)는 쓰지 않으므로 모듈 최상단 import를 두지 않는다.
+# (agent-worker 컨테이너에 pandas 미선언 → 최상단 import 시 핸들러 빌드가 ImportError)
+# 타입 힌트용 이름만 정적 분석에 노출하고 런타임 import는 collect_all 내부에서 지연 수행.
+if TYPE_CHECKING:
+    import pandas as pd
 
 # ──────────────────────────────────────────
 # 설정값
@@ -57,9 +65,9 @@ EXCLUDE_KEYWORDS = [
     "Valuation Update", "TP Change",
 ]
 
-# 수집 기간 (고정)
-DATE_START = datetime(2025, 7, 1)
-DATE_END = datetime(2025, 9, 30, 23, 59, 59)
+# CLI 직접 실행 시 기본 수집 기간 (자동화 파이프라인은 collect_stock() 인자로 전달)
+_CLI_DATE_START = datetime(2025, 7, 1)
+_CLI_DATE_END = datetime(2025, 9, 30, 23, 59, 59)
 
 NAVER_FINANCE_BASE = "https://finance.naver.com"
 NAVER_RESEARCH_BASE = f"{NAVER_FINANCE_BASE}/research/"
@@ -130,12 +138,11 @@ def parse_date(date_str: str) -> datetime | None:
     return None
 
 
-def is_within_range(date_str: str) -> bool:
-    """날짜가 수집 기간(2025.07.01 ~ 2025.09.30) 이내인지 확인"""
+def is_within_range(date_str: str, date_start: datetime, date_end: datetime) -> bool:
     dt = parse_date(date_str)
     if not dt:
         return False
-    return DATE_START <= dt <= DATE_END
+    return date_start <= dt <= date_end
 
 
 # ──────────────────────────────────────────
@@ -155,7 +162,7 @@ def fetch_page(stock_code: str, page: int) -> str:
     return response.text
 
 
-def parse_reports(html: str) -> tuple[list[dict], bool]:
+def parse_reports(html: str, date_start: datetime, date_end: datetime) -> tuple[list[dict], bool]:
     """
     HTML에서 리포트 메타데이터 추출
 
@@ -181,7 +188,7 @@ def parse_reports(html: str) -> tuple[list[dict], bool]:
             report_date = parse_date(date_str)
 
             # 수집 시작일 이전 리포트가 나오면 이후 페이지는 더 오래됨
-            if report_date and report_date < DATE_START:
+            if report_date and report_date < date_start:
                 stop_paging = True
                 continue
 
@@ -190,7 +197,7 @@ def parse_reports(html: str) -> tuple[list[dict], bool]:
             if firm not in TARGET_FIRMS:
                 continue
 
-            if not is_within_range(date_str):
+            if not is_within_range(date_str, date_start, date_end):
                 continue
 
             title_tag = cols[1].select_one("a")
@@ -235,7 +242,15 @@ def parse_reports(html: str) -> tuple[list[dict], bool]:
     return reports, stop_paging
 
 
-def collect_stock(stock_name: str, stock_code: str, max_pages: int = 20) -> list[dict]:
+def collect_stock(
+    stock_name: str,
+    stock_code: str,
+    max_pages: int = 20,
+    date_start: datetime | None = None,
+    date_end: datetime | None = None,
+) -> list[dict]:
+    start = date_start or (datetime.now() - timedelta(days=7))
+    end = date_end or datetime.now()
     all_reports = []
     print(f"\n[{stock_name}] 수집 시작 (코드: {stock_code})")
 
@@ -244,7 +259,7 @@ def collect_stock(stock_name: str, stock_code: str, max_pages: int = 20) -> list
 
         try:
             html = fetch_page(stock_code, page)
-            reports, stop_paging = parse_reports(html)
+            reports, stop_paging = parse_reports(html, start, end)
 
             if not reports:
                 if stop_paging:
@@ -275,11 +290,17 @@ def collect_stock(stock_name: str, stock_code: str, max_pages: int = 20) -> list
     return all_reports
 
 
-def collect_all(max_pages: int = 20) -> pd.DataFrame:
+def collect_all(
+    max_pages: int = 20,
+    date_start: datetime | None = None,
+    date_end: datetime | None = None,
+) -> "pd.DataFrame":
+    import pandas as pd  # legacy 배치 경로 전용 — 지연 import
+
     all_reports = []
 
     for stock_name, stock_code in STOCKS.items():
-        reports = collect_stock(stock_name, stock_code, max_pages)
+        reports = collect_stock(stock_name, stock_code, max_pages, date_start, date_end)
         all_reports.extend(reports)
 
     df = pd.DataFrame(all_reports)
@@ -318,7 +339,7 @@ def print_summary(df: pd.DataFrame) -> None:
     print("\n" + "=" * 60)
     print("수집 결과 요약")
     print("=" * 60)
-    print(f"수집 기간: {DATE_START.strftime('%Y.%m.%d')} ~ {DATE_END.strftime('%Y.%m.%d')}")
+    print(f"수집 기간: {_CLI_DATE_START.strftime('%Y.%m.%d')} ~ {_CLI_DATE_END.strftime('%Y.%m.%d')}")
     print(f"총 수집: {len(df)}건")
     print()
 
@@ -343,11 +364,11 @@ def print_summary(df: pd.DataFrame) -> None:
 if __name__ == "__main__":
     print("=" * 60)
     print("Signal α — 증권사 리포트 크롤러")
-    print(f"수집 기간: {DATE_START.strftime('%Y.%m.%d')} ~ {DATE_END.strftime('%Y.%m.%d')}")
+    print(f"수집 기간: {_CLI_DATE_START.strftime('%Y.%m.%d')} ~ {_CLI_DATE_END.strftime('%Y.%m.%d')}")
     print(f"수집 증권사: {', '.join(TARGET_FIRMS)}")
     print(f"수집 종목: {', '.join(STOCKS.keys())}")
     print("=" * 60)
 
-    df = collect_all(max_pages=20)
+    df = collect_all(max_pages=20, date_start=_CLI_DATE_START, date_end=_CLI_DATE_END)
     save_results(df)
     print_summary(df)
