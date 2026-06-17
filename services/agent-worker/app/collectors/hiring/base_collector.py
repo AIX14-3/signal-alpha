@@ -96,6 +96,29 @@ class _SkipRecord(Exception):
     """오류가 아닌 정상 스킵(중복·매핑 없음). savepoint 컨텍스트가 자동 롤백."""
 
 
+# 플레이스홀더/문자열 오염 거부 — casefold 완전일치만(부분문자열 X → "Null Safety
+# Engineer" 같은 정상 제목은 안전). JS 리터럴("null"/"undefined")·Python str(None)
+# 오염은 깨진 SPA/꼬인 API 응답에서 실제로 흘러들어온다.
+_PLACEHOLDER_TITLES = {"(제목 없음)", "null", "undefined", "none"}
+
+
+def validation_failure_reason(data: dict) -> str | None:
+    """필수 필드(company_name·job_title·job_link) 입력 검증 게이트.
+
+    DB 진입 전에 빈/깨진 레코드를 걸러내기 위한 순수 함수. 위반 시 사유 문자열을,
+    유효하면 None 을 반환한다. job_link 폴백 규칙은 _insert_one 과 동일(job_link →
+    source_url)하게 맞춰 검증을 단일 지점으로 일원화한다.
+    """
+    if not (data.get("company_name") or "").strip():
+        return "company_name 누락"
+    title = (data.get("job_title") or "").strip()
+    if not title or title.casefold() in _PLACEHOLDER_TITLES:
+        return "job_title 누락/플레이스홀더"
+    if not (data.get("job_link") or data.get("source_url") or "").strip():
+        return "job_link 누락"
+    return None
+
+
 class BaseCollector(ABC):
     """채용 데이터 수집의 공통 인터페이스 (Strategy Pattern)."""
 
@@ -263,10 +286,9 @@ class BaseCollector(ABC):
         except Exception as _baseline_err:
             logger.warning("⚠️  hiring_baseline 조회 실패 (계절 가중치 스킵): %s", _baseline_err)
 
+        # job_link 빈값은 insert_to_db 의 검증 게이트(validation_failure_reason)가
+        # DB 진입 전에 선방어한다 — 여기 도달하는 레코드는 job_link 가 보장된다.
         job_link = data.get("job_link") or data.get("source_url")
-        if not job_link:
-            logger.warning("⚠️  job_link 없음 스킵: %s", data.get("job_title"))
-            raise _SkipRecord
 
         # published_at NOT NULL 방어: posting_date 누락 시 수집 시각으로 대체
         posting_date = data.get("posting_date") or datetime.datetime.now(_KST).isoformat()
@@ -396,6 +418,19 @@ class BaseCollector(ABC):
             db.commit()
 
             for data in parsed_data_list:
+                # ── 입력 검증 게이트: DB(savepoint) 진입 전 빈/깨진 레코드 거부 ──
+                #    무효 레코드는 데이터 품질 결함이므로 failed 로 집계(중복/미등록
+                #    benign skip 과 구분) → run status 가 partial/failed 로 떠 모니터링에
+                #    노출된다. savepoint 진입 전이라 트랜잭션 비용도 없다.
+                reason = validation_failure_reason(data)
+                if reason:
+                    failed += 1
+                    logger.warning(
+                        "🚫 무효 레코드 거부(%s) | company=%r title=%r link=%r",
+                        reason, data.get("company_name"), data.get("job_title"),
+                        data.get("job_link") or data.get("source_url"),
+                    )
+                    continue
                 try:
                     # ── Savepoint: 이 한 건만 격리 ──
                     with db.begin_nested():
