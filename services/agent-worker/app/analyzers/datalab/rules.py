@@ -73,6 +73,15 @@ def evaluate_indicators(
             "— 표본 부족으로 모멘텀·변화율 억제"
         )
 
+    # NOTE (L2 — momentum/change double-count): `momentum` (window-level
+    # recent-vs-prior growth) and `change` (averaged per-row change_pct) both
+    # measure search-trend growth, so a consistently rising trend is credited
+    # twice in this sum. This is intentionally LEFT AS-IS for now: the fix
+    # (drop `change` / reweight / make the two orthogonal) is a scoring-design
+    # decision tied to the in-progress redesign (tanh/baseline/polarity/
+    # consensus) and must be made by the maintainer. The behavior is pinned by
+    # tests/analyzers/test_datalab_doublecount.py — do not change this
+    # expression without updating that characterization test.
     score = max(-1.0, min(1.0, momentum + spike + change + risk))
     direction = _direction(score, momentum, indicators, config)
     return DataLabAssessment(
