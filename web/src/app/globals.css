@@ -1,3 +1,6 @@
+/* Tailwind CSS v4 — 유틸리티/preflight 주입. 기존 커스텀 CSS와 병행 사용. */
+@import "tailwindcss";
+
 :root {
   color-scheme: light;
   --background: #f6f8fb;
