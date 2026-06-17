@@ -33,7 +33,6 @@
 | 소스 | 모듈 | 상태 | 담당 | 비고 |
 |---|---|---|---|---|
 | 공시(국내) DART | `collectors/dart`,`analyzers/dart` | ⚠️ 부분(룰·LLM·텍스트재무) | 🧑‍💼 | 정형 재무(L1)로 심화 예정 |
-| **공시(해외) SEC** | `collectors/sec` | 🟡 수집기 골격(PR #128) | 🙋 | EDGAR, 대상 유니버스 연결 완료 |
 | 증권사 리포트 RAG | `collectors/report`,`report_chunks` | ⚠️ 부분(pgvector·BGE-M3) | 🙋 | 의존성 정리 필요 |
 | 검색 트렌드(데이터랩) | `collectors/datalab`,`analyzers/datalab` | ⚠️ 부분 | 👤 | LangGraph attention 에이전트 |
 | 수급·가격 | `collectors/price`,`analyzers/price` | ✅ 실시간(키움 REST) | 🙋 | 공매도/외국인/창구 hard data |
@@ -59,7 +58,6 @@
 
 상세 스펙: L1 → `docs/spec/dart-l1-financials-spec.md`, **L2~L6 → `docs/spec/data-layers-l2-l10-spec.md`**.
 토대 원칙(PIT·feature store·평가지표·DQ) + L1~L10 워크플로우 → `docs/spec/data-foundations-and-l1-l10-workflow.md`.
-→ SEC(해외)도 동일 레이어 모델을 `source:"sec"`로 따른다(`해외공시_데이터수집_계획.md`).
 
 **확장 비전(미구현, 방향 고정용)** — 상세는 위 L2~L10 스펙 Part B:
 | 레이어 | 내용 | 기술 |
@@ -77,14 +75,14 @@
 
 ```jsonc
 Signal {
-  source: "dart" | "sec" | "trend" | "price" | "hiring" | "patent" | "report" | "dart_financial",
+  source: "dart" | "trend" | "price" | "hiring" | "patent" | "report" | "dart_financial",
   ticker: "005930",
   ts:        "2026-03-15",     // 신호 시점(정렬 기준)
   direction: "positive|negative|neutral|mixed",
   magnitude: 1.8,              // z-score 등 표준화 강도
   confidence: 0.8,
   cause:     "catalyst|fomo|price_led|null",  // 트렌드 전용
-  evidence_ref: ["rcept_no:...","accession:...","url:..."],  // 인용/감사추적
+  evidence_ref: ["rcept_no:...","url:..."],  // 인용/감사추적
   meta:      { /* 소스별 부가 */ }
 }
 ```
@@ -96,7 +94,7 @@ Signal {
 
 | 영역 | 담당 |
 |---|---|
-| 수급·가격·SEC·리포트·채용·특허 수집 + **공통 스키마·feature store·백테스트(심판)** | 🙋 본인 (소유자) |
+| 수급·가격·리포트·채용·특허 수집 + **공통 스키마·feature store·백테스트(심판)** | 🙋 본인 (소유자) |
 | DART 공시·정형 재무(L1~)·★4 정량·표준계정 매핑 | 🧑‍💼 팀장님 |
 | 검색 트렌드 수집 + LangGraph attention 에이전트 | 👤 트렌드 팀원 |
 
@@ -108,9 +106,9 @@ Signal {
 
 | Phase | 목표 | 현재 위치 |
 |---|---|---|
-| **0 토대** | 공통 신호 스키마 확정, corp_code/ticker·CIK 매핑, price 패널, **CI** | ✅ CI 완료, 🟡 스키마 합의 진행 |
-| **1 정형 피드** | DART L1 재무, SEC 수집 적재, 수급 hard data | 🟡 SEC 골격·L1 스펙 |
-| **2 비정형 corpus** | 보고서/10-K 섹션 → 임베딩(RAG) | ⚠️ 일부 |
+| **0 토대** | 공통 신호 스키마 확정, corp_code/ticker 매핑, price 패널, **CI** | ✅ CI 완료, 🟡 스키마 합의 진행 |
+| **1 정형 피드** | DART L1 재무, 수급 hard data | 🟡 L1 스펙 |
+| **2 비정형 corpus** | 보고서 섹션 → 임베딩(RAG) | ⚠️ 일부 |
 | **3 신호+백테스트** | 전 소스 공통 스키마 emit → lift 검증 게이트 | ⬜ |
 | **4 다단계 추론** | 멀티섹션 RAG·트렌드 에이전트·thesis → **LangChain/LangGraph PoC** | ⬜ (게이트 §8) |
 
@@ -147,7 +145,6 @@ Signal {
 **설계 문서 (현재 작성자 로컬 — 레포 `docs/`로 이전 권장)**
 - `DART_분석_아이디어_마스터.md` — ★3~★8 아이디어 사다리
 - `DART_LangChain_데이터준비_계획.md` — L1~L6 레이어·Phase·LangChain 게이트
-- `해외공시_데이터수집_계획.md` — SEC EDGAR(해외 공시)
 - `협업안_검색트렌드_에이전트.md` — 트렌드 LangGraph 에이전트 협업·신호 스키마
 
 > 권장: 위 설계 문서를 레포 `docs/`로 옮기면 팀 전체가 링크로 추적 가능(이 로드맵이 인덱스 역할).
