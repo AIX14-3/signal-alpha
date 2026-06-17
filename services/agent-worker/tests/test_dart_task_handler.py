@@ -41,12 +41,23 @@ class FakeClient:
         return {"text": "DART original document body", "files": [{"name": "document.xml", "text_length": 27}]}
 
 
+class _NullTransaction:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
 class FakeConnection:
     def __init__(self, *, state_last_end_de="20260608", raw_inserted=True):
         self.calls = []
         self.next_id = 300
         self.state_last_end_de = state_last_end_de
         self.raw_inserted = raw_inserted
+
+    def transaction(self):
+        return _NullTransaction()
 
     async def fetchrow(self, sql, *args):
         self.calls.append(("fetchrow", sql, args))

@@ -5,11 +5,8 @@ from datetime import date, datetime, time
 from typing import Any
 
 from app.schemas.evidence import RawEvidence, SourceType
-from app.schemas.source_result import Direction, EvidenceItem, SourceResult
 from signal_alpha_data_access.repositories import (
-    AnalysisRepository,
     CollectionRepository,
-    NormalizationRepository,
     ProcessingQueueRepository,
     RawDetailRepository,
 )
@@ -17,6 +14,7 @@ from signal_alpha_data_access.repositories import (
 
 class CollectionPersistence:
     def __init__(self, connection: Any) -> None:
+        self._connection = connection
         self._collection_repository = CollectionRepository(connection)
         self._queue_repository = ProcessingQueueRepository(connection)
         self._raw_detail_repository = RawDetailRepository(connection)
@@ -42,66 +40,83 @@ class CollectionPersistence:
         inserted_raw_ids: list[int] = []
         reprocessed_raw_ids: list[int] = []
         queued_task_ids: list[int] = []
-        try:
-            for item in evidence:
-                raw_document = await self._collection_repository.upsert_raw_document(
-                    stock_id=stock_id,
-                    collector_run_id=run_id,
-                    source_type=item.source,
-                    source_name=item.metadata.get("source_name", item.source),
-                    external_id=_external_id(item),
-                    source_hash=_source_hash(item),
-                    title=item.title,
-                    source_url=item.url,
-                    published_at=_to_datetime(item.published_at or item.metadata.get("published_at")),
-                    collector_ver=item.metadata.get("collector_ver", "1.0"),
-                )
-                raw_document_id = raw_document["id"]
-                raw_document_ids.append(raw_document_id)
-                is_inserted = _raw_document_inserted(raw_document)
-                if is_inserted:
-                    inserted_raw_ids.append(raw_document_id)
-                elif force_reprocess:
-                    reprocessed_raw_ids.append(raw_document_id)
-                await self._save_source_detail(raw_document_id, stock_id, item)
-
-                if enqueue_task_type and (is_inserted or force_reprocess):
-                    task_id = await self._queue_repository.enqueue(
+        failed_count = 0
+        last_error: Exception | None = None
+        for item in evidence:
+            try:
+                # CLAUDE.md Transaction Rule: raw_documents + detail + processing_queue 를
+                # record 당 한 트랜잭션으로 묶는다. enqueue/detail 가 실패하면 raw/detail 까지
+                # 롤백되어 "큐 엔트리 없는 고아 raw 행"이 남지 않는다(재수집 시 upsert skip 으로
+                # 영구 미정규화되는 문제 방지). collector_runs 는 트랜잭션 밖에서 기록.
+                async with self._connection.transaction():
+                    raw_document = await self._collection_repository.upsert_raw_document(
                         stock_id=stock_id,
-                        task_type=enqueue_task_type,
-                        priority=item.metadata.get("priority", "batch"),
-                        source_raw_ids=[raw_document_id],
-                        task_context={
-                            "stock_code": stock_code,
-                            "source_type": item.source,
-                        },
-                        dedupe=True,
+                        collector_run_id=run_id,
+                        source_type=item.source,
+                        source_name=item.metadata.get("source_name", item.source),
+                        external_id=_external_id(item),
+                        source_hash=_source_hash(item),
+                        title=item.title,
+                        source_url=item.url,
+                        published_at=_to_datetime(item.published_at or item.metadata.get("published_at")),
+                        collector_ver=item.metadata.get("collector_ver", "1.0"),
                     )
-                    queued_task_ids.append(task_id)
+                    raw_document_id = raw_document["id"]
+                    is_inserted = _raw_document_inserted(raw_document)
+                    await self._save_source_detail(raw_document_id, stock_id, item)
 
-            await self._collection_repository.finish_collector_run(
-                run_id=run_id,
-                status="success",
-                collected_count=len(evidence),
-                inserted_count=len(inserted_raw_ids),
-            )
-        except Exception as exc:
-            await self._collection_repository.finish_collector_run(
-                run_id=run_id,
-                status="failed",
-                collected_count=len(evidence),
-                inserted_count=len(inserted_raw_ids),
-                failed_count=max(1, len(evidence) - len(raw_document_ids)),
-                error_message=str(exc),
-            )
-            raise
+                    task_id: int | None = None
+                    if enqueue_task_type and (is_inserted or force_reprocess):
+                        task_id = await self._queue_repository.enqueue(
+                            stock_id=stock_id,
+                            task_type=enqueue_task_type,
+                            priority=item.metadata.get("priority", "batch"),
+                            source_raw_ids=[raw_document_id],
+                            task_context={
+                                "stock_code": stock_code,
+                                "source_type": item.source,
+                            },
+                            dedupe=True,
+                        )
+            except Exception as exc:
+                # 이 record 의 raw/detail/enqueue 는 트랜잭션과 함께 롤백됨.
+                failed_count += 1
+                last_error = exc
+                continue
+
+            raw_document_ids.append(raw_document_id)
+            if is_inserted:
+                inserted_raw_ids.append(raw_document_id)
+            elif force_reprocess:
+                reprocessed_raw_ids.append(raw_document_id)
+            if task_id is not None:
+                queued_task_ids.append(task_id)
+
+        status = _run_status(usable=len(raw_document_ids), failed=failed_count)
+        skipped_count = len(raw_document_ids) - len(inserted_raw_ids) - len(reprocessed_raw_ids)
+        await self._collection_repository.finish_collector_run(
+            run_id=run_id,
+            status=status,
+            collected_count=len(evidence),
+            inserted_count=len(inserted_raw_ids),
+            skipped_count=skipped_count,
+            failed_count=failed_count,
+            error_message=str(last_error) if last_error is not None else None,
+        )
+        # 전건 실패(처리된 record 0 + 실패 존재) → 큐 재시도/DLQ 로 넘기기 위해 raise.
+        # 부분 실패(partial)는 정상 반환 — 성공 record 는 이미 커밋되었고 run 에 partial 로 기록됨.
+        if not raw_document_ids and failed_count:
+            assert last_error is not None
+            raise last_error
 
         return {
             "collector_run_id": run_id,
             "collected_count": len(evidence),
             "inserted_count": len(inserted_raw_ids),
-            "skipped_count": len(raw_document_ids) - len(inserted_raw_ids) - len(reprocessed_raw_ids),
+            "skipped_count": skipped_count,
             "reprocessed_count": len(reprocessed_raw_ids),
+            "failed_count": failed_count,
+            "status": status,
             "raw_document_ids": raw_document_ids,
             "new_raw_document_ids": inserted_raw_ids,
             "reprocessed_raw_document_ids": reprocessed_raw_ids,
@@ -193,112 +208,16 @@ class CollectionPersistence:
             )
 
 
-class AnalysisPersistence:
-    def __init__(self, connection: Any) -> None:
-        self._analysis_repository = AnalysisRepository(connection)
-        self._normalization_repository = NormalizationRepository(connection)
+def _run_status(*, usable: int, failed: int) -> str:
+    """CLAUDE.md Error Handling 규칙의 카운트 기반 collector_run status.
 
-    async def save_source_result(
-        self,
-        *,
-        stock_id: int,
-        stock_code: str,
-        source_result: SourceResult,
-        source_raw_ids: list[int],
-        run_key: str = "BATCH",
-        version: str = "1.0",
-        publish_final_signal: bool = False,
-    ) -> dict[str, Any]:
-        signal_event_ids: list[int] = []
-        for index, evidence_item in enumerate(source_result.evidence_items):
-            raw_document_id = _raw_id_for_evidence(source_raw_ids, index)
-            source_document = await self._normalization_repository.upsert_source_document(
-                raw_document_id=raw_document_id,
-                stock_id=stock_id,
-                source_type=source_result.source,
-                source_name=evidence_item.source_name or source_result.source,
-                title=evidence_item.title,
-                source_url=evidence_item.url,
-                published_at=evidence_item.published_at or _today(),
-                collected_at=_today(),
-                reliability_level="medium",
-                is_official=source_result.source == "DART",
-            )
-            signal_event = await self._normalization_repository.upsert_signal_event(
-                stock_id=stock_id,
-                source_document_id=source_document["id"],
-                event_hash=_event_hash(stock_code, source_result, evidence_item),
-                source_type=source_result.source,
-                event_type=f"{source_result.source.lower()}_analysis",
-                event_date=_date_part(evidence_item.published_at),
-                signal_direction=source_result.direction,
-                impact_level="medium",
-                title=evidence_item.title,
-                summary=evidence_item.summary,
-                evidence_text=evidence_item.summary,
-                evidence_url=evidence_item.url,
-                needs_review=source_result.data_status != "ok",
-            )
-            signal_event_ids.append(signal_event["id"])
-            await self._normalization_repository.upsert_signal_metric(
-                signal_event_id=signal_event["id"],
-                metric_name="source_score",
-                metric_value=source_result.score,
-                metric_unit="score",
-            )
-
-        analysis_result = await self._analysis_repository.upsert_analysis_result(
-            stock_id=stock_id,
-            analysis_date=_today(),
-            run_key=run_key,
-            source_signal_event_ids=signal_event_ids,
-            base_score=source_result.score,
-            analysis_mode="full",
-            warning="; ".join(source_result.risk_flags) or None,
-            version=version,
-        )
-        agent_result = await self._analysis_repository.upsert_agent_result(
-            result_id=analysis_result["id"],
-            stock_id=stock_id,
-            debate_method="D-1",
-            source_signal_event_ids=signal_event_ids,
-            method_score=source_result.score,
-            method_signal=_final_signal_value(source_result.direction),
-            method_detail={
-                "source": source_result.source,
-                "summary": source_result.summary,
-                "risk_flags": source_result.risk_flags,
-                "data_status": source_result.data_status,
-            },
-        )
-
-        final_signal_id: int | None = None
-        if publish_final_signal:
-            final_signal = await self._analysis_repository.upsert_final_signal(
-                stock_id=stock_id,
-                analysis_result_id=analysis_result["id"],
-                signal_date=_today(),
-                run_key=run_key,
-                version=version,
-                final_score=source_result.score,
-                confidence=source_result.score,
-                signal=_final_signal_value(source_result.direction),
-                source_agreement="MEDIUM",
-                score_breakdown={source_result.source: source_result.score},
-                summary=source_result.summary,
-                warning_level="NORMAL" if source_result.data_status == "ok" else "CAUTION",
-                needs_review=source_result.data_status != "ok",
-                is_published=True,
-                published_at=_today(),
-            )
-            final_signal_id = final_signal["id"]
-
-        return {
-            "analysis_result_id": analysis_result["id"],
-            "agent_result_id": agent_result["id"],
-            "final_signal_id": final_signal_id,
-            "signal_event_ids": signal_event_ids,
-        }
+    usable = 실패 없이 처리된 record 수(inserted + skipped + reprocessed).
+    """
+    if failed == 0:
+        return "success"
+    if usable > 0:
+        return "partial"
+    return "failed"
 
 
 def _infer_collector_type(evidence: list[RawEvidence]) -> SourceType:
@@ -308,16 +227,19 @@ def _infer_collector_type(evidence: list[RawEvidence]) -> SourceType:
 
 
 def _source_hash(item: RawEvidence) -> str:
-    stable_text = "|".join(
-        [
-            item.source,
-            item.stock_code,
-            item.title,
-            item.published_at or "",
-            item.url or "",
-            item.content,
-        ]
-    )
+    # patent/datalab 의 소스별 키(PATENT|application_no 등)와 달리, DART/REPORT 경로는
+    # 별도 키가 없어 content 기반 제네릭 핑거프린트를 쓴다. dedup 키는 (source_type,
+    # external_id)이며 이 hash 는 변경 감지용. CLAUDE.md 정규화 규칙(trim·lower·NULL→empty·
+    # "|" join)을 따른다.
+    parts = [
+        item.source,
+        item.stock_code,
+        item.title,
+        item.published_at or "",
+        item.url or "",
+        item.content,
+    ]
+    stable_text = "|".join((part or "").strip().lower() for part in parts)
     return sha256(stable_text.encode("utf-8")).hexdigest()
 
 
@@ -368,44 +290,3 @@ def _to_date(value: Any) -> date:
     if len(text) == 8 and text.isdigit():
         return datetime.strptime(text, "%Y%m%d").date()
     return datetime.fromisoformat(text).date()
-
-
-def _raw_id_for_evidence(source_raw_ids: list[int], index: int) -> int:
-    if not source_raw_ids:
-        raise ValueError("source_raw_ids is required to persist normalized evidence.")
-    if index < len(source_raw_ids):
-        return source_raw_ids[index]
-    return source_raw_ids[0]
-
-
-def _event_hash(
-    stock_code: str,
-    source_result: SourceResult,
-    evidence_item: EvidenceItem,
-) -> str:
-    stable_text = "|".join(
-        [
-            stock_code,
-            source_result.source,
-            evidence_item.title,
-            evidence_item.published_at or "",
-            evidence_item.url or "",
-        ]
-    )
-    return sha256(stable_text.encode("utf-8")).hexdigest()
-
-
-def _date_part(value: str | None) -> str:
-    if not value:
-        return _today()
-    return value[:10]
-
-
-def _today() -> str:
-    return date.today().isoformat()
-
-
-def _final_signal_value(direction: Direction) -> str:
-    if direction == "unknown":
-        return "neutral"
-    return direction
