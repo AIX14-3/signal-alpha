@@ -110,6 +110,21 @@ class HiringAnalyzer:
         quarter_num = (dt.month - 1) // 3 + 1
         return f"Q{quarter_num}"
 
+    @staticmethod
+    def _normalize_query_date(target_date):
+        """asyncpg ``$1::DATE`` 바인딩용 — str/datetime 을 date 로 정규화.
+
+        str 을 그대로 넘기면 asyncpg 가 date 코덱(내부적으로 toordinal 호출)에서
+        ``'str' object has no attribute 'toordinal'`` DataError 를 낸다. 분석 쿼리
+        인자는 반드시 이 헬퍼로 date 객체화한다.
+        """
+        from datetime import date as _date
+        if isinstance(target_date, str):
+            return _date.fromisoformat(str(target_date)[:10])
+        if isinstance(target_date, datetime):
+            return target_date.date()
+        return target_date
+
     def _get_baseline_scale(self, stock_id: int, rolling_avg: float) -> tuple[float, str]:
         """3단계 Fallback으로 기준선과 Phase 레이블을 함께 반환.
 
@@ -151,6 +166,9 @@ class HiringAnalyzer:
         await self.load_baselines()
         current_quarter = self._get_current_quarter(target_date)
 
+        # asyncpg 는 $1::DATE 에 str 을 바인딩하지 못한다 → date 로 정규화(헬퍼).
+        query_date = self._normalize_query_date(target_date)
+
         async with self._pool.acquire() as conn:
             # Step 1: 지난 14일간의 총 공고 수 조회 후 14.0으로 나누어 정확한 일평균 계산
             # ⭐ 주의: AVG(daily_count) 함정 제거
@@ -170,7 +188,7 @@ class HiringAnalyzer:
                 WHERE observed_date BETWEEN $1::DATE - INTERVAL '14 days'
                                         AND $1::DATE - INTERVAL '1 day'
                 GROUP BY stock_id
-            """, target_date)
+            """, query_date)
 
             rolling_averages = {
                 row["stock_id"]: float(row["rolling_avg"]) 
@@ -183,7 +201,7 @@ class HiringAnalyzer:
                 FROM hiring_raw_details
                 WHERE observed_date = $1::DATE
                 GROUP BY stock_id
-            """, target_date)
+            """, query_date)
 
             # Step 3: 각 주식별 분석 — 루프에서는 계산만, DB 저장은 Step 4에서 일괄 처리
             upsert_data: list[tuple] = []
@@ -227,7 +245,7 @@ class HiringAnalyzer:
 
                 upsert_data.append((
                     stock_id,
-                    target_date,
+                    query_date,
                     today_count,
                     round(expected_baseline_count, 2),
                     round(relative_strength, 2),
