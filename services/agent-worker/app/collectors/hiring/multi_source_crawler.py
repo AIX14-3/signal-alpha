@@ -300,15 +300,20 @@ class MultiSourceCrawler(BaseCollector):
 
     # ── 파싱 (이미 표준 포맷 — 그대로 통과) ─────────────────────────────────
     def parse(self, raw_data) -> dict:
-        """BaseSiteCrawler._make_record() 이 이미 표준 포맷을 반환하므로 누락 키만 보완."""
+        """BaseSiteCrawler._make_record() 이 이미 표준 포맷을 반환하므로 누락 키만 보완.
+
+        필수 필드(company_name·job_title·job_link)에는 관대한 기본값을 채우지 않는다.
+        누락 시 None 으로 통과시켜 insert_to_db 의 검증 게이트가 거부하도록 한다
+        (빈 회사명·"(제목 없음)" 플레이스홀더가 DB 로 흘러드는 것 방지).
+        """
         return {
             "source_type":     raw_data.get("source_type", "MULTI_SOURCE_WEB"),
-            "company_name":    raw_data.get("company_name", ""),
-            "job_title":       raw_data.get("job_title", "(제목 없음)"),
+            "company_name":    raw_data.get("company_name"),
+            "job_title":       raw_data.get("job_title"),
             "job_description": raw_data.get("job_description"),
             "closing_date":    raw_data.get("closing_date"),
-            "source_url":      raw_data.get("source_url") or raw_data.get("job_link", ""),
-            "job_link":        raw_data.get("job_link") or raw_data.get("source_url", ""),
+            "source_url":      raw_data.get("source_url") or raw_data.get("job_link"),
+            "job_link":        raw_data.get("job_link") or raw_data.get("source_url"),
             "unique_key":      raw_data.get("unique_key"),
             "tech_stack":      raw_data.get("tech_stack") or [],
             "story":           raw_data.get("story"),
