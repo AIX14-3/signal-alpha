@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-# L1 정형 재무 fact 적재 리포지토리. (DartRepository / SecFilingRepository 와 동일 패턴)
+# L1 정형 재무 fact 적재 리포지토리. (DartRepository 와 동일 패턴)
 #
 # 멱등 자연키: (corp_code, bsns_year, reprt_code, fs_div, sj_div,
 #              COALESCE(account_id, account_nm)) — 마이그레이션 003 의 uq_dart_fin_fact.
