@@ -17,6 +17,9 @@ class _FakeSettings:
         self.hiring_max_retries = retries
         self.hiring_retry_backoff_seconds = backoff
         self.hiring_timeout_seconds = timeout
+        # anti-block(#146): UA 주입/429-403 적응형 백오프가 참조하는 속성.
+        self.hiring_ua_pool = ["UA-test/1.0"]
+        self.hiring_rate_limit_max_backoff_seconds = 30.0
 
 
 def _http_error(status_code: int) -> requests.HTTPError:

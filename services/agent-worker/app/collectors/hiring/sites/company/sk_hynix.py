@@ -36,8 +36,8 @@ class SKHynixCrawler(BaseSiteCrawler):
     def _try_api(self, company_name: str) -> list[dict]:
         from ..http import get as http_get
 
+        # User-Agent는 http_get이 풀에서 로테이션 주입한다.
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0",
             "Accept": "application/json",
             "Referer": _HOME,
         }

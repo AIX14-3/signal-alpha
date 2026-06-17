@@ -23,8 +23,8 @@ class NaverCrawler(BaseSiteCrawler):
         """NAVER 채용 공고 수집 (HTML SSR 파싱 기법 적용)."""
         from ..http import get as http_get
 
+        # User-Agent는 http_get이 풀에서 로테이션 주입한다.
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Referer": _BASE,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
         }
