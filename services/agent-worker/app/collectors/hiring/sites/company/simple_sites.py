@@ -130,49 +130,32 @@ class SimpleSiteCrawler(BaseSiteCrawler):
         return jobs
 
     # ── 삼성바이오로직스 ─────────────────────────────────────────────────────────
-    # 안내 메뉴(공고 아님) 식별용 휴리스틱 블랙리스트(제목 casefold 부분일치).
-    # ⚠️ 임시 1차 — 현재 selector(a[href*='career'] 등)가 광범위해 메뉴를 오파싱한다.
-    #    정밀 컨테이너 selector 는 raw_payload 실HTML 확보 후 후속(#175 종결).
-    #    href 의 'career' 경로는 검사하지 않는다(실공고 URL 도 /careers/ 라 과소수집 방지).
-    _MENU_BLOCKLIST = {
-        "faq", "복지", "다양성", "사내복지", "자기개발",
-        "채용절차", "채용안내", "채용지원", "careers", "welfare", "benefit",
-    }
-
     def _parse_samsung_bio(self, company: str, base_url: str, soup, raw_html=None) -> list:
-        """삼성바이오로직스 채용 페이지 파싱 (Phase 4b — CollectorResult 전환).
+        """삼성바이오로직스 — '채용 안내' 1건만 반환 (#175 종결).
 
-        각 레코드를 CollectorResult 로 감싸 원본 HTML(raw_html)을 보존한다 → 게이트 거부/
-        오류 시 hiring_quarantine 에 raw_payload 로 격리되어, selector 수정 후
-        replay-reparse(유실 제로 backfill)가 가능해진다.
+        삼성바이오 채용 사이트는 **상시 직무 공고 목록을 노출하지 않는다**(확인: how-to-apply
+        페이지의 a[href*='career'] 링크는 전부 네비 메뉴 — CAREERS/복지제도/FAQs/인재상/
+        인재Pool 등). 채용 방식이 '시즌 공개채용 + 직무분야 안내 + 국내경력 인재Pool 등록'
+        이라 긁을 공고가 없다. 메뉴를 긁으면 공고로 오파싱(오염)되므로 career 링크 수집을
+        제거하고 안내 1건만 기록한다(공식 채용관 생존 신호).
+
+        - 안내 1건은 분석의 MIN_TODAY_JOB_COUNT(3) 미만이라 hiring_signals 에 영향 없음.
+        - 실질 삼성바이오 공고 신호는 포털(잡코리아) 경로가 커버한다.
+        - raw_html 은 CollectorResult 로 보존(미래에 사이트가 공고 목록을 노출하면
+          격리/reparse 기반 복구 가능).
         """
         from ...base_collector import CollectorResult
 
-        results: list = []
-        for link_el in soup.select("a[href*='career'], a[href*='recruit'], a[href*='job']"):
-            title = link_el.get_text(strip=True)
-            if not title or len(title) < 4:
-                continue
-            # 휴리스틱: 안내 메뉴 제목은 공고가 아니므로 제외(1차 — 정밀 selector 는 후속).
-            if any(tok in title.casefold() for tok in self._MENU_BLOCKLIST):
-                continue
-            url = self.normalize_url(link_el.get("href", ""), base_url)
-            results.append(CollectorResult(
-                data=self._make_record(company, title, url),
-                raw_payload=raw_html,
-                source_label=self.source_label,
-            ))
-
-        if not results:
-            # 공고 링크 없음 → 채용 안내 페이지 1건 등록 (공고 집계용)
-            results.append(CollectorResult(
-                data=self._make_record(
-                    company,
-                    "삼성바이오로직스 채용 안내",
-                    base_url,
-                    job_description="공식 채용 안내 페이지. 개별 공고는 사이트 직접 확인 요망.",
+        return [CollectorResult(
+            data=self._make_record(
+                company,
+                "삼성바이오로직스 채용 안내",
+                base_url,
+                job_description=(
+                    "공식 채용 안내 페이지. 상시 공고 목록 미노출"
+                    "(시즌 공개채용/직무분야 안내/인재Pool). 실 공고는 포털 경로 참조."
                 ),
-                raw_payload=raw_html,
-                source_label=self.source_label,
-            ))
-        return results
+            ),
+            raw_payload=raw_html,
+            source_label=self.source_label,
+        )]

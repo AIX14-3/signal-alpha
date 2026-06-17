@@ -25,41 +25,40 @@ class SamsungBioParserTest(unittest.TestCase):
         self.c = SimpleSiteCrawler()           # 무인자 생성(driver=None)
         self.c.source_label = "SAMSUNG_BIO_CAREERS"
 
-    def test_menu_links_filtered_real_job_kept(self):
+    def test_menu_links_not_scraped_only_guide(self):
+        """career 링크(메뉴)가 있어도 긁지 않고 '채용 안내' 1건만 반환(공고 미노출 사이트)."""
         html = """
-            <a href="/careers/welfare">복지제도</a>
-            <a href="/careers/faq">FAQs</a>
-            <a href="/careers/diversity">다양성포용</a>
-            <a href="/careers/apply/123">경력사원 채용(AI 보안)</a>
+            <a href="/careers/working-with-us/benefits">복지제도</a>
+            <a href="/careers/value">인재상</a>
+            <a href="/careers/talent-pool">인재 POOL 등록</a>
+            <a href="/careers/apply/how-to-apply">채용안내</a>
         """
         results = self.c._parse_samsung_bio(
             "삼성바이오로직스", "https://samsungbiologics.com", _soup(html), "<html>RAW</html>"
         )
-        titles = [r.data["job_title"] for r in results]
-        self.assertIn("경력사원 채용(AI 보안)", titles)   # 실공고 통과
-        self.assertNotIn("복지제도", titles)               # 메뉴 제외
-        self.assertNotIn("FAQs", titles)
-        self.assertNotIn("다양성포용", titles)
+        self.assertEqual(len(results), 1)
+        title = results[0].data["job_title"]
+        self.assertIn("채용 안내", title)
+        # 메뉴(복지제도/인재상/인재POOL)가 공고로 둔갑하지 않음
+        for menu in ("복지제도", "인재상", "인재 POOL 등록"):
+            self.assertNotEqual(title, menu)
 
-    def test_returns_collector_result_with_raw_payload(self):
-        html = '<a href="/careers/apply/1">데이터 엔지니어 채용</a>'
+    def test_collector_result_preserves_raw_and_label(self):
         results = self.c._parse_samsung_bio(
-            "삼성바이오로직스", "https://samsungbiologics.com", _soup(html), "<html>RAW</html>"
+            "삼성바이오로직스", "https://samsungbiologics.com", _soup("<div/>"), "<html>RAW</html>"
         )
-        self.assertTrue(results)
         self.assertTrue(all(isinstance(r, CollectorResult) for r in results))
         self.assertEqual(results[0].raw_payload, "<html>RAW</html>")
         self.assertEqual(results[0].source_label, "SAMSUNG_BIO_CAREERS")
-        self.assertEqual(results[0].data["job_title"], "데이터 엔지니어 채용")
 
-    def test_no_jobs_falls_back_to_guide_page(self):
+    def test_empty_page_still_one_guide(self):
         results = self.c._parse_samsung_bio(
             "삼성바이오로직스", "https://samsungbiologics.com", _soup("<div>없음</div>"), "RAW"
         )
         self.assertEqual(len(results), 1)
         self.assertIsInstance(results[0], CollectorResult)
         self.assertIn("채용 안내", results[0].data["job_title"])
-        self.assertEqual(results[0].raw_payload, "RAW")   # fallback 도 원본 보존
+        self.assertEqual(results[0].raw_payload, "RAW")   # 안내 1건도 원본 보존
 
 
 class FetchSoupTest(unittest.TestCase):
