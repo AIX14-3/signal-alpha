@@ -12,6 +12,7 @@ asyncpg 의존성 없이 unittest.IsolatedAsyncioTestCase 사용.
 from __future__ import annotations
 
 import unittest
+from datetime import date, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 from app.analyzers.hiring.hiring_analyzer import (
@@ -25,6 +26,34 @@ from app.analyzers.hiring.hiring_analyzer import (
 def _reset_cache():
     HiringAnalyzer._baseline_cache = {}
     HiringAnalyzer._is_cache_loaded = False
+
+
+# ── _normalize_query_date (asyncpg date 바인딩 회귀 가드) ─────────────────────
+
+class TestNormalizeQueryDate(unittest.TestCase):
+    """str/datetime → date 정규화. str 을 쿼리에 그대로 넘기면 asyncpg DataError
+    ('str' object has no attribute 'toordinal')가 나던 회귀를 방지한다."""
+
+    def setUp(self):
+        self.a = HiringAnalyzer.__new__(HiringAnalyzer)
+
+    def test_str_to_date(self):
+        self.assertEqual(self.a._normalize_query_date("2026-06-17"), date(2026, 6, 17))
+
+    def test_str_with_time_suffix(self):
+        # "YYYY-MM-DD HH:MM:SS" 형태도 앞 10자리로 안전 처리.
+        self.assertEqual(
+            self.a._normalize_query_date("2026-06-17 09:30:00"), date(2026, 6, 17)
+        )
+
+    def test_datetime_to_date(self):
+        self.assertEqual(
+            self.a._normalize_query_date(datetime(2026, 6, 17, 9, 30)), date(2026, 6, 17)
+        )
+
+    def test_date_passthrough(self):
+        d = date(2026, 6, 17)
+        self.assertIs(self.a._normalize_query_date(d), d)
 
 
 # ── _get_current_quarter ──────────────────────────────────────────────────────
@@ -253,7 +282,9 @@ class TestAnalyzeHiringTrend(unittest.IsolatedAsyncioTestCase):
         rows = self._upsert_rows(conn)
         stock_id, obs_date, job_count, *_ = rows[0]
         self.assertEqual(stock_id, 1)
-        self.assertEqual(obs_date, "2024-06-15")
+        # observed_date 는 asyncpg $1::DATE 바인딩을 위해 date 객체여야 한다.
+        # (str 로 들어가면 'str' object has no attribute 'toordinal' DataError — 회귀 가드)
+        self.assertEqual(obs_date, date(2024, 6, 15))
         self.assertEqual(job_count, 8)
 
     async def test_phase_c_no_baseline_still_inserts(self):

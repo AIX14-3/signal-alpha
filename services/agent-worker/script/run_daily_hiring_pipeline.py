@@ -16,9 +16,15 @@ from datetime import datetime
 from typing import Optional
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 # 프로젝트 루트 경로 자동 추가
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+
+# repo root(.env)를 로드해 DATABASE_URL을 단일 소스로 사용 가능하게 한다.
+# PROJECT_ROOT = services/agent-worker → repo root = .parent.parent
+load_dotenv(PROJECT_ROOT.parent.parent / ".env")
 
 # 1️⃣ [버그 수정] logs 디렉터리가 없으면 자동 생성하여 FileHandler 크래시 방지
 Path("logs").mkdir(exist_ok=True)
@@ -49,7 +55,9 @@ DB_NAME = os.getenv("DB_NAME", "signal_alpha")
 DB_USER = os.getenv("DB_USER", "postgres")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "your_password")  # 실무에선 .env로 관리
 
-DSN = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+# DATABASE_URL(.env 표준)이 있으면 우선 사용 — run_collectors.py / base_collector 와 일관.
+# 미설정 시에만 쪼개진 DB_* 변수로 폴백(레거시 호환).
+DSN = os.getenv("DATABASE_URL") or f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
 RETRY_COUNT = 3
 RETRY_BACKOFF = 5        # 실패 시 재시도 대기 시간(초)
