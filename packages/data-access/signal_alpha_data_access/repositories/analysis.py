@@ -312,7 +312,7 @@ class AnalysisRepository:
             VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
                 $11, $12, $13, $14, $15, $16, $17, $18, $19,
-                $20, $21::jsonb, $22::jsonb
+                $20, $21, $22
             )
             ON CONFLICT (stock_id, signal_date, run_key, version)
             DO UPDATE SET
@@ -356,8 +356,8 @@ class AnalysisRepository:
             is_published,
             published_at,
             consensus_score,
-            positive_evidence,
-            caution_evidence,
+            _jsonb(positive_evidence),
+            _jsonb(caution_evidence),
         )
 
 
