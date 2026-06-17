@@ -58,7 +58,7 @@ docker compose run --rm migrate
 | D Processing | `processing_queue`, `dead_letter`, `source_documents`, `signal_events`, `signal_metrics`, `validation_logs` |
 | B User 기본 | `users`, `subscription_plans` |
 | E Analysis | `analysis_requests`, `analysis_results`, `quant_scores`, `ta_scores`, `ai_scores`, `agent_results`, `xgb_model_versions`, `ml_scores`, `final_signals`, `score_history`, `backtest_results` |
-| F User 확장 | `signal_subscriptions`, `watchlists`, `signal_journals`, `user_signal_reads`, `social_accounts`, `portone_verifications`, `terms_agreements` |
+| F User 확장 | `signal_subscriptions`, `watchlists`, `signal_journals`, `user_signal_reads`, `user_sessions`, `social_accounts`, `portone_verifications`, `terms_agreements` |
 | G Admin | `admin_accounts`, `admin_sessions` |
 | 트리거 | (트리거 함수 2종 + updated_at 트리거 일괄 부착) |
 | Legacy | `report_raw`, `report_signal` ← **폐기 예정, 신규 참조 금지** (§7) |

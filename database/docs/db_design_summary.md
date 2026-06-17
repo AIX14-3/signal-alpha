@@ -85,6 +85,7 @@ The following tables are expansion-stage tables:
 - `ml_scores`
 - `score_history`
 - `backtest_results`
+- `user_sessions`
 - `social_accounts`
 - `portone_verifications`
 - `terms_agreements`

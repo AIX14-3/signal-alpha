@@ -55,6 +55,17 @@ class UserBillingRepository:
             email,
         )
 
+    async def get_user_by_id(self, user_id: int) -> Any:
+        return await self._connection.fetchrow(
+            """
+            SELECT *
+            FROM users
+            WHERE id = $1
+              AND deleted_at IS NULL
+            """,
+            user_id,
+        )
+
     async def upsert_subscription_plan(
         self,
         *,

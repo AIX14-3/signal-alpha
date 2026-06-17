@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 
+from app.api.routes.auth import auth_router, users_router
 from app.api.routes.health import router as health_router
 from app.api.routes.signals import router as signals_router
 from app.core.config import get_settings
@@ -15,6 +16,8 @@ def create_app() -> FastAPI:
         lifespan=lifespan_with_database
     )
     app.include_router(health_router)
+    app.include_router(auth_router)
+    app.include_router(users_router)
     app.include_router(signals_router)
     return app
 
