@@ -131,6 +131,18 @@ class HiringAnalyzerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.score, 0.0)
         self.assertEqual(result.direction, "neutral")
 
+    async def test_stale_data_flagged_when_latest_posting_is_old(self):
+        """최신 공고가 stale_days(45)보다 오래되면 stale_data + partial.
+
+        stale 판정은 days_since_latest > stale_days 만으로 결정(모멘텀 윈도우와 무관).
+        관측 4건(>= min_observations 3)이라 insufficient_history 와는 분리된다.
+        """
+        rows = [_row(50, 100), _row(55, 100), _row(60, 100), _row(65, 100)]
+        result = await HiringAnalyzer(CONFIG).analyze("005930", _evidence(rows))
+        self.assertIn("stale_data", result.risk_flags)
+        self.assertNotIn("insufficient_history", result.risk_flags)
+        self.assertEqual(result.data_status, "partial")
+
     async def test_keyword_fusion_surfaces_tech_and_titles(self):
         """Loader-attached tech_stack/job_title are surfaced in summary + a focus
         evidence item, without changing the score (descriptive only)."""
