@@ -26,7 +26,11 @@ import logging
 import random
 import time
 from abc import ABC, abstractmethod
-from datetime import datetime, timezone
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+# 모듈 시각 stamp 기준은 KST(base_collector·multi_source_crawler·observability와 일치, #120).
+_KST = ZoneInfo("Asia/Seoul")
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +79,8 @@ class BaseSiteCrawler(ABC):
     # ── 공통 유틸 ──────────────────────────────────────────────────────────────
     @staticmethod
     def now_iso() -> str:
-        return datetime.now(timezone.utc).isoformat()
+        """현재 시각 ISO(KST, +09:00). 모듈 전체 posting_date 기준을 KST로 통일(#120)."""
+        return datetime.now(_KST).isoformat()
 
     @staticmethod
     def extract_tech(text: str) -> list[str]:
