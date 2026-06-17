@@ -1,11 +1,14 @@
 """
 samsung.py
-삼성전자 공식 채용 사이트 크롤러
-URL: https://careers.samsung.com/kr
+삼성전자 공식 채용 크롤러 — 통합 채용포털 안내(guidance-only)
 
-Samsung Careers 는 SPA(React) 이며 내부 REST API 를 사용.
-DevTools Network 탭에서 관찰된 API 엔드포인트를 직접 호출 (JSON 파싱).
-Selenium 없이 requests 로 처리 가능.
+구 careers.samsung.com REST API 는 폐기(DNS 死). 신 채용은
+https://www.samsungcareers.com/hr/ (끝 슬래시 필수) 통합 포털로 이전됐는데,
+이 포털은 **관계사 선택형 디렉터리**(관계사 26개, /subsid/detail/<CODE> 타일)이고
+삼성전자 자체(DX부문 C10CAA / DS부문 C10CAH)는 flat 공고 목록을 노출하지 않으며
+현재 자체 공고가 0건이다. 긁을 직무 목록이 없으므로 삼성바이오로직스와 동일하게
+'채용 안내' 1건만 기록한다(공식 채용관 생존 신호). raw_html 은 CollectorResult 로
+보존하여, 추후 전자 자체 공고가 노출되면 격리/reparse 기반 복구가 가능하다.
 """
 
 from __future__ import annotations
@@ -16,68 +19,46 @@ from ..base_site import BaseSiteCrawler
 
 logger = logging.getLogger(__name__)
 
-_BASE = "https://careers.samsung.com"
-# Samsung Careers 공개 검색 API (DevTools 관찰 기반, 변경 가능)
-_API = (
-    f"{_BASE}/kr/restful/jobSearchResults.json"
-    "?jobCategory=&jobSubCategory=&country=KR&language=ko"
-    "&pageIndex={page}&pageSize=20&sortBy=recent"
-)
+_BASE = "https://www.samsungcareers.com"
+_PORTAL = f"{_BASE}/hr/"
 
 
 class SamsungCrawler(BaseSiteCrawler):
     source_label = "SAMSUNG_CAREERS"
 
-    def crawl(self, company_name: str) -> list[dict]:
-        """Samsung Careers JSON API 호출 (최대 3페이지)."""
-        from ..http import get as http_get
+    def crawl(self, company_name: str) -> list:
+        """통합 채용포털 안내 1건 반환(원본 HTML best-effort 보존)."""
+        raw_html: str | None = None
+        try:
+            from ..http import get as http_get
 
-        jobs: list[dict] = []
-        # User-Agent는 http_get이 풀에서 로테이션 주입한다.
-        headers = {"Referer": f"{_BASE}/kr/"}
+            # User-Agent는 http_get이 풀에서 로테이션 주입한다.
+            raw_html = http_get(_PORTAL).text
+        except Exception as exc:  # 포털 fetch 실패해도 안내는 그대로 기록
+            logger.debug("삼성전자 포털 fetch 실패(안내만 기록): %s", exc)
 
-        for page in range(1, 4):  # 최대 3페이지
-            try:
-                resp = http_get(_API.format(page=page), headers=headers)
-                data = resp.json()
+        return self._parse_samsung_guidance(company_name, raw_html)
 
-                items = (
-                    data.get("jobSearchResults")
-                    or data.get("jobs")
-                    or data.get("results")
-                    or []
-                )
-                if not items:
-                    break
+    def _parse_samsung_guidance(self, company: str, raw_html: str | None = None) -> list:
+        """삼성전자 — '채용 안내' 1건만 반환 (#175 / #243).
 
-                for item in items:
-                    title = (
-                        item.get("jobTitle") or item.get("title") or item.get("name") or ""
-                    )
-                    if not title:
-                        continue
-                    job_id = item.get("jobId") or item.get("id") or ""
-                    url = (
-                        item.get("applyUrl")
-                        or item.get("url")
-                        or f"{_BASE}/kr/job/{job_id}" if job_id else _BASE
-                    )
-                    deadline = item.get("closingDate") or item.get("deadline")
-                    desc = item.get("jobSummary") or item.get("description")
+        samsungcareers.com/hr/ 는 관계사 선택형 통합 포털이라 직무 목록을 직접 노출하지
+        않는다(삼성전자 = DX부문 C10CAA / DS부문 C10CAH 타일). 전자 자체 공고도 현재 0건.
+        메뉴/관계사 타일을 긁으면 공고로 오파싱되므로 안내 1건만 기록한다.
+        raw_html 은 CollectorResult 로 보존(미래 전자 자체 공고 노출 시 reparse 복구).
+        """
+        from ...base_collector import CollectorResult
 
-                    jobs.append(self._make_record(
-                        company_name, title, url,
-                        job_description=desc,
-                        closing_date=deadline,
-                    ))
-
-            except Exception as exc:
-                logger.warning("삼성전자 API 오류 (page=%d): %s", page, exc)
-                break
-
-        if not jobs:
-            logger.warning(
-                "⚠️  삼성전자 API 응답 비어있음 — API 스펙 변경 가능성. "
-                "DevTools 에서 재확인 후 _API 상수 업데이트 필요"
-            )
-        return jobs
+        return [CollectorResult(
+            data=self._make_record(
+                company,
+                "삼성전자 채용 안내",
+                _PORTAL,
+                job_description=(
+                    "삼성 통합 채용포털(관계사 선택형). 삼성전자(DX부문 C10CAA/DS부문 C10CAH)는 "
+                    "현재 자체 공고 미노출. 실 공고는 포털/포털 경로 참조."
+                ),
+            ),
+            raw_payload=raw_html,
+            source_label=self.source_label,
+        )]
