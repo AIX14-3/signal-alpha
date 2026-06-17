@@ -126,6 +126,30 @@ class AlternativeAggregatorTest(unittest.TestCase):
             any("위험 키워드 검색 급등(악재 신호)" in e for e in signal.caution_evidence)
         )
 
+    def test_zero_weights_warn_but_still_equal_blend(self):
+        # L3 guard: when no source has a configured weight, the aggregator must
+        # still return the equal-blend score (unchanged behavior) but emit a
+        # WARNING so the misconfiguration is visible rather than silently masked.
+        unconfigured = AggregatorConfig(
+            weights={},  # nothing configured → every weight resolves to 0.0
+            positive_threshold=0.2,
+            negative_threshold=-0.2,
+            confidence_base=0.3,
+            confidence_per_source=0.35,
+        )
+        aggregator = AlternativeAggregator(unconfigured)
+        results = [_sr("PATENT", "positive", 0.6), _sr("DATALAB", "positive", 0.8)]
+
+        with self.assertLogs(
+            "app.aggregator.alternative", level="WARNING"
+        ) as captured:
+            signal = aggregator.merge(results)
+
+        # Warning fired about the equal-blend fallback.
+        self.assertTrue(any("equal blend" in m for m in captured.output))
+        # Equal-blend score is unchanged: mean of 0.6 and 0.8.
+        self.assertAlmostEqual(signal.score, 0.7, places=3)
+
     def test_analyzer_error_flag_surfaces_for_missing_source(self):
         # analyzer_error 는 실패=missing 소스에 붙는다 → 누락 caution 의 사유로 표면화.
         failed = SourceResult(
