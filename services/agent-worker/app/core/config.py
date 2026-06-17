@@ -96,28 +96,6 @@ class Settings:
             getenv("HIRING_RATE_LIMIT_MAX_BACKOFF_SECONDS", "30")
         )
 
-        # ── SEC EDGAR (해외/미국 공시 수집) ──
-        # SEC는 연락처가 담긴 User-Agent를 요구한다(없으면 차단). 운영 시 팀 공용 주소로 교체.
-        self.sec_user_agent = getenv(
-            "SEC_USER_AGENT", "signal-alpha (contact: biop99999@gmail.com)"
-        )
-        self.sec_base_url = getenv("SEC_BASE_URL", "https://data.sec.gov").rstrip("/")
-        self.sec_ticker_map_url = getenv(
-            "SEC_TICKER_MAP_URL", "https://www.sec.gov/files/company_tickers.json"
-        )
-        self.sec_timeout_seconds = float(getenv("SEC_TIMEOUT_SECONDS", "15"))
-        # SEC fair-access(~10 req/s) 준수를 위한 요청 간 최소 간격.
-        self.sec_min_request_interval_sec = float(getenv("SEC_MIN_REQUEST_INTERVAL_SEC", "0.2"))
-        self.sec_max_retries = int(getenv("SEC_MAX_RETRIES", "2"))
-        # 수집 대상 폼 화이트리스트(쉼표 구분). 빈 값이면 전체 폼.
-        self.sec_form_whitelist = _env_list(
-            "SEC_FORM_WHITELIST",
-            default=["8-K", "10-K", "10-Q", "4", "SC 13D", "SC 13G", "20-F", "6-K"],
-        )
-        # 수집 대상 기업(티커, 쉼표 구분). 빈 값이면 collectors/sec/targets.py의
-        # 기본 유니버스(AI 선도주 보드)를 사용한다. 나중에 DB로 옮길 수 있다.
-        self.sec_target_tickers = _env_list("SEC_TARGET_TICKERS", default=[])
-
         # ── Realtime price collector (Kiwoom REST, agent-worker 내장 데몬) ──
         self.price_collector_enabled = _env_bool("PRICE_COLLECTOR_ENABLED", default=True)
         # Kiwoom REST API (App Key/Secret + OAuth). Works on Linux/Docker —
