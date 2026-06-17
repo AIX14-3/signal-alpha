@@ -41,6 +41,17 @@ class Settings:
         self.dart_ownership_min_request_interval_sec = float(
             getenv("DART_OWNERSHIP_MIN_REQUEST_INTERVAL_SEC", "0.2")
         )
+        # ── L3 임직원 현황 수집 (empSttus → dart_employee_stats) ──
+        self.dart_employee_lookback_years = int(getenv("DART_EMPLOYEE_LOOKBACK_YEARS", "3"))
+        # empSttus 는 사업보고서(11011)·반기(11012)에만 제출되고 분기(11013/11014)엔 거의 없으므로
+        # 기본값을 둘로 제한해 무자료(013) 호출 낭비를 줄인다(financials 와 의도적으로 다름).
+        self.dart_employee_reprt_codes = _env_list(
+            "DART_EMPLOYEE_REPRT_CODES",
+            default=["11011", "11012"],
+        )
+        self.dart_employee_min_request_interval_sec = float(
+            getenv("DART_EMPLOYEE_MIN_REQUEST_INTERVAL_SEC", "0.2")
+        )
         self.dart_use_llm = _env_bool("DART_USE_LLM", default=False)
         self.dart_llm_high_impact_only = _env_bool("DART_LLM_HIGH_IMPACT_ONLY", default=True)
         self.dart_llm_provider = getenv("DART_LLM_PROVIDER", "gemini").strip().lower()
