@@ -4,6 +4,7 @@ from signal_alpha_data_access.repositories.backtests import BacktestRepository
 from signal_alpha_data_access.repositories.collection import CollectionRepository
 from signal_alpha_data_access.repositories.dart import DartRepository
 from signal_alpha_data_access.repositories.dart_financials import DartFinancialFactsRepository
+from signal_alpha_data_access.repositories.dart_ownership import DartOwnershipRepository
 from signal_alpha_data_access.repositories.market_data import MarketDataRepository
 from signal_alpha_data_access.repositories.normalization import NormalizationRepository
 from signal_alpha_data_access.repositories.processing_queue import ProcessingQueueRepository
@@ -23,6 +24,7 @@ __all__ = [
     "CollectionRepository",
     "DartRepository",
     "DartFinancialFactsRepository",
+    "DartOwnershipRepository",
     "MarketDataRepository",
     "NormalizationRepository",
     "ProcessingQueueRepository",
