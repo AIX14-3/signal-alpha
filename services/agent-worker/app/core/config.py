@@ -37,6 +37,10 @@ class Settings:
         self.dart_financials_min_request_interval_sec = float(
             getenv("DART_FINANCIALS_MIN_REQUEST_INTERVAL_SEC", "0.2")
         )
+        # ── L2 지분·내부자 수집 (majorstock/elestock → dart_ownership_events) ──
+        self.dart_ownership_min_request_interval_sec = float(
+            getenv("DART_OWNERSHIP_MIN_REQUEST_INTERVAL_SEC", "0.2")
+        )
         self.dart_use_llm = _env_bool("DART_USE_LLM", default=False)
         self.dart_llm_high_impact_only = _env_bool("DART_LLM_HIGH_IMPACT_ONLY", default=True)
         self.dart_llm_provider = getenv("DART_LLM_PROVIDER", "gemini").strip().lower()
