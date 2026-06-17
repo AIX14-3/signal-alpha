@@ -8,7 +8,7 @@ ERD 다이어그램([`../erd/signal_alpha_core_erd.md`](../erd/signal_alpha_core
 > - 워커/에이전트가 **어떤 테이블을 쓰는지**(역할→테이블 방향)는 [`table_responsibility.md`](./table_responsibility.md)를 참고하세요. 이 문서는 그 반대인 **테이블→역할** 방향입니다.
 > - **새 테이블을 추가하는 마이그레이션 PR은 이 문서에도 한 줄 설명을 반드시 추가해야 합니다** (`database/README.md` §4).
 
-총 53개 테이블 (러너가 자동 관리하는 `schema_migrations` 원장 제외).
+총 54개 테이블 (러너가 자동 관리하는 `schema_migrations` 원장 제외).
 
 ---
 
@@ -112,6 +112,7 @@ Agent·ML의 분석 결과와 최종 시그널.
 | `watchlists` | 사용자 관심종목. `(user_id, stock_id)` 유니크 |
 | `signal_journals` | 사용자가 시그널에 남긴 투자 일지/견해 |
 | `user_signal_reads` | 사용자별 시그널 읽음 표시. `(user_id, final_signal_id)` 유니크 |
+| `user_sessions` | 사용자 refresh token 세션. refresh token hash, 만료, 폐기 시각 관리 |
 | `social_accounts` | 소셜 로그인 연동(provider·provider_user_id) |
 | `portone_verifications` | PortOne 본인인증 기록(imp_uid 등) |
 | `terms_agreements` | 약관 동의 이력(약관 유형·버전별). `(user_id, terms_type, version)` 유니크 |

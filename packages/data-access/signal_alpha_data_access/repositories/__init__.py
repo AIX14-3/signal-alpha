@@ -17,6 +17,7 @@ from signal_alpha_data_access.repositories.sec import SecFilingRepository
 from signal_alpha_data_access.repositories.signals import SignalRepository
 from signal_alpha_data_access.repositories.stocks import StockRepository
 from signal_alpha_data_access.repositories.user_signals import UserSignalRepository
+from signal_alpha_data_access.repositories.user_sessions import UserSessionRepository
 from signal_alpha_data_access.repositories.users_billing import UserBillingRepository
 
 __all__ = [
@@ -39,5 +40,6 @@ __all__ = [
     "SignalRepository",
     "StockRepository",
     "UserSignalRepository",
+    "UserSessionRepository",
     "UserBillingRepository",
 ]

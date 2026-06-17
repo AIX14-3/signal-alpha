@@ -313,6 +313,14 @@ erDiagram
         BIGINT final_signal_id FK
     }
 
+    user_sessions {
+        BIGINT id PK
+        BIGINT user_id FK "users CASCADE"
+        TEXT refresh_token_hash UK
+        TIMESTAMPTZ expires_at
+        TIMESTAMPTZ revoked_at
+    }
+
     social_accounts {
         BIGINT id PK
         BIGINT user_id FK "users CASCADE"
@@ -339,6 +347,7 @@ erDiagram
     users ||--o{ watchlists : "user_id"
     users ||--o{ signal_journals : "user_id"
     users ||--o{ user_signal_reads : "user_id"
+    users ||--o{ user_sessions : "user_id"
     users ||--o{ social_accounts : "user_id"
     users ||--o{ portone_verifications : "user_id"
     users ||--o{ terms_agreements : "user_id"
