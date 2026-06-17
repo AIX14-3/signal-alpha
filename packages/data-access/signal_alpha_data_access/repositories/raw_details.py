@@ -165,13 +165,43 @@ class RawDetailRepository:
             since_date,
         )
 
-    async def list_unenriched_patent_details(self, *, limit: int = 200) -> list[Any]:
+    async def list_unenriched_patent_details(
+        self,
+        *,
+        limit: int = 200,
+        raw_document_ids: list[int] | None = None,
+    ) -> list[Any]:
         """Patent rows still awaiting LLM enrichment (``llm_status = 'pending'``).
 
         Newest filings first so a partial batch enriches the most relevant
         patents. ``extra_payload`` carries the abstract (``astrtCont``) the
         enrichment tool feeds to the LLM. See migration 019.
+
+        ``raw_document_ids`` scopes the worklist to a specific set of patents
+        (the queue-driven ENRICH_PATENT path enriches only the rows a matching
+        NORMALIZE_PATENT just promoted); pass None for the global batch sweep.
+        Already-enriched rows in the set are skipped by the ``pending`` filter,
+        so re-running a task is a no-op.
         """
+        if raw_document_ids is not None:
+            if not raw_document_ids:
+                return []
+            return await self._connection.fetch(
+                """
+                SELECT
+                    p.raw_document_id,
+                    p.application_no,
+                    p.patent_title,
+                    p.extra_payload
+                FROM patent_raw_details p
+                WHERE p.llm_status = 'pending'
+                  AND p.raw_document_id = ANY($1::bigint[])
+                ORDER BY p.application_date DESC, p.raw_document_id DESC
+                LIMIT $2
+                """,
+                raw_document_ids,
+                limit,
+            )
         return await self._connection.fetch(
             """
             SELECT

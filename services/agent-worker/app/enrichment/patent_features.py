@@ -107,19 +107,33 @@ def _as_dict(value: Any) -> dict[str, Any]:
 class PatentEnricher:
     """Enrich pending patents: title+abstract → Gemini → cached features.
 
-    ``repository`` must expose ``list_unenriched_patent_details(limit)`` and
-    ``update_patent_llm_features(raw_document_id, features, status)``; ``client``
-    must expose async ``generate_json(prompt)``. Both are injected so this class is
-    testable with fakes.
+    ``repository`` must expose ``list_unenriched_patent_details(limit,
+    raw_document_ids)`` and ``update_patent_llm_features(raw_document_id,
+    features, status)``; ``client`` must expose async ``generate_json(prompt)``.
+    Both are injected so this class is testable with fakes.
+
+    ``raw_document_ids`` scopes the run to a specific set of patents (the
+    queue-driven ENRICH_PATENT path passes the raw_ids a NORMALIZE_PATENT task
+    just promoted); pass None for the global pending-batch sweep.
     """
 
-    def __init__(self, repository: Any, client: Any, *, batch_limit: int = 200) -> None:
+    def __init__(
+        self,
+        repository: Any,
+        client: Any,
+        *,
+        batch_limit: int = 200,
+        raw_document_ids: list[int] | None = None,
+    ) -> None:
         self._repository = repository
         self._client = client
         self._batch_limit = batch_limit
+        self._raw_document_ids = raw_document_ids
 
     async def run(self) -> dict[str, int]:
-        rows = await self._repository.list_unenriched_patent_details(limit=self._batch_limit)
+        rows = await self._repository.list_unenriched_patent_details(
+            limit=self._batch_limit, raw_document_ids=self._raw_document_ids
+        )
         stats = {"total": len(rows), "success": 0, "failed": 0, "skipped": 0}
         for row in rows:
             await self._enrich_one(row, stats)
