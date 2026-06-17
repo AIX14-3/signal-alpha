@@ -134,6 +134,11 @@ def sanitize(text: str) -> str:
     LLM 재생성 3회 모두 실패 시 템플릿 강제 출력 전 전처리 용도로 사용합니다.
     """
     result = text
-    for phrase, alternative in SAFE_ALTERNATIVES.items():
+    # 긴 표현부터 치환한다. 짧은 표현이 긴 표현의 부분문자열인 경우(예: "사세요" ⊂
+    # "지금 사세요") 짧은 쪽이 먼저 치환되면 긴 표현이 깨진다. dict 삽입 순서에 의존하지
+    # 않도록 키 길이 내림차순으로 정렬해 항상 긴 표현을 우선 치환한다.
+    for phrase, alternative in sorted(
+        SAFE_ALTERNATIVES.items(), key=lambda kv: len(kv[0]), reverse=True
+    ):
         result = result.replace(phrase, alternative)
     return result

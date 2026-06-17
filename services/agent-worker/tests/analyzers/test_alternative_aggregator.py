@@ -115,6 +115,28 @@ class AlternativeAggregatorTest(unittest.TestCase):
         signal = self.aggregator.merge([_sr("PATENT", "mixed", 0.05)])
         self.assertEqual(signal.direction, "mixed")
 
+    def test_risk_search_flag_surfaces_as_caution(self):
+        # risk_search 는 available(ok) DATALAB 음성 소스에 붙는다 → caution 으로 표면화.
+        datalab = SourceResult(
+            source="DATALAB", stock_code="005930", direction="negative", score=-0.5,
+            summary="위험 키워드 급등", risk_flags=["risk_search"],
+        )
+        signal = self.aggregator.merge([_sr("PATENT", "positive", 0.6), datalab])
+        self.assertTrue(
+            any("위험 키워드 검색 급등(악재 신호)" in e for e in signal.caution_evidence)
+        )
+
+    def test_analyzer_error_flag_surfaces_for_missing_source(self):
+        # analyzer_error 는 실패=missing 소스에 붙는다 → 누락 caution 의 사유로 표면화.
+        failed = SourceResult(
+            source="PATENT", stock_code="005930", direction="unknown", score=0.0,
+            summary="분석 실패", data_status="failed", risk_flags=["analyzer_error"],
+        )
+        signal = self.aggregator.merge([_sr("DATALAB", "positive", 0.6), failed])
+        self.assertTrue(
+            any("PATENT" in e and "분석기 오류로 제외됨" in e for e in signal.caution_evidence)
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

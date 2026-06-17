@@ -138,6 +138,8 @@ class AlternativeAggregator:
         "stale_data": "데이터 정체(오래됨)",
         "search_spike": "검색 급등 구간(해석 주의)",
         "no_data": "데이터 없음",
+        "risk_search": "위험 키워드 검색 급등(악재 신호)",
+        "analyzer_error": "분석기 오류로 제외됨",
     }
 
     def _evidence(
@@ -163,7 +165,11 @@ class AlternativeAggregator:
         if conflicting:
             caution.append("소스 간 방향이 엇갈립니다(추가 확인 필요).")
         for r in missing:
-            caution.append(f"{r.source} 데이터 누락 — 통합 점수에 미반영")
+            # 실패=missing 소스의 플래그(예: analyzer_error)도 표면화한다. flag-specific
+            # 메시지가 있으면 그것을, 없으면 일반 누락 안내를 caution 으로 올린다.
+            flag_notes = [self._FLAG_CAUTIONS[f] for f in r.risk_flags if f in self._FLAG_CAUTIONS]
+            reason = "; ".join(flag_notes) if flag_notes else "통합 점수에 미반영"
+            caution.append(f"{r.source} 데이터 누락 — {reason}")
 
         return _dedupe(positive), _dedupe(caution)
 

@@ -93,3 +93,14 @@ class TestSanitize:
     def test_all_ai_style_phrases_are_sanitized(self, phrase: str):
         result = sanitize(f"테스트: {phrase}")
         assert phrase not in result
+
+    def test_longer_phrase_wins_over_substring(self):
+        # "사세요" ⊂ "지금 사세요" — 긴 표현이 먼저 치환돼야 한다(dict 순서 무관 견고성).
+        result = sanitize("지금 사세요")
+        assert result == "복수 소스가 긍정 방향으로 수렴합니다"
+
+    def test_overlapping_substring_phrases_all_removed(self):
+        # 부분문자열 관계가 섞여도 원 금지 표현이 결과에 하나도 남지 않아야 한다.
+        result = sanitize("지금 사세요 그리고 좋은 종목입니다")
+        for phrase in ("지금 사세요", "사세요", "좋은 종목입니다", "좋은 종목"):
+            assert phrase not in result
