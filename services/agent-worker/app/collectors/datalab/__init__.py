@@ -19,6 +19,7 @@ import asyncpg  # type: ignore[import]
 import asyncpg.exceptions  # type: ignore[import]
 
 from app.clients.naver_datalab_client import NaverDataLabClient, NaverDataLabRecord, _default_end_date, _default_start_date
+from app.observability import calculate_run_status as _run_status
 from app.utils.hash_utils import make_source_hash
 
 SOURCE_TYPE = "DATALAB"
@@ -274,14 +275,6 @@ def _compute_change_pct(current: float, previous: float | None) -> float | None:
     if previous == 0:
         return 999.99 if current > 0 else 0.0
     return round((current - previous) / previous * 100, 2)
-
-
-def _run_status(inserted: int, skipped: int, failed: int) -> str:
-    if failed == 0 and (inserted > 0 or skipped > 0):
-        return "success"
-    if (inserted > 0 or skipped > 0) and failed > 0:
-        return "partial"
-    return "failed"
 
 
 async def _create_run(conn: Any) -> int:

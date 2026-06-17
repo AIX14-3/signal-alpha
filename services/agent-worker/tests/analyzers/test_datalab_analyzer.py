@@ -20,7 +20,17 @@ CONFIG = DataLabRuleConfig(
 )
 
 
-def _row(days_ago, search_index, *, is_spike=False, change_pct=None, weight=1.0, polarity="demand"):
+def _row(
+    days_ago,
+    search_index,
+    *,
+    is_spike=False,
+    change_pct=None,
+    weight=1.0,
+    polarity="demand",
+    polarity_source="default",
+    polarity_model=None,
+):
     return {
         "category_id": 1,
         "weight": weight,
@@ -32,6 +42,8 @@ def _row(days_ago, search_index, *, is_spike=False, change_pct=None, weight=1.0,
         "change_pct": change_pct,
         "is_spike": is_spike,
         "polarity": polarity,
+        "polarity_source": polarity_source,
+        "polarity_model": polarity_model,
     }
 
 
@@ -102,6 +114,38 @@ class DataLabAnalyzerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.direction, "negative")
         self.assertLess(result.score, 0.0)
         self.assertIn("risk_search", result.risk_flags)
+
+    async def test_llm_polarity_sets_provenance(self):
+        """LLM-classified polarity rows surface llm_model + summary disclosure."""
+        rows = [
+            _row(2, 70, polarity_source="llm", polarity_model="gemini-2.5-flash-lite"),
+            _row(4, 70, polarity_source="llm", polarity_model="gemini-2.5-flash-lite"),
+            _row(6, 70),  # one manual/default row mixed in
+            _row(18, 50), _row(20, 50), _row(22, 50), _row(24, 50), _row(26, 50),
+        ]
+        result = await DataLabAnalyzer(CONFIG).analyze("005930", _evidence(rows))
+        self.assertEqual(result.llm_model, "gemini-2.5-flash-lite")
+        self.assertIn("LLM 분류 키워드 2건", result.summary)
+
+    async def test_provenance_does_not_change_score(self):
+        """Scope A guarantee: provenance is read-only — same rows with/without LLM
+        tagging produce an identical score and direction."""
+        base = [
+            _row(2, 70), _row(4, 70), _row(6, 70),
+            _row(18, 50), _row(20, 50), _row(22, 50), _row(24, 50), _row(26, 50),
+        ]
+        tagged = [
+            _row(2, 70, polarity_source="llm", polarity_model="m"),
+            _row(4, 70, polarity_source="llm", polarity_model="m"),
+            _row(6, 70, polarity_source="llm", polarity_model="m"),
+            _row(18, 50), _row(20, 50), _row(22, 50), _row(24, 50), _row(26, 50),
+        ]
+        a = await DataLabAnalyzer(CONFIG).analyze("005930", _evidence(base))
+        b = await DataLabAnalyzer(CONFIG).analyze("005930", _evidence(tagged))
+        self.assertEqual(a.score, b.score)
+        self.assertEqual(a.direction, b.direction)
+        self.assertIsNone(a.llm_model)
+        self.assertEqual(b.llm_model, "m")
 
     async def test_demand_outweighs_mild_risk(self):
         """Strong demand momentum + only mild risk → still positive (demand − risk)."""

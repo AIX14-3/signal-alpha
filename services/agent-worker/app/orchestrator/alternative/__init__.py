@@ -1,13 +1,13 @@
 from app.orchestrator.alternative.tasks import (
     AlternativeAnalyzeTaskHandler,
-    DataLabNormalizeRouteHandler,
+    DataLabNormalizeTaskHandler,
     HiringNormalizeTaskHandler,
     PatentNormalizeTaskHandler,
 )
 
 __all__ = [
     "AlternativeAnalyzeTaskHandler",
-    "DataLabNormalizeRouteHandler",
+    "DataLabNormalizeTaskHandler",
     "HiringNormalizeTaskHandler",
     "PatentNormalizeTaskHandler",
 ]

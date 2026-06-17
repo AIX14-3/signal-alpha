@@ -132,3 +132,7 @@ Thumbs.db
 .idea/
 .vscode/
 tempCodeRunnerFile.py
+
+# DBeaver
+.dbeaver/
+.DBeaverData/

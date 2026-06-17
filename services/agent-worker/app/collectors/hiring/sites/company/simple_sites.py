@@ -59,12 +59,9 @@ class SimpleSiteCrawler(BaseSiteCrawler):
         """requests → BeautifulSoup, 실패 시 Selenium 폴백."""
         from bs4 import BeautifulSoup
         try:
-            import requests
-            resp = requests.get(url, timeout=10, headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                              "AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"
-            })
-            resp.raise_for_status()
+            from ..http import get as http_get
+            # User-Agent는 http_get이 풀에서 로테이션 주입한다.
+            resp = http_get(url)
             return BeautifulSoup(resp.text, "html.parser")
         except Exception as exc:
             logger.debug("requests 실패(%s) → Selenium 폴백: %s", url, exc)

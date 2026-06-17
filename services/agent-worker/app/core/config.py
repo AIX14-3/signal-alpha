@@ -46,6 +46,11 @@ class Settings:
         self.dart_llm_provider = getenv("DART_LLM_PROVIDER", "gemini").strip().lower()
         self.dart_llm_model = getenv("DART_LLM_MODEL", "")
         self.dart_llm_timeout_seconds = float(getenv("DART_LLM_TIMEOUT_SECONDS", "20"))
+        # Report RAG agent LLM 종합 — provider/key는 아래 openai/gemini 공유 설정 재사용.
+        self.report_use_llm = _env_bool("REPORT_USE_LLM", default=False)
+        self.report_llm_provider = getenv("REPORT_LLM_PROVIDER", "gemini").strip().lower()
+        self.report_llm_model = getenv("REPORT_LLM_MODEL", "")
+        self.report_llm_timeout_seconds = float(getenv("REPORT_LLM_TIMEOUT_SECONDS", "20"))
         self.openai_api_key = getenv("OPENAI_API_KEY", "")
         self.openai_base_url = getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
         self.gemini_api_key = getenv("GEMINI_API_KEY", "")
@@ -53,12 +58,43 @@ class Settings:
             "GEMINI_BASE_URL",
             "https://generativelanguage.googleapis.com/v1beta",
         )
+        self.aws_access_key_id = getenv("AWS_ACCESS_KEY_ID", "")
+        self.aws_secret_access_key = getenv("AWS_SECRET_ACCESS_KEY", "")
+        self.aws_region = getenv("AWS_REGION", "ap-northeast-2")
+        self.s3_report_bucket = getenv("S3_REPORT_BUCKET", "signal-alpha-reports")
+
         self.kipris_api_key = getenv("KIPRIS_API_KEY", "")
         self.kipris_timeout_seconds = int(getenv("KIPRIS_TIMEOUT_SECONDS", "15"))
         self.kipris_page_size = int(getenv("KIPRIS_PAGE_SIZE", "100"))
         self.naver_client_id = getenv("NAVER_CLIENT_ID", "")
         self.naver_client_secret = getenv("NAVER_CLIENT_SECRET", "")
         self.naver_datalab_timeout_seconds = int(getenv("NAVER_DATALAB_TIMEOUT_SECONDS", "15"))
+
+        # ── Hiring 크롤러 resilience (공용 fetch 헬퍼: sites/http.py) ──
+        # 일시적 timeout·5xx·커넥션오류를 지수 백오프로 재시도한다(4xx는 비재시도).
+        self.hiring_timeout_seconds = float(getenv("HIRING_TIMEOUT_SECONDS", "10"))
+        self.hiring_max_retries = int(getenv("HIRING_MAX_RETRIES", "2"))
+        self.hiring_retry_backoff_seconds = float(getenv("HIRING_RETRY_BACKOFF_SECONDS", "0.5"))
+        # ── Hiring 크롤러 anti-block (UA 로테이션 + 429/403 적응형 백오프) ──
+        # 데스크톱 전용 UA 풀(모바일 금지 — m.* 모바일 레이아웃이 파싱을 깨뜨림).
+        self.hiring_ua_pool = _env_list(
+            "HIRING_UA_POOL",
+            default=[
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
+                "(KHTML, like Gecko) Version/17.2 Safari/605.1.15",
+            ],
+        )
+        # 429 Retry-After/지수 백오프의 상한(초) — 악성/비정상 대기로 워커가 무한 수면하는 것 방어.
+        self.hiring_rate_limit_max_backoff_seconds = float(
+            getenv("HIRING_RATE_LIMIT_MAX_BACKOFF_SECONDS", "30")
+        )
 
         # ── SEC EDGAR (해외/미국 공시 수집) ──
         # SEC는 연락처가 담긴 User-Agent를 요구한다(없으면 차단). 운영 시 팀 공용 주소로 교체.
@@ -105,6 +141,29 @@ class Settings:
         )
         self.market_open = getenv("MARKET_OPEN", "09:00")
         self.market_close = getenv("MARKET_CLOSE", "15:30")
+
+        # ── Hiring 운영 알림 + self-healing 데몬 (Phase 5) ──
+        # collector_runs 통계 기반 임계 판정 → Discord Embed 알림. sweep/reconcile 자동화.
+        # 기본 off(price 데몬 관례). 단일 uvicorn 워커 전제(advisory lock으로 중복 기동 방지).
+        self.hiring_ops_daemon_enabled = _env_bool("HIRING_OPS_DAEMON_ENABLED", default=False)
+        # 빈 값이면 알림은 no-op(데몬은 sweep/reconcile만 수행).
+        self.discord_webhook_url = getenv("DISCORD_WEBHOOK_URL", "")
+        self.hiring_ops_interval_sec = float(getenv("HIRING_OPS_INTERVAL_SEC", "300"))
+        # 거부율(failed/collected) 임계 — 초과 run을 Discord로 알림.
+        self.hiring_alert_failure_rate_threshold = float(
+            getenv("HIRING_ALERT_FAILURE_RATE_THRESHOLD", "0.5")
+        )
+        self.hiring_ops_sweep_running_timeout_min = int(
+            getenv("HIRING_OPS_SWEEP_RUNNING_TIMEOUT_MIN", "30")
+        )
+        self.hiring_ops_sweep_retrying_timeout_min = int(
+            getenv("HIRING_OPS_SWEEP_RETRYING_TIMEOUT_MIN", "120")
+        )
+        self.hiring_ops_reconcile_limit = int(getenv("HIRING_OPS_RECONCILE_LIMIT", "100"))
+        # 알림 대상 collector_type(쉼표 구분). run별 임계 판정에 사용.
+        self.hiring_alert_collector_types = _env_list(
+            "HIRING_ALERT_COLLECTOR_TYPES", default=["HIRING"]
+        )
 
 
 @lru_cache

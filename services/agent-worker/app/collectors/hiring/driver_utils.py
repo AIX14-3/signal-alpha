@@ -44,10 +44,13 @@ def create_chrome_driver(headless: bool = True):
     opts.add_argument("--blink-settings=imagesEnabled=false")
 
     # ── Anti-Bot ──────────────────────────────────────────────────────────────
-    opts.add_argument(
-        "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    )
+    # UA는 풀에서 로테이션해 핑거프린트를 분산한다. 단, requests(sites/http.py)는
+    # 매 시도마다 UA를 교체하는 반면 Selenium UA는 이 드라이버 인스턴스 수명 동안
+    # 고정된다(_safe_get 재시도는 동일 UA로 백오프만). 드라이버 로테이션 주기마다
+    # 새 UA로 갱신된다.
+    from .user_agents import pick_ua
+
+    opts.add_argument(f"user-agent={pick_ua()}")
     opts.add_argument("--disable-blink-features=AutomationControlled")
     opts.add_experimental_option("excludeSwitches", ["enable-automation"])
     opts.add_experimental_option("useAutomationExtension", False)

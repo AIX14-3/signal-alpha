@@ -5,15 +5,17 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "packages" / "data-access"))
 
+from app.analyzers.datalab.normalize_rules import classify_datalab_observation
 from app.analyzers.hiring.normalize_rules import classify_hiring_posting
 from app.analyzers.patent.normalize_rules import classify_patent_filing
 from app.analyzers.registry import SourceRegistration
 from app.orchestrator.alternative.tasks import (
     AlternativeAnalyzeTaskHandler,
-    DataLabNormalizeRouteHandler,
+    DataLabNormalizeTaskHandler,
     HiringNormalizeTaskHandler,
     PatentNormalizeTaskHandler,
     _as_of_str,
+    analysis_task_context,
 )
 from app.schemas.source_result import SourceResult
 
@@ -96,6 +98,49 @@ PATENT_ROW = {
 }
 
 
+# One DataLab observation (one datalab_raw_documents row), joined with its detail
+# + raw meta + polarity, as returned by list_datalab_details_by_raw_ids.
+DATALAB_ROW = {
+    "raw_document_id": 30,
+    "category_id": 5,
+    "keyword": "갤럭시",
+    "keyword_group": "삼성 스마트폰",
+    "observed_date": date(2026, 6, 10),
+    "search_index": 88.5,
+    "previous_search_index": 60.0,
+    "change_pct": 47.5,
+    "period_type": "daily",
+    "device": "all",
+    "gender": "all",
+    "age_group": "all",
+    "is_spike": True,
+    "extra_payload": {},
+    "polarity": "demand",
+    "source_name": "NAVER_DATALAB",
+    "title": "갤럭시 검색 트렌드",
+    "source_url": None,
+    "published_at": datetime(2026, 6, 10),
+    "collected_at": datetime(2026, 6, 10),
+}
+
+
+class _DataLabConnection(FakeConnection):
+    """Routes fetch by SQL: detail-by-raw-ids vs category→stock mapping."""
+
+    def __init__(self, detail_rows, stock_rows):
+        super().__init__()
+        self._detail_rows = detail_rows
+        self._stock_rows = stock_rows
+
+    async def fetch(self, sql, *args):
+        self.calls.append(("fetch", sql, args))
+        if "FROM datalab_raw_details" in sql:
+            return self._detail_rows
+        if "FROM datalab_category_stocks" in sql:
+            return self._stock_rows
+        return []
+
+
 class NormalizeRulesTest(unittest.TestCase):
     def test_hiring_posting_is_positive_demand_signal(self):
         c = classify_hiring_posting(HIRING_ROW)
@@ -117,12 +162,70 @@ class NormalizeRulesTest(unittest.TestCase):
         self.assertEqual(c.event_type, "patent_filing")
         self.assertEqual(c.impact_level, "low")
 
+    def test_datalab_demand_spike_is_positive_high(self):
+        c = classify_datalab_observation(DATALAB_ROW)
+        self.assertEqual(c.event_type, "datalab_search_spike")  # is_spike
+        self.assertEqual(c.signal_direction, "positive")        # demand + rising
+        self.assertEqual(c.impact_level, "high")                # spike
+
+    def test_datalab_risk_polarity_flips_direction(self):
+        c = classify_datalab_observation({**DATALAB_ROW, "polarity": "risk", "is_spike": False})
+        self.assertEqual(c.event_type, "datalab_search_observation")
+        self.assertEqual(c.signal_direction, "negative")  # risk + rising search = bearish
+        self.assertEqual(c.impact_level, "medium")         # |47.5| >= 20, no spike
+
+    def test_datalab_flat_change_is_neutral_low(self):
+        c = classify_datalab_observation(
+            {**DATALAB_ROW, "change_pct": 0, "is_spike": False}
+        )
+        self.assertEqual(c.signal_direction, "neutral")
+        self.assertEqual(c.impact_level, "low")
+
 
 class AsOfStrTest(unittest.TestCase):
     def test_normalizes_to_yyyy_mm_dd(self):
         self.assertEqual(_as_of_str("2026-06-16T09:30:00"), "2026-06-16")
         self.assertEqual(_as_of_str(date(2026, 6, 16)), "2026-06-16")
         self.assertEqual(_as_of_str(datetime(2026, 6, 16, 9, 30)), "2026-06-16")
+        self.assertEqual(_as_of_str("20260616"), "2026-06-16")  # YYYYMMDD digits
+
+    def test_defaults_blank_to_today(self):
+        today = date.today().isoformat()
+        self.assertEqual(_as_of_str(None), today)
+        self.assertEqual(_as_of_str(""), today)
+
+    def test_rejects_unparseable_input(self):
+        # Garbage fails fast rather than silently producing a bogus dedupe key.
+        with self.assertRaises(ValueError):
+            _as_of_str("not-a-date")
+
+
+class AnalysisTaskContextTest(unittest.TestCase):
+    def test_canonical_key_is_as_of_only(self):
+        self.assertEqual(analysis_task_context("2026-06-16"), {"as_of": "2026-06-16"})
+
+    def test_carries_no_stock_identity(self):
+        # Regression for the cross-producer dedupe bug: the key must be
+        # stock-agnostic (no stock_code/ticker) so run_analyzers.py and the
+        # normalize handlers build IS-NOT-DISTINCT-FROM-identical contexts.
+        ctx = analysis_task_context("2026-06-16")
+        self.assertNotIn("stock_code", ctx)
+        self.assertNotIn("ticker", ctx)
+
+
+class EnqueueDedupeContextTest(unittest.IsolatedAsyncioTestCase):
+    async def test_normalize_enqueue_context_has_no_stock_identity(self):
+        # The normalize-side producer must use the canonical {"as_of"} key so it
+        # dedupes against run_analyzers.py (which also omits stock_code).
+        conn = FakeConnection(rows=[HIRING_ROW])
+        handler = HiringNormalizeTaskHandler(conn)
+        await handler(
+            {"id": 1, "stock_id": 1, "source_raw_ids": [10],
+             "task_context": {"as_of": "2026-06-16"}}
+        )
+        serialized_context = conn._enqueue_inserts()[0][2][6]
+        self.assertIn('"as_of": "2026-06-16"', serialized_context)
+        self.assertNotIn("stock_code", serialized_context)
 
 
 class HiringNormalizeHandlerTest(unittest.IsolatedAsyncioTestCase):
@@ -182,27 +285,96 @@ class PatentNormalizeHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(conn._enqueue_inserts()), 1)
 
 
-class DataLabRouteHandlerTest(unittest.IsolatedAsyncioTestCase):
-    async def test_routes_category_to_mapped_stocks(self):
-        conn = FakeConnection(rows=[{"stock_id": 1, "weight": 1.0}, {"stock_id": 3, "weight": 0.5}])
-        handler = DataLabNormalizeRouteHandler(conn)
+class DataLabNormalizeHandlerTest(unittest.IsolatedAsyncioTestCase):
+    async def test_normalizes_fan_out_per_stock_with_external_anchor(self):
+        # One observation (raw_document_id=30, category_id=5) → 2 mapped stocks.
+        conn = _DataLabConnection(
+            detail_rows=[DATALAB_ROW],
+            stock_rows=[{"stock_id": 1, "weight": 1.0}, {"stock_id": 3, "weight": 0.5}],
+        )
+        handler = DataLabNormalizeTaskHandler(conn)
 
         result = await handler(
-            {"id": 3, "stock_id": None, "task_context": {"category_id": 5, "as_of": "2026-06-16"}}
+            {"id": 3, "stock_id": None, "source_raw_ids": [30],
+             "task_context": {"category_id": 5, "as_of": "2026-06-16"}}
         )
 
-        self.assertEqual(result["routed_count"], 2)
+        # fan-out: 1 observation × 2 stocks
+        self.assertEqual(result["normalized_count"], 2)
+        self.assertEqual(len(conn._inserts("source_documents")), 2)
+        self.assertEqual(len(conn._inserts("signal_events")), 2)
+        self.assertEqual(len(conn._inserts("signal_metrics")), 2)
+        self.assertEqual(len(conn._inserts("validation_logs")), 2)
+
+        # external anchor: ('datalab_raw_documents', raw_document_id, stock_id, ...)
+        doc_call = conn._inserts("source_documents")[0]
+        self.assertEqual(doc_call[2][0], "datalab_raw_documents")  # external_ref_type
+        self.assertEqual(doc_call[2][1], 30)                       # external_ref_id
+        self.assertIn(doc_call[2][2], (1, 3))                      # stock_id
+
+        # event: demand spike → positive/high, event_date = observed_date
+        event_call = conn._inserts("signal_events")[0]
+        self.assertEqual(event_call[2][4], "datalab_search_spike")  # event_type
+        self.assertEqual(event_call[2][5], date(2026, 6, 10))       # event_date
+        self.assertEqual(event_call[2][6], "positive")             # signal_direction
+        self.assertEqual(event_call[2][7], "high")                 # impact_level
+
+        # event_hash differs per stock (the fan-out key)
+        hashes = {c[2][2] for c in conn._inserts("signal_events")}
+        self.assertEqual(len(hashes), 2)
+
+        # metric carries previous_value + change_pct
+        metric_call = conn._inserts("signal_metrics")[0]
+        self.assertEqual(metric_call[2][1], "datalab_search_index")
+
+        # one deduped ANALYZE_ALTERNATIVE per distinct stock
         enqueues = conn._enqueue_inserts()
-        self.assertEqual(len(enqueues), 2)
-        self.assertEqual({e[2][0] for e in enqueues}, {1, 3})  # stock_ids
+        self.assertEqual({e[2][0] for e in enqueues}, {1, 3})
         self.assertTrue(all(e[2][1] == "ANALYZE_ALTERNATIVE" for e in enqueues))
 
-    async def test_skips_without_category_id(self):
-        conn = FakeConnection()
-        handler = DataLabNormalizeRouteHandler(conn)
-        result = await handler({"id": 3, "stock_id": None, "task_context": {}})
-        self.assertEqual(result["routed_count"], 0)
-        self.assertEqual(result["skipped_reason"], "category_id_required")
+    async def test_same_category_observations_resolve_mapping_once(self):
+        # Two observations of the same category (different dates) × 2 stocks = 4
+        # normalized rows, but the category→stock mapping is fetched only once.
+        row_b = {**DATALAB_ROW, "raw_document_id": 31, "observed_date": date(2026, 6, 11)}
+        conn = _DataLabConnection(
+            detail_rows=[DATALAB_ROW, row_b],
+            stock_rows=[{"stock_id": 1, "weight": 1.0}, {"stock_id": 3, "weight": 0.5}],
+        )
+        handler = DataLabNormalizeTaskHandler(conn)
+
+        result = await handler(
+            {"id": 3, "stock_id": None, "source_raw_ids": [30, 31],
+             "task_context": {"category_id": 5, "as_of": "2026-06-16"}}
+        )
+
+        self.assertEqual(result["normalized_count"], 4)
+        mapping_fetches = [
+            c for c in conn.calls
+            if c[0] == "fetch" and "FROM datalab_category_stocks" in c[1]
+        ]
+        self.assertEqual(len(mapping_fetches), 1)  # cached across both observations
+        self.assertEqual(len(conn._enqueue_inserts()), 2)  # still deduped per stock
+
+    async def test_unmapped_category_normalizes_nothing(self):
+        conn = _DataLabConnection(detail_rows=[DATALAB_ROW], stock_rows=[])
+        handler = DataLabNormalizeTaskHandler(conn)
+
+        result = await handler(
+            {"id": 3, "stock_id": None, "source_raw_ids": [30],
+             "task_context": {"category_id": 5, "as_of": "2026-06-16"}}
+        )
+
+        self.assertEqual(result["normalized_count"], 0)
+        self.assertFalse(conn._inserts("source_documents"))
+        self.assertFalse(conn._enqueue_inserts())
+
+    async def test_no_raw_rows_is_noop(self):
+        conn = _DataLabConnection(detail_rows=[], stock_rows=[{"stock_id": 1, "weight": 1.0}])
+        handler = DataLabNormalizeTaskHandler(conn)
+        result = await handler(
+            {"id": 3, "stock_id": None, "source_raw_ids": [], "task_context": {}}
+        )
+        self.assertEqual(result["normalized_count"], 0)
         self.assertFalse(conn._enqueue_inserts())
 
 

@@ -78,6 +78,11 @@ def _row(record: Any, weight_by_category: dict[int, float]) -> dict[str, Any]:
         "change_pct": _to_float(record["change_pct"]),
         "is_spike": bool(record["is_spike"]),
         "polarity": (record.get("polarity") if hasattr(record, "get") else None) or "demand",
+        # provenance (003): who/how the polarity was tagged. Scope A does not change
+        # scoring; the analyzer only uses this to record agent_results.llm_model.
+        "polarity_source": (record.get("polarity_source") if hasattr(record, "get") else None)
+        or "default",
+        "polarity_model": (record.get("polarity_model") if hasattr(record, "get") else None),
     }
 
 

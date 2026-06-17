@@ -351,7 +351,9 @@ class RawDetailRepository:
                 d.age_group,
                 d.is_spike,
                 d.extra_payload,
-                COALESCE(dck.polarity, 'demand') AS polarity
+                COALESCE(dck.polarity, 'demand') AS polarity,
+                COALESCE(dck.polarity_source, 'default') AS polarity_source,
+                dck.polarity_model AS polarity_model
             FROM datalab_raw_details d
             LEFT JOIN datalab_category_keywords dck
                 ON dck.category_id = d.category_id AND dck.keyword = d.keyword
@@ -361,6 +363,56 @@ class RawDetailRepository:
             """,
             category_ids,
             since_date,
+        )
+
+    async def list_datalab_details_by_raw_ids(
+        self, raw_document_ids: list[int]
+    ) -> list[Any]:
+        """DataLab detail rows + their datalab_raw_documents meta, by raw id.
+
+        Mirrors ``list_hiring_details_by_raw_ids``/``list_patent_details_by_raw_ids``
+        for the Normalizer: the NORMALIZE_DATALAB handler reads the datalab raw the
+        collector enqueued (``source_raw_ids`` = ``datalab_raw_documents.id``) and
+        converts each observation into source_documents/signal_events per mapped
+        stock. ``polarity`` (demand|risk) is joined from datalab_category_keywords
+        so per-event direction is polarity-aware. Note the anchor table is
+        ``datalab_raw_documents`` (NOT ``raw_documents``).
+        """
+        if not raw_document_ids:
+            return []
+
+        return await self._connection.fetch(
+            """
+            SELECT
+                d.raw_document_id,
+                d.category_id,
+                d.keyword,
+                d.keyword_group,
+                d.observed_date,
+                d.search_index,
+                d.previous_search_index,
+                d.change_pct,
+                d.period_type,
+                d.device,
+                d.gender,
+                d.age_group,
+                d.is_spike,
+                d.extra_payload,
+                COALESCE(dck.polarity, 'demand') AS polarity,
+                doc.source_name,
+                doc.title,
+                doc.source_url,
+                doc.published_at,
+                doc.collected_at
+            FROM datalab_raw_details d
+            INNER JOIN datalab_raw_documents doc
+                ON doc.id = d.raw_document_id
+            LEFT JOIN datalab_category_keywords dck
+                ON dck.category_id = d.category_id AND dck.keyword = d.keyword
+            WHERE d.raw_document_id = ANY($1::BIGINT[])
+            ORDER BY d.observed_date DESC, d.raw_document_id DESC
+            """,
+            raw_document_ids,
         )
 
     async def upsert_dart_detail(
