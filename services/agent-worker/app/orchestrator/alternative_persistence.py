@@ -13,7 +13,6 @@ Score scaling: analyzers/aggregator work in [-1, +1]; the DB columns are
 
 from __future__ import annotations
 
-import json
 from typing import Any, Sequence
 
 from app.analyzers.config import AnalyzerRuntimeConfig
@@ -68,7 +67,7 @@ class AlternativeSignalPersistence:
                 debate_method=debate_method,
                 method_score=_to_100(source_result.score),
                 method_signal=_signal_value(source_result.direction),
-                method_detail=json.dumps(_method_detail(source_result), ensure_ascii=False),
+                method_detail=_method_detail(source_result),
                 llm_model=source_result.llm_model,
                 prompt_ver=self._config.version,
             )
@@ -87,18 +86,17 @@ class AlternativeSignalPersistence:
                 confidence=round(max(0.0, min(1.0, signal.confidence)) * 100.0, 2),
                 signal=_signal_value(signal.direction),
                 source_agreement=signal.source_agreement,
-                score_breakdown=json.dumps(
-                    {src: _to_100(score) for src, score in signal.score_breakdown.items()},
-                    ensure_ascii=False,
-                ),
+                score_breakdown={
+                    src: _to_100(score) for src, score in signal.score_breakdown.items()
+                },
                 summary=signal.summary,
                 warning_level=_warning_level(signal),
                 needs_review=needs_review,
                 is_published=True,
                 published_at=analysis_date,
                 consensus_score=round(max(0.0, min(100.0, signal.consensus_score)), 2),
-                positive_evidence=json.dumps(signal.positive_evidence, ensure_ascii=False),
-                caution_evidence=json.dumps(signal.caution_evidence, ensure_ascii=False),
+                positive_evidence=signal.positive_evidence,
+                caution_evidence=signal.caution_evidence,
             )
             final_signal_id = final_signal["id"]
 
