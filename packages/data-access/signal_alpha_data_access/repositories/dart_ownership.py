@@ -4,7 +4,7 @@ from typing import Any
 
 # L2 지분·내부자 이벤트 적재 리포지토리. (DartFinancialFactsRepository 와 동일 패턴)
 #
-# 멱등 자연키: (corp_code, rcept_no, holder_name, holder_type, line_seq) — 마이그레이션 005 의
+# 멱등 자연키: (corp_code, rcept_no, holder_name, holder_type, line_seq) — 마이그레이션 011 의
 # uq_ownership_event. line_seq 는 한 보고서에서 같은 보고자가 여러 행(증권종류/변동내역)으로
 # 나뉠 때 행이 서로 덮어쓰지 않도록 하는 행 일련번호다(수집기가 부여, 미지정 시 0).
 # 정정 단조성: 이미 적재된 행보다 rcept_no 가 같거나 큰 경우에만 갱신한다

@@ -1,4 +1,4 @@
--- 005_dart_ownership_events.sql
+-- 011_dart_ownership_events.sql
 -- ============================================================================
 -- L2 지분·내부자 적재 — OpenDART majorstock(대량보유 상황보고) + elestock(임원·주요주주 소유보고)
 -- ----------------------------------------------------------------------------
@@ -7,7 +7,7 @@
 -- report_date(보고서 접수일 rcept_dt)가 사실상 known_at(PIT) 역할을 한다.
 --
 -- 멱등 자연키: (corp_code, rcept_no, holder_name, holder_type, line_seq). 같은 키로
--- 재수집되면 rcept_no 가 같거나 큰 경우에만 갱신한다(정정이 과거 재수집에 덮이지 않도록 — L1 004 동일).
+-- 재수집되면 rcept_no 가 같거나 큰 경우에만 갱신한다(정정이 과거 재수집에 덮이지 않도록 — L1 006 동일).
 -- line_seq: 한 보고서(rcept_no)에서 같은 보고자(holder_name)·유형이 여러 행으로 나뉘는 경우
 -- (elestock 증권종류별, majorstock 변동내역 다건)를 보존하기 위한 행 일련번호. 수집기가
 -- (rcept_no, holder_name, holder_type) 그룹 내 응답 순서로 0,1,2… 부여한다. 보고서는 불변이라
