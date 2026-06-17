@@ -1,0 +1,60 @@
+<!--
+  기아 채용관(career.kia.com/apply/applyList.kc) 발췌 픽스처.
+  diagnostics/KIA_RENDERED.html(재진단: applyList.kc) 의 ul#applyList 영역을
+  최외곽 컨테이너(div.cont__wrap)까지 조상 보존하여 발췌.
+  - li 2건은 실데이터(일반 공고, data-recucls=55 / 59)
+  - 3번째 li 는 그룹공고 분기 커버를 위해 data-ntcgroupno>0 으로 가공(실데이터엔 없음)
+  - #applyNoneList 는 공고 없음 빈 상태 노드(항상 DOM 에 존재, display 토글)
+-->
+<div class="cont__wrap type01">
+  <article class="cont__left">
+    <div class="tip__box">
+      <p class="txt" id="listCntKo">총 <span class="p_red" id="applyListCnt">3</span>건의 채용공고가 진행중 입니다.</p>
+    </div>
+    <ul class="box__list" id="applyList" style="display: block;">
+      <li data-recuyy="2026" data-recutype="N5" data-recucls="55" data-scrap="N"
+          data-ntcgroupno="0" class="cont__box ">
+        <a href="javascript:void(0);">
+          <h3 class="tit">[계약직] 인증중고차 매매 상담 운영</h3>
+          <div class="day__box">
+            <span class="p_red">D-4</span>
+            <ul class="work__list">
+              <li>국내사업</li><li>직무별 상이</li><li>서울 압구정  </li><li>계약직</li>
+            </ul>
+          </div>
+        </a>
+        <div class="box__marker " data-scrap="N"></div>
+      </li>
+      <li data-recuyy="2026" data-recutype="N5" data-recucls="59" data-scrap="N"
+          data-ntcgroupno="0" class="cont__box ">
+        <a href="javascript:void(0);">
+          <h3 class="tit">[계약직] 서비스센터 고객안내요원 (수원)</h3>
+          <div class="day__box">
+            <span class="p_red">D-6</span>
+            <ul class="work__list">
+              <li>국내사업</li><li>직무별 상이</li><li>기타지역  </li><li>계약직</li>
+            </ul>
+          </div>
+        </a>
+        <div class="box__marker " data-scrap="N"></div>
+      </li>
+      <li data-recuyy="2026" data-recutype="N1" data-recucls="70" data-scrap="N"
+          data-ntcgroupno="42" class="cont__box ">
+        <a href="javascript:void(0);">
+          <h3 class="tit">[그룹공고] 2026 상반기 신입 통합채용</h3>
+          <div class="day__box">
+            <span class="p_red">D-10</span>
+            <ul class="work__list">
+              <li>국내사업</li><li>연구개발</li><li>화성  </li><li>신입</li>
+            </ul>
+          </div>
+        </a>
+        <div class="box__marker " data-scrap="N"></div>
+      </li>
+    </ul>
+    <div class="negative__box_wrap" id="applyNoneList" style="display: none;">
+      <em class="ico__search_negative"></em>
+      <p id="applyNoneListMsg">현재 진행중인 채용 공고가 없습니다.</p>
+    </div>
+  </article>
+</div>
