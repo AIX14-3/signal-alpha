@@ -38,7 +38,7 @@ from app.collectors.hiring.user_agents import pick_ua
 # (아직 크롤러 상수에 없어 import 불가). selector 검증 후 크롤러 상수에 반영하며 import(SSOT)로
 # 되돌린다. SK_HYNIX 는 검증 완료되어 _LIST(SSOT) import 로 환원(#175/#233).
 TARGETS: list[tuple[str, str, str, bool]] = [
-    ("SAMSUNG_ELECTRONICS", "https://www.samsungcareers.com/hr", "html", True),    # careers.samsung.com DNS죽음
+    ("SAMSUNG_ELECTRONICS", "https://www.samsungcareers.com/hr/", "html", True),   # 끝 슬래시 필수(/hr는 404). 관계사 선택형 통합포털
     ("NAVER", f"{NAVER_URL}?pageNo=1", "html", True),
     ("SK_HYNIX", SK_HYNIX_LIST, "html", True),
     ("HYUNDAI", _HYUNDAI_LIST, "html", True),
