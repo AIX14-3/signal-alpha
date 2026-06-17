@@ -147,6 +147,18 @@ class DataLabAnalyzerTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(a.llm_model)
         self.assertEqual(b.llm_model, "m")
 
+    async def test_stale_data_flagged_when_latest_observation_is_old(self):
+        """최신 관측이 stale_days(14)보다 오래되면 stale_data + partial.
+
+        stale 판정은 days_since_latest > stale_days 만으로 결정(모멘텀 윈도우와 무관).
+        관측 6건(>= min_observations 5)이라 insufficient_history 와는 분리된다.
+        """
+        rows = [_row(16, 60), _row(18, 60), _row(20, 60), _row(22, 60), _row(24, 60), _row(26, 60)]
+        result = await DataLabAnalyzer(CONFIG).analyze("005930", _evidence(rows))
+        self.assertIn("stale_data", result.risk_flags)
+        self.assertNotIn("insufficient_history", result.risk_flags)
+        self.assertEqual(result.data_status, "partial")
+
     async def test_demand_outweighs_mild_risk(self):
         """Strong demand momentum + only mild risk → still positive (demand − risk)."""
         rows = [
