@@ -1,0 +1,19 @@
+# node_modules는 이미지 안에서 npm ci로 설치하고, .next는 런타임에 생성된다.
+# 호스트의 것을 COPY로 덮어쓰지 않도록 컨텍스트에서 제외한다.
+node_modules
+.next
+out
+
+# VCS / 로컬 환경 (로컬 .env가 이미지에 새지 않도록)
+.git
+.gitignore
+.env*
+
+# 런타임에 불필요한 파일
+Dockerfile
+.dockerignore
+README.md
+AGENTS.md
+mockups
+tests
+npm-debug.log*

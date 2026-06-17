@@ -19,6 +19,7 @@ package = false
 [tool.uv.workspace]
 members = [
   "packages/data-access",
+  "packages/market-data",
   "packages/signal-core",
   "services/agent-worker",
   "services/main-server",
@@ -42,5 +43,9 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "*/tests/*.py" = [
+  "E402",
+]
+# 스크립트는 import 전에 sys.path/.env/logs 부트스트랩이 필요해 E402가 정상이다.
+"*/script/*.py" = [
   "E402",
 ]

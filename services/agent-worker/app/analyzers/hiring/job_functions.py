@@ -21,11 +21,40 @@ from app.analyzers.hiring.indicators import _parse_date  # shared date parser
 
 # Ordered rules: first matching function wins. Keys are matched case-insensitively
 # as substrings of the job title. Korean first (job titles are mostly Korean).
+#
+# Order matters: more specific functions precede the broad ENGINEER catch-all so an
+# AI/data title is not swallowed by ENGINEER. DATA_AI therefore comes BEFORE ENGINEER
+# (it owns the ai/ml/데이터 needles that used to sit in ENGINEER). ENGINEER is split
+# into two tiers around RESEARCH: an explicit-role tier (엔지니어/engineer/developer/
+# 프로그래머) BEFORE RESEARCH so "엔지니어" intent wins, and an activity tier (개발/
+# 소프트웨어/클라우드…) AFTER RESEARCH so a research ROLE ("신약 개발 연구원") is not
+# hijacked by the bare 개발 needle. The activity tier still precedes MANUFACTURING so
+# "생산기술 엔지니어" stays ENGINEER — see test_hiring_job_functions.
+#
+# TODO(taxonomy): this is an intentionally COARSE, curated set (~10 functions),
+# not a full directory of every market job. It is tuned to the sectors the tracked
+# stocks span today (반도체/AI/플랫폼/자동차/바이오/엔터/경영지원). When the tracked
+# universe expands into NEW sectors, round it out toward the standard top-level
+# 직군 set — likely 금융/핀테크, 의료/헬스케어, 물류/유통, 게임, 교육, 서비스/운영.
+# Driver: add a bucket only when real postings show a meaningful cluster falling to
+# None or mis-bucketing (evidence-based, not speculative). Each new function needs
+# all three: a needle rule here + a hiring_job_functions row + a
+# hiring_job_function_stocks mapping (an unmapped function produces no signal).
 DEFAULT_FUNCTION_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("ENGINEER", ("개발", "엔지니어", "engineer", "developer", "소프트웨어", "프로그래머",
-                  "백엔드", "프론트", "데이터", "ai", "ml", "서버", "sw")),
-    ("RESEARCH", ("연구", "r&d", "연구원", "선행", "박사", "research")),
-    ("MANUFACTURING", ("생산", "제조", "공정", "품질", "설비", "양산", "manufactur", "공장")),
+    ("DATA_AI", ("ai", "ml", "머신러닝", "딥러닝", "인공지능", "데이터", "사이언티스트",
+                 "data scientist", "nlp")),
+    # ENGINEER (role): explicit engineer/developer titles win over RESEARCH so
+    # "선행개발 엔지니어"/"연구 엔지니어" stay ENGINEER (the 엔지니어 intent dominates).
+    ("ENGINEER", ("엔지니어", "engineer", "developer", "프로그래머")),
+    # RESEARCH before the ENGINEER activity tier: a research ROLE must not be hijacked
+    # by the bare 개발 needle — "신약 개발 연구원" → RESEARCH (연구원), not ENGINEER.
+    ("RESEARCH", ("연구", "r&d", "연구원", "선행", "박사", "research", "임상", "신약", "과학자")),
+    # ENGINEER (activity): generic engineering needles, checked after RESEARCH.
+    ("ENGINEER", ("개발", "소프트웨어", "백엔드", "프론트", "서버", "sw", "클라우드",
+                  "아키텍트", "architect", "인프라", "devops", "sre")),
+    ("MANUFACTURING", ("생산", "제조", "공정", "품질", "설비", "양산", "manufactur", "공장", "장비")),
+    ("CREATIVE", ("프로듀서", "producer", "a&r", "repertoire", "아티스트", "작곡", "작사",
+                  "드라마", "음악", "연출", "엔터")),
     ("SALES", ("영업", "세일즈", "sales", "판매", "리테일")),
     ("MARKETING", ("마케팅", "marketing", "브랜드", "홍보", "pr", "콘텐츠")),
     ("DESIGN", ("디자인", "design", "ux", "ui")),
@@ -34,9 +63,11 @@ DEFAULT_FUNCTION_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 LABELS: dict[str, str] = {
+    "DATA_AI": "데이터/AI",
     "ENGINEER": "개발/엔지니어",
     "RESEARCH": "연구개발(R&D)",
     "MANUFACTURING": "생산/제조",
+    "CREATIVE": "콘텐츠/크리에이티브",
     "SALES": "영업",
     "MARKETING": "마케팅",
     "DESIGN": "디자인",

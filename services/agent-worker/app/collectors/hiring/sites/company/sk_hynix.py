@@ -34,7 +34,7 @@ class SKHynixCrawler(BaseSiteCrawler):
 
     # ── 1) API 시도 ──────────────────────────────────────────────────────────────
     def _try_api(self, company_name: str) -> list[dict]:
-        import requests
+        from ..http import get as http_get
 
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0",
@@ -44,8 +44,7 @@ class SKHynixCrawler(BaseSiteCrawler):
         params = {"language": "ko", "page": 1, "size": 100}
 
         try:
-            resp = requests.get(_API_LIST, headers=headers, params=params, timeout=10)
-            resp.raise_for_status()
+            resp = http_get(_API_LIST, headers=headers, params=params)
             data = resp.json()
 
             items = (

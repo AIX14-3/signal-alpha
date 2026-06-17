@@ -44,21 +44,21 @@ base_collector.py
 from __future__ import annotations
 
 import datetime
-import hashlib
 import json
 import logging
 import zoneinfo
 from abc import ABC, abstractmethod
 
-_KST = zoneinfo.ZoneInfo("Asia/Seoul")
-
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
+from app.observability import calculate_run_status
+from app.utils.hash_utils import make_source_hash
+
+_KST = zoneinfo.ZoneInfo("Asia/Seoul")
+
+# 라이브러리 모듈은 logging.basicConfig 를 호출하지 않는다(호스트 앱 로깅 설정을
+# 덮어쓰는 부작용 방지). 로깅 핸들러/레벨 설정은 진입점(main.py, 파이프라인 스크립트)이 담당.
 logger = logging.getLogger(__name__)
 
 
@@ -147,11 +147,6 @@ class BaseCollector(ABC):
         for pattern in ["(주)", "주식회사", "㈜", "(유)", "(재)"]:
             cleaned = cleaned.replace(pattern, "")
         return " ".join(cleaned.split()).strip()  # 연속 공백 1칸으로
-
-    @staticmethod
-    def _source_hash(seed: str) -> str:
-        """seed(unique_key 또는 job_link) → SHA-256 hex 64자. source_hash UNIQUE 충족."""
-        return hashlib.sha256(seed.encode("utf-8")).hexdigest()
 
     @staticmethod
     def _get_current_quarter() -> str:
@@ -301,7 +296,7 @@ class BaseCollector(ABC):
                 "stype": self.SOURCE_TYPE,
                 "source_name": self._clean_company_name(data["company_name"])[:100],
                 "external_id": job_link[:200],
-                "source_hash": self._source_hash(seed),
+                "source_hash": make_source_hash(self.SOURCE_TYPE, seed),
                 "title": data["job_title"],
                 "source_url": job_link,
                 "published_at": posting_date,
@@ -413,13 +408,21 @@ class BaseCollector(ABC):
                     logger.error("❌ %s: %s", data.get("company_name"), exc)
 
             # 모든 savepoint 처리 후 최종 상태 반영 + 단 1회 commit
-            status = "success" if failed == 0 else "partial"
+            status = calculate_run_status(inserted, skipped, failed)
             self._finish_collector_run(db, run_id, status, inserted, skipped, failed)
             db.commit()
 
+            # 구조화 성공률 요약 (가시성 Phase 1) — collected = inserted+skipped+failed
+            from app.observability import RunStats, format_run_summary
+
+            run_stats = RunStats.from_counts(
+                collected=inserted + skipped + failed,
+                inserted=inserted,
+                skipped=skipped,
+                failed=failed,
+            )
             logger.info("=" * 70)
-            logger.info("✅ 적재 완료 | 신규 %d · 중복/스킵 %d · 실패 %d (상태 %s)",
-                        inserted, skipped, failed, status.upper())
+            logger.info(format_run_summary(self.SOURCE_TYPE, run_stats))
             logger.info("=" * 70)
             return inserted
 

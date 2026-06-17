@@ -23,6 +23,11 @@ Kick-off 이슈 열기  →  본인 self-assign  →  Project Status: In Progres
 - 이슈를 열면 **본인을 Assignee로 지정**한다 → "작업을 시작한 사람"이 GitHub ID로 박힌다.
 - 영역(`area:*`)은 *무엇*을 분류할 뿐, *누구*는 항상 assignee로 본다.
 
+> **자동 경로(병행)**: `feat/`·`fix/`·`docs/`·`chore/`·`refactor/` 접두사 브랜치를 만들면
+> `.github/workflows/branch-kickoff.yml`이 **Kick-off 이슈를 자동 생성**하고 브랜치 생성자를
+> self-assign 한다(멱등 — 같은 브랜치용 이슈가 있으면 재생성 안 함). 목표/완료기준은 그 이슈에 채운다.
+> 수동으로 먼저 이슈를 열었다면 자동 생성에 의존하지 않아도 되고, 그 이슈를 그대로 쓰면 된다.
+
 ## 2. 진행 상태 (GitHub Project 보드)
 
 상태는 GitHub Project의 **Status 필드**로 추적한다:

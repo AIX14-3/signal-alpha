@@ -15,8 +15,8 @@ ROOT_DIR = Path(__file__).resolve().parents[6]
 load_dotenv(ROOT_DIR / ".env")
 
 sys.path.insert(0, str(Path(__file__).parent))
-from chunker import chunk_text
-from pdf_extractor import extract_text
+from chunker import chunk_text  # noqa: E402
+from pdf_extractor import extract_text  # noqa: E402
 
 DB_URL = os.getenv("DATABASE_URL", "postgresql://localhost/signal_alpha")
 

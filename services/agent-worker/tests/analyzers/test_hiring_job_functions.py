@@ -30,6 +30,36 @@ class ClassifyTests(unittest.TestCase):
         self.assertEqual(classify_job_function("품질관리"), "MANUFACTURING")
         self.assertEqual(classify_job_function("브랜드 마케터"), "MARKETING")
 
+    def test_ai_data_titles_are_not_swallowed_by_engineer(self):
+        # AI/ML/data titles get their own function instead of collapsing to ENGINEER.
+        self.assertEqual(classify_job_function("AI/머신러닝 연구원"), "DATA_AI")
+        self.assertEqual(classify_job_function("데이터 사이언티스트"), "DATA_AI")
+        self.assertEqual(classify_job_function("NLP 엔지니어"), "DATA_AI")
+        # A plain engineering title still maps to ENGINEER.
+        self.assertEqual(classify_job_function("HBM 설계 엔지니어"), "ENGINEER")
+
+    def test_cloud_and_infra_are_engineer(self):
+        self.assertEqual(classify_job_function("클라우드 아키텍트"), "ENGINEER")
+        self.assertEqual(classify_job_function("인프라 / DevOps 엔지니어"), "ENGINEER")
+
+    def test_creative_and_bio_research(self):
+        self.assertEqual(classify_job_function("음악 프로듀서"), "CREATIVE")
+        self.assertEqual(classify_job_function("A&R (Artist & Repertoire)"), "CREATIVE")
+        self.assertEqual(classify_job_function("드라마 프로듀서"), "CREATIVE")
+        self.assertEqual(classify_job_function("신약 임상 연구원"), "RESEARCH")
+
+    def test_research_role_beats_bare_dev_needle(self):
+        # A research ROLE must not be hijacked by the bare 개발 needle: "신약 개발 연구원"
+        # is a 연구원 (RESEARCH), not ENGINEER. Regression for the two-tier ENGINEER split.
+        self.assertEqual(classify_job_function("신약 개발 연구원"), "RESEARCH")
+        self.assertEqual(classify_job_function("선행 개발 연구원"), "RESEARCH")
+
+    def test_engineer_intent_preserved_over_research_words(self):
+        # The explicit 엔지니어 role still wins over research domain words, so we did NOT
+        # simply move RESEARCH ahead of ENGINEER: "선행개발 엔지니어" stays ENGINEER.
+        self.assertEqual(classify_job_function("선행개발 엔지니어"), "ENGINEER")
+        self.assertEqual(classify_job_function("연구소 플랫폼 엔지니어"), "ENGINEER")
+
     def test_unmatched_is_none(self):
         self.assertIsNone(classify_job_function("점성술사"))
         self.assertIsNone(classify_job_function(None))

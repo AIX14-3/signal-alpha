@@ -108,10 +108,14 @@ services:
     volumes:
       - ./services/agent-worker:/workspace/services/agent-worker
       - ./packages/data-access:/workspace/packages/data-access
+      # market-data(PSR 파생)는 analyzer가 소비하므로 마운트 + PYTHONPATH에 포함.
+      # 이미지엔 source가 COPY/설치되지 않으므로(agent-worker pyproject 미의존)
+      # 현재는 이 dev 바인드마운트로만 import 가능 — prod 사용 시 의존성 선언 필요.
+      - ./packages/market-data:/workspace/packages/market-data
     environment:
       SERVICE_NAME: analyzer
       DATABASE_URL: ${DATABASE_URL:-postgresql://signal_alpha:signal_alpha_password@postgres:5432/signal_alpha}
-      PYTHONPATH: /workspace/services/agent-worker:/workspace/packages/data-access
+      PYTHONPATH: /workspace/services/agent-worker:/workspace/packages/data-access:/workspace/packages/market-data
     command: >
       python run_analyzers.py --loop --interval-seconds ${ANALYZER_INTERVAL_SECONDS:-3600}
     depends_on:

@@ -1,6 +1,6 @@
 # Signal Alpha DART 수집기·분석기 상세 스펙
 
-> 기준일: 2026-06-12
+> 기준일: 2026-06-16
 > 대상: `services/agent-worker`의 DART 수집, 정규화, 분석 흐름
 > 목적: DART 관련 개발을 이어갈 때 코드와 DB, API, 운영 방식을 한 번에 파악하기 위한 상세 스펙
 
@@ -8,7 +8,7 @@
 
 ## 1. 범위와 원칙
 
-DART 모듈은 OpenDART 공시 데이터를 수집하고, 원문을 표준 이벤트로 정규화한 뒤, rule 기반 분석과 선택적 LLM 분석을 통해 `analysis_results`와 `agent_results`를 생성한다.
+DART 모듈은 OpenDART 공시 데이터를 수집하고, 원문을 표준 이벤트로 정규화한 뒤, LangGraph 기반 DART 분석 graph를 통해 rule 기반 분석과 선택적 LLM 분석을 실행하여 `analysis_results`와 `agent_results`를 생성한다.
 
 현재 DART 흐름은 세 개의 큐 작업으로 분리된다.
 
@@ -26,6 +26,7 @@ collect_dart
 - 수집기는 OpenDART API 호출과 원천 저장까지만 담당한다.
 - 정규화기는 원문을 `source_documents`, `signal_events`, `signal_metrics`로 변환한다.
 - 분석기는 `signal_events`만 읽어 방향성, 점수, 리스크 플래그를 만든다.
+- `analyze_dart`는 LangGraph runner를 통해 입력 검증, 분석 실행, 출력 검증을 분리한다.
 - LLM은 기본값으로 꺼져 있으며, 활성화하더라도 고임팩트 공시 위주로 선택 적용한다.
 - 투자 추천 문구를 만들지 않고, 공시 기반 정보 방향성과 추가 검토 필요 여부만 제공한다.
 
@@ -43,6 +44,8 @@ collect_dart
 | 분류 룰 | `services/agent-worker/app/analyzers/dart/rules.py` | 공시 제목 기반 event type, direction, impact 분류 |
 | rule 분석 | `services/agent-worker/app/analyzers/dart/source_result.py` | 이벤트 묶음의 방향성, 점수, 리스크 산출 |
 | LLM 분석 | `services/agent-worker/app/analyzers/dart/llm.py` | Gemini/OpenAI 선택 분석, JSON 검증, fallback |
+| DART Source Agent | `services/agent-worker/app/agents/dart/agent.py` | Source Agent 계약 기반 rule/LLM 분석 결과 생성 |
+| DART LangGraph runner | `services/agent-worker/app/agents/dart/graph.py` | 입력 검증, DART Agent 호출, 출력 메타데이터 보강 |
 | 재무 지표 추출 | `services/agent-worker/app/analyzers/dart/financials.py` | 공시 텍스트에서 매출/영업이익/순이익 수치 추출 |
 | API 라우터 | `services/agent-worker/app/api/routes/dart.py` | DART 조회, E2E 실행, corp code sync |
 
@@ -269,6 +272,22 @@ sha256("DART|{stock_code}|{receipt_no}|{report_name}")
 
 `source_signal_event_ids`가 없으면 분석은 실행하지 않고 `skipped_reason='source_signal_event_ids_required'`를 반환한다.
 
+### LangGraph 실행 흐름
+
+`DartAnalyzeTaskHandler`는 DB에서 `signal_events`를 조회한 뒤 `SourceAgentInput`을 만들고 `DartAnalysisGraphAgent`를 호출한다. Graph는 다음 node로 구성된다.
+
+```text
+validate_input
+  -> analyze
+  -> validate_output
+```
+
+| node | 책임 |
+|---|---|
+| `validate_input` | `source='DART'`, `stock_code`, events 입력을 검증한다. 실패 시 `data_status='failed'`, `analysis_source='graph_validation'` 결과를 반환한다. |
+| `analyze` | 기존 `DartAnalysisAgent`를 호출해 rule 기반 분석 또는 선택적 LLM 분석을 실행한다. |
+| `validate_output` | `method_detail.graph='dart_analysis_v1'`, `method_detail.graph_nodes`를 추가한다. |
+
 ### rule 기반 분석
 
 `build_dart_analysis_result()`는 이벤트 목록을 기준으로 다음 값을 산출한다.
@@ -312,6 +331,8 @@ LLM 성공 시 `agent_results.method_detail`에는 rule detail에 더해 다음 
 - `llm_confidence`
 - `key_facts`
 - `data_status='partial'` 또는 `ok`
+- `graph='dart_analysis_v1'`
+- `graph_nodes=['validate_input', 'analyze', 'validate_output']`
 
 fallback 시 `analysis_source='rules_fallback'`, `llm_error`가 저장된다.
 
@@ -325,6 +346,8 @@ fallback 시 `analysis_source='rules_fallback'`, `llm_error`가 저장된다.
 | `agent_results` | `debate_method='D-1'`, `method_score`, `method_signal`, `method_detail`, `reliability_score=90`, `evidence_quality`, `llm_model`, `prompt_ver` |
 
 `analysis_date`는 이벤트 날짜 중 최신값을 사용한다. 이벤트 날짜가 없으면 task context의 `analysis_date` 또는 실행일을 사용한다.
+
+`agent_results.method_detail`에는 DART graph 실행 경로를 확인할 수 있도록 `graph`와 `graph_nodes`가 포함된다.
 
 ---
 
@@ -462,6 +485,7 @@ curl "http://localhost:8011/internal/dart/analysis-results?stock_code=005930&lim
 - 공시명 분류 룰
 - event hash 안정성
 - rule 기반 DART analysis score/direction/risk flag
+- DART LangGraph runner 입력 검증, rule/LLM 경로, graph 메타데이터
 - LLM JSON 파싱, 금지 문구 차단, fallback
 - 재무 지표 정규식 추출
 

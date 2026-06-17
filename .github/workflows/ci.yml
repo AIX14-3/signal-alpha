@@ -1,0 +1,116 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  python:
+    name: Python lint & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install Python (from .python-version)
+        run: uv python install
+
+      - name: Sync dependencies
+        run: uv sync --all-packages --group dev
+
+      - name: Ruff lint
+        run: uv run ruff check .
+
+      # 워크스페이스 멤버는 각자 app 패키지를 PYTHONPATH 루트로 갖기 때문에
+      # 루트 일괄 실행 시 모듈명이 충돌한다. AGENTS.md대로 패키지별로 실행한다.
+      - name: Pytest - main-server
+        run: uv run pytest
+        working-directory: services/main-server
+
+      - name: Pytest - agent-worker
+        run: uv run pytest
+        working-directory: services/agent-worker
+
+      - name: Pytest - data-access
+        run: uv run pytest
+        working-directory: packages/data-access
+
+      - name: Pytest - signal-core
+        run: uv run pytest
+        working-directory: packages/signal-core
+
+      - name: Pytest - market-data
+        run: uv run pytest
+        working-directory: packages/market-data
+
+  web:
+    name: Web typecheck, build & test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck (tsc --noEmit)
+        run: npm run lint
+
+      - name: Build (next build)
+        run: npm run build
+
+      - name: Test
+        run: npm test
+
+  migrations:
+    name: Migration smoke test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: signal_alpha
+          POSTGRES_USER: signal_alpha
+          POSTGRES_PASSWORD: signal_alpha_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U signal_alpha -d signal_alpha"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://signal_alpha:signal_alpha_password@localhost:5432/signal_alpha
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install Python (from .python-version)
+        run: uv python install
+
+      - name: Sync dependencies
+        run: uv sync --all-packages --group dev
+
+      - name: Apply migrations and seeds
+        run: uv run python database/migrate.py apply --seeds
+
+      - name: Show migration status
+        run: uv run python database/migrate.py status

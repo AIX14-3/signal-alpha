@@ -4,12 +4,16 @@ from typing import Any
 
 from app.core.config import get_settings
 from app.orchestrator.queue.task_types import (
+    ANALYZE_ALTERNATIVE,
     ANALYZE_DART,
     ANALYZE_REPORT,
     COLLECT_DART,
     COLLECT_REPORT,
     EMBED_REPORT,
     NORMALIZE_DART,
+    NORMALIZE_DATALAB,
+    NORMALIZE_HIRING,
+    NORMALIZE_PATENT,
     PROCESS_REPORT,
 )
 from app.orchestrator.queue.tasks import TaskHandler
@@ -17,6 +21,12 @@ from app.orchestrator.queue.tasks import TaskHandler
 
 def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
     from app.analyzers.dart.llm import DartLlmAnalyzer, GeminiGenerateContentClient, OpenAiChatClient
+    from app.orchestrator.alternative.tasks import (
+        AlternativeAnalyzeTaskHandler,
+        DataLabNormalizeTaskHandler,
+        HiringNormalizeTaskHandler,
+        PatentNormalizeTaskHandler,
+    )
     from app.orchestrator.dart.tasks import (
         DartAnalyzeTaskHandler,
         DartCollectionTaskHandler,
@@ -87,4 +97,9 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
             llm_client=report_llm_client,
             llm_model=report_llm_model,
         ),
+        # Alternative sources (hiring/patent/datalab) — converged onto the queue.
+        NORMALIZE_HIRING: HiringNormalizeTaskHandler(connection),
+        NORMALIZE_PATENT: PatentNormalizeTaskHandler(connection),
+        NORMALIZE_DATALAB: DataLabNormalizeTaskHandler(connection),
+        ANALYZE_ALTERNATIVE: AlternativeAnalyzeTaskHandler(connection),
     }

@@ -59,6 +59,71 @@ class NormalizationRepository:
             is_official,
         )
 
+    async def upsert_external_source_document(
+        self,
+        *,
+        external_ref_type: str,
+        external_ref_id: int,
+        stock_id: int,
+        source_type: str,
+        source_name: str,
+        title: str,
+        source_url: str | None,
+        published_at: Any,
+        collected_at: Any,
+        reliability_level: str = "medium",
+        is_official: bool = False,
+    ) -> Any:
+        """Upsert a source_document anchored to raw that lives outside raw_documents.
+
+        For sources whose raw is not in ``raw_documents`` (DataLab now; future
+        non-raw_documents sources later). ``raw_document_id`` stays NULL and the
+        anchor is the generic ``(external_ref_type, external_ref_id)`` pair — see
+        ``004_datalab_source_anchor.sql``. One observation fans out to N stocks,
+        so the conflict key is ``(external_ref_type, external_ref_id, stock_id)``
+        (the ``uq_source_doc_external`` partial unique index) for rerun idempotency.
+        """
+        return await self._connection.fetchrow(
+            """
+            INSERT INTO source_documents (
+                external_ref_type,
+                external_ref_id,
+                stock_id,
+                source_type,
+                source_name,
+                title,
+                source_url,
+                published_at,
+                collected_at,
+                reliability_level,
+                is_official
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            ON CONFLICT (external_ref_type, external_ref_id, stock_id)
+                WHERE external_ref_type IS NOT NULL
+            DO UPDATE SET
+                source_name = EXCLUDED.source_name,
+                title = EXCLUDED.title,
+                source_url = EXCLUDED.source_url,
+                published_at = EXCLUDED.published_at,
+                collected_at = EXCLUDED.collected_at,
+                reliability_level = EXCLUDED.reliability_level,
+                is_official = EXCLUDED.is_official
+            RETURNING *
+            """,
+            external_ref_type,
+            external_ref_id,
+            stock_id,
+            source_type,
+            source_name,
+            title,
+            source_url,
+            published_at,
+            collected_at,
+            reliability_level,
+            is_official,
+        )
+
     async def upsert_signal_event(
         self,
         *,

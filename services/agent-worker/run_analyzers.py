@@ -1,12 +1,15 @@
-"""Run the Patent/DataLab analyzers and persist AlternativeSignals.
+"""Drive the Alternative (hiring/patent/datalab) analysis via the queue (#117).
 
 No stock ids, tickers, weights, or windows are hardcoded: targets come from the
-database (stocks that have patent or datalab raw rows), and every threshold comes
-from env via the analyzer config dataclasses.
+database (stocks that have hiring/patent/datalab raw rows), and every threshold
+comes from env via the analyzer config dataclasses.
 
-Performance loops:
-  ① per stock — registered source analyzers run concurrently (AlternativeAgent).
-  ② per batch — stocks are processed concurrently under a Semaphore cap.
+Queue-based flow:
+  ① discover target stocks (fetch_target_stocks) and enqueue one deduped
+     ANALYZE_ALTERNATIVE task per stock (as_of = today, YYYY-MM-DD).
+  ② drain the queue with QueueTaskRunner across ``batch_concurrency`` workers;
+     each task runs AlternativeAnalyzeTaskHandler (the same loaders/analyzers/
+     aggregator/persistence as before — collectors now feed the same path).
 """
 from __future__ import annotations
 
@@ -28,8 +31,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "packages" / "data-
 from app.aggregator import AlternativeAggregator
 from app.analyzers.config import AggregatorConfig, AnalyzerRuntimeConfig
 from app.analyzers.registry import build_registry
-from app.orchestrator.alternative_agent import AlternativeAgent
-from app.orchestrator.alternative_persistence import AlternativeSignalPersistence
+from app.orchestrator.alternative.tasks import (
+    AlternativeAnalyzeTaskHandler,
+    analysis_task_context,
+)
+from app.orchestrator.queue.task_types import ANALYZE_ALTERNATIVE
+from app.orchestrator.queue.tasks import QueueTaskRunner
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -60,6 +67,18 @@ def parse_dsn(dsn: str) -> dict[str, Any]:
         "port": int(match.group("port")),
         "database": match.group("db"),
     }
+
+
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "postgres"}
+
+
+def resolve_ssl(host: str) -> Any:
+    """SSL mode for asyncpg: managed Postgres (Supabase) needs 'require'; a local
+    Docker Postgres rejects SSL. Default by host; ``DB_SSL`` env overrides."""
+    override = os.getenv("DB_SSL")
+    if override:
+        return False if override.lower() in {"disable", "off", "false", "0", "no"} else override
+    return False if host in _LOCAL_HOSTS else "require"
 
 
 def _since(value: str | None) -> date | None:
@@ -133,25 +152,38 @@ async def run_once(args: argparse.Namespace) -> None:
     if not registrations:
         raise RuntimeError("No source selected (check --hiring-only/--patent-only/--datalab-only).")
 
-    agent = AlternativeAgent(
-        registrations=registrations,
-        aggregator=AlternativeAggregator(AggregatorConfig.from_env()),
-    )
+    # Queue-based: this driver enqueues one deduped ANALYZE_ALTERNATIVE per target
+    # stock, then drains the queue with QueueTaskRunner. The analysis itself lives
+    # in AlternativeAnalyzeTaskHandler (same loaders/analyzers/aggregator as before),
+    # so collectors and this driver feed the *same* queue path (#117).
+    from signal_alpha_data_access.repositories import ProcessingQueueRepository
+
+    aggregator = AlternativeAggregator(AggregatorConfig.from_env())
 
     pool_max = max(
         int(os.getenv("ANALYZER_DB_POOL_MAX", "0")) or 0,
         runtime.batch_concurrency * 2 + 2,
     )
+    params = parse_dsn(dsn)
     pool = await asyncpg.create_pool(
-        **parse_dsn(dsn),
+        **params,
         min_size=1,
         max_size=pool_max,
-        ssl="require",
+        ssl=resolve_ssl(params["host"]),
         statement_cache_size=0,
     )
     as_of = date.today()
+    as_of_str = as_of.isoformat()  # stable YYYY-MM-DD dedupe key
     summary = {"processed": 0, "published": 0, "no_data": 0, "error": 0}
-    semaphore = asyncio.Semaphore(runtime.batch_concurrency)
+
+    def _build_runner(conn: Any) -> QueueTaskRunner:
+        handler = AlternativeAnalyzeTaskHandler(
+            conn,
+            registrations=registrations,
+            aggregator=aggregator,
+            runtime_config=runtime,
+        )
+        return QueueTaskRunner(conn, {ANALYZE_ALTERNATIVE: handler})
 
     try:
         async with pool.acquire() as conn:
@@ -162,53 +194,57 @@ async def run_once(args: argparse.Namespace) -> None:
                 since=_since(args.since),
                 limit=args.limit,
             )
+            queue_repository = ProcessingQueueRepository(conn)
+            for target in targets:
+                await queue_repository.enqueue(
+                    stock_id=int(target["stock_id"]),
+                    task_type=ANALYZE_ALTERNATIVE,
+                    priority="batch",
+                    # Canonical key (as_of only) so this dedupes against the
+                    # normalize-side producer; the handler resolves ticker from
+                    # stock_id. Including stock_code here would defeat dedupe.
+                    task_context=analysis_task_context(as_of_str),
+                    dedupe=True,
+                )
 
         print("\nALTERNATIVE ANALYZER")
         print("=" * 60)
         print(f"targets={len(targets)} sources={sorted(wanted)} concurrency={runtime.batch_concurrency}")
 
-        async def process(target: dict[str, Any]) -> None:
-            async with semaphore:
-                stock_id = target["stock_id"]
-                stock_code = target["ticker"]
-                try:
-                    signal = await agent.run(
-                        pool=pool,
-                        stock_id=stock_id,
-                        stock_code=stock_code,
-                        as_of=as_of,
-                    )
-                    async with pool.acquire() as conn:
-                        async with conn.transaction():
-                            persistence = AlternativeSignalPersistence(
-                                conn,
-                                registrations=registrations,
-                                runtime_config=runtime,
-                            )
-                            ids = await persistence.save(
-                                stock_id=stock_id,
-                                signal=signal,
-                                analysis_date=as_of,
-                                publish_final_signal=True,
-                            )
+        async def drain_worker() -> None:
+            while True:
+                async with pool.acquire() as conn:
+                    result = await _build_runner(conn).run_task(ANALYZE_ALTERNATIVE)
+                status = result["status"]
+                if status == "idle":
+                    return
+                if status == "success":
+                    payload = result.get("result") or {}
                     summary["processed"] += 1
-                    if signal.available_sources:
+                    if payload.get("available_sources"):
                         summary["published"] += 1
                     else:
                         summary["no_data"] += 1
                     print(
-                        f"  {stock_code} {target['name']}: {signal.direction} "
-                        f"{signal.score:+.3f} agree={signal.source_agreement} "
-                        f"avail={signal.available_sources} final={ids['final_signal_id']}"
+                        f"  stock_id={payload.get('stock_id')}: {payload.get('direction')} "
+                        f"{float(payload.get('score') or 0.0):+.3f} "
+                        f"avail={payload.get('available_sources')} final={payload.get('final_signal_id')}"
                     )
-                except Exception as exc:  # isolate one stock's failure
+                else:  # failed/skipped — isolate and keep draining
                     summary["error"] += 1
-                    print(f"  {stock_code} {target['name']}: ERROR {exc}")
+                    print(f"  task_id={result.get('task_id')}: {status} {result.get('error', '')}")
 
-        await asyncio.gather(*[process(target) for target in targets])
+        await asyncio.gather(*[drain_worker() for _ in range(max(1, runtime.batch_concurrency))])
 
         print("-" * 60)
         print(f"SUMMARY {summary}")
+        attempted = summary["processed"] + summary["error"]
+        success_rate = (summary["processed"] / attempted * 100) if attempted else 0.0
+        print(
+            f"📊 분석 성공률 {success_rate:.1f}% "
+            f"(성공 {summary['processed']} / 시도 {attempted} · "
+            f"신호발행 {summary['published']} · 데이터없음 {summary['no_data']} · 오류 {summary['error']})"
+        )
     finally:
         await pool.close()
 

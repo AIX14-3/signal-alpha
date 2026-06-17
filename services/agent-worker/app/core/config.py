@@ -24,6 +24,19 @@ class Settings:
         self.dart_fetch_documents = _env_bool("DART_FETCH_DOCUMENTS", default=True)
         self.dart_max_retries = int(getenv("DART_MAX_RETRIES", "2"))
         self.dart_retry_backoff_seconds = float(getenv("DART_RETRY_BACKOFF_SECONDS", "0.5"))
+        # ── L1 정형 재무 수집 (fnlttSinglAcntAll → dart_financial_facts) ──
+        self.dart_financials_lookback_years = int(getenv("DART_FINANCIALS_LOOKBACK_YEARS", "3"))
+        self.dart_financials_reprt_codes = _env_list(
+            "DART_FINANCIALS_REPRT_CODES",
+            default=["11011", "11012", "11013", "11014"],
+        )
+        self.dart_financials_fs_priority = _env_list(
+            "DART_FINANCIALS_FS_PRIORITY", default=["CFS", "OFS"]
+        )
+        # OpenDART 분당 호출 제한 대비 요청 간 최소 간격(초).
+        self.dart_financials_min_request_interval_sec = float(
+            getenv("DART_FINANCIALS_MIN_REQUEST_INTERVAL_SEC", "0.2")
+        )
         self.dart_use_llm = _env_bool("DART_USE_LLM", default=False)
         self.dart_llm_high_impact_only = _env_bool("DART_LLM_HIGH_IMPACT_ONLY", default=True)
         self.dart_llm_provider = getenv("DART_LLM_PROVIDER", "gemini").strip().lower()
@@ -52,6 +65,34 @@ class Settings:
         self.naver_client_id = getenv("NAVER_CLIENT_ID", "")
         self.naver_client_secret = getenv("NAVER_CLIENT_SECRET", "")
         self.naver_datalab_timeout_seconds = int(getenv("NAVER_DATALAB_TIMEOUT_SECONDS", "15"))
+
+        # ── Hiring 크롤러 resilience (공용 fetch 헬퍼: sites/http.py) ──
+        # 일시적 timeout·5xx·커넥션오류를 지수 백오프로 재시도한다(4xx는 비재시도).
+        self.hiring_timeout_seconds = float(getenv("HIRING_TIMEOUT_SECONDS", "10"))
+        self.hiring_max_retries = int(getenv("HIRING_MAX_RETRIES", "2"))
+        self.hiring_retry_backoff_seconds = float(getenv("HIRING_RETRY_BACKOFF_SECONDS", "0.5"))
+
+        # ── SEC EDGAR (해외/미국 공시 수집) ──
+        # SEC는 연락처가 담긴 User-Agent를 요구한다(없으면 차단). 운영 시 팀 공용 주소로 교체.
+        self.sec_user_agent = getenv(
+            "SEC_USER_AGENT", "signal-alpha (contact: biop99999@gmail.com)"
+        )
+        self.sec_base_url = getenv("SEC_BASE_URL", "https://data.sec.gov").rstrip("/")
+        self.sec_ticker_map_url = getenv(
+            "SEC_TICKER_MAP_URL", "https://www.sec.gov/files/company_tickers.json"
+        )
+        self.sec_timeout_seconds = float(getenv("SEC_TIMEOUT_SECONDS", "15"))
+        # SEC fair-access(~10 req/s) 준수를 위한 요청 간 최소 간격.
+        self.sec_min_request_interval_sec = float(getenv("SEC_MIN_REQUEST_INTERVAL_SEC", "0.2"))
+        self.sec_max_retries = int(getenv("SEC_MAX_RETRIES", "2"))
+        # 수집 대상 폼 화이트리스트(쉼표 구분). 빈 값이면 전체 폼.
+        self.sec_form_whitelist = _env_list(
+            "SEC_FORM_WHITELIST",
+            default=["8-K", "10-K", "10-Q", "4", "SC 13D", "SC 13G", "20-F", "6-K"],
+        )
+        # 수집 대상 기업(티커, 쉼표 구분). 빈 값이면 collectors/sec/targets.py의
+        # 기본 유니버스(AI 선도주 보드)를 사용한다. 나중에 DB로 옮길 수 있다.
+        self.sec_target_tickers = _env_list("SEC_TARGET_TICKERS", default=[])
 
         # ── Realtime price collector (Kiwoom REST, agent-worker 내장 데몬) ──
         self.price_collector_enabled = _env_bool("PRICE_COLLECTOR_ENABLED", default=True)
@@ -88,3 +129,10 @@ def _env_bool(name: str, *, default: bool) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _env_list(name: str, *, default: list[str]) -> list[str]:
+    value = getenv(name)
+    if value is None:
+        return list(default)
+    return [item.strip() for item in value.split(",") if item.strip()]

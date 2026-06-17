@@ -216,6 +216,9 @@ class DartAnalyzeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(agent_call[2][2], "D-1")
         self.assertEqual(agent_call[2][5], "neutral")
         self.assertEqual(agent_call[2][10], "dart-rules-v1")
+        method_detail = json.loads(agent_call[2][6])
+        self.assertEqual(method_detail["graph"], "dart_analysis_v1")
+        self.assertEqual(method_detail["graph_nodes"], ["validate_input", "analyze", "validate_output"])
 
     async def test_handler_uses_llm_for_high_impact_dart_event(self):
         connection = FakeConnection(

@@ -41,6 +41,93 @@ class RawDetailRepository:
             raw_document_ids,
         )
 
+    async def list_hiring_details_by_raw_ids(self, raw_document_ids: list[int]) -> list[Any]:
+        """Hiring detail rows joined to their raw_documents, for the Normalizer.
+
+        Mirrors ``list_dart_documents_by_raw_ids``: the normalize handler reads the
+        rows the collector just enqueued (by ``source_raw_ids``) and converts each
+        into a ``source_document`` + ``signal_event``.
+        """
+        if not raw_document_ids:
+            return []
+
+        return await self._connection.fetch(
+            """
+            SELECT
+                raw_documents.id AS raw_document_id,
+                raw_documents.stock_id,
+                raw_documents.source_type,
+                raw_documents.source_name,
+                raw_documents.external_id,
+                raw_documents.title,
+                raw_documents.source_url,
+                raw_documents.published_at,
+                raw_documents.collected_at,
+                h.keyword,
+                h.job_category,
+                h.job_count,
+                h.previous_job_count,
+                h.change_pct,
+                h.extra_payload
+            FROM hiring_raw_details h
+            INNER JOIN raw_documents
+                ON raw_documents.id = h.raw_document_id
+            WHERE h.raw_document_id = ANY($1::BIGINT[])
+            ORDER BY raw_documents.published_at DESC, raw_documents.id DESC
+            """,
+            raw_document_ids,
+        )
+
+    async def list_patent_details_by_raw_ids(self, raw_document_ids: list[int]) -> list[Any]:
+        """Patent detail rows joined to their raw_documents, for the Normalizer."""
+        if not raw_document_ids:
+            return []
+
+        return await self._connection.fetch(
+            """
+            SELECT
+                raw_documents.id AS raw_document_id,
+                raw_documents.stock_id,
+                raw_documents.source_type,
+                raw_documents.source_name,
+                raw_documents.title,
+                raw_documents.source_url,
+                raw_documents.published_at,
+                raw_documents.collected_at,
+                p.application_no,
+                p.patent_title,
+                p.applicant_name,
+                p.application_date,
+                p.tech_category,
+                p.is_new_category,
+                p.extra_payload
+            FROM patent_raw_details p
+            INNER JOIN raw_documents
+                ON raw_documents.id = p.raw_document_id
+            WHERE p.raw_document_id = ANY($1::BIGINT[])
+            ORDER BY raw_documents.published_at DESC, raw_documents.id DESC
+            """,
+            raw_document_ids,
+        )
+
+    async def list_stocks_for_datalab_category(self, category_id: int) -> list[Any]:
+        """Active stock_ids mapped to a DataLab category (datalab_category_stocks).
+
+        DataLab raw has no ``raw_documents``/``stock_id`` anchor, so the route
+        handler resolves category → stock here to enqueue per-stock analysis.
+        """
+        return await self._connection.fetch(
+            """
+            SELECT dcs.stock_id, dcs.weight
+            FROM datalab_category_stocks dcs
+            INNER JOIN stocks s ON s.id = dcs.stock_id
+            WHERE dcs.category_id = $1
+              AND s.is_active = TRUE
+            ORDER BY dcs.stock_id
+            """,
+            category_id,
+        )
+
     async def list_patent_details_by_stock(
         self,
         *,
@@ -264,7 +351,9 @@ class RawDetailRepository:
                 d.age_group,
                 d.is_spike,
                 d.extra_payload,
-                COALESCE(dck.polarity, 'demand') AS polarity
+                COALESCE(dck.polarity, 'demand') AS polarity,
+                COALESCE(dck.polarity_source, 'default') AS polarity_source,
+                dck.polarity_model AS polarity_model
             FROM datalab_raw_details d
             LEFT JOIN datalab_category_keywords dck
                 ON dck.category_id = d.category_id AND dck.keyword = d.keyword
@@ -274,6 +363,56 @@ class RawDetailRepository:
             """,
             category_ids,
             since_date,
+        )
+
+    async def list_datalab_details_by_raw_ids(
+        self, raw_document_ids: list[int]
+    ) -> list[Any]:
+        """DataLab detail rows + their datalab_raw_documents meta, by raw id.
+
+        Mirrors ``list_hiring_details_by_raw_ids``/``list_patent_details_by_raw_ids``
+        for the Normalizer: the NORMALIZE_DATALAB handler reads the datalab raw the
+        collector enqueued (``source_raw_ids`` = ``datalab_raw_documents.id``) and
+        converts each observation into source_documents/signal_events per mapped
+        stock. ``polarity`` (demand|risk) is joined from datalab_category_keywords
+        so per-event direction is polarity-aware. Note the anchor table is
+        ``datalab_raw_documents`` (NOT ``raw_documents``).
+        """
+        if not raw_document_ids:
+            return []
+
+        return await self._connection.fetch(
+            """
+            SELECT
+                d.raw_document_id,
+                d.category_id,
+                d.keyword,
+                d.keyword_group,
+                d.observed_date,
+                d.search_index,
+                d.previous_search_index,
+                d.change_pct,
+                d.period_type,
+                d.device,
+                d.gender,
+                d.age_group,
+                d.is_spike,
+                d.extra_payload,
+                COALESCE(dck.polarity, 'demand') AS polarity,
+                doc.source_name,
+                doc.title,
+                doc.source_url,
+                doc.published_at,
+                doc.collected_at
+            FROM datalab_raw_details d
+            INNER JOIN datalab_raw_documents doc
+                ON doc.id = d.raw_document_id
+            LEFT JOIN datalab_category_keywords dck
+                ON dck.category_id = d.category_id AND dck.keyword = d.keyword
+            WHERE d.raw_document_id = ANY($1::BIGINT[])
+            ORDER BY d.observed_date DESC, d.raw_document_id DESC
+            """,
+            raw_document_ids,
         )
 
     async def upsert_dart_detail(
