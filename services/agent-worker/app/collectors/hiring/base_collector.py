@@ -48,6 +48,7 @@ import json
 import logging
 import zoneinfo
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
@@ -90,6 +91,19 @@ def get_target_companies(database_url: str) -> list[str]:
         return []
     finally:
         engine.dispose()
+
+
+@dataclass(frozen=True)
+class CollectorResult:
+    """크롤 결과 1건 — parse 대상 data + 격리용 원본 payload(선택) (Phase 4).
+
+    하이브리드 점진 전환용 그릇. 크롤러가 dict 를 반환하면(legacy) raw_payload 가
+    없고, CollectorResult 를 반환하면(new) 격리 시 원본 HTML/JSON 을 보존해
+    selector 수정 후 replay-reparse(유실 제로 backfill)가 가능해진다.
+    """
+    data: dict
+    raw_payload: str | None = None   # 원본 HTML/JSON. legacy 크롤러는 None.
+    source_label: str | None = None  # replay-reparse 파서 매핑용(없으면 data['source_type'])
 
 
 class _SkipRecord(Exception):
@@ -400,10 +414,53 @@ class BaseCollector(ABC):
         logger.info("✓ [%s] %s",
                     self._clean_company_name(data["company_name"]), data.get("job_title"))
 
+    # ── 격리 (Phase 4) ──────────────────────────────────────────────────────────
+    def _quarantine_record(
+        self, db, run_id: int | None, data: dict, raw_payload: str | None, reason: str
+    ) -> None:
+        """failed 로 거부/오류난 크롤 레코드를 hiring_quarantine 에 격리(best-effort).
+
+        격리 INSERT 자체도 savepoint(begin_nested)로 감싼다 — 격리가 또 실패해도
+        (payload 직렬화 등) 메인 트랜잭션·마지막 단일 commit 을 오염시키지 않는다.
+        격리 실패는 로깅만 하고 수집 루프는 계속한다. 호출부는 트랜잭션이 usable
+        상태(게이트=savepoint 진입 전, 오류=savepoint 자동 롤백 후)임을 보장한다.
+
+        raw_payload 는 크롤러가 CollectorResult 로 원본을 실어 보낼 때만 채워지고,
+        legacy(dict 반환) 크롤러는 NULL 이다(replay-data 는 record_payload 로 가능).
+        """
+        try:
+            with db.begin_nested():
+                db.execute(
+                    text("""
+                        INSERT INTO hiring_quarantine (
+                            collector_run_id, source_type, source_label, company_name,
+                            violation_reason, record_payload, raw_payload
+                        )
+                        VALUES (
+                            :run_id, :stype, :label, :company,
+                            :reason, :payload ::jsonb, :raw
+                        )
+                    """),
+                    {
+                        "run_id": run_id,
+                        "stype": self.SOURCE_TYPE,
+                        "label": data.get("source_type"),
+                        "company": data.get("company_name"),
+                        "reason": reason[:200],
+                        "payload": json.dumps(data, ensure_ascii=False, default=str),
+                        "raw": raw_payload,
+                    },
+                )
+        except Exception as q_exc:
+            logger.warning("⚠️  격리 INSERT 실패(무시): %s", q_exc)
+
     # ── 전체 적재 ──────────────────────────────────────────────────────────────
-    def insert_to_db(self, parsed_data_list: list[dict]) -> int:
+    def insert_to_db(self, parsed_data_list: list) -> int:
         """
         파싱 리스트 → DB 적재. Savepoint 격리 + 마지막 단일 commit.
+
+        항목은 dict(legacy) 또는 (dict, raw_payload) 튜플(하이브리드, Phase 4)이다.
+        failed 로 거부/오류난 레코드는 hiring_quarantine 에 격리한다(유실 방지).
 
         Returns:
             inserted_count (신규 적재 건수)
@@ -417,7 +474,9 @@ class BaseCollector(ABC):
             run_id = self._create_collector_run(db)
             db.commit()
 
-            for data in parsed_data_list:
+            for item in parsed_data_list:
+                # 하이브리드: (dict, raw_payload) 튜플 또는 dict(raw 없음) 정규화.
+                data, raw_payload = item if isinstance(item, tuple) else (item, None)
                 # ── 입력 검증 게이트: DB(savepoint) 진입 전 빈/깨진 레코드 거부 ──
                 #    무효 레코드는 데이터 품질 결함이므로 failed 로 집계(중복/미등록
                 #    benign skip 과 구분) → run status 가 partial/failed 로 떠 모니터링에
@@ -430,6 +489,8 @@ class BaseCollector(ABC):
                         reason, data.get("company_name"), data.get("job_title"),
                         data.get("job_link") or data.get("source_url"),
                     )
+                    # 게이트는 savepoint 진입 전 → 트랜잭션 정상 상태에서 격리(Phase 4).
+                    self._quarantine_record(db, run_id, data, raw_payload, reason)
                     continue
                 try:
                     # ── Savepoint: 이 한 건만 격리 ──
@@ -441,6 +502,12 @@ class BaseCollector(ABC):
                 except Exception as exc:    # 진짜 오류
                     failed += 1
                     logger.error("❌ %s: %s", data.get("company_name"), exc)
+                    # _insert_one 의 SQL 오류는 begin_nested savepoint 가 자동 롤백 →
+                    # 여기(except, savepoint 밖)선 트랜잭션이 usable 상태라 격리 안전
+                    # (PostgreSQL InFailedSqlTransaction 함정 방어).
+                    self._quarantine_record(
+                        db, run_id, data, raw_payload, f"_insert_one: {exc}"
+                    )
 
             # 모든 savepoint 처리 후 최종 상태 반영 + 단 1회 commit
             status = calculate_run_status(inserted, skipped, failed)
@@ -495,6 +562,12 @@ class BaseCollector(ABC):
 
         raw = self.collect(target_companies)
         logger.info("📊 %d건 파싱 중...", len(raw))
-        parsed = [self.parse(item) for item in raw]
+        # 하이브리드(Phase 4): collect()는 list[dict](legacy) 또는
+        # list[CollectorResult](new)를 반환한다. parse 는 .data 에 적용하고, 격리용
+        # 원본 payload 는 (parsed, raw_payload) 페어로 insert_to_db 까지 실어 보낸다.
+        pairs: list[tuple[dict, str | None]] = []
+        for item in raw:
+            result = item if isinstance(item, CollectorResult) else CollectorResult(data=item)
+            pairs.append((self.parse(result.data), result.raw_payload))
         logger.info("💾 DB 적재 중...")
-        return self.insert_to_db(parsed)
+        return self.insert_to_db(pairs)
