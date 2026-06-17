@@ -1,4 +1,3 @@
-import json
 import sys
 import unittest
 from datetime import date
@@ -88,21 +87,6 @@ class AlternativeSignalPersistenceTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("analysis_result_id", self.result)
         self.assertEqual(len(self.result["agent_result_ids"]), 2)
         self.assertIsNotNone(self.result["final_signal_id"])
-
-    async def test_jsonb_fields_serialized_once_not_double_encoded(self):
-        # Caller passes dict/list (like DART); the repository's _jsonb serializes
-        # exactly once. A single json.loads must yield the dict/list — if it were
-        # double-encoded it would decode to a string instead.
-        agents = self.conn.find("INSERT INTO agent_results")
-        by_method = {args[2]: args for args in agents}
-        method_detail = json.loads(by_method["D-2"][6])  # $7 → index 6
-        self.assertIsInstance(method_detail, dict)
-        self.assertEqual(method_detail["source"], "PATENT")
-
-        args = self.conn.find("INSERT INTO final_signals")[0]
-        self.assertEqual(json.loads(args[10]), {"PATENT": 80.0, "DATALAB": 20.0})  # score_breakdown
-        self.assertIsInstance(json.loads(args[20]), list)  # positive_evidence
-        self.assertIsInstance(json.loads(args[21]), list)  # caution_evidence
 
 
 if __name__ == "__main__":

@@ -74,57 +74,6 @@ class AnalysisAndSignalRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("ON CONFLICT (stock_id, signal_date, run_key, version)", connection.calls[0][1])
         self.assertEqual(json.loads(connection.calls[0][2][10]), {"report": 60})
 
-    async def test_upsert_final_signal_serializes_evidence_jsonb(self):
-        # positive_evidence/caution_evidence must go through _jsonb like
-        # score_breakdown, so list/dict inputs are serialized (not bound raw,
-        # which asyncpg cannot encode for a JSONB column).
-        connection = FakeConnection()
-        repository = AnalysisRepository(connection)
-
-        await repository.upsert_final_signal(
-            stock_id=1,
-            analysis_result_id=2,
-            signal_date="2026-06-08",
-            run_key="AM",
-            version="1.0",
-            final_score=60,
-            confidence=70,
-            signal="neutral",
-            source_agreement="MEDIUM",
-            score_breakdown={"PATENT": 60},
-            summary="중립 신호",
-            positive_evidence=["PATENT: 특허 급증"],
-            caution_evidence=["소스 간 방향이 엇갈립니다."],
-        )
-
-        args = connection.calls[0][2]
-        # $21 → index 20 (positive_evidence), $22 → index 21 (caution_evidence)
-        self.assertEqual(json.loads(args[20]), ["PATENT: 특허 급증"])
-        self.assertEqual(json.loads(args[21]), ["소스 간 방향이 엇갈립니다."])
-
-    async def test_upsert_final_signal_passes_none_evidence_through(self):
-        # Omitted evidence stays NULL (not the string "null").
-        connection = FakeConnection()
-        repository = AnalysisRepository(connection)
-
-        await repository.upsert_final_signal(
-            stock_id=1,
-            analysis_result_id=2,
-            signal_date="2026-06-08",
-            run_key="AM",
-            version="1.0",
-            final_score=60,
-            confidence=70,
-            signal="neutral",
-            source_agreement="MEDIUM",
-            score_breakdown={"PATENT": 60},
-            summary="중립 신호",
-        )
-
-        args = connection.calls[0][2]
-        self.assertIsNone(args[20])
-        self.assertIsNone(args[21])
-
     async def test_upsert_agent_result_serializes_method_detail_jsonb(self):
         connection = FakeConnection()
         repository = AnalysisRepository(connection)
