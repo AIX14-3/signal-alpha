@@ -1,0 +1,63 @@
+<!--
+  현대자동차 채용관(talent.hyundai.com/apply/applyList.hc) 발췌 픽스처.
+  diagnostics/HYUNDAI_RENDERED.html 의 React 렌더 결과에서 ul.apply__list 영역을
+  최외곽 컨테이너(div.apply__list_wrap)까지 조상 보존하여 발췌.
+  - li 2건은 실데이터(일반 공고, data-recucls=130 / 121)
+  - 3번째 li 는 그룹공고 분기 커버를 위해 class="group" + data-ntcgroupno 로 가공(실데이터엔 없음)
+-->
+<div class="apply__list_wrap">
+  <div class="inner__new">
+    <div class="list">
+      <div class="list__top">
+        <strong id="totTxt">총 <b>3</b>건의 채용공고가 진행 중입니다.</strong>
+      </div>
+      <div class="list">
+        <ul class="apply__list">
+          <li data-brand="hyun-02" data-recuyy="2026" data-recutype="N5" data-recucls="130"
+              data-ntcgroupno="0" data-recunoticenm="[계약직] 글로벌 임원 비서"
+              data-dispdday="D-1" data-dispdate="2026-06-15 09:00 ~ 2026-06-18 23:59"
+              data-scrap="N" class="">
+            <a href="javascript:void(0)">
+              <div class="top"><strong>[계약직] 글로벌 임원 비서</strong></div>
+              <div class="btm">
+                <span class="d__day">D-1</span>
+                <div class="tags">
+                  <span data-value="J0002" data-type="sec">#경영지원</span>
+                  <span data-value="K0014" data-type="fld">#비즈니스 지원</span>
+                </div>
+              </div>
+            </a>
+          </li>
+          <li data-brand="hyun-02" data-recuyy="2026" data-recutype="N5" data-recucls="121"
+              data-ntcgroupno="0" data-recunoticenm="[계약직] 임상병리사(울산공장)"
+              data-dispdday="D-2" data-dispdate="2026-06-12 08:00 ~ 2026-06-19 23:59"
+              data-scrap="N" class="">
+            <a href="javascript:void(0)">
+              <div class="top"><strong>[계약직] 임상병리사(울산공장)</strong></div>
+              <div class="btm">
+                <span class="d__day">D-2</span>
+                <div class="tags">
+                  <span data-value="790" data-type="sec">#기타</span>
+                </div>
+              </div>
+            </a>
+          </li>
+          <li data-brand="hyun-02" data-recuyy="2026" data-recutype="N1" data-recucls="200"
+              data-ntcgroupno="55" data-recunoticenm="[그룹공고] 2026 상반기 신입 통합채용"
+              data-dispdday="D-7" data-dispdate="2026-06-10 09:00 ~ 2026-06-24 23:59"
+              data-scrap="N" class="group">
+            <a href="javascript:void(0)">
+              <div class="top"><strong>[그룹공고] 2026 상반기 신입 통합채용</strong></div>
+              <div class="btm">
+                <span class="d__day">D-7</span>
+              </div>
+            </a>
+          </li>
+        </ul>
+        <article class="board-empty" style="display: none;">
+          <div class="message"><p>해당 조건에 대한 검색 결과가 없습니다.</p></div>
+        </article>
+      </div>
+    </div>
+  </div>
+</div>

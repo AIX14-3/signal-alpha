@@ -9,10 +9,13 @@ hyundai_kia.py
 from __future__ import annotations
 
 import logging
-import re
 import time
+from typing import TYPE_CHECKING
 
 from ..base_site import BaseSiteCrawler
+
+if TYPE_CHECKING:
+    from bs4.element import Tag
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +31,7 @@ _KIA_LIST = f"{_KIA_BASE}/job/jobs.kc"
 class HyundaiCrawler(BaseSiteCrawler):
     source_label = "HYUNDAI_CAREERS"
 
-    def crawl(self, company_name: str) -> list[dict]:
+    def crawl(self, company_name: str) -> list:
         from bs4 import BeautifulSoup
         from selenium.common.exceptions import TimeoutException
         from selenium.webdriver.common.by import By
@@ -36,9 +39,10 @@ class HyundaiCrawler(BaseSiteCrawler):
         self._safe_get(_HYUNDAI_LIST, wait_sec=3)
 
         try:
+            # 공고가 있으면 li, 비수기라 없으면 board-empty 둘 중 하나로 렌더 완료 판정
             self._wait_for(
                 By.CSS_SELECTOR,
-                "table.board-list, .apply-list tbody tr, .recruit-list li, [class*='apply-item'], table tbody tr",
+                "ul.apply__list > li, article.board-empty",
                 timeout=10,
             )
         except TimeoutException:
@@ -46,101 +50,66 @@ class HyundaiCrawler(BaseSiteCrawler):
             return []
 
         time.sleep(1.5)  # 비동기 데이터 렌더링 안정성을 위해 소폭 확장
-        soup = BeautifulSoup(self.driver.page_source, "html.parser")
-        return self._parse_hyundai(company_name, soup)
+        raw_html = self.driver.page_source
+        soup = BeautifulSoup(raw_html, "html.parser")
+        return self._parse_hyundai(company_name, soup, raw_html)
 
-    def _extract_hyundai_url(self, link_el) -> str | None:
-        """href나 onclick 속성에서 현대자동차 상세 페이지 이동 인자값을 추출하여 URL 완성."""
-        if not link_el:
-            return None
+    def _extract_hyundai_url(self, li_tag: Tag) -> str:
+        """공고 li 의 data-* 속성으로 상세 페이지 GET URL 을 조립(그룹/일반 분기)."""
+        ntc_group_no = (li_tag.get("data-ntcgroupno") or "").strip()
+        is_group = "group" in (li_tag.get("class") or []) or (
+            bool(ntc_group_no) and ntc_group_no != "0"
+        )
+        if is_group:
+            return f"{_HYUNDAI_BASE}/apply/applyGroupView.hc?ntcGroupNo={ntc_group_no}"
 
-        href = link_el.get("href", "")
-        onclick = link_el.get("onclick", "")
-        
-        # 1. 운 좋게 일반적인 텍스트 링크 구조로 풀 주소가 잡혀있을 경우
-        if "applyView.hc" in href:
-            return self.normalize_url(href, _HYUNDAI_BASE)
+        recu_yy = (li_tag.get("data-recuyy") or "").strip()
+        recu_type = (li_tag.get("data-recutype") or "").strip()
+        recu_cls = (li_tag.get("data-recucls") or "").strip()
+        return (
+            f"{_HYUNDAI_BASE}/apply/applyView.hc"
+            f"?recuYy={recu_yy}&recuType={recu_type}&recuCls={recu_cls}"
+        )
 
-        # 2. 자바스크립트 함수 호출 형태일 경우 (cURL 단서 기반 파싱 처리)
-        # 예: goView('2026', 'N4', '29') 또는 fn_view(2026, 'N4', 29) 등에서 따옴표 안의 값이나 숫자 추출
-        combined_str = f"{href} {onclick}"
-        
-        # 괄호 안의 인자값들만 추출하기 위한 정규식 (따옴표 제거 포함)
-        tokens = re.findall(r"['\"]?([a-zA-Z0-9_\-]+)['\"]?", combined_str)
-        
-        # 인자 중 연도 패턴(예: 2026)과 공고 유형 코드가 연속으로 감지되는 구간 파싱
-        for i in range(len(tokens) - 2):
-            # 첫 번째 토큰이 4자리 숫자(연도)이고 뒤이어 공고 분류 코드가 온다면 타겟으로 매칭
-            if tokens[i].isdigit() and len(tokens[i]) == 4:
-                recu_yy = tokens[i]
-                recu_type = tokens[i+1]
-                recu_cls = tokens[i+2]
-                
-                return f"{_HYUNDAI_BASE}/apply/applyView.hc?recuYy={recu_yy}&recuType={recu_type}&recuCls={recu_cls}"
-        
-        # 기본 폴백 처리
-        return self.normalize_url(href, _HYUNDAI_BASE) if href and "javascript" not in href else _HYUNDAI_LIST
+    def _parse_hyundai(self, company_name: str, soup, raw_html: str | None = None) -> list:
+        """현대자동차 React 채용관(apply__list) 목록 파싱.
 
-    def _parse_hyundai(self, company_name: str, soup) -> list[dict]:
-        """현대자동차 ATS 목록 파싱 (table / dl / li 다중 시도)."""
-        jobs: list[dict] = []
+        공고 데이터는 ``ul.apply__list > li`` 의 data-* 속성에 모두 들어있다.
+        각 건을 CollectorResult 로 감싸 raw_payload·source_label 을 보존한다(4b reparse 호환).
+        공고가 없으면(board-empty) 빈 리스트를 반환한다.
+        """
+        from ...base_collector import CollectorResult
 
-        # 시도 1: 테이블 행 기반 (<tr> with <a>)
-        rows = soup.select("table tbody tr, .board-list tr")
-        if rows:
-            for row in rows:
-                try:
-                    link_el = row.find("a")
-                    if not link_el:
-                        continue
-                    title = link_el.get_text(strip=True)
-                    if not title:
-                        continue
-                        
-                    # [수정] 자바스크립트 인자 추적 로직 적용
-                    url = self._extract_hyundai_url(link_el) or _HYUNDAI_LIST
-                    
-                    cells = row.find_all("td")
-                    deadline = cells[-1].get_text(strip=True) if len(cells) >= 3 else None
-                    jobs.append(self._make_record(company_name, title, url, closing_date=deadline))
-                except Exception as exc:
-                    logger.debug("현대자동차 table 파싱 오류: %s", exc)
+        jobs: list = []
+        for li in soup.select("ul.apply__list > li"):
+            try:
+                title = (li.get("data-recunoticenm") or "").strip()
+                if not title:
+                    strong = li.select_one("div.top strong")
+                    title = strong.get_text(strip=True) if strong else ""
+                if not title:
+                    continue
 
-        # 시도 2: dl/dt/dd 패턴
-        if not jobs:
-            for dl in soup.select("dl.apply-item, dl.recruit-item, .apply-list dl"):
-                try:
-                    link_el = dl.find("a")
-                    title_el = dl.find(["dt", "strong", "h4"])
-                    if not (link_el or title_el):
-                        continue
-                    title = (title_el or link_el).get_text(strip=True)
-                    
-                    # [수정] 자바스크립트 인자 추적 로직 적용
-                    url = self._extract_hyundai_url(link_el) or _HYUNDAI_LIST
-                    
-                    date_el = dl.find("dd", class_=lambda c: c and "date" in c.lower())
-                    deadline = date_el.get_text(strip=True) if date_el else None
-                    jobs.append(self._make_record(company_name, title, url, closing_date=deadline))
-                except Exception as exc:
-                    logger.debug("현대자동차 dl 파싱 오류: %s", exc)
+                url = self._extract_hyundai_url(li)
 
-        # 시도 3: 범용 li + a 패턴
-        if not jobs:
-            for li in soup.select("ul li, ol li"):
-                try:
-                    link_el = li.find("a")
-                    if not link_el:
-                        continue
-                    title = link_el.get_text(strip=True)
-                    if not title or len(title) < 4:
-                        continue
-                        
-                    # [수정] 자바스크립트 인자 추적 로직 적용
-                    url = self._extract_hyundai_url(link_el) or _HYUNDAI_LIST
-                    jobs.append(self._make_record(company_name, title, url))
-                except Exception:
-                    pass
+                # data-dispdate: "2026-06-15 09:00 ~ 2026-06-18 23:59" → 종료일 YYYY-MM-DD
+                disp_date = (li.get("data-dispdate") or "").strip()
+                if disp_date:
+                    deadline = disp_date.split("~")[-1].strip()[:10]
+                else:
+                    deadline = (li.get("data-dispdday") or "").strip() or None
+
+                jobs.append(
+                    CollectorResult(
+                        data=self._make_record(
+                            company_name, title, url, closing_date=deadline
+                        ),
+                        raw_payload=raw_html,
+                        source_label=self.source_label,
+                    )
+                )
+            except Exception as exc:
+                logger.debug("현대자동차 apply__list 파싱 오류: %s", exc)
 
         return jobs
 
