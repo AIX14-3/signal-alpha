@@ -128,6 +128,29 @@ class Settings:
         self.market_open = getenv("MARKET_OPEN", "09:00")
         self.market_close = getenv("MARKET_CLOSE", "15:30")
 
+        # ── Hiring 운영 알림 + self-healing 데몬 (Phase 5) ──
+        # collector_runs 통계 기반 임계 판정 → Discord Embed 알림. sweep/reconcile 자동화.
+        # 기본 off(price 데몬 관례). 단일 uvicorn 워커 전제(advisory lock으로 중복 기동 방지).
+        self.hiring_ops_daemon_enabled = _env_bool("HIRING_OPS_DAEMON_ENABLED", default=False)
+        # 빈 값이면 알림은 no-op(데몬은 sweep/reconcile만 수행).
+        self.discord_webhook_url = getenv("DISCORD_WEBHOOK_URL", "")
+        self.hiring_ops_interval_sec = float(getenv("HIRING_OPS_INTERVAL_SEC", "300"))
+        # 거부율(failed/collected) 임계 — 초과 run을 Discord로 알림.
+        self.hiring_alert_failure_rate_threshold = float(
+            getenv("HIRING_ALERT_FAILURE_RATE_THRESHOLD", "0.5")
+        )
+        self.hiring_ops_sweep_running_timeout_min = int(
+            getenv("HIRING_OPS_SWEEP_RUNNING_TIMEOUT_MIN", "30")
+        )
+        self.hiring_ops_sweep_retrying_timeout_min = int(
+            getenv("HIRING_OPS_SWEEP_RETRYING_TIMEOUT_MIN", "120")
+        )
+        self.hiring_ops_reconcile_limit = int(getenv("HIRING_OPS_RECONCILE_LIMIT", "100"))
+        # 알림 대상 collector_type(쉼표 구분). run별 임계 판정에 사용.
+        self.hiring_alert_collector_types = _env_list(
+            "HIRING_ALERT_COLLECTOR_TYPES", default=["HIRING"]
+        )
+
 
 @lru_cache
 def get_settings() -> Settings:
