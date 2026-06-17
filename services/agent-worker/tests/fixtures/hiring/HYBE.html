@@ -1,0 +1,34 @@
+<!--
+  HYBE 채용관(careers.hybecorp.com/ko/career) 발췌 픽스처.
+  diagnostics/HYBE_RENDERED.html 의 GreetingHR opening 목록을 발췌(styled-components 해시 class 보존).
+  - a[href="/ko/o/<id>"] opening 3건은 실데이터(223329/223325/223251)
+  - 제목은 span[class*=OpeningListItemTitle]
+  - 비-opening 네비 링크(/ko/career)는 selector(a[href*="/ko/o/"])상 제외됨(미수집 검증)
+-->
+<div class="opening-area">
+  <nav><a href="/ko/career">채용 홈</a></nav>
+  <ul class="sc-kAkozD gxoss">
+    <a data-testid="opening_link" href="/ko/o/223329">
+      <li class="opening-list__OpeningItemContainer-sc-ece8b094-2 hblWLd">
+        <div class="opening-list__OpeningListItemMetaContainer-sc-ece8b094-4 ktxHrF">
+          <span data-variant="title-01" class="color-greeth1azm0 opening-list__OpeningListItemTitle-sc-ece8b094-3 PqSxf">[KOZ Entertainment] 레이블경영관리</span>
+          <div class="subtext-styles__CareerInfo-xxx">정규직 · 서울</div>
+        </div>
+      </li>
+    </a>
+    <a data-testid="opening_link" href="/ko/o/223325">
+      <li class="opening-list__OpeningItemContainer-sc-ece8b094-2 hblWLd">
+        <div class="opening-list__OpeningListItemMetaContainer-sc-ece8b094-4 ktxHrF">
+          <span data-variant="title-01" class="color-greeth1azm0 opening-list__OpeningListItemTitle-sc-ece8b094-3 PqSxf">[KOZ Entertainment] 솔로 아티스트 영상콘텐츠기획・제작 Jr.</span>
+        </div>
+      </li>
+    </a>
+    <a data-testid="opening_link" href="/ko/o/223251">
+      <li class="opening-list__OpeningItemContainer-sc-ece8b094-2 hblWLd">
+        <div class="opening-list__OpeningListItemMetaContainer-sc-ece8b094-4 ktxHrF">
+          <span data-variant="title-01" class="color-greeth1azm0 opening-list__OpeningListItemTitle-sc-ece8b094-3 PqSxf">[BIGHIT MUSIC] 미디어프로모션(TXT 담당)</span>
+        </div>
+      </li>
+    </a>
+  </ul>
+</div>
