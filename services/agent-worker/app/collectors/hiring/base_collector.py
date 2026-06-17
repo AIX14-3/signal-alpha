@@ -58,6 +58,13 @@ from app.utils.hash_utils import make_source_hash
 
 _KST = zoneinfo.ZoneInfo("Asia/Seoul")
 
+
+def _kst_today() -> datetime.date:
+    """오늘 날짜(KST 기준). observed_date 등 '오늘' 경계를 DB 서버 tz(CURRENT_DATE)가 아니라
+    한국시간 자정 기준으로 고정한다(#253). UTC 서버에서 KST 00:00~09:00 수집분이 전날로
+    오분류되는 문제 방지."""
+    return datetime.datetime.now(_KST).date()
+
 # 라이브러리 모듈은 logging.basicConfig 를 호출하지 않는다(호스트 앱 로깅 설정을
 # 덮어쓰는 부작용 방지). 로깅 핸들러/레벨 설정은 진입점(main.py, 파이프라인 스크립트)이 담당.
 logger = logging.getLogger(__name__)
@@ -366,7 +373,7 @@ class BaseCollector(ABC):
                 )
                 VALUES (
                     :raw_document_id, :stock_id, :keyword, :job_category,
-                    :job_count, CURRENT_DATE, :extra_payload ::jsonb
+                    :job_count, :observed_date, :extra_payload ::jsonb
                 )
                 ON CONFLICT (raw_document_id) DO NOTHING
             """),
@@ -376,6 +383,7 @@ class BaseCollector(ABC):
                 "keyword": (data.get("job_title") or "UNKNOWN")[:100],
                 "job_category": sector,
                 "job_count": 1,
+                "observed_date": _kst_today(),  # KST 자정 기준(구 CURRENT_DATE=DB tz, #253)
                 "extra_payload": json.dumps(extra_payload, ensure_ascii=False),
             },
         )

@@ -13,8 +13,11 @@ import logging
 import sys
 import os
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from typing import Optional
 from pathlib import Path
+
+_KST = ZoneInfo("Asia/Seoul")  # 분석 대상일 '오늘' 경계를 KST로 고정(observed_date와 일치, #253)
 
 from dotenv import load_dotenv
 
@@ -119,7 +122,7 @@ async def run_hiring_analyzer(pool: asyncpg.Pool, target_date: str) -> bool:
 async def run_full_pipeline(target_date: Optional[str] = None) -> bool:
     """전체 파이프라인 오케스트레이션 총괄"""
     if target_date is None:
-        target_date = datetime.now().strftime("%Y-%m-%d")
+        target_date = datetime.now(_KST).strftime("%Y-%m-%d")  # KST 기준(#253)
     
     logger.info("=" * 80)
     logger.info(f"🚀 채용 데이터 엔지니어링 파이프라인 가동 ({target_date})")
