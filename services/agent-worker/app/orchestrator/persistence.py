@@ -5,11 +5,8 @@ from datetime import date, datetime, time
 from typing import Any
 
 from app.schemas.evidence import RawEvidence, SourceType
-from app.schemas.source_result import Direction, EvidenceItem, SourceResult
 from signal_alpha_data_access.repositories import (
-    AnalysisRepository,
     CollectionRepository,
-    NormalizationRepository,
     ProcessingQueueRepository,
     RawDetailRepository,
 )
@@ -211,114 +208,6 @@ class CollectionPersistence:
             )
 
 
-class AnalysisPersistence:
-    def __init__(self, connection: Any) -> None:
-        self._analysis_repository = AnalysisRepository(connection)
-        self._normalization_repository = NormalizationRepository(connection)
-
-    async def save_source_result(
-        self,
-        *,
-        stock_id: int,
-        stock_code: str,
-        source_result: SourceResult,
-        source_raw_ids: list[int],
-        run_key: str = "BATCH",
-        version: str = "1.0",
-        publish_final_signal: bool = False,
-    ) -> dict[str, Any]:
-        signal_event_ids: list[int] = []
-        for index, evidence_item in enumerate(source_result.evidence_items):
-            raw_document_id = _raw_id_for_evidence(source_raw_ids, index)
-            source_document = await self._normalization_repository.upsert_source_document(
-                raw_document_id=raw_document_id,
-                stock_id=stock_id,
-                source_type=source_result.source,
-                source_name=evidence_item.source_name or source_result.source,
-                title=evidence_item.title,
-                source_url=evidence_item.url,
-                published_at=evidence_item.published_at or _today(),
-                collected_at=_today(),
-                reliability_level="medium",
-                is_official=source_result.source == "DART",
-            )
-            signal_event = await self._normalization_repository.upsert_signal_event(
-                stock_id=stock_id,
-                source_document_id=source_document["id"],
-                event_hash=_event_hash(stock_code, source_result, evidence_item),
-                source_type=source_result.source,
-                event_type=f"{source_result.source.lower()}_analysis",
-                event_date=_date_part(evidence_item.published_at),
-                signal_direction=source_result.direction,
-                impact_level="medium",
-                title=evidence_item.title,
-                summary=evidence_item.summary,
-                evidence_text=evidence_item.summary,
-                evidence_url=evidence_item.url,
-                needs_review=source_result.data_status != "ok",
-            )
-            signal_event_ids.append(signal_event["id"])
-            await self._normalization_repository.upsert_signal_metric(
-                signal_event_id=signal_event["id"],
-                metric_name="source_score",
-                metric_value=source_result.score,
-                metric_unit="score",
-            )
-
-        analysis_result = await self._analysis_repository.upsert_analysis_result(
-            stock_id=stock_id,
-            analysis_date=_today(),
-            run_key=run_key,
-            source_signal_event_ids=signal_event_ids,
-            base_score=source_result.score,
-            analysis_mode="full",
-            warning="; ".join(source_result.risk_flags) or None,
-            version=version,
-        )
-        agent_result = await self._analysis_repository.upsert_agent_result(
-            result_id=analysis_result["id"],
-            stock_id=stock_id,
-            debate_method="D-1",
-            source_signal_event_ids=signal_event_ids,
-            method_score=source_result.score,
-            method_signal=_final_signal_value(source_result.direction),
-            method_detail={
-                "source": source_result.source,
-                "summary": source_result.summary,
-                "risk_flags": source_result.risk_flags,
-                "data_status": source_result.data_status,
-            },
-        )
-
-        final_signal_id: int | None = None
-        if publish_final_signal:
-            final_signal = await self._analysis_repository.upsert_final_signal(
-                stock_id=stock_id,
-                analysis_result_id=analysis_result["id"],
-                signal_date=_today(),
-                run_key=run_key,
-                version=version,
-                final_score=source_result.score,
-                confidence=source_result.score,
-                signal=_final_signal_value(source_result.direction),
-                source_agreement="MEDIUM",
-                score_breakdown={source_result.source: source_result.score},
-                summary=source_result.summary,
-                warning_level="NORMAL" if source_result.data_status == "ok" else "CAUTION",
-                needs_review=source_result.data_status != "ok",
-                is_published=True,
-                published_at=_today(),
-            )
-            final_signal_id = final_signal["id"]
-
-        return {
-            "analysis_result_id": analysis_result["id"],
-            "agent_result_id": agent_result["id"],
-            "final_signal_id": final_signal_id,
-            "signal_event_ids": signal_event_ids,
-        }
-
-
 def _run_status(*, usable: int, failed: int) -> str:
     """CLAUDE.md Error Handling 규칙의 카운트 기반 collector_run status.
 
@@ -401,44 +290,3 @@ def _to_date(value: Any) -> date:
     if len(text) == 8 and text.isdigit():
         return datetime.strptime(text, "%Y%m%d").date()
     return datetime.fromisoformat(text).date()
-
-
-def _raw_id_for_evidence(source_raw_ids: list[int], index: int) -> int:
-    if not source_raw_ids:
-        raise ValueError("source_raw_ids is required to persist normalized evidence.")
-    if index < len(source_raw_ids):
-        return source_raw_ids[index]
-    return source_raw_ids[0]
-
-
-def _event_hash(
-    stock_code: str,
-    source_result: SourceResult,
-    evidence_item: EvidenceItem,
-) -> str:
-    stable_text = "|".join(
-        [
-            stock_code,
-            source_result.source,
-            evidence_item.title,
-            evidence_item.published_at or "",
-            evidence_item.url or "",
-        ]
-    )
-    return sha256(stable_text.encode("utf-8")).hexdigest()
-
-
-def _date_part(value: str | None) -> str:
-    if not value:
-        return _today()
-    return value[:10]
-
-
-def _today() -> str:
-    return date.today().isoformat()
-
-
-def _final_signal_value(direction: Direction) -> str:
-    if direction == "unknown":
-        return "neutral"
-    return direction
