@@ -17,6 +17,7 @@ async def lifespan_with_database(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     app.state.database_pool = None
     app.state.price_collector_task = None
+    app.state.ops_daemon_task = None
 
     if settings.database_url:
         from signal_alpha_data_access import DatabaseSettings, create_pool
@@ -44,18 +45,35 @@ async def lifespan_with_database(app: FastAPI) -> AsyncIterator[None]:
                 name="price-collector-daemon",
             )
 
+    # Hiring 운영 알림 + self-healing 데몬 (Phase 5) — collector_runs 통계 기반
+    # Discord 알림 + sweep/reconcile 자동화. 기본 off. price 와 동일 lifespan 패턴.
+    if settings.hiring_ops_daemon_enabled:
+        if app.state.database_pool is None:
+            logger.warning(
+                "HIRING_OPS_DAEMON_ENABLED but DATABASE_URL is not set; "
+                "ops daemon will not start"
+            )
+        else:
+            from app.observability.ops_daemon import supervise_ops_daemon
+
+            app.state.ops_daemon_task = asyncio.create_task(
+                supervise_ops_daemon(app.state.database_pool, settings),
+                name="hiring-ops-daemon",
+            )
+
     try:
         yield
     finally:
         # 순서 고정: 데몬 cancel → 완료 대기 → pool.close
         # (역순이면 데몬이 닫힌 풀을 쓰다 InterfaceError)
-        task = getattr(app.state, "price_collector_task", None)
-        if task is not None:
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
+        for attr in ("price_collector_task", "ops_daemon_task"):
+            task = getattr(app.state, attr, None)
+            if task is not None:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
         pool = getattr(app.state, "database_pool", None)
         if pool is not None:
             await pool.close()
