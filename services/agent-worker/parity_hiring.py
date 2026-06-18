@@ -46,7 +46,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "packages" / "data-
 
 from app.analyzers.hiring.hiring_analyzer import HiringAnalyzer as LegacyHiringAnalyzer
 from app.analyzers.registry import build_registry
-from run_analyzers import fetch_target_stocks, load_env, parse_dsn
+from run_analyzers import fetch_target_stocks, load_env, parse_dsn, resolve_ssl
 
 # ── Pure bucketing / comparison logic (unit-testable, no I/O) ────────────────
 
@@ -218,11 +218,16 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
         raise RuntimeError("DATABASE_URL is required.")
     as_of = date.fromisoformat(args.date) if args.date else date.today()
 
+    dsn_parts = parse_dsn(dsn)
     pool = await asyncpg.create_pool(
-        **parse_dsn(dsn),
+        **dsn_parts,
         min_size=1,
         max_size=6,
-        ssl="require",
+        # Reuse run_analyzers' host-based SSL resolution: managed Postgres
+        # (Supabase/prod) needs "require", a local Docker Postgres rejects SSL.
+        # ``DB_SSL`` env overrides. Previously hardcoded to "require", which made
+        # parity impossible to run against a local DB.
+        ssl=resolve_ssl(dsn_parts["host"]),
         statement_cache_size=0,
     )
     try:

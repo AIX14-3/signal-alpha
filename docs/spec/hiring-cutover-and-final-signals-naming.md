@@ -22,17 +22,53 @@
 
 이 병행은 **영구 상태가 아니라 이행기(strangler-fig 컷오버)** 다. 최종 목표는 **하나만 남기는 것**이며, 그 근거가 parity다.
 
+### 1.1 두 경로의 의미 차이 (코드 근거)
+
+같은 "채용이 늘었나/줄었나"를 묻지만, **무엇을 언제 기준으로 재는지**가 다르다. parity의 MISMATCH/PARTIAL은 대부분 이 차이에서 나온다.
+
+**① 시간 범위 — 정확 날짜(레거시) vs lookback 윈도우(신규)**
+- **레거시**는 `--date` **당일에 공고가 있는 종목만** 본다. baseline은 직전 14일을 14.0으로 나눈 일평균
+  (`app/analyzers/hiring/hiring_analyzer.py:184-204` — `observed_date BETWEEN $1 - 14d AND $1 - 1d` 로 일평균,
+  `observed_date = $1` 로 당일 건수). → 당일 공고가 0이면 그 종목은 **행 자체가 없음**(parity에서 `NO_DATA` → `PARTIAL`).
+- **신규**는 `as_of` 기준 **최근 `lookback_days` 윈도우**를 누적해 본다
+  (`app/analyzers/hiring/analyzer.py:44-49` → `compute_indicators(rows, as_of, lookback_days, sector_demand)`).
+  → 정확히 당일 공고가 없어도 윈도우 안에 있으면 신호가 잡힌다.
+- **귀결:** "정확 당일엔 공고 없지만 최근 며칠 추세는 있는" 종목 = 레거시 NO_DATA · 신규 신호 → **PARTIAL**(충돌 아님,
+  `parity_hiring.py:20-23, 89-93`).
+
+**② 기준·산식 — 14일 baseline×계절가중(레거시) vs 직군분류 컨텍스트 점수(신규)**
+- **레거시**: `상대강도% = 당일건수 / (baseline × 분기 계절가중치) × 100`, `≥150%` 면 `is_spike`
+  (`hiring_analyzer.py:230-238`). baseline은 3단계 fallback — Phase A(14일 이동평균) → B(네이버 검색량) → C(기본값)
+  (`hiring_analyzer.py:128-146`). 출력은 `relative_strength %` + `is_spike(bool)` → `hiring_signals` 에 적재.
+- **신규**: 윈도우 지표를 룰로 평가해 `score ∈ [-1,+1]` + `direction(positive/negative/neutral)` 산출
+  (`analyzer.py:50, 95-104` → `evaluate_indicators`). 직군 분류(`app/analyzers/hiring/job_functions.py`)·섹터수요
+  컨텍스트가 반영되고, 채용 **직무·기술 포커스**는 점수와 무관한 서술 근거로만 첨부(`analyzer.py:63-93`).
+  이력 부족/오래된 데이터면 `data_status="partial"`(`analyzer.py:54-55`).
+
+**③ 버킷 환산(비교를 위한 공통자)**: 레거시 `is_spike` 또는 `rs≥150%`→UP, `rs<100%`→DOWN, 그 사이 FLAT
+(`parity_hiring.py:56-75`); 신규 `positive`→UP, `negative`→DOWN, `neutral`→FLAT(`parity_hiring.py:78-86`).
+둘 다 데이터가 있을 때만 `MATCH/MISMATCH`, 한쪽이라도 NO_DATA면 `PARTIAL`.
+
+> 요약: **레거시 = "오늘 하루, 평년 대비 몇 %인가"(point-in-time, 비율·스파이크)**,
+> **신규 = "최근 며칠 추세가 어느 방향인가"(window, 방향·점수 + 직군맥락)**. 컷오버는 이 의미 차이를
+> 인지한 채 *방향*이 일관되는지를 본다.
+
 ---
 
 ## 2. [DECISION] 컷오버 완료 기준 (레거시 폐기 조건)
 
 아래 조건이 **모두** 충족되기 전에는 레거시(`hiring_analyzer.py` + `run_daily_hiring_pipeline.py` + `hiring_signals`)를 삭제하지 않는다.
 
-### C0. 사전 조건 — parity가 실행 가능할 것 ⚠️ **현재 미충족(블로커)**
+### C0. 사전 조건 — parity가 실행 가능할 것 ⚠️ **prod 기준 미충족(블로커)**
 - `parity_hiring.py` 가 대상 DB에서 **에러 없이 끝까지 실행**되어야 한다.
-- **현재 상태(2026-06-16 확인):** 운영 DB에서 `hiring_raw_details.observed_date` 컬럼 부재로
-  `UndefinedColumnError` 발생 → parity 실행 불가. DB 스키마가 `001_baseline` 보다 뒤처져 있음
-  (스키마 드리프트). **이 드리프트 해소가 컷오버의 1번 선결 과제.**
+- **prod 상태(2026-06-16 확인):** 운영 DB에서 `hiring_raw_details.observed_date` 컬럼 부재로
+  `UndefinedColumnError` 발생 → prod 대상 parity 실행 불가. DB 스키마가 `001_baseline` 보다 뒤처져 있음
+  (스키마 드리프트). **이 드리프트 해소가 prod 컷오버의 1번 선결 과제이며, prod 마이그 재정합은 팀 결정 사항.**
+- **로컬 우회(2026-06-18):** 로컬 Docker Postgres는 `001_baseline` 최신이라 `observed_date` 가 있어
+  C0 스키마 블로커가 없다. 단 과거 `parity_hiring.py` 는 `ssl="require"` 하드코딩이라 로컬(SSL 미지원) 연결이
+  막혔는데, `run_analyzers.resolve_ssl(host)` 재사용으로 해소(로컬→SSL off, prod→require, `DB_SSL` override).
+  → **로컬 시드 데이터로 parity를 돌려 C1/C2 측정 방법을 선검증**할 수 있다(아래 §5 절차). prod 재정합 전
+  산식·버킷 로직 회귀는 로컬에서 확인 가능.
 
 ### C1. 방향 일치율 임계
 - `agreement_rate`(= MATCH / (MATCH+MISMATCH)) **≥ 0.85** 를, 서로 다른 **최소 N=3 영업일**에 대해 재현.
@@ -116,7 +152,32 @@
 ---
 
 ## 4. 다음 액션
-- [ ] **C0 블로커**: 운영 DB 스키마 드리프트(`hiring_raw_details.observed_date` 등) 재정합 → parity 실행 가능화.
+- [ ] **C0 블로커(prod)**: 운영 DB 스키마 드리프트(`hiring_raw_details.observed_date` 등) 재정합 → prod parity 실행 가능화(팀 결정).
 - [ ] parity 재실행하여 C1 표본(≥3 영업일) 수집, `agreement_rate`/MISMATCH 기록.
 - [ ] §3.4 [DECISION]: 융합(A) vs 파이프라인별(B) 아키텍처 확정.
 - [ ] 단기 조치: alternative `run_key = ALTERNATIVE` 적용.
+
+---
+
+## 5. 로컬 parity 실행 절차 (prod 재정합 전 선검증용)
+
+prod C0(스키마 드리프트)는 팀 결정 사안이라, 그 전에 **산식·버킷 로직과 측정 방법을 로컬에서 선검증**한다.
+로컬 Docker Postgres는 `001_baseline` 최신이라 `observed_date` 가 있고, SSL 보정으로 연결도 열렸다.
+
+1. **로컬 DB 기동 + 마이그**: `docker compose up -d postgres` 후 `database/migrations` 적용(`001_baseline` 포함).
+2. **hiring raw 시드**: `hiring_raw_details` 에 며칠치 공고 행을 적재(수집기 실행 또는 fixture INSERT).
+   - 의미 차이(§1.1)상 **정확 날짜에 공고가 있는** 종목이 있어야 레거시가 `NO_DATA`(PARTIAL)가 아닌 비교행을 만든다.
+3. **환경**: `DATABASE_URL=postgresql://signal_alpha:signal_alpha_password@localhost:5432/signal_alpha`.
+   로컬 호스트는 `resolve_ssl` 이 자동으로 SSL을 끈다(필요 시 `DB_SSL=disable` 명시).
+4. **실행(읽기 전용)**:
+   ```bash
+   cd services/agent-worker
+   python parity_hiring.py --date YYYY-MM-DD            # 그날의 hiring 종목 전체
+   python parity_hiring.py --ticker 005930 --json out.json
+   ```
+   리포트의 `agreement_rate(over comparable)` 와 `MISMATCH` 행이 C1/C2 측정값이다(DB write 없음).
+5. **해석**: `MISMATCH` = 컷오버 리스크 목록(§C2 전수 해명 대상), `PARTIAL` = 한쪽 NO_DATA(주로 정확 날짜 공고
+   부재, §C3 충돌 아님). 임계는 §C1(`≥0.85`, ≥3 영업일).
+
+> 주의: 로컬 표본은 시드 데이터에 의존하므로 **C1 충족 근거로 직접 쓰지 않는다**(C1은 prod/실데이터 기준).
+> 로컬은 "parity가 끝까지 돌고 산식·버킷이 의도대로 동작하는지" 확인하는 용도다.
