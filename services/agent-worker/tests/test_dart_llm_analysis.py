@@ -72,7 +72,7 @@ class DartLlmAnalyzerTest(unittest.IsolatedAsyncioTestCase):
             """
             {
               "direction": "positive",
-              "score": 72,
+              "score": 0.72,
               "summary": "Revenue and operating profit improved based on the disclosure.",
               "key_facts": ["Revenue increased", "Operating profit improved"],
               "risk_flags": [],
@@ -97,7 +97,7 @@ class DartLlmAnalyzerTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(result.direction, "positive")
-        self.assertEqual(result.score, 72)
+        self.assertEqual(result.score, 0.72)
         self.assertEqual(result.confidence, 84)
         self.assertEqual(result.key_facts, ["Revenue increased", "Operating profit improved"])
         self.assertIn("JSON only", client.prompts[0]["prompt"])
@@ -110,7 +110,7 @@ class DartLlmAnalyzerTest(unittest.IsolatedAsyncioTestCase):
         rule_result = build_dart_analysis_result([])
         analyzer = DartLlmAnalyzer(
             client=FakeLlmClient(
-                '{"direction":"neutral","score":50,"summary":"No material change was identified.","key_facts":[],"risk_flags":[],"needs_review":false,"confidence":0.82}'
+                '{"direction":"neutral","score":0,"summary":"No material change was identified.","key_facts":[],"risk_flags":[],"needs_review":false,"confidence":0.82}'
             ),
             model="test-model",
         )
@@ -123,7 +123,7 @@ class DartLlmAnalyzerTest(unittest.IsolatedAsyncioTestCase):
         rule_result = build_dart_analysis_result([])
         analyzer = DartLlmAnalyzer(
             client=FakeLlmClient(
-                '{"direction":"buy","score":99,"summary":"Buy now","key_facts":[],"risk_flags":[],"needs_review":false,"confidence":90}'
+                '{"direction":"buy","score":0.99,"summary":"Buy now","key_facts":[],"risk_flags":[],"needs_review":false,"confidence":90}'
             ),
             model="test-model",
         )
@@ -135,7 +135,7 @@ class DartLlmAnalyzerTest(unittest.IsolatedAsyncioTestCase):
         rule_result = build_dart_analysis_result([])
         analyzer = DartLlmAnalyzer(
             client=FakeLlmClient(
-                '{"direction":"positive","score":80,"summary":"Buy this stock now.","key_facts":[],"risk_flags":[],"needs_review":false,"confidence":90}'
+                '{"direction":"positive","score":0.8,"summary":"Buy this stock now.","key_facts":[],"risk_flags":[],"needs_review":false,"confidence":90}'
             ),
             model="test-model",
         )
@@ -147,7 +147,7 @@ class DartLlmAnalyzerTest(unittest.IsolatedAsyncioTestCase):
         rule_result = build_dart_analysis_result([])
         analyzer = DartLlmAnalyzer(
             client=FakeLlmClient(
-                '{"direction":"neutral","score":50,"summary":"The disclosure describes shareholder holdings and governance information.","key_facts":["Shareholder holdings were disclosed"],"risk_flags":[],"needs_review":false,"confidence":80}'
+                '{"direction":"neutral","score":0,"summary":"The disclosure describes shareholder holdings and governance information.","key_facts":["Shareholder holdings were disclosed"],"risk_flags":[],"needs_review":false,"confidence":80}'
             ),
             model="test-model",
         )
@@ -242,7 +242,7 @@ class DartLlmAnalyzerTest(unittest.IsolatedAsyncioTestCase):
                             "content": {
                                 "parts": [
                                     {
-                                        "text": '{"direction":"neutral","score":50,"summary":"ok","key_facts":[],"risk_flags":[],"needs_review":false,"confidence":80}'
+                                        "text": '{"direction":"neutral","score":0,"summary":"ok","key_facts":[],"risk_flags":[],"needs_review":false,"confidence":80}'
                                     }
                                 ]
                             }

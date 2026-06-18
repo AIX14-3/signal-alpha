@@ -9,7 +9,7 @@ from typing import Any
 @dataclass(frozen=True)
 class DartAnalysisResult:
     direction: str
-    score: int
+    score: float
     summary: str
     risk_flags: list[str]
     method_detail: dict[str, Any]
@@ -20,7 +20,7 @@ def build_dart_analysis_result(events: list[dict[str, Any]]) -> DartAnalysisResu
     if not events:
         return DartAnalysisResult(
             direction="neutral",
-            score=50,
+            score=0.0,
             summary="No DART disclosure events were available for analysis.",
             risk_flags=["no_dart_events"],
             method_detail={
@@ -35,7 +35,7 @@ def build_dart_analysis_result(events: list[dict[str, Any]]) -> DartAnalysisResu
     direction_scores = Counter[str]()
     risk_flags: list[str] = []
     detail_events: list[dict[str, Any]] = []
-    score = 50
+    score = 0.0
 
     for event in events:
         direction = str(event.get("signal_direction") or "unknown")
@@ -69,7 +69,7 @@ def build_dart_analysis_result(events: list[dict[str, Any]]) -> DartAnalysisResu
         )
 
     resolved_direction = _resolve_direction(direction_scores)
-    bounded_score = max(0, min(100, score))
+    bounded_score = round(max(-1.0, min(1.0, score)), 3)
     unique_risk_flags = _dedupe(risk_flags)
     needs_review = bool(unique_risk_flags) or resolved_direction in {"mixed", "unknown"}
 
@@ -93,15 +93,15 @@ def _impact_weight(impact_level: str) -> int:
     return {"high": 3, "medium": 2, "low": 1}.get(impact_level, 1)
 
 
-def _score_delta(direction: str, impact_level: str) -> int:
+def _score_delta(direction: str, impact_level: str) -> float:
     weight = _impact_weight(impact_level)
     if direction == "positive":
-        return 5 * weight
+        return 0.1 * weight
     if direction == "negative":
-        return -5 * weight
+        return -0.1 * weight
     if direction == "mixed":
-        return 0
-    return 0
+        return 0.0
+    return 0.0
 
 
 def _resolve_direction(direction_scores: Counter[str]) -> str:

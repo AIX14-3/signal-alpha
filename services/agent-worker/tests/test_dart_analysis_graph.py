@@ -21,7 +21,7 @@ class FakeLlmAnalyzer:
             raise RuntimeError("LLM timeout")
         return DartLlmAnalysis(
             direction="positive",
-            score=73,
+            score=0.73,
             summary="LLM reviewed the disclosure and found improving performance.",
             key_facts=["Revenue improved", "Operating profit improved"],
             risk_flags=[],
@@ -72,7 +72,7 @@ class DartAnalysisGraphAgentTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(result.direction, "positive")
-        self.assertEqual(result.score, 73)
+        self.assertEqual(result.score, 0.73)
         self.assertEqual(result.analysis_source, "llm")
         self.assertEqual(result.llm_model, "test-llm")
         self.assertEqual(result.prompt_ver, "dart-llm-v1")

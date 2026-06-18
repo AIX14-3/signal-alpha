@@ -81,7 +81,7 @@ class LlmClient(Protocol):
 @dataclass(frozen=True)
 class DartLlmAnalysis:
     direction: str
-    score: int
+    score: float
     summary: str
     key_facts: list[str]
     risk_flags: list[str]
@@ -243,7 +243,7 @@ def parse_dart_llm_response(response_text: str) -> DartLlmAnalysis:
     _reject_investment_advice([summary, *key_facts])
     return DartLlmAnalysis(
         direction=direction,
-        score=_bounded_int(payload.get("score"), "score"),
+        score=_bounded_unit_score(payload.get("score"), "score"),
         summary=summary,
         key_facts=key_facts,
         risk_flags=_string_list(payload.get("risk_flags"), "risk_flags"),
@@ -407,6 +407,16 @@ def _bounded_int(value: Any, key: str, *, allow_fraction: bool = False) -> int:
     if number < 0 or number > 100:
         raise DartLlmAnalysisError(f"DART LLM field out of range: {key}")
     return int(round(number))
+
+
+def _bounded_unit_score(value: Any, key: str) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise DartLlmAnalysisError(f"DART LLM response missing numeric field: {key}") from exc
+    if number < -1 or number > 1:
+        raise DartLlmAnalysisError(f"DART LLM field out of range: {key}")
+    return round(number, 3)
 
 
 def _string_list(value: Any, key: str) -> list[str]:

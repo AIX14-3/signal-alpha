@@ -226,7 +226,7 @@ class DartAnalyzeTaskHandler:
             analysis_date=analysis_date,
             run_key=run_key,
             source_signal_event_ids=signal_event_ids,
-            base_score=result.score,
+            base_score=_to_db_score(result.score),
             analysis_mode="dart_only",
             warning="; ".join(result.risk_flags) or None,
             version=result.prompt_ver,
@@ -236,10 +236,11 @@ class DartAnalyzeTaskHandler:
             stock_id=stock_id,
             debate_method="D-1",
             source_signal_event_ids=signal_event_ids,
-            method_score=result.score,
+            method_score=_to_db_score(result.score),
             method_signal=result.direction,
             method_detail={
                 **result.method_detail,
+                "source_score": result.score,
                 "summary": result.summary,
                 "risk_flags": result.risk_flags,
                 "needs_review": result.needs_review,
@@ -437,3 +438,8 @@ def _evidence_quality(events: list[dict[str, Any]]) -> int:
         return 0
     official_count = sum(1 for event in events if event.get("is_official"))
     return round((official_count / len(events)) * 100)
+
+
+def _to_db_score(score: float) -> float:
+    """Map DART source-agent [-1, +1] score onto legacy DB 0-100 score columns."""
+    return round(max(0.0, min(100.0, (score + 1.0) * 50.0)), 2)
