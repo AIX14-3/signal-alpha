@@ -89,11 +89,24 @@ class _FakeTransaction:
 
 
 class _FakeUniqueConnection(FakeConnection):
-    """Connection that raises UniqueViolation on raw_documents insert."""
+    """Raises UniqueViolation on raw_documents INSERT (duplicate raw).
+
+    Also answers the F1 re-enqueue lookups: ``SELECT id FROM raw_documents``
+    (existing raw by source_hash) and the ``has_open_or_successful_task`` probe on
+    processing_queue (controlled by ``existing_task``).
+    """
+
+    def __init__(self, *, existing_task: bool = False):
+        super().__init__()
+        self._existing_task = existing_task
 
     async def fetchval(self, sql, *args):
-        if "raw_documents" in sql:
+        if "raw_documents" in sql and "SELECT" in sql:
+            return self._raw_id
+        if "raw_documents" in sql:  # INSERT
             raise asyncpg.exceptions.UniqueViolationError("duplicate")
+        if "processing_queue" in sql and "source_raw_ids" in sql:
+            return 1 if self._existing_task else None
         return await super().fetchval(sql, *args)
 
 
@@ -142,10 +155,11 @@ class TestPatentCollectorInsert(unittest.IsolatedAsyncioTestCase):
         self.assertIn("patent_raw_details", conn.inserts)
         self.assertIn("processing_queue", conn.inserts)
 
-    async def test_duplicate_source_hash_increments_skipped_not_failed(self):
+    async def test_duplicate_with_existing_task_increments_skipped_not_failed(self):
+        # 중복 raw + 활성/성공 NORMALIZE task 존재 → 진짜 skip(재인큐 안 함).
         record = _make_record()
         client = FakeKiprisClient(pages=[([record], 1)])
-        conn = _FakeUniqueConnection()
+        conn = _FakeUniqueConnection(existing_task=True)
         pool = FakePool(conn)
 
         collector = PatentCollector(pool=pool, client=client, collector_ver="1.0")
@@ -159,8 +173,33 @@ class TestPatentCollectorInsert(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result["inserted_count"], 0)
         self.assertEqual(result["skipped_count"], 1)
+        self.assertEqual(result["requeued_count"], 0)
         self.assertEqual(result["failed_count"], 0)
         self.assertEqual(result["status"], "success")
+        self.assertNotIn("processing_queue", conn.inserts)
+
+    async def test_duplicate_without_task_requeues_for_recovery(self):
+        # F1: 중복 raw 인데 활성/성공 task 가 없음 → NORMALIZE 재인큐(자가복구).
+        record = _make_record()
+        client = FakeKiprisClient(pages=[([record], 1)])
+        conn = _FakeUniqueConnection(existing_task=False)
+        pool = FakePool(conn)
+
+        collector = PatentCollector(pool=pool, client=client, collector_ver="1.0")
+        result = await collector.run(
+            stock_id=1,
+            stock_code="005930",
+            applicant_name="테스트회사",
+            start_date="20230101",
+            end_date="20231231",
+        )
+
+        self.assertEqual(result["inserted_count"], 0)
+        self.assertEqual(result["skipped_count"], 0)
+        self.assertEqual(result["requeued_count"], 1)
+        self.assertEqual(result["failed_count"], 0)
+        self.assertEqual(result["status"], "success")
+        self.assertIn("processing_queue", conn.inserts)
 
     async def test_status_success_when_all_skipped(self):
         self.assertEqual(_run_status(0, 5, 0), "success")

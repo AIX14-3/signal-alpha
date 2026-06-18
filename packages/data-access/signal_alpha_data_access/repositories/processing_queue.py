@@ -72,6 +72,33 @@ class ProcessingQueueRepository:
             scheduled_at,
         )
 
+    async def has_open_or_successful_task(
+        self,
+        *,
+        raw_document_id: int,
+        task_type: str,
+    ) -> bool:
+        """Whether a raw_document already has a normalization task worth keeping.
+
+        F1 안전망 판단용. 활성(pending/running/retrying) 또는 성공(success) task 가
+        하나라도 있으면 True. failed/skipped 뿐이거나 task 자체가 없으면 False →
+        호출부(collector)가 재수집 시 재인큐(복구)한다. 'success' 를 포함시켜 이미
+        정규화된 raw 를 매 재수집마다 다시 처리하는 것을 막는다.
+        """
+        existing = await self._connection.fetchval(
+            """
+            SELECT 1
+            FROM processing_queue
+            WHERE task_type = $1
+              AND $2 = ANY(source_raw_ids)
+              AND status IN ('pending', 'running', 'retrying', 'success')
+            LIMIT 1
+            """,
+            task_type,
+            raw_document_id,
+        )
+        return existing is not None
+
     async def claim_next_pending(self, *, task_type: str) -> Any:
         return await self._connection.fetchrow(
             """

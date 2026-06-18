@@ -173,3 +173,39 @@ class ProcessingQueueRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("status = 'retrying'", connection.calls[0][1])
         self.assertIn("error_message = NULL", connection.calls[0][1])
         self.assertEqual(connection.calls[0][2], (77,))
+
+
+class _ProbeConnection(FakeConnection):
+    def __init__(self, result):
+        super().__init__()
+        self._result = result
+
+    async def fetchval(self, sql, *args):
+        self.calls.append(("fetchval", sql, args))
+        return self._result
+
+
+class HasOpenOrSuccessfulTaskTest(unittest.IsolatedAsyncioTestCase):
+    async def test_true_when_live_or_successful_task_exists(self):
+        connection = _ProbeConnection(result=1)
+        repository = ProcessingQueueRepository(connection)
+
+        found = await repository.has_open_or_successful_task(
+            raw_document_id=42, task_type="NORMALIZE_PATENT"
+        )
+
+        self.assertTrue(found)
+        sql = connection.calls[0][1]
+        self.assertIn("status IN ('pending', 'running', 'retrying', 'success')", sql)
+        self.assertIn("$2 = ANY(source_raw_ids)", sql)
+        self.assertEqual(connection.calls[0][2], ("NORMALIZE_PATENT", 42))
+
+    async def test_false_when_only_failed_or_no_task(self):
+        connection = _ProbeConnection(result=None)
+        repository = ProcessingQueueRepository(connection)
+
+        found = await repository.has_open_or_successful_task(
+            raw_document_id=42, task_type="NORMALIZE_DATALAB"
+        )
+
+        self.assertFalse(found)

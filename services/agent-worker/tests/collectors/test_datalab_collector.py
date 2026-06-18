@@ -41,8 +41,9 @@ def _make_record(keyword="삼성전자", period="2024-01-01", ratio=75.0) -> Nav
 
 
 class FakeConnection:
-    def __init__(self, *, raise_unique_on_raw: bool = False):
+    def __init__(self, *, raise_unique_on_raw: bool = False, existing_task: bool = False):
         self._raise_unique_on_raw = raise_unique_on_raw
+        self._existing_task = existing_task
         self.inserts: list[str] = []
         self._run_id = 1
         self._raw_id = 200
@@ -51,11 +52,17 @@ class FakeConnection:
         if "collector_runs" in sql and "INSERT" in sql:
             self.inserts.append("collector_runs")
             return self._run_id
-        if "datalab_raw_documents" in sql:
+        # F1 재인큐 경로: 기존 raw 조회(롤백 후 source_hash 로 찾음).
+        if "datalab_raw_documents" in sql and "SELECT" in sql:
+            return self._raw_id
+        if "datalab_raw_documents" in sql:  # INSERT
             if self._raise_unique_on_raw:
                 raise asyncpg.exceptions.UniqueViolationError("duplicate key")
             self.inserts.append("datalab_raw_documents")
             return self._raw_id
+        # has_open_or_successful_task 프로브.
+        if "processing_queue" in sql and "source_raw_ids" in sql:
+            return 1 if self._existing_task else None
         return None
 
     async def execute(self, sql, *args):
@@ -152,10 +159,11 @@ class TestDataLabCollectorInsert(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(conn.inserts.count("datalab_raw_details"), 3)
         self.assertEqual(conn.inserts.count("processing_queue"), 3)
 
-    async def test_duplicate_increments_skipped_not_failed(self):
+    async def test_duplicate_with_existing_task_increments_skipped_not_failed(self):
+        # 중복 raw + 활성/성공 NORMALIZE task 존재 → 진짜 skip(재인큐 안 함).
         records = [_make_record()]
         client = FakeNaverClient(records)
-        conn = FakeConnection(raise_unique_on_raw=True)
+        conn = FakeConnection(raise_unique_on_raw=True, existing_task=True)
         pool = FakePool(conn)
 
         collector = DataLabCollector(pool=pool, client=client, collector_ver="1.0")
@@ -168,8 +176,32 @@ class TestDataLabCollectorInsert(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result["inserted_count"], 0)
         self.assertEqual(result["skipped_count"], 1)
+        self.assertEqual(result["requeued_count"], 0)
         self.assertEqual(result["failed_count"], 0)
         self.assertEqual(result["status"], "success")
+        self.assertNotIn("processing_queue", conn.inserts)
+
+    async def test_duplicate_without_task_requeues_for_recovery(self):
+        # F1: 중복 raw 인데 활성/성공 task 가 없음 → NORMALIZE 재인큐(자가복구).
+        records = [_make_record()]
+        client = FakeNaverClient(records)
+        conn = FakeConnection(raise_unique_on_raw=True, existing_task=False)
+        pool = FakePool(conn)
+
+        collector = DataLabCollector(pool=pool, client=client, collector_ver="1.0")
+        result = await collector.run(
+            category_id=1,
+            category_name="삼성",
+            keyword_group="삼성",
+            keywords=["삼성전자"],
+        )
+
+        self.assertEqual(result["inserted_count"], 0)
+        self.assertEqual(result["skipped_count"], 0)
+        self.assertEqual(result["requeued_count"], 1)
+        self.assertEqual(result["failed_count"], 0)
+        self.assertEqual(result["status"], "success")
+        self.assertIn("processing_queue", conn.inserts)
 
     async def test_collector_does_not_write_to_forbidden_tables(self):
         records = [_make_record()]
