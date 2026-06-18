@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "packages" / "data-
 from app.analyzers.datalab.normalize_rules import classify_datalab_observation
 from app.analyzers.hiring.normalize_rules import classify_hiring_posting
 from app.analyzers.patent.normalize_rules import classify_patent_filing
+from app.agents.base import SourceAgentOutput
 from app.analyzers.registry import SourceRegistration
 from app.orchestrator.alternative.tasks import (
     AlternativeAnalyzeTaskHandler,
@@ -15,6 +16,8 @@ from app.orchestrator.alternative.tasks import (
     HiringNormalizeTaskHandler,
     PatentNormalizeTaskHandler,
     _as_of_str,
+    _from_output,
+    _instantiate_known,
     analysis_task_context,
 )
 from app.schemas.source_result import EvidenceItem, ReportMeta, SourceResult
@@ -526,6 +529,119 @@ class RunSourceWiringTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(wired.llm_model, "gemini-2.5")
         self.assertEqual(wired.evidence_items, direct.evidence_items)
         self.assertEqual(wired.report_meta, direct.report_meta)
+
+    async def test_wired_run_source_empty_evidence_and_no_report_meta(self):
+        # The minimal (pure-rule) case: no evidence_items, report_meta=None.
+        # _to_output omits both keys from method_detail, so _from_output must
+        # still round-trip losslessly via the .get(...) / None branches.
+        class _BareAnalyzer:
+            source = "HIRING"
+
+            async def analyze(self, stock_code, evidence):
+                return SourceResult(
+                    source="HIRING",
+                    stock_code=stock_code,
+                    direction="positive",
+                    score=0.21,
+                    summary="채용 증가",
+                )
+
+        analyzer = _BareAnalyzer()
+        direct = await analyzer.analyze("005930", [])
+        registration = SourceRegistration(
+            source="HIRING",
+            debate_method="D-1",
+            analyzer=analyzer,
+            loader_factory=lambda repo: _FakeLoader("HIRING"),
+        )
+        handler = AlternativeAnalyzeTaskHandler(conn := FakeConnection(), registrations=[registration])
+        wired = await handler._run_source(
+            registration, handler._repository_factory(conn), 1, "005930", date(2026, 6, 16)
+        )
+
+        self.assertEqual(wired, direct)
+        self.assertEqual(wired.evidence_items, [])
+        self.assertIsNone(wired.report_meta)
+
+
+class FromOutputRestoreTest(unittest.TestCase):
+    """Unit coverage for the _from_output / _instantiate_known restore path —
+    resilience to schema drift (L1) and observability of restore bugs (L2)."""
+
+    def test_ignores_unknown_keys_in_method_detail(self):
+        # An extra key on a flattened dataclass (e.g. a field added on the
+        # producer side) must NOT crash the restore — known fields survive,
+        # unknown ones are dropped.
+        output = SourceAgentOutput(
+            source="DATALAB",
+            stock_code="005930",
+            direction="negative",
+            score=-0.3,
+            summary="급락",
+            risk_flags=["watch"],
+            method_detail={
+                "data_status": "ok",
+                "evidence_items": [
+                    {
+                        "title": "갤럭시",
+                        "summary": "검색 급락",
+                        "url": None,
+                        "published_at": None,
+                        "source_name": "NAVER_DATALAB",
+                        "future_field": "ignored",  # unknown → dropped
+                    }
+                ],
+                "report_meta": {
+                    "avg_target": None,
+                    "upside_pct": None,
+                    "target_trend": "down",
+                    "conflict_detected": False,
+                    "opinions": [],
+                    "extra_meta": 123,  # unknown → dropped
+                },
+            },
+            data_status="ok",
+        )
+
+        result = _from_output(output)
+
+        self.assertEqual(len(result.evidence_items), 1)
+        self.assertEqual(result.evidence_items[0].title, "갤럭시")
+        self.assertEqual(result.evidence_items[0].source_name, "NAVER_DATALAB")
+        self.assertFalse(hasattr(result.evidence_items[0], "future_field"))
+        self.assertEqual(result.report_meta.target_trend, "down")
+        self.assertFalse(hasattr(result.report_meta, "extra_meta"))
+
+    def test_instantiate_known_filters_to_declared_fields(self):
+        item = _instantiate_known(
+            EvidenceItem,
+            {"title": "t", "summary": "s", "bogus": "x"},
+        )
+        self.assertEqual(item.title, "t")
+        self.assertEqual(item.summary, "s")
+        self.assertIsNone(item.url)
+
+    def test_restore_failure_is_logged_and_reraised(self):
+        # A genuinely broken payload (missing required field) must raise AND
+        # leave a log trail — so a wiring bug is not silently laundered into
+        # data_status="failed" by the caller's broad except.
+        output = SourceAgentOutput(
+            source="DATALAB",
+            stock_code="005930",
+            direction="neutral",
+            score=0.0,
+            summary="x",
+            method_detail={
+                "evidence_items": [{"summary": "missing required title"}],
+            },
+        )
+
+        with self.assertLogs(
+            "app.orchestrator.alternative.tasks", level="ERROR"
+        ) as logs:
+            with self.assertRaises(TypeError):
+                _from_output(output)
+        self.assertTrue(any("복원 실패" in m for m in logs.output))
 
 
 class HandlerRegistrationTest(unittest.IsolatedAsyncioTestCase):
