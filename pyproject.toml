@@ -12,6 +12,12 @@ dev = [
   "pytest>=8.0.0",
   "ruff>=0.14.0",
 ]
+# 데이터 정합성 눈검증용 Streamlit 미니 대시보드(services/agent-worker/script/dashboard_validator.py).
+# 런타임 서비스와 무관한 dev/ops 도구라 기본(dev) 그룹과 분리 — 설치: `uv sync --group dashboard`.
+dashboard = [
+  "streamlit>=1.40.0",
+  "pandas>=2.0.0",
+]
 
 [tool.uv]
 package = false
