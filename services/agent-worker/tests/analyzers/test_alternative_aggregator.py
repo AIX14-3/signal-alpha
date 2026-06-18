@@ -181,6 +181,29 @@ class AlternativeAggregatorTest(unittest.TestCase):
             any("DATALAB" in e and "규약 위반" in e for e in signal.caution_evidence)
         )
 
+    def test_default_confidence_is_earned_not_saturated(self):
+        # With shipped defaults, confidence must be EARNED (rises with each
+        # agreeing source) and never reach 100% even on a perfect 3-source
+        # agreement — §10 avoids overclaiming certainty on an informational signal.
+        cfg = AggregatorConfig(
+            weights={"HIRING": 0.34, "PATENT": 0.33, "DATALAB": 0.33}
+        )
+        agg = AlternativeAggregator(cfg)
+        one = agg.merge([_sr("HIRING", "positive", 0.6)])
+        two = agg.merge(
+            [_sr("HIRING", "positive", 0.6), _sr("PATENT", "positive", 0.6)]
+        )
+        three = agg.merge(
+            [
+                _sr("HIRING", "positive", 0.6),
+                _sr("PATENT", "positive", 0.6),
+                _sr("DATALAB", "positive", 0.6),
+            ]
+        )
+        self.assertLess(three.confidence, 1.0)  # never saturates at 100%
+        self.assertLess(one.confidence, two.confidence)  # earned, monotonic
+        self.assertLess(two.confidence, three.confidence)
+
     def test_boundary_scores_pass_just_outside_rejected(self):
         # ±1.0 are valid (tolerance absorbs float rounding); just past the bound
         # is a violation and gets excluded.
