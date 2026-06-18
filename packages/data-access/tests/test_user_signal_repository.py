@@ -17,7 +17,7 @@ class FakeConnection:
 
     async def fetchval(self, sql, *args):
         self.calls.append(("fetchval", sql, args))
-        return 1
+        return 10
 
     async def execute(self, sql, *args):
         self.calls.append(("execute", sql, args))
@@ -32,6 +32,7 @@ class UserSignalRepositoryTest(unittest.IsolatedAsyncioTestCase):
         await repository.add_watchlist(user_id=1, stock_id=10)
 
         self.assertIn("ON CONFLICT (user_id, stock_id)", connection.calls[0][1])
+        self.assertEqual(connection.calls[0][2][2], False)
 
     async def test_list_watchlist_joins_stocks(self):
         connection = FakeConnection()
@@ -40,6 +41,25 @@ class UserSignalRepositoryTest(unittest.IsolatedAsyncioTestCase):
         await repository.list_watchlist(user_id=1)
 
         self.assertIn("INNER JOIN stocks", connection.calls[0][1])
+
+    async def test_count_watchlist_counts_user_rows(self):
+        connection = FakeConnection()
+        repository = UserSignalRepository(connection)
+
+        count = await repository.count_watchlist(user_id=1)
+
+        self.assertEqual(count, 10)
+        self.assertIn("COUNT(*)", connection.calls[0][1])
+        self.assertEqual(connection.calls[0][2], (1,))
+
+    async def test_get_watchlist_item_joins_stock_by_user_and_stock(self):
+        connection = FakeConnection()
+        repository = UserSignalRepository(connection)
+
+        await repository.get_watchlist_item(user_id=1, stock_id=10)
+
+        self.assertIn("INNER JOIN stocks", connection.calls[0][1])
+        self.assertEqual(connection.calls[0][2], (1, 10))
 
     async def test_mark_signal_read_uses_read_unique_key(self):
         connection = FakeConnection()
@@ -55,5 +75,5 @@ class UserSignalRepositoryTest(unittest.IsolatedAsyncioTestCase):
 
         journal_id = await repository.create_journal(user_id=1, stock_id=10, user_view="watch")
 
-        self.assertEqual(journal_id, 1)
+        self.assertEqual(journal_id, 10)
         self.assertIn("INSERT INTO signal_journals", connection.calls[0][1])

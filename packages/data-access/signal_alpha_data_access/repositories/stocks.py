@@ -29,6 +29,24 @@ class StockRepository:
             limit,
         )
 
+    async def search_active(self, query: str, limit: int = 20) -> list[Any]:
+        pattern = f"%{query.strip()}%"
+        return await self._connection.fetch(
+            """
+            SELECT id, ticker, name, market, sector, is_active, created_at, updated_at
+            FROM stocks
+            WHERE is_active = TRUE
+              AND (
+                  ticker ILIKE $1
+                  OR name ILIKE $1
+              )
+            ORDER BY market ASC, ticker ASC
+            LIMIT $2
+            """,
+            pattern,
+            limit,
+        )
+
     async def ensure_stock(
         self,
         *,

@@ -35,6 +35,18 @@ class StockRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rows, [{"id": 1, "ticker": "005930"}])
         self.assertEqual(connection.calls[0][2], (5,))
 
+    async def test_search_active_matches_ticker_or_name(self):
+        connection = FakeConnection()
+        repository = StockRepository(connection)
+
+        rows = await repository.search_active("삼성", limit=10)
+
+        self.assertEqual(rows, [{"id": 1, "ticker": "005930"}])
+        sql = connection.calls[0][1]
+        self.assertIn("ticker ILIKE", sql)
+        self.assertIn("name ILIKE", sql)
+        self.assertEqual(connection.calls[0][2], ("%삼성%", 10))
+
     async def test_ensure_stock_upserts_by_ticker(self):
         connection = FakeConnection()
         repository = StockRepository(connection)
