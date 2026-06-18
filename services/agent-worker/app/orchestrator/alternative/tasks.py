@@ -22,7 +22,9 @@ sources, so a single ANALYZE task covers all registered sources for one stock.
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Mapping
+from dataclasses import fields
 from datetime import date, datetime
 from typing import Any, Callable, Sequence
 
@@ -45,6 +47,8 @@ from signal_alpha_data_access.repositories import (
     ProcessingQueueRepository,
     RawDetailRepository,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class _AltNormalizeBase:
@@ -590,6 +594,16 @@ class AlternativeAnalyzeTaskHandler:
             )
             return _from_output(output)
         except Exception as exc:  # one source failing must not sink the others
+            # Observability: a source going to "failed" is either a genuine
+            # loader/analyzer error OR a _from_output restore bug — _from_output
+            # logs the latter with a stack trace before re-raising, so the two
+            # are distinguishable in the logs (this warning fires for both).
+            logger.warning(
+                "Alternative source %s 분석 실패 (stock=%s): %s",
+                registration.source,
+                stock_code,
+                exc,
+            )
             return SourceResult(
                 source=registration.source,
                 stock_code=stock_code,
@@ -615,6 +629,19 @@ class AlternativeAnalyzeTaskHandler:
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _instantiate_known(cls, data: Mapping[str, Any]):
+    """Build a dataclass from a dict using only its declared fields.
+
+    ``_to_output`` flattens dataclasses via ``asdict``, so the round-trip is
+    lossless today. But rebuilding with ``cls(**data)`` would raise ``TypeError``
+    the moment ``method_detail`` carries an unexpected key (e.g. a field renamed
+    or added on one side of the contract). Filtering to known fields keeps the
+    restore resilient to such schema drift while preserving every matching value.
+    """
+    allowed = {f.name for f in fields(cls)}
+    return cls(**{k: v for k, v in data.items() if k in allowed})
+
+
 def _from_output(output: SourceAgentOutput) -> SourceResult:
     """Convert a ``SourceAgentOutput`` back to the ``SourceResult`` the aggregator
     consumes — the exact inverse of ``RuleSourceAgent._to_output``.
@@ -628,8 +655,20 @@ def _from_output(output: SourceAgentOutput) -> SourceResult:
     """
     detail = output.method_detail
     raw_items = detail.get("evidence_items") or []
-    evidence_items = [EvidenceItem(**item) for item in raw_items]
-    report_meta = detail.get("report_meta")
+    raw_meta = detail.get("report_meta")
+    try:
+        evidence_items = [_instantiate_known(EvidenceItem, item) for item in raw_items]
+        report_meta = _instantiate_known(ReportMeta, raw_meta) if raw_meta is not None else None
+    except Exception:
+        # A restore failure here is a wiring/schema bug, not a genuine analyzer
+        # failure — log it loudly so it is not silently laundered into
+        # data_status="failed" by the caller's broad except.
+        logger.exception(
+            "RuleSourceAgent output 복원 실패 (source=%s, stock=%s)",
+            output.source,
+            output.stock_code,
+        )
+        raise
     return SourceResult(
         source=output.source,
         stock_code=output.stock_code,
@@ -639,7 +678,7 @@ def _from_output(output: SourceAgentOutput) -> SourceResult:
         evidence_items=evidence_items,
         risk_flags=list(output.risk_flags),
         data_status=output.data_status,
-        report_meta=ReportMeta(**report_meta) if report_meta is not None else None,
+        report_meta=report_meta,
         llm_model=output.llm_model,
     )
 
