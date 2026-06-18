@@ -24,10 +24,21 @@ class SourceAgentInput:
 
 @dataclass(frozen=True)
 class SourceAgentOutput:
+    """One source analyzer's result — the contract every source agent emits.
+
+    score convention: signed ``[-1.0, +1.0]`` (negative = bearish, 0 = neutral,
+    positive = bullish). The analyzer/aggregator layer computes in this signed
+    scale; conversion to the DB's 0-100 columns happens only at the persistence
+    boundary via ``_to_100``. Do NOT emit a different scale (e.g. 0-100): the
+    AlternativeAggregator weight-averages raw scores, so a mismatched unit
+    silently corrupts the blended signal. A producer in another scale must
+    rescale to ``[-1, +1]`` before returning.
+    """
+
     source: SourceType
     stock_code: str
     direction: Direction
-    score: float
+    score: float  # [-1, +1] convention — see class docstring
     summary: str
     risk_flags: list[str] = field(default_factory=list)
     method_detail: dict[str, Any] = field(default_factory=dict)
