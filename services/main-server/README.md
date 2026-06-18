@@ -39,6 +39,8 @@ GET    /api/watchlists
 POST   /api/watchlists
 DELETE /api/watchlists/{stock_code}
 
+GET /api/dashboard
+
 GET /signals/{ticker}
 ```
 
