@@ -23,7 +23,7 @@ class DartSourceResultTest(unittest.TestCase):
         )
 
         self.assertEqual(result.direction, "neutral")
-        self.assertEqual(result.score, 50)
+        self.assertEqual(result.score, 0.0)
         self.assertFalse(result.needs_review)
         self.assertEqual(result.method_detail["data_status"], "ok")
         self.assertEqual(result.method_detail["event_count"], 1)
@@ -76,4 +76,22 @@ class DartSourceResultTest(unittest.TestCase):
 
         self.assertEqual(result.direction, "mixed")
         self.assertTrue(result.needs_review)
-        self.assertEqual(result.score, 50)
+        self.assertEqual(result.score, 0.0)
+
+    def test_positive_high_impact_event_scores_on_signed_unit_range(self):
+        result = build_dart_analysis_result(
+            [
+                {
+                    "id": 14,
+                    "event_type": "supply_contract",
+                    "event_date": date(2026, 6, 9),
+                    "signal_direction": "positive",
+                    "impact_level": "high",
+                    "title": "Supply contract",
+                    "needs_review": False,
+                }
+            ]
+        )
+
+        self.assertEqual(result.direction, "positive")
+        self.assertAlmostEqual(result.score, 0.3)

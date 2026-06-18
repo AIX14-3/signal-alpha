@@ -295,7 +295,7 @@ validate_input
 | 산출값 | 설명 |
 |---|---|
 | `direction` | `positive`, `negative`, `neutral`, `mixed` |
-| `score` | 0~100 점수. 기본 50에서 방향성과 impact weight로 보정 |
+| `score` | -1.0~1.0 signed score. 기본 0.0에서 방향성과 impact weight로 보정 |
 | `summary` | 공식 공시 이벤트 수와 대표 공시명을 포함한 요약 |
 | `risk_flags` | 정정, 불확실 방향성, 검토 필요 등 |
 | `method_detail` | source, data_status, event_count, direction_counts, events |
@@ -344,6 +344,8 @@ fallback 시 `analysis_source='rules_fallback'`, `llm_error`가 저장된다.
 |---|---|
 | `analysis_results` | `analysis_mode='dart_only'`, `run_key`, `base_score`, `source_signal_event_ids`, `warning`, `version` |
 | `agent_results` | `debate_method='D-1'`, `method_score`, `method_signal`, `method_detail`, `reliability_score=90`, `evidence_quality`, `llm_model`, `prompt_ver` |
+
+`DartAnalysisAgent`와 LangGraph 출력의 `score`는 -1.0~1.0 범위다. 단, 기존 DB 컬럼 `analysis_results.base_score`와 `agent_results.method_score`는 0~100 CHECK 제약을 유지하므로 저장 시 `(score + 1) * 50`으로 변환한다. 원본 source score는 `agent_results.method_detail.source_score`에 보존한다.
 
 `analysis_date`는 이벤트 날짜 중 최신값을 사용한다. 이벤트 날짜가 없으면 task context의 `analysis_date` 또는 실행일을 사용한다.
 

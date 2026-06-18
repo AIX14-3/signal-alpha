@@ -73,7 +73,7 @@ class FakeLlmAnalyzer:
 
         return DartLlmAnalysis(
             direction="positive",
-            score=73,
+            score=0.73,
             summary="LLM reviewed the disclosure and found improving performance.",
             key_facts=["Revenue improved", "Operating profit improved"],
             risk_flags=[],
@@ -211,12 +211,17 @@ class DartAnalyzeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result["analyzed_count"], 1)
         self.assertEqual(result["direction"], "neutral")
+        self.assertEqual(result["score"], 0.0)
         self.assertTrue(any("INSERT INTO analysis_results" in call[1] for call in connection.calls))
+        analysis_call = next(call for call in connection.calls if "INSERT INTO analysis_results" in call[1])
+        self.assertEqual(analysis_call[2][5], 50.0)
         agent_call = next(call for call in connection.calls if "INSERT INTO agent_results" in call[1])
         self.assertEqual(agent_call[2][2], "D-1")
+        self.assertEqual(agent_call[2][4], 50.0)
         self.assertEqual(agent_call[2][5], "neutral")
         self.assertEqual(agent_call[2][10], "dart-rules-v1")
         method_detail = json.loads(agent_call[2][6])
+        self.assertEqual(method_detail["source_score"], 0.0)
         self.assertEqual(method_detail["graph"], "dart_analysis_v1")
         self.assertEqual(method_detail["graph_nodes"], ["validate_input", "analyze", "validate_output"])
 
@@ -259,17 +264,19 @@ class DartAnalyzeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(result["direction"], "positive")
-        self.assertEqual(result["score"], 73)
+        self.assertEqual(result["score"], 0.73)
         self.assertEqual(result["analysis_source"], "llm")
         self.assertEqual(len(llm_analyzer.calls), 1)
         analysis_call = next(call for call in connection.calls if "INSERT INTO analysis_results" in call[1])
-        self.assertEqual(analysis_call[2][5], 73)
+        self.assertEqual(analysis_call[2][5], 86.5)
         self.assertEqual(analysis_call[2][11], "dart-llm-v1")
         agent_call = next(call for call in connection.calls if "INSERT INTO agent_results" in call[1])
+        self.assertEqual(agent_call[2][4], 86.5)
         self.assertEqual(agent_call[2][5], "positive")
         self.assertEqual(agent_call[2][9], "test-llm")
         self.assertEqual(agent_call[2][10], "dart-llm-v1")
         method_detail = json.loads(agent_call[2][6])
+        self.assertEqual(method_detail["source_score"], 0.73)
         self.assertEqual(method_detail["analysis_source"], "llm")
         self.assertEqual(method_detail["key_facts"], ["Revenue improved", "Operating profit improved"])
 

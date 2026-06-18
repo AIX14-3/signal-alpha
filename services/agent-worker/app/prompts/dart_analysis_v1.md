@@ -14,12 +14,14 @@ Analysis guidance:
 - Negative evidence can include declining revenue/profit, losses, deteriorating cash flow, rising leverage, uncertainty, or correction disclosures.
 - Neutral means the disclosure is mostly administrative or lacks enough operational/financial change evidence.
 - Include concrete numeric facts in key_facts when supplied.
+- Use score as a signed value from -1.0 to 1.0.
+- Negative means cautionary information direction, 0 means neutral/mixed or insufficient directional evidence, and positive means positive information direction.
 - Use confidence as 0-100. Higher confidence requires clear evidence in financial_metrics or evidence_highlights.
 
 JSON only schema:
 {
   "direction": "positive|negative|neutral|mixed",
-  "score": 0,
+  "score": 0.0,
   "summary": "Short evidence-grounded summary without investment advice.",
   "key_facts": ["Fact grounded in the disclosure"],
   "risk_flags": ["review_required"],

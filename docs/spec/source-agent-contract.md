@@ -50,7 +50,7 @@
 | `source` | `SourceType` | 결과 source |
 | `stock_code` | `str` | 종목 코드 |
 | `direction` | `Direction` | `positive`, `negative`, `neutral`, `mixed`, `unknown` |
-| `score` | `float` | source별 점수. 저장 계층에서 필요한 범위로 매핑 |
+| `score` | `float` | source별 signed score. 원칙적으로 -1.0~1.0 범위를 사용하고, 저장 계층에서 필요한 범위로 매핑 |
 | `summary` | `str` | source 분석 요약 |
 | `risk_flags` | `list[str]` | 리스크/주의 플래그 |
 | `method_detail` | `dict[str, Any]` | `agent_results.method_detail`에 저장할 상세 JSON |

@@ -23,7 +23,7 @@ class SourceAgentContractTest(unittest.IsolatedAsyncioTestCase):
             source="DART",
             stock_code="005930",
             direction="neutral",
-            score=50,
+            score=0.0,
             summary="DART disclosures are neutral.",
         )
 
