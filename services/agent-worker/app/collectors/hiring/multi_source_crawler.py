@@ -24,6 +24,7 @@ import logging
 import time
 import zoneinfo
 from datetime import datetime
+from typing import NamedTuple
 
 _KST = zoneinfo.ZoneInfo("Asia/Seoul")
 
@@ -33,6 +34,14 @@ except ImportError:
     from app.collectors.hiring.base_collector import BaseCollector
 
 logger = logging.getLogger(__name__)
+
+
+class CrawlerSpec(NamedTuple):
+    """hiring_sources 한 행 = 크롤러 사양. dict 매직스트링 대신 속성 접근으로 타입 안전화."""
+
+    company_name: str
+    crawler_type: str
+    crawler_class: str
 
 
 def _load_crawler_registry() -> dict[str, type]:
@@ -71,7 +80,7 @@ def _load_crawler_registry() -> dict[str, type]:
     }
 
 
-def _load_source_specs(db_url: str) -> list[dict]:
+def _load_source_specs(db_url: str) -> list[CrawlerSpec]:
     """hiring_sources + stocks 조인 → 크롤러 사양(spec) 목록.
 
     DB 조회는 driver 와 무관(매핑 데이터는 불변)하므로, 드라이버 로테이션 때마다
@@ -95,17 +104,17 @@ def _load_source_specs(db_url: str) -> list[dict]:
         engine.dispose()
 
     return [
-        {
-            "company_name": row.name,
-            "crawler_type": row.crawler_type,
-            "crawler_class": row.crawler_class,
-        }
+        CrawlerSpec(
+            company_name=row.name,
+            crawler_type=row.crawler_type,
+            crawler_class=row.crawler_class,
+        )
         for row in rows
     ]
 
 
 def _instantiate_crawlers(
-    specs: list[dict], driver, registry: dict[str, type] | None = None
+    specs: list[CrawlerSpec], driver, registry: dict[str, type] | None = None
 ) -> dict[str, object]:
     """크롤러 사양 목록 → {company_name: CrawlerInstance} (DB 접근 없음; registry 주입 시 순수).
 
@@ -120,9 +129,9 @@ def _instantiate_crawlers(
     crawlers: dict[str, object] = {}
 
     for spec in specs:
-        company_name = spec["company_name"]
-        crawler_cls_name = spec["crawler_class"]
-        use_driver = None if spec["crawler_type"] == "official_api" else driver
+        company_name = spec.company_name
+        crawler_cls_name = spec.crawler_class
+        use_driver = None if spec.crawler_type == "official_api" else driver
 
         cls = registry.get(crawler_cls_name)
         if cls is None:
@@ -219,7 +228,7 @@ class MultiSourceCrawler(BaseCollector):
 
         # hiring_sources 사양은 driver 와 무관하므로 루프 진입 전 1회만 DB 조회.
         # 로테이션 시에는 _instantiate_crawlers 로 driver 만 갈아끼운다(DB 재조회 없음).
-        source_specs: list[dict] = []
+        source_specs: list[CrawlerSpec] = []
         official_crawlers: dict[str, object] = {}
         if self.use_official:
             try:
