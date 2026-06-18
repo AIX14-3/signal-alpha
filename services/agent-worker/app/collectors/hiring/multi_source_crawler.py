@@ -305,7 +305,42 @@ class MultiSourceCrawler(BaseCollector):
 
         logger.info("=" * 60)
         logger.info("📊 전체 수집 합계: %d건 (중복 포함)", len(all_jobs))
-        return all_jobs
+
+        # 수집단계 선거부(#176): 포털 키워드 검색은 하청·대리점·계열사 공고를 대거
+        # 끌어온다(미등록 → insert 단계 _resolve_stock 이 거부). 그 거부를 parse 이전으로
+        # 앞당겨 다운스트림 처리량/트래픽 낭비를 줄인다. 매칭은 insert 단계와 동일한
+        # _filter_registered(공유 _match_stock_row)를 써 유효 공고 회귀를 막는다.
+        return self._reject_unregistered(all_jobs)
+
+    def _reject_unregistered(self, jobs: list[dict]) -> list[dict]:
+        """stocks 미등록이 확실한 레코드를 parse 이전에 드랍(수집단계 선거부, #176).
+
+        DB 연결 실패 시 전량 통과(graceful degradation) — insert 단계 게이트가 여전히
+        방어하므로 안전하다. 효율 최적화가 수집 자체를 깨뜨리지 않도록 한다.
+        """
+        if not jobs:
+            return jobs
+
+        candidates = {j.get("company_name") for j in jobs if j.get("company_name")}
+        try:
+            from sqlalchemy import create_engine
+
+            engine = create_engine(self.database_url, echo=False, future=True)
+            try:
+                with engine.connect() as conn:
+                    registered = self._filter_registered(conn, candidates)
+            finally:
+                engine.dispose()
+        except Exception as exc:
+            logger.warning("⚠️  수집단계 선거부 스킵(전량 통과): %s", exc)
+            return jobs
+
+        kept = [j for j in jobs if j.get("company_name") in registered]
+        logger.info(
+            "📊 수집단계 선거부: %d건 → %d건 (미등록 %d건 조기 제거)",
+            len(jobs), len(kept), len(jobs) - len(kept),
+        )
+        return kept
 
     # ── 파싱 (이미 표준 포맷 — 그대로 통과) ─────────────────────────────────
     def parse(self, raw_data) -> dict:
