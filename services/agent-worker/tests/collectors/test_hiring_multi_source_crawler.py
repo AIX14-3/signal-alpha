@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from app.collectors.hiring import multi_source_crawler
 from app.collectors.hiring.multi_source_crawler import (
@@ -126,6 +126,93 @@ class CollectRotationDbReloadTest(unittest.TestCase):
         self.assertEqual(mock_load.call_count, 1)
         # 최초 1회 + 로테이션 2회 = driver 만 갈아끼우며 재인스턴스화.
         self.assertEqual(mock_inst.call_count, 3)
+
+
+def _crawler() -> MultiSourceCrawler:
+    return MultiSourceCrawler(
+        database_url="postgresql://test/ignored",
+        use_portals=False,
+        use_official=False,
+    )
+
+
+class FilterRegisteredTest(unittest.TestCase):
+    """수집단계 선거부(#176)의 등록판정. insert 단계와 동일한 _match_stock_row 를
+    공유하는지(회귀 방지)와, 통과 시 *원본* 회사명을 돌려주는지 검증."""
+
+    def test_returns_only_registered_original_names(self):
+        crawler = _crawler()
+        registered_db = {"삼성전자", "NAVER"}
+
+        def fake_match(_db, name):
+            return (1, "전기전자") if name in registered_db else None
+
+        with patch.object(MultiSourceCrawler, "_match_stock_row", side_effect=fake_match):
+            out = crawler._filter_registered(
+                db=object(), company_names={"삼성전자", "NAVER", "기아화서대리점"}
+            )
+        self.assertEqual(out, {"삼성전자", "NAVER"})
+
+    def test_delegates_every_candidate_to_match_helper(self):
+        """매칭 의미를 재구현하지 않고 _match_stock_row 에 전적으로 위임한다."""
+        crawler = _crawler()
+        with patch.object(
+            MultiSourceCrawler, "_match_stock_row", return_value=None
+        ) as m:
+            crawler._filter_registered(db=object(), company_names={"A", "B", "C"})
+        self.assertEqual(m.call_count, 3)
+
+
+class ResolveStockDelegationTest(unittest.TestCase):
+    """_resolve_stock 이 공유 _match_stock_row 결과를 그대로 반환하고, 미등록만 경고."""
+
+    def test_returns_match_helper_result(self):
+        crawler = _crawler()
+        with patch.object(
+            MultiSourceCrawler, "_match_stock_row", return_value=(7, "반도체")
+        ):
+            self.assertEqual(crawler._resolve_stock(object(), "삼성전자"), (7, "반도체"))
+
+    def test_none_when_unregistered(self):
+        crawler = _crawler()
+        with patch.object(MultiSourceCrawler, "_match_stock_row", return_value=None):
+            self.assertIsNone(crawler._resolve_stock(object(), "기아화서대리점"))
+
+
+class RejectUnregisteredTest(unittest.TestCase):
+    """collect() 반환 직전 선거부: 미등록 드랍·등록 보존·graceful degradation."""
+
+    def _jobs(self):
+        return [
+            {"company_name": "삼성전자", "job_title": "백엔드"},
+            {"company_name": "기아화서대리점", "job_title": "영업"},
+            {"company_name": "NAVER", "job_title": "프론트"},
+        ]
+
+    def test_drops_unregistered_keeps_registered(self):
+        crawler = _crawler()
+        # create_engine 은 MagicMock 으로 대체 — 실제 DB 없이 connect() 컨텍스트 통과.
+        with patch("sqlalchemy.create_engine", return_value=MagicMock()), patch.object(
+            MultiSourceCrawler, "_filter_registered", return_value={"삼성전자", "NAVER"}
+        ):
+            kept = crawler._reject_unregistered(self._jobs())
+        self.assertEqual({j["company_name"] for j in kept}, {"삼성전자", "NAVER"})
+        self.assertEqual(len(kept), 2)
+
+    def test_empty_jobs_short_circuit(self):
+        """빈 입력은 DB 연결 없이 즉시 반환(create_engine 미호출)."""
+        crawler = _crawler()
+        with patch("sqlalchemy.create_engine") as mock_engine:
+            self.assertEqual(crawler._reject_unregistered([]), [])
+        mock_engine.assert_not_called()
+
+    def test_db_failure_passes_all_through(self):
+        """DB 연결 실패 시 전량 통과(graceful degradation) — insert 게이트가 방어."""
+        crawler = _crawler()
+        jobs = self._jobs()
+        with patch("sqlalchemy.create_engine", side_effect=RuntimeError("no db")):
+            out = crawler._reject_unregistered(jobs)
+        self.assertEqual(out, jobs)
 
 
 if __name__ == "__main__":

@@ -199,24 +199,27 @@ class BaseCollector(ABC):
         return f"Q{(month - 1) // 3 + 1}"
 
     # ── stocks 매칭 ──────────────────────────────────────────────────────────────
-    def _resolve_stock(self, db, raw_company_name: str) -> tuple[int, str] | None:
-        """
-        기업명 → (stock_id, sector).
+    def _match_stock_row(self, db, raw_company_name: str) -> tuple[int, str] | None:
+        """기업명 → (stock_id, sector). 매칭 실패 시 None. (로그/스킵 판단은 호출부 책임)
+
+        단일 매칭 SQL의 Single Source of Truth. insert 단계 _resolve_stock 과
+        수집 단계 _filter_registered 가 **반드시 이 헬퍼를 공유**해 매칭 의미가
+        절대 갈라지지 않게 한다(수집단계 선거부가 insert 게이트보다 엄격/느슨해지면
+        유효 공고 유실 또는 효과 상실 — #176).
 
         매칭 우선순위:
-          1) 정규화된 이름으로 정확/부분 일치 (ORDER BY CASE: 정확>부분, 짧은 이름 우선)
-          2) 일치 없음 → None 반환 (호출부에서 _SkipRecord)
+          정규화된 이름으로 정확/부분 일치 (ORDER BY CASE: 정확>부분, 짧은 이름 우선)
 
-        미등록 기업은 스킵한다. DB가 Single Source of Truth:
-          초기 데이터 → database/migrations/016_seed_stocks_targets.sql
-          기업 추가   → INSERT INTO stocks ...
+        이름(name)뿐 아니라 약칭(short_name)으로도 매칭한다. 잡코리아 등은 종목을
+        약칭으로 표기하는 경우가 많다(예: stock 'HYBE' ↔ 공고 회사명 '하이브',
+        'NAVER' ↔ '네이버'). short_name 이 NULL 인 종목은 ILIKE 결과가 NULL 이라
+        자동으로 제외되므로 안전하다.
+
+        is_target 조건을 두지 않는다 — stocks 에 존재하면 매칭한다(수집단계 필터가
+        is_target 으로 좁히면 insert 게이트 대비 회귀가 되므로 동일하게 유지).
         """
         clean = self._clean_company_name(raw_company_name)
 
-        # 이름(name)뿐 아니라 약칭(short_name)으로도 매칭한다. 잡코리아 등은 종목을
-        # 약칭으로 표기하는 경우가 많다(예: stock 'HYBE' ↔ 공고 회사명 '하이브',
-        # 'NAVER' ↔ '네이버'). short_name 이 NULL 인 종목은 ILIKE 결과가 NULL 이라
-        # 자동으로 제외되므로 안전하다.
         row = db.execute(
             text("""
                 SELECT id, COALESCE(sector, '')
@@ -234,9 +237,34 @@ class BaseCollector(ABC):
 
         if row:
             return int(row[0]), row[1]
-
-        logger.warning("⚠️  DB stocks 에 미등록 기업 → 스킵: %s", clean)
         return None
+
+    def _resolve_stock(self, db, raw_company_name: str) -> tuple[int, str] | None:
+        """
+        기업명 → (stock_id, sector). 미등록은 스킵(None, 호출부에서 _SkipRecord).
+
+        매칭은 _match_stock_row 에 위임(공유 SQL). DB가 Single Source of Truth:
+          초기 데이터 → database/migrations/016_seed_stocks_targets.sql
+          기업 추가   → INSERT INTO stocks ...
+        """
+        resolved = self._match_stock_row(db, raw_company_name)
+        if resolved is None:
+            logger.warning("⚠️  DB stocks 에 미등록 기업 → 스킵: %s",
+                           self._clean_company_name(raw_company_name))
+        return resolved
+
+    def _filter_registered(self, db, company_names: set[str]) -> set[str]:
+        """수집단계 선거부용: 후보 회사명 집합 → stocks 에 등록된 **원본** 회사명 집합.
+
+        각 후보를 insert 단계와 동일한 _match_stock_row 로 판정하므로, 여기서 통과한
+        레코드는 insert 단계 _resolve_stock 도 반드시 통과한다(89건 회귀 불가). 반환은
+        호출부가 원본 레코드를 그대로 필터링할 수 있도록 입력받은 *원본 문자열*을 담는다.
+        """
+        registered: set[str] = set()
+        for name in company_names:
+            if self._match_stock_row(db, name) is not None:
+                registered.add(name)
+        return registered
 
     # ── collector_runs 라이프사이클 ─────────────────────────────────────────────
     def _create_collector_run(self, db) -> int:
