@@ -25,6 +25,23 @@ Expected response:
 }
 ```
 
+Implemented user-facing endpoints:
+
+```text
+POST /api/auth/signup
+POST /api/auth/login
+POST /api/auth/refresh
+POST /api/auth/logout
+GET  /api/users/me
+
+GET    /api/stocks/search?query=
+GET    /api/watchlists
+POST   /api/watchlists
+DELETE /api/watchlists/{stock_code}
+
+GET /signals/{ticker}
+```
+
 ## Responsibilities
 
 - Expose frontend APIs.

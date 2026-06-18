@@ -12,7 +12,7 @@ class UserSignalRepository:
         *,
         user_id: int,
         stock_id: int,
-        notification_enabled: bool = True,
+        notification_enabled: bool = False,
     ) -> Any:
         return await self._connection.fetchrow(
             """
@@ -25,6 +25,37 @@ class UserSignalRepository:
             user_id,
             stock_id,
             notification_enabled,
+        )
+
+    async def count_watchlist(self, *, user_id: int) -> int:
+        return int(
+            await self._connection.fetchval(
+                """
+                SELECT COUNT(*)
+                FROM watchlists
+                WHERE user_id = $1
+                """,
+                user_id,
+            )
+        )
+
+    async def get_watchlist_item(self, *, user_id: int, stock_id: int) -> Any:
+        return await self._connection.fetchrow(
+            """
+            SELECT
+                watchlists.*,
+                stocks.ticker,
+                stocks.name,
+                stocks.market,
+                stocks.sector
+            FROM watchlists
+            INNER JOIN stocks
+                ON stocks.id = watchlists.stock_id
+            WHERE watchlists.user_id = $1
+              AND watchlists.stock_id = $2
+            """,
+            user_id,
+            stock_id,
         )
 
     async def remove_watchlist(self, *, user_id: int, stock_id: int) -> None:
