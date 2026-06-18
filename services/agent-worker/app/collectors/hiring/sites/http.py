@@ -29,6 +29,32 @@ logger = logging.getLogger(__name__)
 
 _session: requests.Session | None = None
 
+# ── 차단 신호 센서(#162 재검토 트리거 계측) ──────────────────────────────────
+# requests 경로에서 관측된 403/429 발생 횟수를 런 단위로 집계한다. 프록시 인프라
+# (#162)는 "실제 IP 차단이 측정될 때" 착수하기로 보류했으므로, 그 트리거를 자동으로
+# 감지하는 가벼운 센서다. Selenium 경로 차단(블록 페이지)은 신호가 모호해 제외.
+# NOTE: 현재 hiring 크롤러는 순차 실행 → 단순 모듈 카운터로 충분(_session 싱글턴과
+# 동일 가정). 향후 asyncio/멀티스레드 도입 시 ContextVar 등으로 전환 필요(레이스 방지).
+_BLOCK_SIGNALS: dict[str, int] = {"403": 0, "429": 0}
+
+
+def record_block_signal(code: int) -> None:
+    """403/429 관측 1건 기록(그 외 코드는 무시)."""
+    key = str(code)
+    if key in _BLOCK_SIGNALS:
+        _BLOCK_SIGNALS[key] += 1
+
+
+def block_signal_snapshot() -> dict[str, int]:
+    """현재까지 집계된 차단 신호 카운트의 사본."""
+    return dict(_BLOCK_SIGNALS)
+
+
+def reset_block_signals() -> None:
+    """런 시작 시 호출 — 크로스-런 누적(고스트) 방지."""
+    for key in _BLOCK_SIGNALS:
+        _BLOCK_SIGNALS[key] = 0
+
 
 def _get_session() -> requests.Session:
     """커넥션 풀 재사용을 위한 지연 초기화 Session 싱글턴."""
@@ -106,6 +132,10 @@ def get(
             return response
         except requests.RequestException as exc:
             last_exc = exc
+            # 차단 신호 센서: 403/429 응답을 시도 단위로 집계(#162 트리거 계측).
+            resp = getattr(exc, "response", None)
+            if resp is not None and resp.status_code in (403, 429):
+                record_block_signal(resp.status_code)
             sleep_s = _retry_delay(exc, attempt, cfg)
             if attempt >= retries or sleep_s is None:
                 raise
