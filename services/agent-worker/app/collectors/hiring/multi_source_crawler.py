@@ -223,22 +223,35 @@ class MultiSourceCrawler(BaseCollector):
           driver_rotation_size(기본 3) 기업마다 Chrome 을 재시작.
           official_crawlers 는 로테이션 시 driver 참조를 갱신하기 위해 루프마다 재생성.
         """
-        self._setup_driver()
-        all_jobs: list[dict] = []
+        # 차단 신호 센서(#162 트리거 계측): 런 시작 시 카운터 초기화(크로스-런 누적 방지).
+        try:
+            from sites.http import block_signal_snapshot, reset_block_signals
+        except ImportError:
+            from app.collectors.hiring.sites.http import (
+                block_signal_snapshot,
+                reset_block_signals,
+            )
+        reset_block_signals()
 
+        all_jobs: list[dict] = []
         # hiring_sources 사양은 driver 와 무관하므로 루프 진입 전 1회만 DB 조회.
         # 로테이션 시에는 _instantiate_crawlers 로 driver 만 갈아끼운다(DB 재조회 없음).
         source_specs: list[CrawlerSpec] = []
         official_crawlers: dict[str, object] = {}
-        if self.use_official:
-            try:
-                source_specs = _load_source_specs(self.database_url)
-                official_crawlers = _instantiate_crawlers(source_specs, self.driver)
-                logger.info("✓ hiring_sources 로드: %d개 기업 공식 크롤러", len(official_crawlers))
-            except Exception as exc:
-                logger.warning("⚠️  hiring_sources 로드 실패 (공식 사이트 스킵): %s", exc)
 
+        # _setup_driver 부터 try 로 감싸, 차단 신호 요약(finally)이 드라이버 초기화
+        # 실패 등 어떤 예외에도 반드시 실행되게 한다(센서 측정 누락 방지).
         try:
+            self._setup_driver()
+
+            if self.use_official:
+                try:
+                    source_specs = _load_source_specs(self.database_url)
+                    official_crawlers = _instantiate_crawlers(source_specs, self.driver)
+                    logger.info("✓ hiring_sources 로드: %d개 기업 공식 크롤러", len(official_crawlers))
+                except Exception as exc:
+                    logger.warning("⚠️  hiring_sources 로드 실패 (공식 사이트 스킵): %s", exc)
+
             for idx, company in enumerate(target_companies):
 
                 # ── 드라이버 로테이션 ────────────────────────────────────────
@@ -302,6 +315,16 @@ class MultiSourceCrawler(BaseCollector):
         finally:
             self._quit_driver()
             logger.info("✓ WebDriver 최종 종료")
+            # 차단 신호 요약(정상/예외 종료 모두 — 측정 누락 방지). >0이면 WARNING 으로
+            # 띄워 로그/alerting 모니터가 #162(프록시) 재검토 트리거를 자동 포착하게 한다.
+            signals = block_signal_snapshot()
+            if any(signals.values()):
+                logger.warning(
+                    "🚧 차단 신호 감지: 403=%d 429=%d — #162(프록시 로테이션) 재검토 트리거 점검",
+                    signals["403"], signals["429"],
+                )
+            else:
+                logger.info("🛡️  차단 신호 없음 (requests 403/429=0) — 단일 IP 정상")
 
         logger.info("=" * 60)
         logger.info("📊 전체 수집 합계: %d건 (중복 포함)", len(all_jobs))

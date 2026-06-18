@@ -93,5 +93,70 @@ class HiringHttpRetryTest(unittest.TestCase):
         self._sleep.assert_not_called()
 
 
+class HiringHttpBlockSensorTest(unittest.TestCase):
+    """차단 신호 센서(#162 트리거 계측): requests 403/429만 시도 단위로 집계."""
+
+    def setUp(self):
+        mock.patch.object(http.time, "sleep").start()
+        mock.patch.object(http.random, "uniform", return_value=0.0).start()
+        self.addCleanup(mock.patch.stopall)
+        http.reset_block_signals()
+        self.addCleanup(http.reset_block_signals)
+
+    def _patch_session(self, side_effect):
+        session = mock.Mock()
+        session.get.side_effect = side_effect
+        return mock.patch.object(http, "_get_session", return_value=session), session
+
+    def test_403_recorded_per_attempt(self):
+        resp = _ok_response()
+        resp.raise_for_status.side_effect = _http_error(403)
+        patcher, session = self._patch_session([resp, resp, resp])  # 매 시도 403
+        with patcher, self.assertRaises(requests.HTTPError):
+            http.get("https://x.test", settings=_FakeSettings(retries=2))
+        self.assertEqual(session.get.call_count, 3)         # retries+1
+        self.assertEqual(http.block_signal_snapshot(), {"403": 3, "429": 0})
+
+    def test_429_recorded(self):
+        resp = _ok_response()
+        resp.raise_for_status.side_effect = _http_error(429)
+        patcher, _ = self._patch_session([resp])
+        with patcher, self.assertRaises(requests.HTTPError):
+            http.get("https://x.test", settings=_FakeSettings(retries=0))
+        self.assertEqual(http.block_signal_snapshot(), {"403": 0, "429": 1})
+
+    def test_non_block_4xx_not_recorded(self):
+        resp = _ok_response()
+        resp.raise_for_status.side_effect = _http_error(404)
+        patcher, _ = self._patch_session([resp])
+        with patcher, self.assertRaises(requests.HTTPError):
+            http.get("https://x.test", settings=_FakeSettings(retries=2))
+        self.assertEqual(http.block_signal_snapshot(), {"403": 0, "429": 0})
+
+    def test_timeout_not_recorded(self):
+        patcher, _ = self._patch_session(requests.Timeout())
+        with patcher, self.assertRaises(requests.Timeout):
+            http.get("https://x.test", settings=_FakeSettings(retries=1))
+        self.assertEqual(http.block_signal_snapshot(), {"403": 0, "429": 0})
+
+    def test_reset_clears_counts(self):
+        http.record_block_signal(403)
+        http.record_block_signal(429)
+        http.reset_block_signals()
+        self.assertEqual(http.block_signal_snapshot(), {"403": 0, "429": 0})
+
+    def test_retry_delay_has_no_counting_side_effect(self):
+        """_retry_delay 는 순수 판정 함수 — 카운팅 부작용이 없어야 한다."""
+        http._retry_delay(_http_error(403), 0, _FakeSettings())
+        http._retry_delay(_http_error(429), 0, _FakeSettings())
+        self.assertEqual(http.block_signal_snapshot(), {"403": 0, "429": 0})
+
+    def test_snapshot_is_a_copy(self):
+        """snapshot 변형이 내부 상태를 오염시키지 않아야 한다."""
+        snap = http.block_signal_snapshot()
+        snap["403"] = 999
+        self.assertEqual(http.block_signal_snapshot(), {"403": 0, "429": 0})
+
+
 if __name__ == "__main__":
     unittest.main()

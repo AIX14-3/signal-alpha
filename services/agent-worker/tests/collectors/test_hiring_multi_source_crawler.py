@@ -20,6 +20,9 @@ from app.collectors.hiring.multi_source_crawler import (
     MultiSourceCrawler,
     _instantiate_crawlers,
 )
+from app.collectors.hiring.sites import http as http_mod
+
+_LOGGER = "app.collectors.hiring.multi_source_crawler"
 
 
 class _StubCrawler:
@@ -230,6 +233,58 @@ class RejectUnregisteredTest(unittest.TestCase):
         with patch("sqlalchemy.create_engine", side_effect=RuntimeError("no db")):
             out = crawler._reject_unregistered(jobs)
         self.assertEqual(out, jobs)
+
+
+class CollectBlockSensorTest(unittest.TestCase):
+    """collect()가 런 시작 시 차단 카운터를 리셋하고, 종료 시(finally) 스냅샷을
+    요약 로깅하는지 — >0이면 WARNING(#162 트리거)."""
+
+    def _crawler(self):
+        return MultiSourceCrawler(
+            database_url="postgresql://test/ignored",
+            use_portals=False,
+            use_official=False,
+            rate_limit_sec=0.0,
+            driver_rotation_size=0,
+        )
+
+    def test_resets_at_start_and_logs_clean_when_zero(self):
+        crawler = self._crawler()
+        with patch.object(http_mod, "reset_block_signals") as mock_reset, patch.object(
+            http_mod, "block_signal_snapshot", return_value={"403": 0, "429": 0}
+        ), patch.object(
+            MultiSourceCrawler, "_setup_driver", autospec=True
+        ), patch.object(MultiSourceCrawler, "_quit_driver", autospec=True):
+            with self.assertLogs(_LOGGER, level="INFO") as cm:
+                crawler.collect(["삼성전자"])
+        mock_reset.assert_called_once()
+        self.assertTrue(any("차단 신호 없음" in m for m in cm.output))
+
+    def test_warns_when_block_signals_present(self):
+        crawler = self._crawler()
+        with patch.object(http_mod, "reset_block_signals"), patch.object(
+            http_mod, "block_signal_snapshot", return_value={"403": 2, "429": 1}
+        ), patch.object(
+            MultiSourceCrawler, "_setup_driver", autospec=True
+        ), patch.object(MultiSourceCrawler, "_quit_driver", autospec=True):
+            with self.assertLogs(_LOGGER, level="WARNING") as cm:
+                crawler.collect(["삼성전자"])
+        self.assertTrue(
+            any("차단 신호 감지" in m and "403=2" in m and "429=1" in m for m in cm.output)
+        )
+
+    def test_snapshot_logged_even_on_exception(self):
+        """수집 루프가 예외로 튕겨도 finally 에서 센서 값을 남긴다(측정 누락 방지)."""
+        crawler = self._crawler()
+        with patch.object(http_mod, "reset_block_signals"), patch.object(
+            http_mod, "block_signal_snapshot", return_value={"403": 5, "429": 0}
+        ), patch.object(
+            MultiSourceCrawler, "_setup_driver", autospec=True,
+            side_effect=RuntimeError("boom"),
+        ), patch.object(MultiSourceCrawler, "_quit_driver", autospec=True):
+            with self.assertLogs(_LOGGER, level="WARNING") as cm, self.assertRaises(RuntimeError):
+                crawler.collect(["삼성전자"])
+        self.assertTrue(any("차단 신호 감지" in m and "403=5" in m for m in cm.output))
 
 
 if __name__ == "__main__":
