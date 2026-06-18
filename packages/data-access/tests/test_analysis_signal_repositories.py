@@ -169,3 +169,16 @@ class AnalysisAndSignalRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("final_signals.is_current = TRUE", connection.calls[0][1])
         self.assertIn("final_signals.is_published = TRUE", connection.calls[0][1])
         self.assertEqual(connection.calls[0][2], ("005930",))
+
+    async def test_list_current_by_stock_ids_filters_to_current_published_signals(self):
+        connection = FakeConnection()
+        repository = SignalRepository(connection)
+
+        rows = await repository.list_current_by_stock_ids([1, 2])
+
+        self.assertEqual(rows[0]["id"], 7)
+        sql = connection.calls[0][1]
+        self.assertIn("final_signals.stock_id = ANY", sql)
+        self.assertIn("final_signals.is_current = TRUE", sql)
+        self.assertIn("final_signals.is_published = TRUE", sql)
+        self.assertEqual(connection.calls[0][2], ([1, 2],))

@@ -77,3 +77,14 @@ class UserSignalRepositoryTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(journal_id, 10)
         self.assertIn("INSERT INTO signal_journals", connection.calls[0][1])
+
+    async def test_list_latest_journals_by_stock_ids_groups_user_journals(self):
+        connection = FakeConnection()
+        repository = UserSignalRepository(connection)
+
+        await repository.list_latest_journals_by_stock_ids(user_id=1, stock_ids=[10, 11])
+
+        sql = connection.calls[0][1]
+        self.assertIn("DISTINCT ON (stock_id)", sql)
+        self.assertIn("stock_id = ANY", sql)
+        self.assertEqual(connection.calls[0][2], (1, [10, 11]))

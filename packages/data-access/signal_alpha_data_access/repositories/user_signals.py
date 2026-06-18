@@ -138,6 +138,27 @@ class UserSignalRepository:
             source_agreement_at_time,
         )
 
+    async def list_latest_journals_by_stock_ids(self, *, user_id: int, stock_ids: list[int]) -> list[Any]:
+        if not stock_ids:
+            return []
+        return await self._connection.fetch(
+            """
+            SELECT DISTINCT ON (stock_id)
+                id,
+                user_id,
+                final_signal_id,
+                stock_id,
+                user_view,
+                created_at
+            FROM signal_journals
+            WHERE user_id = $1
+              AND stock_id = ANY($2::BIGINT[])
+            ORDER BY stock_id, created_at DESC
+            """,
+            user_id,
+            stock_ids,
+        )
+
     async def update_journal_outcome(
         self,
         *,
