@@ -21,6 +21,7 @@ import asyncpg.exceptions  # type: ignore[import]
 from app.clients.naver_datalab_client import NaverDataLabClient, NaverDataLabRecord, _default_end_date, _default_start_date
 from app.observability import calculate_run_status as _run_status
 from app.utils.hash_utils import make_source_hash
+from signal_alpha_data_access.repositories import ProcessingQueueRepository
 
 SOURCE_TYPE = "DATALAB"
 SOURCE_NAME = "NAVER_DATALAB"
@@ -92,7 +93,7 @@ class DataLabCollector:
 
         # Track previous search index per keyword to compute change_pct
         keyword_previous: dict[str, float] = {}
-        inserted = skipped = failed = 0
+        inserted = skipped = requeued = failed = 0
 
         for record in records:
             prev = keyword_previous.get(record.keyword)
@@ -108,8 +109,10 @@ class DataLabCollector:
                     gender=gender_stored,
                     age_group=age_group_stored,
                 )
-                if saved:
+                if saved == "inserted":
                     inserted += 1
+                elif saved == "requeued":
+                    requeued += 1
                 else:
                     skipped += 1
                 keyword_previous[record.keyword] = record.ratio
@@ -117,7 +120,9 @@ class DataLabCollector:
                 failed += 1
                 keyword_previous[record.keyword] = record.ratio
 
-        status = _run_status(inserted, skipped, failed)
+        # requeued(F1 재인큐 복구)는 usable·non-failed 결과다. collector_runs 에는 requeued
+        # 컬럼이 없어 DB 의 skipped_count 에 합산하고, 반환 dict 에만 별도로 노출한다.
+        status = _run_status(inserted, skipped + requeued, failed)
         async with self._pool.acquire() as conn:
             await _finish_run(
                 conn,
@@ -125,7 +130,7 @@ class DataLabCollector:
                 status=status,
                 collected_count=len(records),
                 inserted_count=inserted,
-                skipped_count=skipped,
+                skipped_count=skipped + requeued,
                 failed_count=failed,
             )
         return {
@@ -133,6 +138,7 @@ class DataLabCollector:
             "collected_count": len(records),
             "inserted_count": inserted,
             "skipped_count": skipped,
+            "requeued_count": requeued,
             "failed_count": failed,
             "status": status,
         }
@@ -149,8 +155,14 @@ class DataLabCollector:
         device: str = "all",
         gender: str = "all",
         age_group: str = "all",
-    ) -> bool:
-        """Insert raw + detail + queue in one transaction. Returns True if inserted, False if skipped."""
+    ) -> str:
+        """Insert raw + detail + queue in one transaction.
+
+        Returns the per-record outcome: ``"inserted"`` (new raw), ``"skipped"``
+        (duplicate with an active/successful NORMALIZE task already present), or
+        ``"requeued"`` (F1: duplicate raw whose normalization was never completed —
+        a fresh NORMALIZE task is re-enqueued so it can self-recover).
+        """
         observed_date = record.period
         # asyncpg needs a date object for DATE/TIMESTAMPTZ params; the string
         # form is kept for source_hash and external_id.
@@ -247,9 +259,73 @@ class DataLabCollector:
                             ensure_ascii=False,
                         ),
                     )
-                return True
+                return "inserted"
             except asyncpg.exceptions.UniqueViolationError:
+                pass
+        # 중복(이미 수집된 raw). 정규화 task 가 활성/성공 상태로 존재하면 진짜 skip,
+        # 하나도 없으면(실패·유실·미생성) F1 안전망으로 재인큐한다.
+        requeued = await self._requeue_if_unprocessed(
+            run_id=run_id,
+            source_hash=source_hash,
+            category_id=category_id,
+            keyword=record.keyword,
+            period_type=period_type,
+        )
+        return "requeued" if requeued else "skipped"
+
+    async def _requeue_if_unprocessed(
+        self,
+        *,
+        run_id: int,
+        source_hash: str,
+        category_id: int,
+        keyword: str,
+        period_type: str,
+    ) -> bool:
+        """F1: re-enqueue NORMALIZE for an existing raw that has no live/done task.
+
+        Returns True if a new task was enqueued. UniqueViolation 으로 롤백된 뒤라
+        새 트랜잭션에서 기존 raw_id 를 source_hash(UNIQUE)로 찾는다. DataLab task 는
+        stock_id=NULL(Normalizer 가 datalab_category_stocks 로 종목 해석).
+        """
+        async with self._pool.acquire() as conn:
+            raw_id = await conn.fetchval(
+                "SELECT id FROM datalab_raw_documents WHERE source_hash = $1",
+                source_hash,
+            )
+            if raw_id is None:
                 return False
+            queue = ProcessingQueueRepository(conn)
+            if await queue.has_open_or_successful_task(
+                raw_document_id=raw_id, task_type=TASK_TYPE
+            ):
+                return False
+            async with conn.transaction():
+                await conn.execute(
+                    """
+                    INSERT INTO processing_queue (
+                        stock_id, task_type, status, priority,
+                        source_raw_ids, task_context
+                    )
+                    VALUES ($1, $2, 'pending', 'batch', $3, $4)
+                    """,
+                    None,  # DataLab tasks have no stock_id
+                    TASK_TYPE,
+                    [raw_id],
+                    json.dumps(
+                        {
+                            "collector_run_id": run_id,
+                            "source_type": SOURCE_TYPE,
+                            "category_id": category_id,
+                            "keyword": keyword,
+                            "period_type": period_type,
+                            "collector_ver": self._collector_ver,
+                            "requeue_reason": "f1_normalization_safety_net",
+                        },
+                        ensure_ascii=False,
+                    ),
+                )
+            return True
 
 
 # ---------------------------------------------------------------------------
