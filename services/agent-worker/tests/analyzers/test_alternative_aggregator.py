@@ -162,5 +162,63 @@ class AlternativeAggregatorTest(unittest.TestCase):
         )
 
 
+    def test_out_of_range_score_is_excluded_and_flagged(self):
+        # A source leaking a 0-100 scale (e.g. DART's native 50 = neutral) must
+        # NOT be blended into the [-1, +1] weighted score. It is demoted to a
+        # failed source: excluded, surfaced as missing + caution, and logged.
+        with self.assertLogs("app.aggregator.alternative", level="ERROR") as captured:
+            signal = self.aggregator.merge(
+                [_sr("PATENT", "positive", 0.6), _sr("DATALAB", "positive", 50.0)]
+            )
+        self.assertTrue(any("outside [-1, +1]" in m for m in captured.output))
+        # Only the valid source contributes — 50.0 never reaches _weighted_score.
+        self.assertEqual(signal.available_sources, ["PATENT"])
+        self.assertEqual(signal.missing_sources, ["DATALAB"])
+        self.assertAlmostEqual(signal.score, 0.6, places=3)
+        self.assertEqual(set(signal.score_breakdown), {"PATENT"})
+        self.assertIn("score_out_of_range", signal.risk_flags)
+        self.assertTrue(
+            any("DATALAB" in e and "규약 위반" in e for e in signal.caution_evidence)
+        )
+
+    def test_default_confidence_is_earned_not_saturated(self):
+        # With shipped defaults, confidence must be EARNED (rises with each
+        # agreeing source) and never reach 100% even on a perfect 3-source
+        # agreement — §10 avoids overclaiming certainty on an informational signal.
+        cfg = AggregatorConfig(
+            weights={"HIRING": 0.34, "PATENT": 0.33, "DATALAB": 0.33}
+        )
+        agg = AlternativeAggregator(cfg)
+        one = agg.merge([_sr("HIRING", "positive", 0.6)])
+        two = agg.merge(
+            [_sr("HIRING", "positive", 0.6), _sr("PATENT", "positive", 0.6)]
+        )
+        three = agg.merge(
+            [
+                _sr("HIRING", "positive", 0.6),
+                _sr("PATENT", "positive", 0.6),
+                _sr("DATALAB", "positive", 0.6),
+            ]
+        )
+        self.assertLess(three.confidence, 1.0)  # never saturates at 100%
+        self.assertLess(one.confidence, two.confidence)  # earned, monotonic
+        self.assertLess(two.confidence, three.confidence)
+
+    def test_boundary_scores_pass_just_outside_rejected(self):
+        # ±1.0 are valid (tolerance absorbs float rounding); just past the bound
+        # is a violation and gets excluded.
+        ok = self.aggregator.merge(
+            [_sr("PATENT", "positive", 1.0), _sr("DATALAB", "negative", -1.0)]
+        )
+        self.assertEqual(set(ok.available_sources), {"PATENT", "DATALAB"})
+        self.assertNotIn("score_out_of_range", ok.risk_flags)
+
+        rejected = self.aggregator.merge(
+            [_sr("PATENT", "positive", 0.6), _sr("DATALAB", "positive", 1.0001)]
+        )
+        self.assertEqual(rejected.available_sources, ["PATENT"])
+        self.assertIn("score_out_of_range", rejected.risk_flags)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -164,8 +164,14 @@ class AggregatorConfig:
     # confidence = (base + per_source * available_sources) * data-quality multipliers,
     # clamped to [0, 1]. The multipliers below temper confidence by data quality so a
     # downstream LLM is told how much to trust the score, not just the score.
-    confidence_base: float = 0.3
-    confidence_per_source: float = 0.35
+    #
+    # base/per_source are tuned so confidence is *earned*, not capped: even a full
+    # 3-source agreement (0.15 + 0.20*3 = 0.75, ×1.1 HIGH-agreement ≈ 0.83) stays
+    # below 1.0. Earlier values (0.3 + 0.35*3 = 1.35) saturated at 100% before any
+    # penalty, so confidence could only be docked, never built — and a 100% reading
+    # overclaims certainty on an informational signal (docs §10: confidence 회피).
+    confidence_base: float = 0.15
+    confidence_per_source: float = 0.20
     partial_penalty: float = 0.8  # any source data_status == "partial"
     stale_penalty: float = 0.85  # any source flagged stale_data
     sparse_penalty: float = 0.8  # any source flagged low_base / insufficient_history

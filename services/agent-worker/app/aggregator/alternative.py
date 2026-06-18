@@ -10,12 +10,21 @@ them, so registering a new source needs no change here.
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 
 from app.analyzers.config import AggregatorConfig
 from app.schemas.alternative_signal import AlternativeSignal
 from app.schemas.source_result import Direction, SourceResult
 
 logger = logging.getLogger(__name__)
+
+# SourceResult.score convention is signed [-1, +1] (see its docstring). A small
+# tolerance absorbs float rounding so a legitimate ±1.0 is never rejected.
+_SCORE_TOLERANCE = 1e-6
+
+
+def _score_in_range(score: float) -> bool:
+    return -1.0 - _SCORE_TOLERANCE <= score <= 1.0 + _SCORE_TOLERANCE
 
 
 class AlternativeAggregator:
@@ -26,6 +35,13 @@ class AlternativeAggregator:
         if not results and stock_code is None:
             raise ValueError("merge requires at least one SourceResult or a stock_code.")
         resolved_stock = stock_code or results[0].stock_code
+
+        # Entry guard: a score outside the [-1, +1] contract (e.g. a producer
+        # leaking DART's native 0-100 scale) would corrupt the weighted blend and
+        # the per-source _to_100 mapping. Reject it as a failed source — excluded
+        # from the blend, surfaced via missing_sources/caution — instead of
+        # silently mixing a mismatched unit.
+        results = [self._guard_score(r) for r in results]
 
         available = [r for r in results if r.data_status != "failed"]
         missing = [r for r in results if r.data_status == "failed"]
@@ -77,6 +93,28 @@ class AlternativeAggregator:
             consensus_score=round(confidence * 100.0, 2),
             positive_evidence=positive_evidence,
             caution_evidence=caution_evidence,
+        )
+
+    def _guard_score(self, r: SourceResult) -> SourceResult:
+        """Demote a contract-violating ([-1, +1] range) score to a failed source.
+
+        The aggregator cannot know which scale an out-of-range score *meant*
+        (0.5 is valid here but ambiguous against a 0-100 scale), so it does not
+        guess/rescale — it excludes the source and flags it. The correct rescale
+        belongs to the producing analyzer (see SourceResult.score docstring).
+        """
+        if r.data_status == "failed" or _score_in_range(r.score):
+            return r
+        logger.error(
+            "AlternativeAggregator: source %s score %.4f outside [-1, +1] — "
+            "excluded from merge (scale-convention violation; see SourceResult.score).",
+            r.source,
+            r.score,
+        )
+        return replace(
+            r,
+            data_status="failed",
+            risk_flags=[*r.risk_flags, "score_out_of_range"],
         )
 
     def _weighted_score(self, available: list[SourceResult]) -> float:
@@ -152,6 +190,7 @@ class AlternativeAggregator:
         "no_data": "데이터 없음",
         "risk_search": "위험 키워드 검색 급등(악재 신호)",
         "analyzer_error": "분석기 오류로 제외됨",
+        "score_out_of_range": "점수 규약 위반으로 제외됨(스케일 불일치)",
     }
 
     def _evidence(
