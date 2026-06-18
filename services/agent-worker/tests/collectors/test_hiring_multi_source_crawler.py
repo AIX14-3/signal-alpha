@@ -14,6 +14,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from app.collectors.hiring import multi_source_crawler
+from app.collectors.hiring.base_collector import CollectorResult
 from app.collectors.hiring.multi_source_crawler import (
     CrawlerSpec,
     MultiSourceCrawler,
@@ -198,6 +199,22 @@ class RejectUnregisteredTest(unittest.TestCase):
             kept = crawler._reject_unregistered(self._jobs())
         self.assertEqual({j["company_name"] for j in kept}, {"삼성전자", "NAVER"})
         self.assertEqual(len(kept), 2)
+
+    def test_handles_collectorresult_items(self):
+        """all_jobs 는 dict(legacy)와 CollectorResult(new)가 섞일 수 있다 — 둘 다
+        회사명을 꺼내 필터링해야 한다(라이브 크롤 회귀: AttributeError 방지)."""
+        crawler = _crawler()
+        jobs = [
+            {"company_name": "삼성전자", "job_title": "백엔드"},          # legacy dict
+            CollectorResult(data={"company_name": "기아화서대리점"}),      # new, 미등록
+            CollectorResult(data={"company_name": "NAVER"}),             # new, 등록
+        ]
+        with patch("sqlalchemy.create_engine", return_value=MagicMock()), patch.object(
+            MultiSourceCrawler, "_filter_registered", return_value={"삼성전자", "NAVER"}
+        ):
+            kept = crawler._reject_unregistered(jobs)
+        names = {(j.data if isinstance(j, CollectorResult) else j)["company_name"] for j in kept}
+        self.assertEqual(names, {"삼성전자", "NAVER"})
 
     def test_empty_jobs_short_circuit(self):
         """빈 입력은 DB 연결 없이 즉시 반환(create_engine 미호출)."""

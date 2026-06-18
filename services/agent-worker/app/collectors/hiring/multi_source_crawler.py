@@ -29,9 +29,9 @@ from typing import NamedTuple
 _KST = zoneinfo.ZoneInfo("Asia/Seoul")
 
 try:
-    from base_collector import BaseCollector
+    from base_collector import BaseCollector, CollectorResult
 except ImportError:
-    from app.collectors.hiring.base_collector import BaseCollector
+    from app.collectors.hiring.base_collector import BaseCollector, CollectorResult
 
 logger = logging.getLogger(__name__)
 
@@ -321,7 +321,13 @@ class MultiSourceCrawler(BaseCollector):
         if not jobs:
             return jobs
 
-        candidates = {j.get("company_name") for j in jobs if j.get("company_name")}
+        # collect()의 all_jobs 는 dict(legacy) 또는 CollectorResult(new)가 섞일 수 있다
+        # (base_collector.run 과 동일 처리). 회사명은 양쪽 모두 .data/dict 에서 꺼낸다.
+        def _company(item):
+            data = item.data if isinstance(item, CollectorResult) else item
+            return data.get("company_name")
+
+        candidates = {c for c in (_company(j) for j in jobs) if c}
         try:
             from sqlalchemy import create_engine
 
@@ -335,7 +341,7 @@ class MultiSourceCrawler(BaseCollector):
             logger.warning("⚠️  수집단계 선거부 스킵(전량 통과): %s", exc)
             return jobs
 
-        kept = [j for j in jobs if j.get("company_name") in registered]
+        kept = [j for j in jobs if _company(j) in registered]
         logger.info(
             "📊 수집단계 선거부: %d건 → %d건 (미등록 %d건 조기 제거)",
             len(jobs), len(kept), len(jobs) - len(kept),
