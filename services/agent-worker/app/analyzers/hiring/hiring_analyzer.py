@@ -27,6 +27,12 @@ MIN_TODAY_JOB_COUNT = 3
 # (예: 검색량 2 → base_scale=0.02 → 1건만 올려도 5000% → 가짜 Spike)
 MIN_PHASE_B_EXPECTED = 0.5
 
+# relative_strength 저장 상한: hiring_signals.relative_strength = NUMERIC(8,4) → 최대 9999.9999.
+# 분모 하한(MIN_PHASE_B_EXPECTED)은 분자 폭발(공고 폭증)은 못 막는다 — 예: HYBE 164건/일이면
+# rs가 1만%를 넘어 컬럼 오버플로로 배치 전체가 실패한다. is_spike는 진짜 값(>=150%)으로 판정하고
+# 저장값만 상한 → 어떤 폭발값에도 배치가 죽지 않게 방어. (1만%를 넘는 정밀도는 분석상 무의미.)
+RELATIVE_STRENGTH_MAX = 9999.99
+
 
 class HiringAnalyzer:
     """
@@ -234,8 +240,11 @@ class HiringAnalyzer:
                 # 상대 강도 계산 (%)
                 relative_strength = (today_count / expected_baseline_count) * 100
 
-                # Spike 판정 (평년 대비 150% 이상)
+                # Spike 판정 (평년 대비 150% 이상) — 상한 적용 전 진짜 값으로 판정
                 is_spike = relative_strength >= (HIRING_SPIKE_THRESHOLD * 100)
+
+                # 저장값 상한: NUMERIC(8,4) 오버플로 방어 (공고 폭증 시 rs가 1만%를 넘어 배치 실패)
+                relative_strength = min(relative_strength, RELATIVE_STRENGTH_MAX)
 
                 logger.debug(
                     "stock_id=%d phase=%s today=%d expected=%.2f rs=%.1f%% spike=%s",

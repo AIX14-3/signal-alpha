@@ -348,6 +348,23 @@ class TestAnalyzeHiringTrend(unittest.IsolatedAsyncioTestCase):
         # 40/100 = 0.4 < MIN_PHASE_B_EXPECTED(0.5) → 0.5로 클램핑됨
         self.assertAlmostEqual(baseline, MIN_PHASE_B_EXPECTED)
 
+    async def test_relative_strength_capped_to_column_max(self):
+        """공고 폭증(예: HYBE 164건)으로 rs가 NUMERIC(8,4) 한도(9999.9999)를 넘으면 저장값을
+        RELATIVE_STRENGTH_MAX로 상한 → 오버플로로 배치 전체가 실패하는 것 방지. is_spike는 진짜 값으로 판정."""
+        from app.analyzers.hiring.hiring_analyzer import RELATIVE_STRENGTH_MAX
+        HiringAnalyzer._baseline_cache = {}            # Phase C → expected=1.0 → rs=164*100=16400%
+        today_row = {"stock_id": 1, "today_count": 164}
+        pool, conn = self._make_pool([], [today_row])
+
+        analyzer = HiringAnalyzer(pool)
+        await analyzer.analyze_hiring_trend("2024-06-15")
+
+        rows = self._upsert_rows(conn)
+        _sid, _date, _count, _baseline, rs, is_spike, _phase = rows[0]
+        self.assertEqual(float(rs), RELATIVE_STRENGTH_MAX)   # 9999.99 로 상한
+        self.assertLessEqual(float(rs), 9999.9999)           # NUMERIC(8,4) 한도 내
+        self.assertTrue(is_spike)                            # 진짜 값(16400%)으로 spike 판정
+
 
 if __name__ == "__main__":
     unittest.main()
