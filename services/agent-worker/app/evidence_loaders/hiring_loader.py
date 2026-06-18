@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections import defaultdict
 from datetime import date, datetime, timedelta
 from typing import Any
 
@@ -24,10 +25,13 @@ class HiringEvidenceLoader:
         stock_code: str,
         as_of: date,
     ) -> list[RawEvidence]:
-        since = as_of - timedelta(days=self._lookback_days)
+        # Warming-up 가드(#290): 수집 커버리지 아티팩트(소스 최초 등장·장기 공백 후 catch-up
+        # 보따리)를 분석 모집합에서 제외한다. 직전 WARMUP_PRIOR_DAYS 이력 유무로 판정하므로
+        # 로드 윈도우를 그만큼 앞으로 버퍼링하고, 집계 대상은 원래 분석 윈도우로 다시 컷한다.
+        window_since = as_of - timedelta(days=self._lookback_days)
         records = await self._repository.list_hiring_details_by_stock(
             stock_id=stock_id,
-            since_date=since,
+            since_date=window_since - timedelta(days=WARMUP_PRIOR_DAYS),
         )
         factors = await self._seasonal_factors(stock_id)
         # raw_rows: one row per posting (job_count=1 each, from base_collector).
@@ -35,8 +39,12 @@ class HiringEvidenceLoader:
         # indicators.py can compute meaningful momentum (recent_avg vs prior_avg).
         # Without this step all values are 1.0 → momentum always 0.
         raw_rows = [_row(record, factors) for record in records]
-        rows = _aggregate_to_daily(raw_rows)
-        posting_count = sum(r.get("job_count") or 0 for r in raw_rows)
+        guarded = _drop_warming_up(raw_rows)  # 소스 배제·종목 유지
+        # 버퍼 컷: 직전5일 판정에만 쓰인 window_since 이전 행은 집계에서 제외(ISO 문자열 사전식 비교).
+        window_since_str = window_since.isoformat()
+        windowed = [r for r in guarded if (r.get("observed_date") or "") >= window_since_str]
+        rows = _aggregate_to_daily(windowed)
+        posting_count = sum(r.get("job_count") or 0 for r in windowed)
         latest = rows[0]["observed_date"] if rows else None
         sector_demand = await self._sector_demand(stock_id, as_of)
         metadata: dict[str, Any] = {
@@ -128,6 +136,50 @@ class HiringEvidenceLoader:
 
 _NEUTRAL_FACTORS: dict[int, float] = {1: 1.0, 2: 1.0, 3: 1.0, 4: 1.0}
 
+# Warming-up 가드(#290): 소스가 직전 이만큼의 날에 이력이 없으면(최초 등장/장기 공백 후
+# 재개) 그날 데이터를 '수집 커버리지 아티팩트'로 보고 제외. 5일 = 일상적 일별 수집 변동은
+# 통과시키되, HYBE 공식사이트 첫 전체 스크랩(20→164)처럼 범위 급변만 거른다.
+WARMUP_PRIOR_DAYS = 5
+
+
+def _warming_up_pairs(rows: list[dict[str, Any]]) -> set[tuple[str, str]]:
+    """제외 대상 (source_key, observed_date) 집합.
+
+    소스별로 distinct 날짜를 오름차순 순회하며, 직전 distinct 날짜가 없거나(최초 등장)
+    5일보다 더 과거면(장기 공백 후 재개) 그 (소스,날짜)를 warming-up으로 표시한다.
+    판정은 (소스,날짜) 단위라 같은 날 다중 행이 동일 판정을 공유한다(HYBE 164행 전부 제외).
+    prev는 warming 여부와 무관하게 매 날짜 전진 → 최초일 다음부터는 정상 복귀(영구 갇힘 없음).
+    """
+    dates_by_source: dict[str, set[str]] = defaultdict(set)
+    for r in rows:
+        d = r.get("observed_date")
+        if d:
+            dates_by_source[r.get("source_key") or "PORTAL_UNKNOWN"].add(d)
+
+    warming: set[tuple[str, str]] = set()
+    for source_key, date_strs in dates_by_source.items():
+        prev: date | None = None
+        for d_str in sorted(date_strs):
+            try:
+                d = date.fromisoformat(d_str)
+            except (TypeError, ValueError):
+                continue  # 파싱 불가한 날짜는 판정 보류(제외하지 않음)
+            if prev is None or prev < d - timedelta(days=WARMUP_PRIOR_DAYS):
+                warming.add((source_key, d_str))
+            prev = d
+    return warming
+
+
+def _drop_warming_up(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Warming-up (소스,날짜) 행 제외. 같은 종목의 정상 소스 행은 유지(소스 배제·종목 유지)."""
+    warming = _warming_up_pairs(rows)
+    if not warming:
+        return rows
+    return [
+        r for r in rows
+        if (r.get("source_key") or "PORTAL_UNKNOWN", r.get("observed_date")) not in warming
+    ]
+
 
 def _aggregate_to_daily(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """개별 공고 행(job_count=1)을 일별 집계 행으로 변환.
@@ -210,6 +262,9 @@ def _row(record: Any, factors: dict[int, float]) -> dict[str, Any]:
         "observed_date": observed_date,
         "seasonal_factor": _factor_for(observed_date, factors),
         "source_url": record["source_url"],
+        # 소스 식별자(Warming-up 가드용). 포털 공고는 extra_payload에 source_type이 없어
+        # NULL → 'PORTAL_UNKNOWN'으로 합쳐 한 소스로 취급(#290).
+        "source_key": payload.get("source_type") or "PORTAL_UNKNOWN",
         # Descriptive fields for the analyzer's keyword/tech surfacing (no score
         # impact). Pulled from the posting's extra_payload, falling back to title.
         "job_title": _job_title(payload, record),
