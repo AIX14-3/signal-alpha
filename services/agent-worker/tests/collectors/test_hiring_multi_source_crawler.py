@@ -15,6 +15,7 @@ from unittest.mock import patch
 
 from app.collectors.hiring import multi_source_crawler
 from app.collectors.hiring.multi_source_crawler import (
+    CrawlerSpec,
     MultiSourceCrawler,
     _instantiate_crawlers,
 )
@@ -34,8 +35,8 @@ class _AnotherStub(_StubCrawler):
 _REGISTRY = {"StubCrawler": _StubCrawler, "AnotherStub": _AnotherStub}
 
 
-def _spec(name: str, crawler_type: str, crawler_class: str) -> dict:
-    return {"company_name": name, "crawler_type": crawler_type, "crawler_class": crawler_class}
+def _spec(name: str, crawler_type: str, crawler_class: str) -> CrawlerSpec:
+    return CrawlerSpec(company_name=name, crawler_type=crawler_type, crawler_class=crawler_class)
 
 
 class InstantiateCrawlersTest(unittest.TestCase):
