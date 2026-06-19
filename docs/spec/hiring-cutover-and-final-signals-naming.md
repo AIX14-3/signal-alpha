@@ -22,17 +22,43 @@
 
 이 병행은 **영구 상태가 아니라 이행기(strangler-fig 컷오버)** 다. 최종 목표는 **하나만 남기는 것**이며, 그 근거가 parity다.
 
+### 1.1 두 경로의 의미·산식 차이 (상세)
+
+parity가 *방향*만 비교하는 이유 = 두 경로가 **데이터 범위**와 **스코어링 아키텍처**가 근본적으로 다르기 때문이다.
+
+- **데이터 범위 — 정확날짜 vs lookback 윈도우**
+  - 레거시(`app/analyzers/hiring/hiring_analyzer.py` `analyze_hiring_trend`)는 **그 날짜(`observed_date = --date`)에 발견된 공고만** 계수한다(정확날짜).
+  - 신규(`app/evidence_loaders/hiring_loader.py` → `app/analyzers/hiring/analyzer.py`)는 **`lookback_days` 윈도우**로 연속 흐름을 본다.
+  - → 정확날짜에 공고 없는 종목은 레거시 `NO_DATA`, 신규는 신호 → **PARTIAL**(충돌 아님). (근거: `parity_hiring.py` 모듈 docstring의 time-semantics caveat.)
+- **스코어링 — 상대강도% vs signed score[-1,+1]**
+  - 레거시: **14일 baseline × 분기 계절가중** → `relative_strength %`(today vs baseline) + `is_spike`(≥150%). 오버플로 상한 `RELATIVE_STRENGTH_MAX`(#289).
+  - 신규: **직군 분류 + 섹터수요 컨텍스트**(`app/analyzers/hiring/job_functions.py`) → `app/analyzers/hiring/rules.py`에서 **`score ∈ [-1,+1]` clamp** + `direction`.
+  - → 스케일이 달라 숫자 직접 비교 불가 → UP/FLAT/DOWN 버킷 일치율로만 환산.
+- **부작용(현재 관측)**: 레거시는 Warming-up 가드가 없어 수집 커버리지 급변(소스 첫 등장)에 **가짜 spike**가 난다(로컬 1일치 재구성 데이터에서 다수 종목 `UP/spike`). 신규는 **Warming-up 가드(#290)**가 그 1일치를 제외 → `NO_DATA` → 현재 전부 PARTIAL. **가드가 노이즈를 막는다는 산 증거.**
+
 ---
 
 ## 2. [DECISION] 컷오버 완료 기준 (레거시 폐기 조건)
 
 아래 조건이 **모두** 충족되기 전에는 레거시(`hiring_analyzer.py` + `run_daily_hiring_pipeline.py` + `hiring_signals`)를 삭제하지 않는다.
 
-### C0. 사전 조건 — parity가 실행 가능할 것 ⚠️ **현재 미충족(블로커)**
+### C0. 사전 조건 — parity가 실행 가능할 것 ✅ **로컬 해소(2026-06-19, #279)**
 - `parity_hiring.py` 가 대상 DB에서 **에러 없이 끝까지 실행**되어야 한다.
-- **현재 상태(2026-06-16 확인):** 운영 DB에서 `hiring_raw_details.observed_date` 컬럼 부재로
-  `UndefinedColumnError` 발생 → parity 실행 불가. DB 스키마가 `001_baseline` 보다 뒤처져 있음
-  (스키마 드리프트). **이 드리프트 해소가 컷오버의 1번 선결 과제.**
+- **로컬 차단요인(본 PR로 해소):**
+  1. `ssl="require"` 하드코딩 → 로컬 Docker Postgres(SSL 미지원) 연결 불가. → host 기반 `resolve_ssl`로 교체.
+  2. INSERT 가로채기 래퍼 `_CaptureConn`이 레거시의 **배치 `executemany`** 미구현 → `AttributeError`. → `executemany` 가로채기 추가.
+  - → 로컬 parity **end-to-end 실행 확인**(2026-06-19, 15종목 요약 출력).
+- **prod(운영 DB) 드리프트는 별도 검증:** 이전 진단의 `hiring_raw_details.observed_date` 부재(`UndefinedColumnError`)는
+  **운영 DB 스키마 한정** 가능성이 큰 이슈로, **실제 prod 스키마 상태를 별도 확인**해야 한다(본 로컬 PR은 운영 정합성을 보장하지 않음).
+  로컬은 마이그레이션 001~017 재구성으로 정합.
+
+#### 로컬 parity 실행 (SSL 픽스 후)
+```bash
+cd services/agent-worker
+uv run python parity_hiring.py --date <YYYY-MM-DD>   # 로컬 Docker DB. DB_SSL=disable 명시는 선택(host 기반 자동 off).
+```
+**요약 읽는 법**: `MATCH`=양쪽 방향(UP/FLAT/DOWN) 일치 · `MISMATCH`=정반대(=로직/데이터 보정 최우선 대상) ·
+`PARTIAL`=한쪽 `NO_DATA`(주로 정확날짜에 공고 없음 — 충돌 아님). `agreement_rate` = MATCH / (MATCH+MISMATCH).
 
 ### C1. 방향 일치율 임계
 - `agreement_rate`(= MATCH / (MATCH+MISMATCH)) **≥ 0.85** 를, 서로 다른 **최소 N=3 영업일**에 대해 재현.
@@ -116,7 +142,9 @@
 ---
 
 ## 4. 다음 액션
-- [ ] **C0 블로커**: 운영 DB 스키마 드리프트(`hiring_raw_details.observed_date` 등) 재정합 → parity 실행 가능화.
-- [ ] parity 재실행하여 C1 표본(≥3 영업일) 수집, `agreement_rate`/MISMATCH 기록.
+- [x] **C0 로컬 해소(#279)**: SSL 하드코딩 + `_CaptureConn.executemany` 미구현 수정 → 로컬 parity 실행 가능.
+- [ ] **C0 잔여**: prod(운영 DB) 스키마 드리프트(`observed_date` 등) **별도 검증** — 운영계에서 parity 실행 확인.
+- [ ] 데이터 누적 후 parity 재실행하여 C1 표본(≥3 영업일) 수집, `agreement_rate`/MISMATCH 기록.
+  (현재 로컬은 1일치라 전부 PARTIAL — 신규 Warming-up 가드가 1일치를 제외하기 때문. 며칠 누적 필요.)
 - [ ] §3.4 [DECISION]: 융합(A) vs 파이프라인별(B) 아키텍처 확정.
 - [ ] 단기 조치: alternative `run_key = ALTERNATIVE` 적용.

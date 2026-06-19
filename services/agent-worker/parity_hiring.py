@@ -46,7 +46,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "packages" / "data-
 
 from app.analyzers.hiring.hiring_analyzer import HiringAnalyzer as LegacyHiringAnalyzer
 from app.analyzers.registry import build_registry
-from run_analyzers import fetch_target_stocks, load_env, parse_dsn
+from run_analyzers import fetch_target_stocks, load_env, parse_dsn, resolve_ssl
 
 # ── Pure bucketing / comparison logic (unit-testable, no I/O) ────────────────
 
@@ -146,6 +146,24 @@ class _CaptureConn:
             return "INSERT 0 0"  # no-op: nothing written
         return await self._real.execute(sql, *args)
 
+    async def executemany(self, sql: str, args_iter: Any, *extra: Any) -> Any:
+        """배치 INSERT 가로채기 — 레거시 analyze_hiring_trend는 hiring_signals 업서트에
+        ``executemany``(배치)를 쓴다. execute 경로와 동일 arg 순서:
+        (stock_id, observed_date, job_count, baseline, relative_strength, is_spike[, phase])."""
+        if "hiring_signals" in sql:
+            for a in args_iter:
+                self._sink.append(
+                    {
+                        "stock_id": a[0],
+                        "job_count": a[2],
+                        "baseline": float(a[3]),
+                        "relative_strength": float(a[4]),
+                        "is_spike": bool(a[5]),
+                    }
+                )
+            return None  # no-op: nothing written
+        return await self._real.executemany(sql, args_iter, *extra)
+
 
 class _AcquireCtx:
     def __init__(self, pool: Any, sink: list[dict[str, Any]]) -> None:
@@ -218,11 +236,14 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
         raise RuntimeError("DATABASE_URL is required.")
     as_of = date.fromisoformat(args.date) if args.date else date.today()
 
+    # 로컬 Docker Postgres(SSL 미지원)에서도 parity가 돌도록 host 기반 SSL 해제(#279).
+    # resolve_ssl: 로컬 호스트 → False(SSL off), 그 외 → "require"(prod 불변). DB_SSL override.
+    conn_kwargs = parse_dsn(dsn)
     pool = await asyncpg.create_pool(
-        **parse_dsn(dsn),
+        **conn_kwargs,
         min_size=1,
         max_size=6,
-        ssl="require",
+        ssl=resolve_ssl(conn_kwargs["host"]),
         statement_cache_size=0,
     )
     try:
