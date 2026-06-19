@@ -9,8 +9,9 @@
 from __future__ import annotations
 
 import unittest
+from datetime import date, timedelta
 
-from app.evidence_loaders.hiring_loader import _aggregate_to_daily
+from app.evidence_loaders.hiring_loader import _aggregate_to_daily, _drop_warming_up
 
 
 def _posting(observed_date: str, *, job_count: int = 1,
@@ -149,6 +150,63 @@ class AggregateDescriptiveFieldsTest(unittest.TestCase):
         rows = [_posting("2026-06-10", seasonal_factor=1.2)]
         result = _aggregate_to_daily(rows)
         self.assertAlmostEqual(result[0]["seasonal_factor"], 1.2)
+
+
+class WarmingUpGuardTest(unittest.TestCase):
+    """Warming-up 가드(#290): 소스 최초 등장·장기(>5일) 공백 후 catch-up 행 제외(소스 배제·종목 유지)."""
+
+    @staticmethod
+    def _p(date_str: str, source_key: str, n: int = 1) -> list[dict]:
+        return [
+            {"observed_date": date_str, "source_key": source_key, "job_count": 1}
+            for _ in range(n)
+        ]
+
+    def test_first_appearance_all_rows_excluded(self):
+        """단일 소스 최초 등장 164행 → (소스,날짜) 단위 판정으로 전부 제외(HYBE형)."""
+        rows = self._p("2026-06-18", "HYBE_CAREERS", n=164)
+        self.assertEqual(_drop_warming_up(rows), [])
+
+    def test_source_warms_up_after_first_day(self):
+        """연속일: 최초일만 제외, 다음 날부터 정상 복귀(영구 갇힘 없음)."""
+        rows: list[dict] = []
+        base = date(2026, 6, 10)
+        for i in range(6):  # 6/10 ~ 6/15 연속
+            rows += self._p((base + timedelta(days=i)).isoformat(), "SARAMIN")
+        kept = {r["observed_date"] for r in _drop_warming_up(rows)}
+        self.assertNotIn("2026-06-10", kept)  # 최초 등장 → 제외
+        self.assertIn("2026-06-11", kept)     # 직전일 이력 → 유지
+        self.assertIn("2026-06-15", kept)
+
+    def test_mixed_sources_only_warming_source_excluded(self):
+        """포털(연속·정상) + 공식(당일 최초 164) → 같은 날 공식만 제외, 포털 유지."""
+        rows: list[dict] = []
+        base = date(2026, 6, 14)
+        for i in range(5):  # 포털 6/14~6/18 연속
+            rows += self._p((base + timedelta(days=i)).isoformat(), "PORTAL_UNKNOWN")
+        rows += self._p("2026-06-18", "HYBE_CAREERS", n=164)  # 공식 첫 등장
+        kept_618 = [r for r in _drop_warming_up(rows) if r["observed_date"] == "2026-06-18"]
+        self.assertEqual(len(kept_618), 1)  # 포털 1건만 남고 공식 164 제외
+        self.assertEqual(kept_618[0]["source_key"], "PORTAL_UNKNOWN")
+
+    def test_gap_over_5days_reappearance_excluded(self):
+        """9일 공백 후 재개 → warming-up(제외)."""
+        rows = self._p("2026-06-01", "X") + self._p("2026-06-10", "X")
+        kept = {r["observed_date"] for r in _drop_warming_up(rows)}
+        self.assertNotIn("2026-06-01", kept)
+        self.assertNotIn("2026-06-10", kept)
+
+    def test_gap_within_5days_kept(self):
+        """4일 간격 → 정상 변동(유지)."""
+        rows = self._p("2026-06-01", "X") + self._p("2026-06-05", "X")
+        kept = {r["observed_date"] for r in _drop_warming_up(rows)}
+        self.assertIn("2026-06-05", kept)
+
+    def test_null_source_treated_as_portal_unknown(self):
+        """source_key 없는 행(포털)도 PORTAL_UNKNOWN으로 묶여 판정된다."""
+        rows = [{"observed_date": "2026-06-10", "job_count": 1}] * 2  # source_key 없음
+        # 단일 날짜 최초 등장 → 제외
+        self.assertEqual(_drop_warming_up(rows), [])
 
 
 if __name__ == "__main__":
