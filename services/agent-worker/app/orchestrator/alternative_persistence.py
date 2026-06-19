@@ -133,7 +133,7 @@ def _warning_level(signal: AlternativeSignal) -> str:
 
 
 def _method_detail(source_result: SourceResult) -> dict[str, Any]:
-    return {
+    detail: dict[str, Any] = {
         "source": source_result.source,
         "summary": source_result.summary,
         "score": round(source_result.score, 3),
@@ -142,3 +142,11 @@ def _method_detail(source_result: SourceResult) -> dict[str, Any]:
         "data_status": source_result.data_status,
         "highlights": [item.title for item in source_result.evidence_items],
     }
+    # Trend-only attention cause (DataLab cause agent). Persisted in agent_results
+    # JSONB only when present — no new column, no migration; None for every other
+    # source leaves the detail shape unchanged.
+    if source_result.cause is not None:
+        detail["cause"] = source_result.cause
+        detail["cause_rationale"] = source_result.cause_rationale
+        detail["cause_source"] = source_result.cause_source
+    return detail
