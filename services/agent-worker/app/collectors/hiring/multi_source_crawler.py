@@ -113,6 +113,28 @@ def _load_source_specs(db_url: str) -> list[CrawlerSpec]:
     ]
 
 
+def _load_jobkorea_company_ids(db_url: str) -> dict[str, str]:
+    """{company_name: 잡코리아 회원번호} (#313). 매핑된 종목은 회원번호 직접수집 → 노이즈 0.
+
+    source_specs와 동일하게 driver 무관·루프 진입 전 1회만 조회. 실패/빈 결과 시 빈 dict
+    반환 → 전 종목 키워드 폴백(graceful, 회귀 없음).
+    """
+    from sqlalchemy import create_engine, text
+
+    engine = create_engine(db_url, echo=False, future=True)
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(text("""
+                SELECT s.name, pci.company_id
+                FROM hiring_portal_company_ids pci
+                JOIN stocks s ON s.id = pci.stock_id
+                WHERE pci.portal = 'JOBKOREA' AND s.is_target = TRUE
+            """)).fetchall()
+    finally:
+        engine.dispose()
+    return {row.name: row.company_id for row in rows}
+
+
 def _instantiate_crawlers(
     specs: list[CrawlerSpec], driver, registry: dict[str, type] | None = None
 ) -> dict[str, object]:
@@ -238,6 +260,7 @@ class MultiSourceCrawler(BaseCollector):
         # 로테이션 시에는 _instantiate_crawlers 로 driver 만 갈아끼운다(DB 재조회 없음).
         source_specs: list[CrawlerSpec] = []
         official_crawlers: dict[str, object] = {}
+        jobkorea_company_ids: dict[str, str] = {}   # {회사명: 잡코리아 회원번호} (#313)
 
         # _setup_driver 부터 try 로 감싸, 차단 신호 요약(finally)이 드라이버 초기화
         # 실패 등 어떤 예외에도 반드시 실행되게 한다(센서 측정 누락 방지).
@@ -251,6 +274,20 @@ class MultiSourceCrawler(BaseCollector):
                     logger.info("✓ hiring_sources 로드: %d개 기업 공식 크롤러", len(official_crawlers))
                 except Exception as exc:
                     logger.warning("⚠️  hiring_sources 로드 실패 (공식 사이트 스킵): %s", exc)
+
+            # 잡코리아 회원번호 매핑(#313) — 매핑 종목은 회원번호 직접수집(노이즈 0).
+            if self.use_portals:
+                try:
+                    jobkorea_company_ids = _load_jobkorea_company_ids(self.database_url)
+                    if jobkorea_company_ids:
+                        logger.info(
+                            "✓ 잡코리아 회원번호 매핑: %d개 종목 직접수집(나머지 키워드)",
+                            len(jobkorea_company_ids),
+                        )
+                except Exception as exc:
+                    logger.warning(
+                        "⚠️  잡코리아 회원번호 매핑 로드 실패(전 종목 키워드 폴백): %s", exc
+                    )
 
             for idx, company in enumerate(target_companies):
 
@@ -283,14 +320,34 @@ class MultiSourceCrawler(BaseCollector):
                 # 1) 포털 수집 (사람인 + 잡코리아)
                 if self.use_portals:
                     saramin, jobkorea = self._get_portal_crawlers()
-                    for crawler in (saramin, jobkorea):
-                        try:
-                            results = crawler.crawl(company)
-                            company_jobs.extend(results)
-                            logger.info("  ✓ [%s] %d건", crawler.source_label, len(results))
-                        except Exception as exc:
-                            logger.warning("  ⚠️  [%s] 오류: %s", crawler.source_label, exc)
-                        time.sleep(self.rate_limit_sec)
+
+                    # 사람인: 키워드 검색(현행)
+                    try:
+                        results = saramin.crawl(company)
+                        company_jobs.extend(results)
+                        logger.info("  ✓ [%s] %d건", saramin.source_label, len(results))
+                    except Exception as exc:
+                        logger.warning("  ⚠️  [%s] 오류: %s", saramin.source_label, exc)
+                    time.sleep(self.rate_limit_sec)
+
+                    # 잡코리아: 회원번호 매핑 있으면 직접수집(노이즈 0). 미매핑·DOM깨짐이면
+                    # crawl_by_member_id가 None → 기존 키워드 crawl()로 폴백(#313).
+                    member_id = jobkorea_company_ids.get(company)
+                    try:
+                        results = (
+                            jobkorea.crawl_by_member_id(member_id, company)
+                            if member_id else None
+                        )
+                        via = "회원번호" if results is not None else "키워드"
+                        if results is None:
+                            results = jobkorea.crawl(company)
+                        company_jobs.extend(results)
+                        logger.info(
+                            "  ✓ [%s] %d건 (%s)", jobkorea.source_label, len(results), via
+                        )
+                    except Exception as exc:
+                        logger.warning("  ⚠️  [%s] 오류: %s", jobkorea.source_label, exc)
+                    time.sleep(self.rate_limit_sec)
 
                 # 2) 공식 사이트 수집 (hiring_sources DB 기반)
                 if self.use_official:
