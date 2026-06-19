@@ -32,6 +32,16 @@ DEBATE_METHODS = {
     "DATALAB": "D-3",
 }
 
+# Each source now publishes its OWN final_signals row, so it needs its own
+# run_key — the (stock_id, signal_date, run_key) tuple is what keeps the three
+# sources' "current" signals from colliding (uq_final_signal_current, 001_baseline).
+# Kept distinct from DART's run_key (read filters use ``run_key LIKE 'DART%'``).
+RUN_KEYS = {
+    "HIRING": "HIRING",
+    "PATENT": "PATENT",
+    "DATALAB": "DATALAB",
+}
+
 
 @dataclass(frozen=True)
 class SourceRegistration:
@@ -39,9 +49,17 @@ class SourceRegistration:
     debate_method: str
     analyzer: Analyzer
     loader_factory: Callable[[Any], EvidenceLoader]
+    # final_signals/analysis_results run_key for this source. Defaults to None so
+    # callers constructing a registration ad hoc still work; resolve via
+    # ``resolved_run_key`` which falls back to the source name.
+    run_key: str | None = None
 
     def build_loader(self, repository: Any) -> EvidenceLoader:
         return self.loader_factory(repository)
+
+    @property
+    def resolved_run_key(self) -> str:
+        return self.run_key or RUN_KEYS.get(self.source, self.source)
 
 
 def build_registry(
@@ -58,6 +76,7 @@ def build_registry(
         SourceRegistration(
             source="HIRING",
             debate_method=DEBATE_METHODS["HIRING"],
+            run_key=RUN_KEYS["HIRING"],
             analyzer=HiringAnalyzer(hiring_config),
             loader_factory=lambda repo, cfg=hiring_config: HiringEvidenceLoader(
                 repo, lookback_days=cfg.lookback_days
@@ -66,6 +85,7 @@ def build_registry(
         SourceRegistration(
             source="PATENT",
             debate_method=DEBATE_METHODS["PATENT"],
+            run_key=RUN_KEYS["PATENT"],
             analyzer=PatentAnalyzer(patent_config),
             loader_factory=lambda repo, cfg=patent_config: PatentEvidenceLoader(
                 repo, lookback_days=cfg.lookback_days
@@ -74,6 +94,7 @@ def build_registry(
         SourceRegistration(
             source="DATALAB",
             debate_method=DEBATE_METHODS["DATALAB"],
+            run_key=RUN_KEYS["DATALAB"],
             analyzer=DataLabAnalyzer(datalab_config),
             loader_factory=lambda repo, cfg=datalab_config: DataLabEvidenceLoader(
                 repo, lookback_days=cfg.lookback_days

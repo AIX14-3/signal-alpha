@@ -27,14 +27,14 @@ class ReportMeta:
 
 @dataclass(frozen=True)
 class SourceResult:
-    """Per-source analysis result the AlternativeAggregator consumes.
+    """Per-source analysis result ``build_source_signal`` consumes.
 
     score convention: signed ``[-1.0, +1.0]`` (negative = bearish, 0 = neutral,
-    positive = bullish). The aggregator weight-averages these raw scores and the
-    persistence layer maps them to the DB's 0-100 columns via ``_to_100`` only at
-    the write boundary. Feeding a different scale (e.g. DART's native 0-100)
-    silently corrupts the blend — the aggregator's entry guard rejects any score
-    outside ``[-1, +1]`` rather than mixing it in.
+    positive = bullish). ``build_source_signal`` maps this raw score onto the
+    source's own signal, and the persistence layer scales it to the DB's 0-100
+    columns via ``_to_100`` only at the write boundary. Feeding a different scale
+    (e.g. DART's native 0-100) is rejected: ``build_source_signal`` demotes any
+    score outside ``[-1, +1]`` to an ``unknown`` signal rather than publishing it.
     """
 
     source: SourceType
