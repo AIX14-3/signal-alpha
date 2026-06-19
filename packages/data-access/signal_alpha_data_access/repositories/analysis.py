@@ -257,6 +257,38 @@ class AnalysisRepository:
             limit,
         )
 
+    async def list_agent_results_for_aggregation(self, analysis_result_ids: list[int]) -> list[Any]:
+        if not analysis_result_ids:
+            return []
+        return await self._connection.fetch(
+            """
+            SELECT
+                analysis_results.id AS analysis_result_id,
+                analysis_results.stock_id,
+                analysis_results.analysis_date,
+                analysis_results.run_key AS analysis_run_key,
+                analysis_results.analysis_mode,
+                analysis_results.version AS analysis_version,
+                analysis_results.source_signal_event_ids AS analysis_source_signal_event_ids,
+                agent_results.id AS agent_result_id,
+                agent_results.debate_method,
+                agent_results.source_signal_event_ids AS agent_source_signal_event_ids,
+                agent_results.method_score,
+                agent_results.method_signal,
+                agent_results.method_detail,
+                agent_results.reliability_score,
+                agent_results.evidence_quality,
+                agent_results.llm_model,
+                agent_results.prompt_ver
+            FROM agent_results
+            INNER JOIN analysis_results
+                ON analysis_results.id = agent_results.result_id
+            WHERE agent_results.result_id = ANY($1::BIGINT[])
+            ORDER BY analysis_results.analysis_date DESC, agent_results.id DESC
+            """,
+            analysis_result_ids,
+        )
+
     async def upsert_final_signal(
         self,
         *,

@@ -19,6 +19,8 @@ collect_dart
   -> source_documents + signal_events + signal_metrics 생성
   -> analyze_dart 큐 등록
   -> analysis_results + agent_results 저장
+  -> aggregate_signal 큐 등록
+  -> final_signals 생성
 ```
 
 핵심 원칙은 다음과 같다.
@@ -83,7 +85,7 @@ collect_dart
 | `collector_runs` | DART 수집 실행 단위 로그 |
 | `raw_documents` | DART 원천 문서 공통 헤더. `source_type='DART'`, `external_id=receipt_no` |
 | `dart_raw_details` | DART 전용 상세 필드. 접수번호, 공시명, 정정 여부, 원문 텍스트 payload |
-| `processing_queue` | `normalize_dart`, `analyze_dart` 후속 작업 |
+| `processing_queue` | `normalize_dart`, `analyze_dart`, `aggregate_signal` 후속 작업 |
 
 ### 정규화·분석 계층
 
@@ -96,7 +98,8 @@ collect_dart
 | `analysis_results` | DART 분석 실행 결과 헤더 |
 | `agent_results` | DART agent의 점수, 신호, 상세 JSON, LLM 메타데이터 |
 
-현재 `analyze_dart`는 `final_signals`를 직접 발행하지 않는다. `final_signals` 집계 연결은 후속 작업이다.
+현재 `analyze_dart`는 `final_signals`를 직접 발행하지 않는다. 성공 시 `aggregate_signal`을
+enqueue하고, Aggregator가 `final_signals`를 생성한다.
 
 ---
 
@@ -513,7 +516,7 @@ curl "http://localhost:8011/internal/dart/analysis-results?stock_code=005930&lim
 
 현재 구현의 주요 한계는 다음과 같다.
 
-- DART 분석 결과는 `analysis_results`, `agent_results`까지만 저장되고 `final_signals` 집계에는 아직 자동 연결되지 않는다.
+- DART 분석 결과는 `analysis_results`, `agent_results`에 저장되고, 성공 시 `aggregate_signal`이 enqueue되어 DART 단일 source 기반 `final_signals` 생성으로 이어진다.
 - rule 기반 방향성은 공시 제목 중심이라 실제 공시 내용의 긍정/부정 판단은 제한적이다.
 - LLM 분석은 선택 기능이며, provider key/model 설정이 없으면 자동으로 rule 분석만 사용한다.
 - `DART_FETCH_DOCUMENTS=false`이면 원문 분석 품질이 낮아지고 공시명 중심 이벤트만 생성된다.
@@ -522,8 +525,7 @@ curl "http://localhost:8011/internal/dart/analysis-results?stock_code=005930&lim
 
 후속 구현 우선순위:
 
-1. DART `agent_results`를 `final_signals` 집계에 연결한다.
-2. 정정 공시와 원공시 비교 분석을 추가한다.
-3. 공급계약, 자사주, 유상증자, 감사의견 등 고임팩트 유형별 세부 rule을 확장한다.
-4. LLM 분석 결과의 `key_facts`를 UI evidence 패널에 연결한다.
-5. DART 분석 결과와 Report/PRICE 분석 결과를 같은 scoring policy로 통합한다.
+1. 정정 공시와 원공시 비교 분석을 추가한다.
+2. 공급계약, 자사주, 유상증자, 감사의견 등 고임팩트 유형별 세부 rule을 확장한다.
+3. LLM 분석 결과의 `key_facts`를 UI evidence 패널에 연결한다.
+4. DART 분석 결과와 Report/PRICE 분석 결과를 같은 scoring policy로 통합한다.

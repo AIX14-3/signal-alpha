@@ -4,6 +4,7 @@ from typing import Any
 
 from app.core.config import get_settings
 from app.orchestrator.queue.task_types import (
+    AGGREGATE_SIGNAL,
     ANALYZE_ALTERNATIVE,
     ANALYZE_DART,
     ANALYZE_REPORT,
@@ -34,6 +35,7 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
         DartCollectionTaskHandler,
         DartNormalizeTaskHandler,
     )
+    from app.orchestrator.aggregation.tasks import AggregateSignalTaskHandler
 
     settings = get_settings()
     llm_analyzer = None
@@ -90,6 +92,7 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
             llm_analyzer=llm_analyzer,
             llm_high_impact_only=settings.dart_llm_high_impact_only,
         ),
+        AGGREGATE_SIGNAL: AggregateSignalTaskHandler(connection),
         COLLECT_REPORT: ReportCollectTaskHandler(connection=connection, settings=settings),
         PROCESS_REPORT: ReportProcessTaskHandler(connection=connection, settings=settings),
         EMBED_REPORT: ReportEmbedTaskHandler(connection=connection, settings=settings),

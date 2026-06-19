@@ -12,7 +12,7 @@ from app.analyzers.dart.llm import DartLlmAnalyzer
 from app.analyzers.dart.rules import classify_dart_report, make_dart_event_hash
 from app.collectors.dart.disclosure import DartCollector, DartDisclosureClient
 from app.orchestrator.persistence import CollectionPersistence
-from app.orchestrator.queue.task_types import ANALYZE_DART, NORMALIZE_DART
+from app.orchestrator.queue.task_types import AGGREGATE_SIGNAL, ANALYZE_DART, NORMALIZE_DART
 from signal_alpha_data_access.repositories import (
     AnalysisRepository,
     DartRepository,
@@ -187,6 +187,7 @@ class DartAnalyzeTaskHandler:
     ) -> None:
         self._normalization_repository = NormalizationRepository(connection)
         self._analysis_repository = AnalysisRepository(connection)
+        self._queue_repository = ProcessingQueueRepository(connection)
         self._analysis_agent = analysis_agent or DartAnalysisGraphAgent(
             llm_analyzer=llm_analyzer,
             llm_high_impact_only=llm_high_impact_only,
@@ -253,9 +254,23 @@ class DartAnalyzeTaskHandler:
             llm_model=result.llm_model,
             prompt_ver=result.prompt_ver,
         )
+        aggregate_task_id = await self._queue_repository.enqueue(
+            stock_id=stock_id,
+            task_type=AGGREGATE_SIGNAL,
+            priority="batch",
+            source_analysis_result_ids=[int(analysis_result["id"])],
+            task_context={
+                "stock_code": task_context.get("stock_code"),
+                "signal_date": analysis_date.isoformat(),
+                "run_key": "AGGREGATED",
+                "aggregation_key": f"AGGREGATED:{stock_id}:{analysis_date.isoformat()}:final-agg-v1",
+            },
+            dedupe=True,
+        )
         return {
             "analysis_result_id": analysis_result["id"],
             "agent_result_id": agent_result["id"],
+            "aggregate_task_id": aggregate_task_id,
             "analyzed_count": len(events),
             "direction": result.direction,
             "score": result.score,

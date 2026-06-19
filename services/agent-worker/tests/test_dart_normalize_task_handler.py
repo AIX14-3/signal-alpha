@@ -212,6 +212,7 @@ class DartAnalyzeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["analyzed_count"], 1)
         self.assertEqual(result["direction"], "neutral")
         self.assertEqual(result["score"], 0.0)
+        self.assertIsNotNone(result["aggregate_task_id"])
         self.assertTrue(any("INSERT INTO analysis_results" in call[1] for call in connection.calls))
         analysis_call = next(call for call in connection.calls if "INSERT INTO analysis_results" in call[1])
         self.assertEqual(analysis_call[2][5], 50.0)
@@ -224,6 +225,13 @@ class DartAnalyzeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(method_detail["source_score"], 0.0)
         self.assertEqual(method_detail["graph"], "dart_analysis_v1")
         self.assertEqual(method_detail["graph_nodes"], ["validate_input", "analyze", "validate_output"])
+        queue_call = next(call for call in connection.calls if "INSERT INTO processing_queue" in call[1])
+        self.assertEqual(queue_call[2][1], "aggregate_signal")
+        self.assertEqual(queue_call[2][5], [401])
+        task_context = json.loads(queue_call[2][6])
+        self.assertEqual(task_context["stock_code"], "005930")
+        self.assertEqual(task_context["signal_date"], "2026-06-08")
+        self.assertEqual(task_context["run_key"], "AGGREGATED")
 
     async def test_handler_uses_llm_for_high_impact_dart_event(self):
         connection = FakeConnection(
