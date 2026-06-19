@@ -26,6 +26,13 @@ _JOB_ID = re.compile(r"/Recruit/GI_Read/(\d+)")
 # Tailwind 유틸 클래스 중 디자인 토큰(text-typo-*)·의미 토큰은 비교적 안정적이다.
 _LINK_SELECTOR = "a[href*='/Recruit/GI_Read/']"
 
+# 회원번호(기업 고유 ID) 기반 직접 수집(#313, 스파이크 #266). 그 법인 진행공고만
+# 서버렌더로 제공 → 키워드검색의 협력사·대리점 노이즈 원천 차단.
+_MEMBER_LIST = "/Recruit/Co_Read/Recruit/C/{cid}"   # 기업 '채용공고' 탭(공고 리스트)
+_COMPANY_PAGE = "/Recruit/Co_Read/C/{cid}"           # 기업정보 페이지(Referer 용)
+# 페이지 title("… 진행 중인 공고 총 N건")의 N = ground-truth 공고 수 → 0건 vs DOM깨짐 구별.
+_COUNT_RE = re.compile(r"총\s*([\d,]+)\s*건")
+
 
 class JobkoreaCrawler(BaseSiteCrawler):
     source_label = "JOBKOREA"
@@ -93,4 +100,78 @@ class JobkoreaCrawler(BaseSiteCrawler):
                 logger.debug("잡코리아 파싱 오류: %s", exc)
 
         logger.info("✓ 잡코리아 [%s]: %d건 파싱", company_name, len(jobs))
+        return jobs
+
+    # ── 회원번호(기업 고유 ID) 기반 직접 수집 (#313) ────────────────────────────
+    def crawl_by_member_id(self, member_id: str, company_name: str) -> list[dict] | None:
+        """잡코리아 회원번호로 그 법인의 진행공고만 직접 수집(협력사 노이즈 0).
+
+        서버렌더라 Selenium 불요 — 공용 http.py(retry/UA로테이션/차단센서)로 GET.
+        반환 list = 파싱 성공(0건 포함). **None = DOM 구조 변경 의심 → 호출부가 키워드 폴백.**
+        """
+        from . import http
+
+        url = f"{_BASE}{_MEMBER_LIST.format(cid=member_id)}"
+        ref = f"{_BASE}{_COMPANY_PAGE.format(cid=member_id)}"
+        try:
+            resp = http.get(url, headers={"Referer": ref})
+        except Exception as exc:
+            logger.warning(
+                "잡코리아 [%s] 회원번호 경로 요청 실패: %s — 키워드 폴백", company_name, exc
+            )
+            return None
+        return self._parse_member_list(resp.text, company_name)
+
+    def _parse_member_list(self, html: str, company_name: str) -> list[dict] | None:
+        """회원번호 기업 공고 리스트 HTML → 표준 레코드. 순수 함수(네트워크 없음, 테스트 격리).
+
+        가드(0건 vs DOM깨짐): title의 '총 N건'(ground-truth)이 N>0인데 카드가 0개면
+        구조 변경으로 보고 None 반환(호출부 키워드 폴백) — 무음 회귀 방지.
+        """
+        from bs4 import BeautifulSoup
+
+        soup = BeautifulSoup(html, "html.parser")
+        title = soup.title.get_text(strip=True) if soup.title else ""
+        m = _COUNT_RE.search(title)
+        declared = int(m.group(1).replace(",", "")) if m else None
+
+        jobs: list[dict] = []
+        seen: set[str] = set()
+        # 카드 1개 = div.list-item (제목 dt.tit / 마감 dd.func span.day / 링크 GI_Read).
+        for card in soup.select("div.list-item"):
+            link_el = card.find("a", href=_JOB_ID)
+            if not link_el:
+                continue
+            mm = _JOB_ID.search(link_el.get("href", ""))
+            if not mm:
+                continue
+            job_id = mm.group(1)
+            if job_id in seen:
+                continue
+
+            tit_el = card.select_one("dt.tit")
+            title_text = (tit_el.get_text(strip=True) if tit_el
+                          else link_el.get_text(strip=True))
+            if not title_text:
+                continue
+            seen.add(job_id)
+
+            day_el = card.select_one("dd.func span.day") or card.select_one("span.day")
+            deadline = day_el.get_text(strip=True) if day_el else None
+
+            job_url = f"{_BASE}/Recruit/GI_Read/{job_id}"
+            jobs.append(self._make_record(
+                company_name, title_text, job_url, closing_date=deadline,
+            ))
+
+        if not jobs and declared:
+            logger.warning(
+                "잡코리아 [%s] 회원번호 경로: title은 %d건인데 카드 0개 — DOM 변경 의심, 키워드 폴백",
+                company_name, declared,
+            )
+            return None
+        logger.info(
+            "✓ 잡코리아 [%s] 회원번호 직접수집: %d건 (title 신고 %s건)",
+            company_name, len(jobs), declared if declared is not None else "?",
+        )
         return jobs
