@@ -1,0 +1,13 @@
+# /etc/logrotate.d/hiring — 일별 채용 파이프라인 로그 로테이션 (#297)
+# 설치: docs/runbooks/hiring-daily-schedule.md
+# ⚠️ <user>/<group>을 /var/log/hiring 디렉터리 소유 계정으로 치환할 것 (예: ubuntu ubuntu).
+/var/log/hiring/*.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    su <user> <group>
+    create 0644 <user> <group>
+}
