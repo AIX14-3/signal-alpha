@@ -14,6 +14,7 @@ CONFIG = PatentRuleConfig(
     momentum_weight=0.5,
     new_category_weight=0.3,
     activity_weight=0.2,
+    activity_scale=5.0,
     positive_threshold=0.2,
     negative_threshold=-0.2,
 )
@@ -89,6 +90,27 @@ class PatentAnalyzerTest(unittest.IsolatedAsyncioTestCase):
         result = await PatentAnalyzer(CONFIG).analyze("005930", _evidence(rows))
         self.assertGreater(result.score, 0.7)
         self.assertLess(result.score, 1.0)
+
+    async def test_more_filings_lift_activity_monotonically(self):
+        # Balanced recent/prior (momentum 0) and no new categories isolate the
+        # activity component: more filings now score strictly higher, where the old
+        # binary activity gave both the same +0.2.
+        few = [_row(10), _row(20), _row(200), _row(210)]  # total 4, recent==prior
+        many = few + [
+            _row(30), _row(40), _row(50), _row(60),
+            _row(220), _row(230), _row(240), _row(250),
+        ]  # total 12, recent==prior
+        low = await PatentAnalyzer(CONFIG).analyze("005930", _evidence(few))
+        high = await PatentAnalyzer(CONFIG).analyze("005930", _evidence(many))
+        self.assertGreater(high.score, low.score)
+        # Single-sided: count alone (flat momentum) never makes the signal negative.
+        self.assertGreaterEqual(low.score, 0.0)
+
+    async def test_below_min_count_has_zero_activity(self):
+        # Small-sample floor preserved: under min_count, activity contributes 0.
+        rows = [_row(10), _row(20)]  # total 2 < min_count 3
+        result = await PatentAnalyzer(CONFIG).analyze("005930", _evidence(rows))
+        self.assertIn("insufficient_history", result.risk_flags)
 
 
 if __name__ == "__main__":

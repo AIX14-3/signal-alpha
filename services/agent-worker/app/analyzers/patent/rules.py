@@ -151,12 +151,22 @@ def _activity_component(
     config: PatentRuleConfig,
     highlights: list[str],
 ) -> float:
-    if indicators.total >= config.min_count:
-        highlights.append(
-            f"기간 내 특허 출원 {indicators.total}건 / 기술분류 {indicators.distinct_tech_categories}종 — 지속적 R&D"
-        )
-        return config.activity_weight
-    return 0.0
+    # One-sided positive "sustained R&D" signal. Below the small-sample floor it
+    # contributes 0 (same as before — the insufficient_history guard handles noise);
+    # at/above it, graded by filing count so 3 vs 50 filings no longer score alike.
+    # Stays single-sided (never negative): low activity is silence, not a bad signal.
+    if indicators.total < config.min_count:
+        return 0.0
+    score = graded(
+        float(indicators.total),
+        scale=config.activity_scale,
+        weight=config.activity_weight,
+    )
+    highlights.append(
+        f"기간 내 특허 출원 {indicators.total}건 / 기술분류 {indicators.distinct_tech_categories}종 "
+        f"— 지속적 R&D (점수 {score:+.2f})"
+    )
+    return score
 
 
 def _direction(

@@ -36,6 +36,7 @@ class PatentRuleConfig:
     momentum_weight: float = 0.5
     new_category_weight: float = 0.3
     activity_weight: float = 0.2
+    activity_scale: float = 5.0  # tanh knee: ~5 filings → 0.76*weight (count-graded R&D)
     # LLM-significance component (C3). Adds a positive "quality of R&D output" signal
     # when patents have been enriched; contributes 0 (exact fallback) when none are.
     significance_weight: float = 0.4
@@ -56,6 +57,7 @@ class PatentRuleConfig:
             momentum_weight=_float("PATENT_MOMENTUM_WEIGHT", cls.momentum_weight),
             new_category_weight=_float("PATENT_NEW_CATEGORY_WEIGHT", cls.new_category_weight),
             activity_weight=_float("PATENT_ACTIVITY_WEIGHT", cls.activity_weight),
+            activity_scale=_float("PATENT_ACTIVITY_SCALE", cls.activity_scale),
             significance_weight=_float("PATENT_SIGNIFICANCE_WEIGHT", cls.significance_weight),
             significance_scale=_float("PATENT_SIGNIFICANCE_SCALE", cls.significance_scale),
             significance_min_enriched=_int(
