@@ -2,3 +2,8 @@
 # migrate.py가 파일 바이트의 sha256으로 적용 원장을 검증하므로, Windows에서
 # CRLF로 체크아웃되면 checksum이 어긋나 마이그레이션이 깨진다(원장 불일치).
 *.sql text eol=lf
+
+# 셸 스크립트·ops 설정은 항상 LF. CRLF로 체크아웃되면 리눅스에서 셰뱅(#!/usr/bin/env bash\r)이
+# 깨져 cron 실행 실패하고, crontab/logrotate도 CRLF에 취약하다(#297).
+*.sh text eol=lf
+services/agent-worker/ops/* text eol=lf

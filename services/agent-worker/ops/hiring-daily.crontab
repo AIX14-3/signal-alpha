@@ -1,0 +1,14 @@
+# 일별 채용 수집·분석 자동 스케줄 (#297)
+# 설치 절차: docs/runbooks/hiring-daily-schedule.md
+#
+# <repo>를 실제 체크아웃 경로로 치환할 것 (예: /home/ubuntu/signal-alpha).
+# 06:00 KST 실행 — observed_date가 KST 자정 기준(#253)이라 자정 이후에 돌려야 당일분이 잡힘.
+# 환경변수(DATABASE_URL/HIRING_DATALAB_*/DISCORD_WEBHOOK_URL)는 래퍼가 repo .env에서
+# 자동 로드하므로 crontab에 따로 넣지 않아도 됨(.env 경로가 다르면 ENV_FILE=... 지정).
+
+CRON_TZ=Asia/Seoul
+0 6 * * *  <repo>/services/agent-worker/ops/run_hiring_daily.sh
+
+# ── CRON_TZ 미지원(구형 cron) 폴백 ──────────────────────────────────────────
+# 위 두 줄 대신 아래 한 줄 사용(UTC 21:00 = KST 06:00):
+# 0 21 * * *  <repo>/services/agent-worker/ops/run_hiring_daily.sh
