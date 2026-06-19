@@ -24,6 +24,9 @@ import pandas as pd
 import streamlit as st
 from sqlalchemy import create_engine, text
 
+# 가드 로직을 복제하지 않고 실제 함수를 재사용 → 배지가 분석기 가드(#290)와 절대 어긋나지 않음.
+from app.evidence_loaders.hiring_loader import WARMUP_PRIOR_DAYS, _warming_up_pairs
+
 DB_URL = os.environ.get(
     "DATABASE_URL",
     "postgresql://signal_alpha:signal_alpha_password@localhost:5432/signal_alpha",
@@ -121,3 +124,60 @@ with right:
 if not sig.empty:
     st.markdown("**신호 원본(hiring_signals)**")
     st.dataframe(sig, use_container_width=True)
+
+# ── 🌱 소스별 Warming-up 상태 (#316) — 분석기 가드 함수(_warming_up_pairs) 직접 재사용 ──
+st.subheader("🌱 소스별 Warming-up 상태")
+src_df = q(
+    "SELECT observed_date, "
+    "COALESCE(extra_payload->>'source_type', 'PORTAL_UNKNOWN') AS source_key "
+    "FROM hiring_raw_details WHERE stock_id = :sid",
+    sid=stock_id,
+)
+if src_df.empty:
+    st.info("수집 이력 없음 — 이 종목은 아직 공고가 수집되지 않았습니다.")
+else:
+    # 가드와 동일 판정: 행을 (source_key, observed_date ISO) 로 만들어 실제 _warming_up_pairs 호출.
+    rows = [
+        {
+            "source_key": r.source_key,
+            "observed_date": pd.Timestamp(r.observed_date).date().isoformat(),
+        }
+        for r in src_df.itertuples(index=False)
+    ]
+    warming = _warming_up_pairs(rows)  # 제외 (source_key, date) 집합
+
+    dates_by_src: dict[str, set[str]] = {}
+    for row in rows:
+        dates_by_src.setdefault(row["source_key"], set()).add(row["observed_date"])
+
+    status_rows = []
+    for src, dset in sorted(dates_by_src.items()):
+        dates = sorted(dset)
+        last = dates[-1]
+        if (src, last) in warming:  # 최신 수집일이 제외(웜업) 대상인가
+            prev = [d for d in dates if d < last]
+            reason = (
+                "첫 등장" if not prev
+                else f"{(pd.Timestamp(last) - pd.Timestamp(prev[-1])).days}일 공백 후 재개"
+            )
+            grace = (pd.Timestamp(last) + pd.Timedelta(days=WARMUP_PRIOR_DAYS)).date().isoformat()
+            status = "⏳ 웜업 중 (이 날짜 제외)"
+        else:
+            reason = f"직전 {WARMUP_PRIOR_DAYS}일 내 이력 보유"
+            grace = "-"
+            status = "✅ 반영 중"
+        status_rows.append({
+            "소스": src,
+            "최신 수집일": last,
+            "수집일수": len(dates),
+            "상태": status,
+            "사유": reason,
+            "재수집 유예 마감": grace,
+        })
+
+    st.dataframe(pd.DataFrame(status_rows), use_container_width=True)
+    st.caption(
+        f"Warming-up 가드(#290): 소스가 **직전 {WARMUP_PRIOR_DAYS}일 내 이력**이 있어야 그 날짜 공고가 분석에 "
+        "반영됩니다(첫 등장·장기공백 후 재개는 가짜 급등이라 제외). ⏳ 소스는 '재수집 유예 마감'일까지 다시 "
+        "수집되면 그 날부터 반영됩니다. → 신호가 중립/없음이어도 **고장이 아니라 웜업 중**일 수 있습니다."
+    )
