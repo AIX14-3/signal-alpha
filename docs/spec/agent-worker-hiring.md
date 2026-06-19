@@ -205,6 +205,18 @@ timeout·커넥션오류·5xx는 지수 백오프, 그 외 4xx는 즉시 raise. 
 - **KST 정합성(#120/#253)**: `posting_date`/`observed_date` 등 날짜 경계를 한국시간 자정 기준으로 고정.
   UTC 서버에서 KST 00:00~09:00 수집분이 전날로 오분류되는 문제 방지.
 
+### 5. 지표 정의 + Warming-up 가드 (#290)
+> **[지표 정의 명세]** hiring `job_count`는 특정 시점의 **'열린 공고 총량(Inventory Volume)'이 아니라,
+> '당일 최초 발견된 신규 공고 수(Discovery Velocity)'**를 의미한다(공고 1건=1행, `(source_type, job_link)`
+> dedup으로 `observed_date`는 최초 발견일 1회만 기록).
+
+- **Warming-up 가드**: 수집 커버리지 급변이 가짜 가속도 신호를 만든다(예: 공식 careers 첫 전체 스크랩 →
+  하루에 수백 건이 "신규"로 몰림). 그래서 **소스 최초 등장·장기(>5일) 공백 후 재개** 시점의 (소스,날짜)
+  데이터는 분석 모집합에서 **제외**한다(소스 배제·종목 유지: 같은 종목의 정상 소스는 그대로).
+- 적용 위치: 신규 경로 `evidence_loaders/hiring_loader.py`(`_drop_warming_up`). 레거시 `hiring_analyzer.py`는
+  컷오버(#188) 폐기 예정이라 미적용. 휴리스틱 한계(간헐 정상 공고 억제 가능)는 코드 주석에 명시.
+- 참고: 신규 경로는 현재 `published_at`, 레거시는 `observed_date` 기준(현재 0행 차이지만 향후 통일 필요 — #188).
+
 ---
 
 ## 환경 변수
