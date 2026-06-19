@@ -9,14 +9,15 @@ Converges the Alternative sources onto the same queue model DART uses
   NORMALIZE_DATALAB (router; no signal_events — DataLab raw lives in a separate
       datalab_raw_documents table with no source_documents FK anchor)
       category_id -> datalab_category_stocks -> enqueue ANALYZE_ALTERNATIVE
-  ANALYZE_ALTERNATIVE (per stock, cross-source)
-      reuses build_registry()/loaders/analyzers/AlternativeAggregator and persists
-      via AlternativeSignalPersistence — identical analysis to run_analyzers.py,
-      just queue-triggered.
+  ANALYZE_ALTERNATIVE (per stock, per source)
+      reuses build_registry()/loaders/analyzers; each source's SourceResult is
+      mapped to its OWN signal (build_source_signal) and persisted under its own
+      run_key via AlternativeSignalPersistence — no cross-source merge. The three
+      sources become peer signals (like DART), not one blended row.
 
-The analysis granularity is per-stock (windowed, cross-source), NOT per-event:
-the Alternative analyzers score aggregated windows and the aggregator merges
-sources, so a single ANALYZE task covers all registered sources for one stock.
+The analysis granularity is per-stock-per-source (windowed): the Alternative
+analyzers score aggregated windows, and a single ANALYZE task publishes one
+final_signals row per registered source for that stock.
 """
 
 from __future__ import annotations
@@ -30,8 +31,8 @@ from typing import Any, Callable, Sequence
 
 from app.agents.base import SourceAgentInput, SourceAgentOutput
 from app.agents.rule_source_agent import RuleSourceAgent
-from app.aggregator import AlternativeAggregator
-from app.analyzers.config import AnalyzerRuntimeConfig
+from app.aggregator.per_source import build_source_signal
+from app.analyzers.config import AggregatorConfig, AnalyzerRuntimeConfig
 from app.core.config import get_settings
 from app.enrichment.patent_features import PatentEnricher
 from app.analyzers.datalab.normalize_rules import classify_datalab_observation
@@ -508,13 +509,14 @@ class PatentEnrichTaskHandler:
 
 
 class AlternativeAnalyzeTaskHandler:
-    """Per-stock, cross-source analysis — the queue-triggered AlternativeAgent.
+    """Per-stock, per-source analysis — the queue-triggered AlternativeAgent.
 
-    Reuses the registered loaders/analyzers and the AlternativeAggregator, but
-    runs the sources **sequentially** on the handler's single asyncpg connection
-    (one connection cannot serve concurrent queries). With ~3 sources per stock
-    the lost concurrency is negligible; batch throughput comes from running many
-    ANALYZE_ALTERNATIVE tasks via the queue's run-batch loop.
+    Reuses the registered loaders/analyzers, but each source is now published as
+    its OWN signal (build_source_signal → its own run_key) instead of being merged
+    cross-source. Runs the sources **sequentially** on the handler's single asyncpg
+    connection (one connection cannot serve concurrent queries). With ~3 sources
+    per stock the lost concurrency is negligible; batch throughput comes from
+    running many ANALYZE_ALTERNATIVE tasks via the queue's run-batch loop.
     """
 
     def __init__(
@@ -522,13 +524,13 @@ class AlternativeAnalyzeTaskHandler:
         connection: Any,
         *,
         registrations: Sequence[SourceRegistration] | None = None,
-        aggregator: AlternativeAggregator | None = None,
+        aggregator_config: AggregatorConfig | None = None,
         runtime_config: AnalyzerRuntimeConfig | None = None,
         repository_factory: Callable[[Any], Any] | None = None,
     ) -> None:
         self._connection = connection
         self._registrations = list(registrations) if registrations is not None else build_registry()
-        self._aggregator = aggregator or AlternativeAggregator()
+        self._aggregator_config = aggregator_config or AggregatorConfig.from_env()
         self._runtime = runtime_config or AnalyzerRuntimeConfig.from_env()
         self._repository_factory = repository_factory or (lambda conn: RawDetailRepository(conn))
 
@@ -539,32 +541,45 @@ class AlternativeAnalyzeTaskHandler:
         stock_code = await self._resolve_stock_code(stock_id, task_context)
 
         repository = self._repository_factory(self._connection)
-        results: list[SourceResult] = []
-        for registration in self._registrations:
-            results.append(
-                await self._run_source(registration, repository, stock_id, stock_code, as_of)
-            )
-
-        signal = self._aggregator.merge(results, stock_code=stock_code)
         persistence = AlternativeSignalPersistence(
             self._connection,
             registrations=self._registrations,
             runtime_config=self._runtime,
         )
-        ids = await persistence.save(
-            stock_id=stock_id,
-            signal=signal,
-            analysis_date=as_of,
-            publish_final_signal=True,
-        )
+
+        sources: list[dict[str, Any]] = []
+        available_sources: list[str] = []
+        for registration in self._registrations:
+            result = await self._run_source(registration, repository, stock_id, stock_code, as_of)
+            # Each source maps to its OWN single-source signal and final_signals
+            # row (its own run_key) — a peer of DART, not a blended component.
+            signal = build_source_signal(result, self._aggregator_config)
+            ids = await persistence.save(
+                stock_id=stock_id,
+                signal=signal,
+                analysis_date=as_of,
+                publish_final_signal=True,
+                run_key=registration.resolved_run_key,
+            )
+            if result.data_status != "failed":
+                available_sources.append(result.source)
+            sources.append(
+                {
+                    "source": result.source,
+                    "run_key": registration.resolved_run_key,
+                    "direction": signal.direction,
+                    "score": signal.score,
+                    "data_status": result.data_status,
+                    "analysis_result_id": ids.get("analysis_result_id"),
+                    "final_signal_id": ids.get("final_signal_id"),
+                }
+            )
+
         return {
-            "analyzed_count": len(results),
+            "analyzed_count": len(sources),
             "stock_id": stock_id,
-            "direction": signal.direction,
-            "score": signal.score,
-            "available_sources": signal.available_sources,
-            "analysis_result_id": ids.get("analysis_result_id"),
-            "final_signal_id": ids.get("final_signal_id"),
+            "available_sources": available_sources,
+            "sources": sources,
         }
 
     async def _run_source(

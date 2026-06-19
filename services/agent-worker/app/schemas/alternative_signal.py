@@ -1,8 +1,12 @@
-"""The combined output of the Alternative aggregation harness.
+"""The published shape of one Alternative source's signal.
 
-``AlternativeSignal`` is what ``AlternativeAggregator.merge`` produces from the
-per-source ``SourceResult`` list — the diagram's "AlternativeSignal" box. It is
-a pure data holder; persistence maps it onto ``final_signals``.
+``AlternativeSignal`` is what ``build_source_signal`` produces from a single
+``SourceResult`` — each source (HIRING/PATENT/DATALAB) now publishes its own
+signal (its own ``final_signals`` row / run_key) rather than being merged
+cross-source. It is a pure data holder; persistence maps it onto ``final_signals``.
+The cross-source fields (``missing_sources``, ``source_agreement``) remain for the
+single-source case: ``source_agreement`` is "MEDIUM" and ``missing_sources`` lists
+the source itself only when it failed.
 """
 
 from __future__ import annotations

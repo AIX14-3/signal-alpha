@@ -436,6 +436,68 @@ class AlternativeAnalyzeHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(conn._inserts("agent_results"))
         self.assertTrue(conn._inserts("final_signals"))
 
+    async def test_publishes_one_signal_per_source_with_distinct_run_keys(self):
+        conn = FakeConnection()
+        handler = AlternativeAnalyzeTaskHandler(
+            conn,
+            registrations=[
+                _registration("HIRING", "positive", 0.5),
+                _registration("PATENT", "positive", 0.3),
+                _registration("DATALAB", "negative", -0.4),
+            ],
+        )
+
+        result = await handler(
+            {"id": 4, "stock_id": 1, "task_context": {"as_of": "2026-06-16", "stock_code": "005930"}}
+        )
+
+        # one analysis_results + one final_signals per source (3 each), not a
+        # single blended row.
+        self.assertEqual(len(conn._inserts("analysis_results")), 3)
+        self.assertEqual(len(conn._inserts("final_signals")), 3)
+
+        # final_signals run_key (arg index 3) is the source's own run_key.
+        final_run_keys = {c[2][3] for c in conn._inserts("final_signals")}
+        self.assertEqual(final_run_keys, {"HIRING", "PATENT", "DATALAB"})
+
+        # return shape exposes per-source rows with their run_key + final_signal_id.
+        by_source = {s["source"]: s for s in result["sources"]}
+        self.assertEqual(set(by_source), {"HIRING", "PATENT", "DATALAB"})
+        self.assertEqual(by_source["DATALAB"]["run_key"], "DATALAB")
+        self.assertEqual(by_source["DATALAB"]["direction"], "negative")
+        self.assertIsNotNone(by_source["HIRING"]["final_signal_id"])
+
+    async def test_failed_source_still_publishes_its_own_row(self):
+        class _BoomAnalyzer:
+            source = "DATALAB"
+
+            async def analyze(self, stock_code, evidence):
+                raise RuntimeError("boom")
+
+        boom = SourceRegistration(
+            source="DATALAB",
+            debate_method="D-3",
+            analyzer=_BoomAnalyzer(),
+            loader_factory=lambda repo: _FakeLoader("DATALAB"),
+        )
+        conn = FakeConnection()
+        handler = AlternativeAnalyzeTaskHandler(
+            conn,
+            registrations=[_registration("HIRING", "positive", 0.5), boom],
+        )
+
+        result = await handler(
+            {"id": 4, "stock_id": 1, "task_context": {"as_of": "2026-06-16", "stock_code": "005930"}}
+        )
+
+        # Both sources publish a row; the failed one is recorded (unknown) so the
+        # gap is visible, not silently dropped.
+        self.assertEqual(len(conn._inserts("final_signals")), 2)
+        self.assertEqual(result["available_sources"], ["HIRING"])  # DATALAB excluded from available
+        datalab = next(s for s in result["sources"] if s["source"] == "DATALAB")
+        self.assertEqual(datalab["data_status"], "failed")
+        self.assertEqual(datalab["direction"], "unknown")
+
     async def test_isolates_failing_source(self):
         class _BoomAnalyzer:
             source = "DATALAB"

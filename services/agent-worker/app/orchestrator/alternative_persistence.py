@@ -42,12 +42,17 @@ class AlternativeSignalPersistence:
         signal: AlternativeSignal,
         analysis_date: Any,
         publish_final_signal: bool = True,
+        run_key: str | None = None,
     ) -> dict[str, Any]:
+        # Each source now publishes its OWN final_signals row, so the handler
+        # passes a per-source run_key (HIRING/PATENT/DATALAB). Falls back to the
+        # runtime default for any caller that still saves a single combined row.
+        run_key = run_key or self._config.run_key
         warning = "; ".join(signal.risk_flags) or None
         analysis_result = await self._analysis.upsert_analysis_result(
             stock_id=stock_id,
             analysis_date=analysis_date,
-            run_key=self._config.run_key,
+            run_key=run_key,
             source_signal_event_ids=[],  # no Normalizer yet → no signal_events to link
             base_score=_to_100(signal.score),
             analysis_mode="full",
@@ -80,7 +85,7 @@ class AlternativeSignalPersistence:
                 stock_id=stock_id,
                 analysis_result_id=result_id,
                 signal_date=analysis_date,
-                run_key=self._config.run_key,
+                run_key=run_key,
                 version=self._config.version,
                 final_score=_to_100(signal.score),
                 confidence=round(max(0.0, min(1.0, signal.confidence)) * 100.0, 2),

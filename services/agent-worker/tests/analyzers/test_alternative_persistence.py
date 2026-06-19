@@ -89,6 +89,23 @@ class AlternativeSignalPersistenceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.result["agent_result_ids"]), 2)
         self.assertIsNotNone(self.result["final_signal_id"])
 
+    async def test_run_key_override_tags_all_three_tables(self):
+        # Per-source publishing passes an explicit run_key; it must land on
+        # analysis_results AND final_signals (not the runtime default 'BATCH').
+        conn = FakeConnection()
+        persistence = AlternativeSignalPersistence(conn, runtime_config=RUNTIME)
+        await persistence.save(
+            stock_id=1,
+            signal=_signal(),
+            analysis_date=date(2026, 6, 11),
+            publish_final_signal=True,
+            run_key="PATENT",
+        )
+        analysis = conn.find("INSERT INTO analysis_results")[0]
+        self.assertEqual(analysis[3], "PATENT")  # run_key arg position
+        final = conn.find("INSERT INTO final_signals")[0]
+        self.assertEqual(final[3], "PATENT")  # run_key arg position
+
     async def test_jsonb_fields_serialized_once_not_double_encoded(self):
         # Caller passes dict/list (like DART); the repository's _jsonb serializes
         # exactly once. A single json.loads must yield the dict/list — if it were

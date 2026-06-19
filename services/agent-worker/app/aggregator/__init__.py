@@ -1,3 +1,3 @@
-from app.aggregator.alternative import AlternativeAggregator
+from app.aggregator.per_source import build_source_signal
 
-__all__ = ["AlternativeAggregator"]
+__all__ = ["build_source_signal"]

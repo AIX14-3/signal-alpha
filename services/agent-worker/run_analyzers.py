@@ -28,7 +28,6 @@ import asyncpg  # type: ignore[import]
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "packages" / "data-access"))
 
-from app.aggregator import AlternativeAggregator
 from app.analyzers.config import AggregatorConfig, AnalyzerRuntimeConfig
 from app.analyzers.registry import build_registry
 from app.orchestrator.alternative.tasks import (
@@ -154,11 +153,12 @@ async def run_once(args: argparse.Namespace) -> None:
 
     # Queue-based: this driver enqueues one deduped ANALYZE_ALTERNATIVE per target
     # stock, then drains the queue with QueueTaskRunner. The analysis itself lives
-    # in AlternativeAnalyzeTaskHandler (same loaders/analyzers/aggregator as before),
-    # so collectors and this driver feed the *same* queue path (#117).
+    # in AlternativeAnalyzeTaskHandler (same loaders/analyzers; each source now
+    # publishes its own per-source signal), so collectors and this driver feed the
+    # *same* queue path (#117).
     from signal_alpha_data_access.repositories import ProcessingQueueRepository
 
-    aggregator = AlternativeAggregator(AggregatorConfig.from_env())
+    aggregator_config = AggregatorConfig.from_env()
 
     pool_max = max(
         int(os.getenv("ANALYZER_DB_POOL_MAX", "0")) or 0,
@@ -180,7 +180,7 @@ async def run_once(args: argparse.Namespace) -> None:
         handler = AlternativeAnalyzeTaskHandler(
             conn,
             registrations=registrations,
-            aggregator=aggregator,
+            aggregator_config=aggregator_config,
             runtime_config=runtime,
         )
         return QueueTaskRunner(conn, {ANALYZE_ALTERNATIVE: handler})
@@ -225,10 +225,15 @@ async def run_once(args: argparse.Namespace) -> None:
                         summary["published"] += 1
                     else:
                         summary["no_data"] += 1
+                    # One final_signals row per source now — summarise each.
+                    per_source = ", ".join(
+                        f"{s['source']}={s['direction']} {float(s.get('score') or 0.0):+.3f}"
+                        f"→fs{s.get('final_signal_id')}"
+                        for s in payload.get("sources") or []
+                    )
                     print(
-                        f"  stock_id={payload.get('stock_id')}: {payload.get('direction')} "
-                        f"{float(payload.get('score') or 0.0):+.3f} "
-                        f"avail={payload.get('available_sources')} final={payload.get('final_signal_id')}"
+                        f"  stock_id={payload.get('stock_id')}: "
+                        f"avail={payload.get('available_sources')} [{per_source}]"
                     )
                 else:  # failed/skipped — isolate and keep draining
                     summary["error"] += 1
