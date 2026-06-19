@@ -120,6 +120,11 @@ stores the rule-based result with `analysis_source="rules_fallback"`. Successful
 `analysis_source="llm"`, `llm_model`, `prompt_ver`, `llm_confidence`, and `key_facts` in
 `agent_results.method_detail`. The prompt template is versioned at `app/prompts/dart_analysis_v1.md`.
 
+After successful `analyze_dart`, the worker enqueues `aggregate_signal`. The aggregator reads the
+DART `agent_results` row and creates the user-facing `final_signals` row with `run_key="AGGREGATED"`.
+DART-only final signals are published as single-source data direction with `warning_level="CAUTION"`
+and `needs_review=true`.
+
 The `collect_dart` task expects `processing_queue.task_context` to include `stock_code`.
 Optional date filters use OpenDART parameter names:
 
@@ -200,6 +205,8 @@ Invoke-RestMethod -Method Get -Uri "http://localhost:8011/internal/queue/tasks?s
 
 $body = '{"max_runs":50}'
 Invoke-RestMethod -Method Post -Uri "http://localhost:8011/internal/queue/normalize_dart/run-batch" -ContentType "application/json" -Body $body
+
+Invoke-RestMethod -Method Post -Uri "http://localhost:8011/internal/queue/aggregate_signal/run-batch" -ContentType "application/json" -Body $body
 
 Invoke-RestMethod -Method Post -Uri "http://localhost:8011/internal/queue/tasks/77/retry"
 ```

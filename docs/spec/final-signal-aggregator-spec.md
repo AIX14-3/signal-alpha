@@ -1,6 +1,6 @@
 # Final Signal Aggregator Spec
 
-> Status: Draft for implementation  
+> Status: MVP task implemented
 > Created: 2026-06-19  
 > Target: `services/agent-worker/app/orchestrator`  
 > Related docs:
@@ -30,7 +30,7 @@ Collector
 -> Web
 ```
 
-이 스펙은 먼저 MVP Aggregator 계약을 확정한다. 구현은 후속 작업에서 진행한다.
+이 스펙은 MVP Aggregator 계약과 현재 구현 기준을 정의한다.
 
 ---
 
@@ -39,8 +39,9 @@ Collector
 현재 문서와 구현 기준 상태는 다음과 같다.
 
 - DART는 `collect_dart`, `normalize_dart`, `analyze_dart`가 구현되어 있다.
-- DART 분석 결과는 `analysis_results`, `agent_results`까지만 저장된다.
-- DART 분석 결과는 아직 `final_signals`에 자동 연결되지 않는다.
+- DART 분석 결과는 `analysis_results`, `agent_results`에 저장된다.
+- DART 분석 성공 시 `aggregate_signal`이 enqueue되고, Aggregator가 DART 단일 source 기반
+  `final_signals`를 생성한다.
 - Main Server 대시보드는 `final_signals`를 기준으로 최신 시그널을 조회한다.
 - `final_signals`를 실제로 쓰는 기존 구현은 Alternative 계열 persistence가 있다.
 - 전체 DART/PRICE/REPORT/ALTERNATIVE 통합 Aggregator는 아직 구현되어 있지 않다.
@@ -98,8 +99,8 @@ aggregate_signal
 ```
 
 `processing_queue.task_type`은 `VARCHAR(50)`이며 enum CHECK가 없으므로 새 task type 추가에
-DB 마이그레이션은 필요하지 않다. 코드에는 `services/agent-worker/app/orchestrator/queue/task_types.py`
-상수와 handler 등록이 필요하다.
+DB 마이그레이션은 필요하지 않다. 코드는 `services/agent-worker/app/orchestrator/queue/task_types.py`
+상수와 handler 등록을 포함한다.
 
 기존 기획 문서의 `AGGREGATE_DEBATE`, `CREATE_FINAL_SIGNAL`은 더 큰 통합/토론 단계 이름이다.
 MVP에서는 둘을 나누지 않고 `aggregate_signal` 하나가 final signal 생성까지 담당한다.
@@ -505,10 +506,7 @@ collect_dart
 -> final_signals
 ```
 
-`analyze_dart` 완료 후 `aggregate_signal`을 enqueue할지, 별도 스케줄러가 stock/date 단위로
-enqueue할지는 구현 시 선택한다.
-
-MVP 권장:
+현재 MVP 구현:
 
 ```text
 analyze_dart handler가 성공하면 aggregate_signal을 enqueue한다.
@@ -653,7 +651,7 @@ git diff --check
 
 1. `feat/final-signal-aggregator-spec`
    - 이 문서 추가
-2. `feat/final-signal-aggregator-task`
+2. `feat/final-signal-aggregator-task` - 구현됨
    - `aggregate_signal` task handler 구현
    - DART 단일 source aggregation 지원
 3. `feat/main-server-signal-detail-api`

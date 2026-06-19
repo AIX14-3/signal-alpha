@@ -159,6 +159,20 @@ class AnalysisAndSignalRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("ar.run_key LIKE 'DART%'", connection.calls[0][1])
         self.assertEqual(connection.calls[0][2], ("005930", "2026-06-08", 20))
 
+    async def test_list_agent_results_for_aggregation_filters_by_analysis_result_ids(self):
+        connection = FakeConnection()
+        repository = AnalysisRepository(connection)
+
+        rows = await repository.list_agent_results_for_aggregation([100, 101])
+
+        self.assertEqual(rows[0]["id"], 7)
+        sql = connection.calls[0][1]
+        self.assertIn("FROM agent_results", sql)
+        self.assertIn("INNER JOIN analysis_results", sql)
+        self.assertIn("agent_results.result_id = ANY($1::BIGINT[])", sql)
+        self.assertIn("ORDER BY analysis_results.analysis_date DESC", sql)
+        self.assertEqual(connection.calls[0][2], ([100, 101],))
+
     async def test_get_current_by_ticker_filters_to_current_published_signal(self):
         connection = FakeConnection()
         repository = SignalRepository(connection)
