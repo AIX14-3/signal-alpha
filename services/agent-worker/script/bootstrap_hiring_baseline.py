@@ -1,10 +1,21 @@
 # scripts/bootstrap_hiring_baseline.py
 import asyncio
 import os
+import sys
 from datetime import date, timedelta
+from pathlib import Path
+
 import asyncpg
-from app.clients.naver_datalab_client import NaverDataLabClient
-from app.collectors.hiring.keyword_generator import HiringKeywordGenerator
+from dotenv import load_dotenv
+
+# script/ 단독 실행 시 app 패키지 import 가능하게 + repo 루트 .env 로드
+# (sibling script/dashboard_validator.py와 동일 컨벤션)
+PROJECT_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+load_dotenv(PROJECT_ROOT.parent.parent / ".env")  # repo root .env → DATABASE_URL/HIRING_DATALAB_*
+
+from app.clients.naver_datalab_client import NaverDataLabClient  # noqa: E402
+from app.collectors.hiring.keyword_generator import HiringKeywordGenerator  # noqa: E402
 
 async def bootstrap_baselines(pool, datalab_client: NaverDataLabClient):
     generator = HiringKeywordGenerator()
@@ -82,10 +93,33 @@ async def bootstrap_baselines(pool, datalab_client: NaverDataLabClient):
                         data_end_date = EXCLUDED.data_end_date,
                         updated_at = NOW()
                 """, 
-                stock_id, avg_search_volume, 
+                stock_id, avg_search_volume,
                 factors["Q1"], factors["Q2"], factors["Q3"], factors["Q4"],
                 group_name, start_date_obj, end_date_obj)
-                
+
+                # 6. 원시 주간 시계열 적재(#291) — analyzer는 집계값만 쓰지만,
+                #    트렌드 시각화/감사용으로 버려지던 records를 그대로 저장한다.
+                #    len==10 가드: 깨진 period로 인한 date.fromisoformat ValueError 방어.
+                period_type = NaverDataLabClient.time_unit_to_period_type("week")
+                trend_rows = [
+                    (stock_id, group_name, date.fromisoformat(r.period), r.ratio, period_type)
+                    for r in records
+                    if r.period and len(r.period) == 10
+                ]
+                if trend_rows:
+                    await conn.executemany("""
+                        INSERT INTO hiring_search_trend (
+                            stock_id, keyword_group, period_date, search_index, period_type
+                        )
+                        VALUES ($1, $2, $3, $4, $5)
+                        ON CONFLICT ON CONSTRAINT uq_hiring_search_trend_stock_date
+                        DO UPDATE
+                        SET search_index = EXCLUDED.search_index,
+                            keyword_group = EXCLUDED.keyword_group,
+                            period_type = EXCLUDED.period_type
+                    """, trend_rows)
+                    print(f"   └ {c_name} 트렌드 {len(trend_rows)}주 적재 완료")
+
             print(f"✅ {c_name} (ID: {stock_id}) Baseline 적재 완료!")
             await asyncio.sleep(0.5)  # API 과부하 방지 디레이
             

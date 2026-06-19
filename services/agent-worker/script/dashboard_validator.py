@@ -74,6 +74,20 @@ else:
     st.bar_chart(factors)
     st.caption("계수 1.0 = 연중 평균. >1 분기에 검색(=채용 관심)이 몰림. 전부 1.0이면 데이터 빈약 신호.")
 
+# ── 3개년 네이버 검색량 트렌드 (원시 시계열 hiring_search_trend, #291) ──
+trend = q(
+    "SELECT period_date, search_index FROM hiring_search_trend "
+    "WHERE stock_id = :sid ORDER BY period_date",
+    sid=stock_id,
+)
+if trend.empty:
+    st.caption("📈 원시 검색 시계열 미적재 — 부트스트랩 재실행 필요(#291).")
+else:
+    st.subheader("📈 3개년 네이버 검색량 트렌드 (원시 시계열)")
+    trend["period_date"] = pd.to_datetime(trend["period_date"])  # 시계열 축 인식
+    st.line_chart(trend.set_index("period_date"))
+    st.caption("baseline(avg/분기계수)의 산출 근거가 되는 주간 검색지수 원본. 절벽/공백은 수집 누락 신호.")
+
 # ── 일별 채용 공고 / 신호 (현재 2일치 — 며칠 누적돼야 추이 의미) ──
 st.subheader("📈 일별 채용 공고·신호")
 st.caption("현재 hiring 데이터가 며칠치뿐이면 선 차트는 점 몇 개로 보입니다(고장 아님).")
