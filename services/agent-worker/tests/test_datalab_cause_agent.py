@@ -10,6 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "packages" / "data-access"))
 
 from app.agents.base import SourceAgentInput
+from app.agents.datalab.agent import DataLabAnalysisAgent
 from app.agents.datalab.graph import DataLabAnalysisGraphAgent
 from app.agents.datalab.lead_lag import compute_lead_lag
 from app.agents.datalab.llm_classifier import CauseVerdict
@@ -152,7 +153,10 @@ class DataLabGraphAgentTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(out.method_detail["cause"], "catalyst")
         self.assertEqual(out.method_detail["cause_source"], "llm")
         self.assertEqual(out.method_detail["graph"], "datalab_cause_v1")
-        self.assertIn("classify_cause", out.method_detail["graph_nodes"])
+        # Thin DART-style wrapper: logic lives in the agent; graph just validates.
+        self.assertEqual(
+            out.method_detail["graph_nodes"], ["validate_input", "analyze", "validate_output"]
+        )
         self.assertEqual(len(classifier.calls), 1)
 
     async def test_llm_failure_falls_back_to_prelabel(self):
@@ -217,6 +221,28 @@ class DataLabGraphAgentTest(unittest.IsolatedAsyncioTestCase):
 # ---------------------------------------------------------------------------
 # cause round-trip through the orchestrator/persistence seam
 # ---------------------------------------------------------------------------
+class StandaloneAgentTest(unittest.IsolatedAsyncioTestCase):
+    """The logic agent runs without langgraph (DART-style split)."""
+
+    async def test_agent_tags_cause_without_graph(self):
+        classifier = FakeClassifier(verdict=CauseVerdict("catalyst", "검색 선행", 0.8))
+        agent = DataLabAnalysisAgent(
+            classifier=classifier,
+            price_provider=_price_provider([
+                {"trade_date": "2026-05-05", "close": 100.0},
+                {"trade_date": "2026-05-15", "close": 100.0},
+                {"trade_date": "2026-05-30", "close": 112.0},
+            ]),
+            lookback_days=LOOKBACK,
+        )
+        out = await agent.analyze(SourceAgentInput(
+            source="DATALAB", stock_code="005930", stock_id=1,
+            analysis_date=AS_OF, evidence=_evidence(_spiking_rows())))
+        self.assertEqual(out.analysis_source, "llm")
+        self.assertEqual(out.method_detail["cause"], "catalyst")
+        self.assertNotIn("graph", out.method_detail)  # no graph wrapper involved
+
+
 class CauseRoundTripTest(unittest.IsolatedAsyncioTestCase):
     async def test_from_output_and_method_detail_carry_cause(self):
         classifier = FakeClassifier(verdict=CauseVerdict("catalyst", "검색 선행", 0.8))

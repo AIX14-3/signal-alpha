@@ -17,6 +17,7 @@ from datetime import timedelta
 from os import getenv
 from typing import Any
 
+from app.agents.datalab.agent import DataLabAnalysisAgent
 from app.agents.datalab.graph import DataLabAnalysisGraphAgent
 from app.agents.datalab.llm_classifier import DataLabCauseClassifier
 from app.analyzers.config import DataLabRuleConfig
@@ -24,6 +25,7 @@ from app.analyzers.datalab import DataLabAnalyzer
 from app.core.config import get_settings
 
 __all__ = [
+    "DataLabAnalysisAgent",
     "DataLabAnalysisGraphAgent",
     "DataLabCauseClassifier",
     "build_datalab_cause_agent",
