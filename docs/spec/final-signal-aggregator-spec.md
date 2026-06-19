@@ -159,6 +159,12 @@ NormalizedSourceResult = {
 
 ### Source Identification
 
+Source Agent가 저장하는 `agent_results.method_detail.source`는 필수 계약이다.
+Aggregator 구현 전에 각 source handler 테스트에서 이 값이 저장되는지 검증해야 한다.
+
+DART MVP 기준 현재 경로는 `build_dart_analysis_result()`가 `method_detail.source="DART"`를
+생성하고, `DartAnalyzeTaskHandler`가 이를 `agent_results.method_detail`에 그대로 저장한다.
+
 source는 아래 순서로 결정한다.
 
 1. `agent_results.method_detail.source`
@@ -166,6 +172,9 @@ source는 아래 순서로 결정한다.
 3. `analysis_results.run_key`
 4. `analysis_results.analysis_mode`
 5. 식별 실패 시 `UNKNOWN` 처리 후 해당 source result는 aggregation에서 제외하고 `needs_review=true`
+
+`UNKNOWN`으로 빠진 result가 있으면 Aggregator는 `risk_flags`에
+`unknown_source_result`를 추가하고 validation log를 남긴다.
 
 ### Score Extraction
 
@@ -208,22 +217,28 @@ ALTERNATIVE
 MVP에서는 하나 이상의 source result가 있으면 final signal을 생성할 수 있다.
 없는 source는 `score_breakdown`에서 `data_status="missing"`으로 표현한다.
 
+PRICE는 canonical source set에는 포함하지만, multi-source scoring에 합류하기 전까지는
+검증/오버레이 source로 취급한다. PRICE를 `aggregate_score`에 넣을지 여부는
+`feat/final-signal-multi-source-aggregation` 전에 결정해야 한다. MVP DART-only Aggregator는
+DART source만 scoring source로 사용한다.
+
 ### Score
 
-MVP 기본 점수는 available source의 signed score 평균이다.
+MVP 기본 점수는 available scoring source의 signed score 평균이다.
 
 ```text
-aggregate_score = average(available_source_scores)
+aggregate_score = average(available_scoring_source_scores)
 final_score = (aggregate_score + 1) * 50
 ```
 
 후속 단계에서 source별 가중치를 도입할 수 있다. 가중치를 도입할 때도 missing source는
-분모에서 제외하고, 실제 available source의 가중치만 재정규화한다.
+분모에서 제외하고, 실제 available scoring source의 가중치만 재정규화한다.
 
 ### Direction
 
 최종 `signal`은 signed score와 source 충돌 여부로 결정한다.
 방향 충돌 판단은 점수 임계값 판단보다 항상 먼저 실행한다.
+아래 순서는 normative rule이며 구현 시 재정렬하지 않는다.
 
 ```text
 has_mixed_source = any(source.direction == "mixed")
@@ -290,18 +305,26 @@ source가 하나뿐인 상태를 과도한 합의로 표현하지 않기 위함�
 ```text
 WARNING:
   - available source가 0개
-  - failed source가 2개 이상
-  - positive와 negative가 강하게 충돌
+  - available scoring source가 0개
+  - failed source가 2개 이상이고 최종 결과를 설명할 available source가 부족함
+  - Aggregator가 stable aggregate parent row를 만들 수 없음
 
 CAUTION:
   - available source가 1개
   - missing source가 2개 이상
+  - positive와 negative source가 공존함
+  - source result 중 direction="mixed"가 있음
   - needs_review=true source가 1개 이상
   - data_status="partial" source가 1개 이상
 
 NORMAL:
   - 위 조건에 해당하지 않음
 ```
+
+소스 간 방향 충돌은 데이터 실패가 아니다. 충돌 또는 mixed 상태는 사용자에게 유용한
+"소스 분열" 정보이므로 `CAUTION` + `needs_review=true`로 공개한다. 숨기는 대상은
+데이터 실패, 분석 불가, parent row 생성 실패처럼 최종 결과를 신뢰 가능한 형태로 만들 수
+없는 경우로 제한한다.
 
 ### Needs Review
 
@@ -347,6 +370,10 @@ Aggregator는 `AnalysisRepository.upsert_final_signal()`을 통해 저장한다.
 `analysis_result_id`는 Aggregator 실행 자체의 대표 row를 참조해야 한다.
 MVP에서는 aggregate task가 새 `analysis_results` row를 `analysis_mode="full"`,
 `run_key="AGGREGATED"`, `version="final-agg-v1"`로 생성한다.
+
+`confidence`는 DB 내부 호환 컬럼명이다. 사용자-facing API, Web, 발표자료에서는
+`confidence` 또는 "신뢰도"라는 라벨을 사용하지 않는다. `final_score`는
+"데이터 방향성 점수", `consensus_score`/`alignment_rate`는 "소스 간 일치도"로 매핑한다.
 
 ---
 
@@ -451,6 +478,12 @@ else:
 단일 source만 있는 결과도 `CAUTION` + `needs_review=true`로 published 가능하다.
 이는 대시보드에서 "데이터 없음"이 아니라 "단일 source 기반 데이터 방향성"을 확인하기 위한 MVP 정책이다.
 
+source disagreement도 published 가능하다. `signal="mixed"` 또는 positive/negative source가
+공존하는 결과는 `CAUTION` + `needs_review=true` + `is_published=true`로 저장해
+사용자가 소스 간 불일치를 확인할 수 있게 한다.
+
+`WARNING` + `is_published=false`는 데이터 실패나 분석 불가에 한정한다.
+
 운영 단계에서는 다음 중 하나로 강화할 수 있다.
 
 - 최소 2개 source 이상일 때만 publish
@@ -546,9 +579,15 @@ Main Server 영향:
 
 Web 영향:
 
-- `latest_signal.score`는 `final_signals.final_score` 기반 0~100 표시값이다.
+- `latest_signal.score`는 `final_signals.final_score` 기반 0~100 표시값이며, 화면 라벨은
+  "데이터 방향성 점수"를 사용한다.
 - `source_summary[].score`는 `score_breakdown[source].score` 기반 signed source score다.
+- `alignment_rate` 또는 `consensus_score`는 "소스 간 일치도"로 표시한다.
+- DB 내부 `confidence` 컬럼은 사용자-facing 응답과 화면 라벨에 노출하지 않는다.
 - 필요한 경우 `source_summary[].score_100` 노출을 Main Server에서 추가할 수 있다.
+- Forecast/Kronos 계열 예측 정보는 `score_breakdown`에 넣지 않는다. 가격 예측은 매매 신호가
+  아니라 교차검증 재료이므로 별도 `forecast_overlay` 또는 `validation_overlay` 계약으로
+  내려준다.
 
 ---
 
@@ -560,6 +599,8 @@ Web 영향:
   - `method_detail.source_score`
   - `method_detail.score`
   - `method_score` 역변환
+- source agent가 `agent_results.method_detail.source`를 저장하는지 검증
+- source 식별 실패 시 `UNKNOWN` 결과를 제외하고 `unknown_source_result` risk flag를 남김
 - signed score clamp
 - 0~100 저장 score 변환
 - DART 단일 source aggregation
@@ -567,9 +608,10 @@ Web 영향:
 - 단일 source일 때 `source_agreement=LOW`, `consensus_score=50.0`
 - positive/negative 충돌 시 점수 임계값보다 먼저 `signal=mixed`, `needs_review=true`
 - 하위 source 중 `direction=mixed`가 있으면 점수 임계값보다 먼저 최종 `signal=mixed`
+- source disagreement는 `CAUTION` + `is_published=true`
 - 동시에 여러 `aggregate_signal` task가 실행되어도 같은 stable aggregate parent row를 upsert
 - source별 run key가 aggregate parent row의 run key로 섞이지 않는지 검증
-- WARNING이면 `is_published=false`
+- 데이터 실패/분석 불가로 인한 WARNING이면 `is_published=false`
 - `final_signals.score_breakdown`이 object 구조인지
 - 금지된 투자 추천 문구가 summary에 없는지
 - `aggregate_signal` queue handler 등록
@@ -592,13 +634,16 @@ git diff --check
 
 | Decision | MVP Default | Later Option |
 |---|---|---|
-| source weighting | available source 단순 평균 | source별 configurable weight |
+| source weighting | available scoring source 단순 평균 | source별 configurable weight |
+| PRICE scoring role | DART-only MVP에서는 제외. multi-source 전 결정 필요 | validation overlay only 또는 weighted scoring source |
 | publish minimum source count | 1개 source도 CAUTION으로 publish | 최소 2개 source 요구 |
 | run_key | `AGGREGATED` | 전략별 `AGGREGATED_D1`, `AGGREGATED_LLM` |
 | LLM summary | 사용 안 함 | 검증된 LLM summary 추가 |
 | Debate D-2~D-5 | 사용 안 함 | 백테스팅 후 비교 |
-| Alternative direct final_signals write | 기존 동작 유지 | Aggregator 경로로 통합 |
+| Alternative direct final_signals write | 기존 동작 유지. multi-source 전 충돌 정리 필요 | direct write off 또는 `run_key=ALTERNATIVE` 분리 후 Aggregator 경로로 통합 |
 | `final_signals` naming | 유지 | `published_signals` 리네임 검토 |
+| Forecast/Kronos | score_breakdown 제외 | `forecast_overlay` / `validation_overlay` API 계약 |
+| User-facing score labels | `final_score`는 데이터 방향성 점수, `consensus_score`는 소스 간 일치도 | Web/Main Server 문서와 UI 문구 동기화 |
 
 ---
 
