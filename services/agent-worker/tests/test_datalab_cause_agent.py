@@ -153,9 +153,10 @@ class DataLabGraphAgentTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(out.method_detail["cause"], "catalyst")
         self.assertEqual(out.method_detail["cause_source"], "llm")
         self.assertEqual(out.method_detail["graph"], "datalab_cause_v1")
-        # Thin DART-style wrapper: logic lives in the agent; graph just validates.
+        # Spike gate is a first-class graph branch → classify_cause node ran.
         self.assertEqual(
-            out.method_detail["graph_nodes"], ["validate_input", "analyze", "validate_output"]
+            out.method_detail["graph_nodes"],
+            ["validate_input", "analyze_rules", "classify_cause", "validate_output"],
         )
         self.assertEqual(len(classifier.calls), 1)
 
@@ -190,6 +191,10 @@ class DataLabGraphAgentTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(out.analysis_source, "rules")
         self.assertNotIn("cause", out.method_detail)
         self.assertEqual(len(classifier.calls), 0)
+        # Spike gate routed around classify_cause.
+        self.assertEqual(
+            out.method_detail["graph_nodes"], ["validate_input", "analyze_rules", "validate_output"]
+        )
 
     async def test_invalid_input_is_failed(self):
         agent = DataLabAnalysisGraphAgent(classifier=FakeClassifier())

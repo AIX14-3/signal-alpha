@@ -1,14 +1,16 @@
 """LangGraph wrapper for the DataLab cause agent (협업안 §4).
 
-Mirrors ``agents/dart/graph.py``: a thin StateGraph that adds input validation
-and observability around the analysis logic, which lives in
-``DataLabAnalysisAgent`` (``agent.py``). The ``analyze`` node delegates there, so
-all rules / spike-gate / lead-lag / LLM-cause / fallback behaviour is shared with
-the langgraph-free agent. Keeping the wrapper thin is deliberate — the same
-convention DART follows.
+Unlike DART (whose only real branch is input-validity), DataLab has a second
+genuine decision — the **spike gate** (is the spike notable enough to spend an
+LLM cause classification?). So this graph is one branch deeper than DART and
+exposes that decision as a first-class conditional edge rather than hiding it
+inside a node. Node bodies delegate to ``DataLabAnalysisAgent`` (``agent.py``),
+which holds the logic and runs without langgraph.
 
-Score is owned by the analyzer; cause is a tag only (docs §9). A defensive score
-clamp in ``validate_output`` guards against a future wiring bug.
+    validate_input ─[valid?]─▶ analyze_rules ─[spike gate: notable?]─▶ classify_cause ─▶ validate_output ─▶ END
+          └────(invalid)──────────────────────┘         └──────────(weak)──────────────────────┘
+
+Score is owned by the analyzer; cause is a tag only (docs §9).
 """
 
 from __future__ import annotations
@@ -21,12 +23,14 @@ from langgraph.graph import END, StateGraph
 from app.agents.base import SourceAgentInput, SourceAgentOutput
 from app.agents.datalab.agent import DataLabAnalysisAgent
 from app.agents.datalab.llm_classifier import PROMPT_VERSION
+from app.schemas.source_result import SourceResult
 
 DATALAB_GRAPH_NAME = "datalab_cause_v1"
 
 
 class DataLabGraphState(TypedDict, total=False):
     input: SourceAgentInput
+    rule: SourceResult
     output: SourceAgentOutput
     graph_nodes: list[str]
 
@@ -40,8 +44,8 @@ class DataLabAnalysisGraphAgent:
         analysis_agent: DataLabAnalysisAgent | None = None,
         **agent_kwargs: Any,
     ) -> None:
-        # Accept either a prebuilt agent or the agent's kwargs (analyzer/classifier/
-        # price_provider/lookback_days/cause_score_threshold) for convenience.
+        # Accept a prebuilt agent or the agent's kwargs (analyzer/classifier/
+        # price_provider/lookback_days/cause_score_threshold).
         self._agent = analysis_agent or DataLabAnalysisAgent(**agent_kwargs)
         self._graph = self._build_graph()
 
@@ -52,15 +56,21 @@ class DataLabAnalysisGraphAgent:
     def _build_graph(self):
         graph = StateGraph(DataLabGraphState)
         graph.add_node("validate_input", self._validate_input)
-        graph.add_node("analyze", self._analyze)
+        graph.add_node("analyze_rules", self._analyze_rules)
+        graph.add_node("classify_cause", self._classify_cause)
         graph.add_node("validate_output", self._validate_output)
         graph.set_entry_point("validate_input")
         graph.add_conditional_edges(
             "validate_input",
             self._route_after_validation,
-            {"analyze": "analyze", "validate_output": "validate_output"},
+            {"analyze_rules": "analyze_rules", "validate_output": "validate_output"},
         )
-        graph.add_edge("analyze", "validate_output")
+        graph.add_conditional_edges(
+            "analyze_rules",
+            self._route_after_rules,  # the spike gate
+            {"classify_cause": "classify_cause", "validate_output": "validate_output"},
+        )
+        graph.add_edge("classify_cause", "validate_output")
         graph.add_edge("validate_output", END)
         return graph.compile()
 
@@ -94,13 +104,18 @@ class DataLabAnalysisGraphAgent:
             ),
         }
 
-    async def _analyze(self, state: DataLabGraphState) -> DataLabGraphState:
-        result = await self._agent.analyze(state["input"])
+    async def _analyze_rules(self, state: DataLabGraphState) -> DataLabGraphState:
+        rule = await self._agent.run_rules(state["input"])
         return {
             **state,
-            "graph_nodes": [*state.get("graph_nodes", []), "analyze"],
-            "output": result,
+            "graph_nodes": [*state.get("graph_nodes", []), "analyze_rules"],
+            "rule": rule,
+            "output": self._agent.build_rules_output(rule),  # provisional (used if gate skips)
         }
+
+    async def _classify_cause(self, state: DataLabGraphState) -> DataLabGraphState:
+        output = await self._agent.classify_cause(state["input"], state["rule"])
+        return {**state, "graph_nodes": [*state.get("graph_nodes", []), "classify_cause"], "output": output}
 
     async def _validate_output(self, state: DataLabGraphState) -> DataLabGraphState:
         output = state["output"]
@@ -118,5 +133,10 @@ class DataLabAnalysisGraphAgent:
 
     def _route_after_validation(
         self, state: DataLabGraphState
-    ) -> Literal["analyze", "validate_output"]:
-        return "validate_output" if state.get("output") is not None else "analyze"
+    ) -> Literal["analyze_rules", "validate_output"]:
+        return "validate_output" if state.get("output") is not None else "analyze_rules"
+
+    def _route_after_rules(
+        self, state: DataLabGraphState
+    ) -> Literal["classify_cause", "validate_output"]:
+        return "classify_cause" if self._agent.should_classify(state["rule"]) else "validate_output"

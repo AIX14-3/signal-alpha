@@ -1,14 +1,14 @@
 """DataLab attention agent — analysis logic (협업안 §4), langgraph-free.
 
-Mirrors the DART split: this module holds the *logic* (rules → spike gate →
-lead/lag → LLM cause → fallback) behind the ``SourceAnalysisAgent`` contract, so
-it runs and tests without langgraph. ``graph.py`` is a thin StateGraph wrapper
-that only adds validation/observability and delegates its ``analyze`` node here.
+Mirrors the DART split (logic here, StateGraph wiring in ``graph.py``) but exposes
+its steps as discrete methods — ``run_rules`` / ``should_classify`` /
+``classify_cause`` — so the graph can wire them as first-class nodes/edges (the
+spike gate is a real graph branch, not hidden inside one node). ``analyze``
+composes the same steps for langgraph-free use/tests.
 
 Invariants:
   - The rule analyzer owns score & direction. Cause is a *tag only* (docs §9).
-  - Spike gate: a weak/empty signal returns the rule result with no cause and no
-    LLM call.
+  - Spike gate: a weak/empty signal skips cause classification (no LLM call).
   - LLM failure degrades to the deterministic lead/lag prelabel
     (``analysis_source="rules_fallback"``, ``llm_error`` logged).
   - Classifier disabled → emits exactly the rule result (== LLM-off rule path).
@@ -49,22 +49,34 @@ class DataLabAnalysisAgent:
         self._lookback_days = lookback_days
         self._cause_score_threshold = cause_score_threshold
 
+    # -- composed entrypoint (langgraph-free) ------------------------------- #
     async def analyze(self, input_data: SourceAgentInput) -> SourceAgentOutput:
-        rule = await self._analyzer.analyze(input_data.stock_code, input_data.evidence)
-        base = self._rules_output(rule)
+        rule = await self.run_rules(input_data)
+        if not self.should_classify(rule):
+            return self.build_rules_output(rule)
+        return await self.classify_cause(input_data, rule)
 
-        # Spike gate: only spend an LLM call on a notable, non-failed signal.
-        if self._classifier is None or not self._notable(rule):
-            return base
+    # -- discrete steps the graph wires as nodes ---------------------------- #
+    async def run_rules(self, input_data: SourceAgentInput) -> SourceResult:
+        return await self._analyzer.analyze(input_data.stock_code, input_data.evidence)
 
+    def should_classify(self, rule: SourceResult) -> bool:
+        """Spike gate: only spend an LLM call on a notable, non-failed signal."""
+        if self._classifier is None or rule.data_status == "failed":
+            return False
+        return "search_spike" in rule.risk_flags or abs(rule.score) >= self._cause_score_threshold
+
+    async def classify_cause(
+        self, input_data: SourceAgentInput, rule: SourceResult
+    ) -> SourceAgentOutput:
         as_of = input_data.analysis_date or date.today()
         price_rows = await self._load_price(input_data.stock_id, as_of)
         lead_lag = compute_lead_lag(
             _search_rows(input_data), price_rows, as_of=as_of, lookback_days=self._lookback_days
         )
         # No usable price series → lead/lag undecidable; emit the rule result.
-        if lead_lag.price_points < MIN_PRICE_POINTS:
-            return base
+        if lead_lag.price_points < MIN_PRICE_POINTS or self._classifier is None:
+            return self.build_rules_output(rule)
 
         try:
             verdict = await self._classifier.classify(
@@ -96,12 +108,8 @@ class DataLabAnalysisAgent:
                 llm_error=str(exc),
             )
 
-    def _notable(self, rule: SourceResult) -> bool:
-        if rule.data_status == "failed":
-            return False
-        return "search_spike" in rule.risk_flags or abs(rule.score) >= self._cause_score_threshold
-
-    def _rules_output(self, rule: SourceResult) -> SourceAgentOutput:
+    # -- output builders ---------------------------------------------------- #
+    def build_rules_output(self, rule: SourceResult) -> SourceAgentOutput:
         return SourceAgentOutput(
             source="DATALAB",
             stock_code=rule.stock_code,
