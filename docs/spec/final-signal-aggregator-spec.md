@@ -223,9 +223,18 @@ final_score = (aggregate_score + 1) * 50
 ### Direction
 
 최종 `signal`은 signed score와 source 충돌 여부로 결정한다.
+방향 충돌 판단은 점수 임계값 판단보다 항상 먼저 실행한다.
 
 ```text
-if positive source와 negative source가 함께 있으면:
+has_mixed_source = any(source.direction == "mixed")
+has_positive = any(source.direction == "positive")
+has_negative = any(source.direction == "negative")
+
+if 모든 available source가 neutral이면:
+    signal = "neutral"
+elif has_mixed_source:
+    signal = "mixed"
+elif has_positive and has_negative:
     signal = "mixed"
 elif aggregate_score >= 0.2:
     signal = "positive"
@@ -235,8 +244,15 @@ else:
     signal = "neutral"
 ```
 
-source result의 `direction="mixed"`가 하나라도 있으면 최종 `signal`은 `mixed`를 우선 고려한다.
-단, 모든 available source가 neutral이면 최종 `signal`은 `neutral`이다.
+이 우선순위는 구현 시 반드시 유지한다. 예를 들어 DART가 `positive`, score `1.0`이고
+PRICE가 `negative`, score `-0.5`이면 평균 score는 `0.25`다. 점수만 보면 positive
+임계값을 넘지만, positive와 negative source가 공존하므로 최종 `signal`은 `mixed`다.
+
+권장 테스트명:
+
+```text
+positive_and_negative_sources_resolve_to_mixed_before_score_threshold
+```
 
 ### Source Agreement
 
@@ -471,6 +487,50 @@ analyze_dart handler가 성공하면 aggregate_signal을 enqueue한다.
 - source_analysis_result_ids를 명시적으로 넘길 수 있어 조회 범위가 작다.
 - 이후 Report/PRICE가 붙으면 stock/date 기준 재집계 스케줄러로 확장할 수 있다.
 
+### Idempotency and Concurrent Aggregate Tasks
+
+후속 단계에서 `analyze_dart`, `analyze_price`, `analyze_report`가 거의 동시에 끝나면
+`aggregate_signal` task가 여러 개 enqueue될 수 있다. Aggregator는 이 상황에서도 같은
+stock/date/version의 최종 결과가 하나의 aggregate parent row와 하나의 final signal row로
+수렴하도록 멱등성을 가져야 한다.
+
+Aggregator는 source별 run key를 aggregate parent row의 run key로 사용하지 않는다.
+항상 stable aggregate identity를 먼저 계산한다.
+
+```text
+aggregate_identity =
+  stock_id
+  + signal_date
+  + analysis_mode="full"
+  + run_key="AGGREGATED"
+  + version="final-agg-v1"
+```
+
+이 identity는 `analysis_results`의 unique key와 일치해야 한다.
+
+```text
+stock_id + analysis_date + analysis_mode + run_key + version
+```
+
+Handler는 이 identity로 `analysis_results`를 upsert하고, 반환된 parent
+`analysis_result_id`를 `final_signals.analysis_result_id`로 사용한다.
+동시에 여러 aggregate task가 실행되어도 unique constraint와 upsert를 통해 같은 parent row를
+갱신해야 한다.
+
+`final_signals`도 같은 stable identity를 사용한다.
+
+```text
+stock_id + signal_date + run_key="AGGREGATED" + version="final-agg-v1"
+```
+
+구현 가이드:
+
+- `aggregate_signal` enqueue 시 가능하면 `dedupe=true`를 사용한다.
+- `task_context.aggregation_key`를 둘 수 있다.
+- handler는 task 입력만 신뢰하지 말고 실행 시점의 최신 available source results를 다시 조회할 수 있어야 한다.
+- 여러 source analyzer가 같은 날 순차/동시 완료되어도 Aggregator는 insert 증식이 아니라 같은 aggregate row 갱신으로 동작해야 한다.
+- 후속 multi-source 단계에서는 source별 완료 이벤트마다 aggregate를 재실행하되, 결과는 같은 `AGGREGATED` identity에 수렴시킨다.
+
 ---
 
 ## 13. API Impact
@@ -505,7 +565,10 @@ Web 영향:
 - DART 단일 source aggregation
 - missing source가 `score_breakdown`에 포함되는지
 - 단일 source일 때 `source_agreement=LOW`, `consensus_score=50.0`
-- positive/negative 충돌 시 `signal=mixed`, `needs_review=true`
+- positive/negative 충돌 시 점수 임계값보다 먼저 `signal=mixed`, `needs_review=true`
+- 하위 source 중 `direction=mixed`가 있으면 점수 임계값보다 먼저 최종 `signal=mixed`
+- 동시에 여러 `aggregate_signal` task가 실행되어도 같은 stable aggregate parent row를 upsert
+- source별 run key가 aggregate parent row의 run key로 섞이지 않는지 검증
 - WARNING이면 `is_published=false`
 - `final_signals.score_breakdown`이 object 구조인지
 - 금지된 투자 추천 문구가 summary에 없는지
@@ -554,4 +617,3 @@ git diff --check
    - Report/PRICE/ALTERNATIVE source 결과 합류
 5. `feat/final-signal-aggregator-backtest`
    - 가중치와 publish rule 검증
-
