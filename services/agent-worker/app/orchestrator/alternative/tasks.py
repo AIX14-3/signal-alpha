@@ -593,11 +593,17 @@ class AlternativeAnalyzeTaskHandler:
         try:
             loader = registration.build_loader(repository)
             evidence = await loader.load(stock_id=stock_id, stock_code=stock_code, as_of=as_of)
-            # Drive the analyzer through the SourceAgentInput/Output contract via the
-            # transparent RuleSourceAgent adapter, then convert back to SourceResult.
-            # The adapter is a pure field mapping — scores/directions/flags are
-            # unchanged vs. calling analyzer.analyze() directly (see _from_output).
-            agent = RuleSourceAgent(registration.analyzer)
+            # Drive the analyzer through the SourceAgentInput/Output contract. By
+            # default that is the transparent RuleSourceAgent adapter (pure field
+            # mapping — scores/directions/flags unchanged vs. calling the analyzer
+            # directly, see _from_output). A source may register an ``agent_factory``
+            # (built from the connection) for a graph/LLM agent instead — DATALAB
+            # uses it for the cause agent when DATALAB_LLM_ENABLED is on. Unset →
+            # identical to the previous rule-only path.
+            if registration.agent_factory is not None:
+                agent = registration.agent_factory(self._connection)
+            else:
+                agent = RuleSourceAgent(registration.analyzer)
             output = await agent.analyze(
                 SourceAgentInput(
                     source=registration.source,
@@ -695,6 +701,11 @@ def _from_output(output: SourceAgentOutput) -> SourceResult:
         data_status=output.data_status,
         report_meta=report_meta,
         llm_model=output.llm_model,
+        # Trend-only cause tag the DataLab graph agent stashed in method_detail
+        # (None for every rule-only source — keeps non-DataLab end-to-end invariant).
+        cause=detail.get("cause"),
+        cause_rationale=detail.get("cause_rationale"),
+        cause_source=detail.get("cause_source"),
     )
 
 

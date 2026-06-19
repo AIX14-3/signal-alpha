@@ -5,6 +5,15 @@ from app.schemas.evidence import SourceType
 
 Direction = Literal["positive", "neutral", "negative", "mixed", "unknown"]
 
+# Trend-only attention cause (협업안 §4). Why a DATALAB search spike happened,
+# inferred from search-vs-price timing (lead/lag) and confirmed by an LLM:
+#   - catalyst : search led the price move (information ahead of price)
+#   - fomo     : search chased a price move that already happened (crowd attention)
+#   - price_led: search merely tracked/lagged price (no independent information)
+# Set ONLY by the DataLab cause agent; every other source leaves it None. Not a
+# buy/sell call — a trace tag (docs §9). Surfaced via agent_results.method_detail.
+Cause = Literal["catalyst", "fomo", "price_led"]
+
 
 @dataclass(frozen=True)
 class EvidenceItem:
@@ -50,3 +59,9 @@ class SourceResult:
     # (e.g. DataLab polarity classification). None for pure-rule output. Flows to
     # agent_results.llm_model in persistence.
     llm_model: str | None = None
+    # Trend-only attention cause (DATALAB cause agent). None for every other source
+    # and for the pure-rule DataLab path. ``cause_source`` records how it was
+    # decided ("llm" | "rules_fallback"); all three flow to agent_results.method_detail.
+    cause: Cause | None = None
+    cause_rationale: str | None = None
+    cause_source: str | None = None

@@ -48,6 +48,11 @@ class GeminiJsonClient:
         self._timeout = timeout
         self._retry_backoff = retry_backoff
 
+    @property
+    def model(self) -> str:
+        """Model id, for recording LLM provenance (e.g. agent_results.llm_model)."""
+        return self._model
+
     async def generate_json(self, prompt: str) -> Any:
         """Return the parsed JSON Gemini emitted for ``prompt``.
 
