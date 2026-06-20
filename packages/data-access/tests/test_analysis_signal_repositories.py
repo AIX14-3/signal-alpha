@@ -196,3 +196,22 @@ class AnalysisAndSignalRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("final_signals.is_current = TRUE", sql)
         self.assertIn("final_signals.is_published = TRUE", sql)
         self.assertEqual(connection.calls[0][2], ([1, 2],))
+
+    async def test_get_detail_by_id_joins_stock_analysis_agent_results_and_events(self):
+        connection = FakeConnection()
+        repository = SignalRepository(connection)
+
+        row = await repository.get_detail_by_id(200)
+
+        self.assertEqual(row["id"], 7)
+        sql = connection.calls[0][1]
+        self.assertIn("FROM final_signals", sql)
+        self.assertIn("INNER JOIN stocks", sql)
+        self.assertIn("INNER JOIN analysis_results", sql)
+        self.assertIn("FROM agent_results", sql)
+        self.assertIn("FROM signal_events", sql)
+        self.assertIn("LEFT JOIN source_documents", sql)
+        self.assertIn("final_signals.id = $1", sql)
+        self.assertIn("final_signals.is_current = TRUE", sql)
+        self.assertIn("final_signals.is_published = TRUE", sql)
+        self.assertEqual(connection.calls[0][2], (200,))

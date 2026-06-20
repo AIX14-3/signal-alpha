@@ -42,6 +42,7 @@ DELETE /api/watchlists/{stock_code}
 GET /api/dashboard
 
 GET /signals/{ticker}
+GET /api/signals/{signal_id}
 ```
 
 ## Responsibilities
