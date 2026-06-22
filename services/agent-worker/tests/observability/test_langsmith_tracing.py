@@ -6,12 +6,40 @@ import unittest
 
 import pytest
 
+from app.observability import langsmith as ls
 from app.observability.langsmith import TracedLlmClient, maybe_trace, tracing_enabled
 
 
 def test_tracing_disabled_by_default(monkeypatch) -> None:
     monkeypatch.delenv("LANGSMITH_TRACING", raising=False)
     assert tracing_enabled() is False
+
+
+def test_warns_once_when_enabled_without_key(monkeypatch, caplog) -> None:
+    monkeypatch.setenv("LANGSMITH_TRACING", "true")
+    monkeypatch.delenv("LANGSMITH_API_KEY", raising=False)
+    ls._warned.clear()
+    sentinel = object()
+    with caplog.at_level("WARNING"):
+        assert maybe_trace(sentinel, name="x") is sentinel
+        assert maybe_trace(sentinel, name="x") is sentinel  # 두 번째 호출
+    warnings = [r for r in caplog.records if "langsmith" in r.getMessage()]
+    assert len(warnings) == 1  # 같은 사유는 1회만 경고
+
+
+def test_recorder_is_cached_per_config(monkeypatch) -> None:
+    monkeypatch.setenv("LANGSMITH_TRACING", "true")
+    monkeypatch.setenv("LANGSMITH_API_KEY", "dummy-key")
+    monkeypatch.setenv("LANGSMITH_PROJECT", "test-proj")
+    monkeypatch.delenv("LANGSMITH_ENDPOINT", raising=False)
+    ls._cached_recorder.cache_clear()
+    ls._warned.clear()
+
+    ls._build_langsmith_recorder()
+    ls._build_langsmith_recorder()
+
+    # 두 번째 호출은 캐시 히트 — 설정당 recorder(=langsmith.Client) 1개만 생성
+    assert ls._cached_recorder.cache_info().hits >= 1
 
 
 def test_maybe_trace_returns_same_client_when_disabled(monkeypatch) -> None:

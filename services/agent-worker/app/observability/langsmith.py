@@ -12,9 +12,24 @@ LLM 클라이언트 계약은 ``app.analyzers.dart.llm.LlmClient`` (async ``comp
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import time
+from functools import lru_cache
 from typing import Any, Protocol
+
+logger = logging.getLogger(__name__)
+
+# 같은 사유는 1회만 경고 — 켜놓고 조용히 죽는(키 오류·SDK 드리프트) 상황을 감지 가능하게 하되
+# per-call 스팸은 막는다.
+_warned: set[str] = set()
+
+
+def _warn_once(key: str, message: str) -> None:
+    if key in _warned:
+        return
+    _warned.add(key)
+    logger.warning("[langsmith] %s", message)
 
 
 class _Recorder(Protocol):
@@ -115,25 +130,41 @@ class LangSmithRecorder:
         )
 
 
+@lru_cache(maxsize=4)
+def _cached_recorder(project: str, api_key: str, endpoint: str | None) -> _Recorder | None:
+    """설정(project/key/endpoint)당 recorder 1개만 생성·재사용 — langsmith.Client(백그라운드
+    배치 스레드 동반)가 태스크마다 새로 만들어지지 않게 한다. 실패는 1회 경고 후 None 캐시."""
+    try:
+        return LangSmithRecorder(project=project, api_key=api_key, endpoint=endpoint)
+    except Exception as exc:  # noqa: BLE001 — langsmith 미설치/초기화 실패 → 관측 비활성(no-op)
+        _warn_once(
+            "langsmith_build",
+            f"LangSmith 관측 초기화 실패(관측 비활성, 파이프라인 영향 없음): {exc}",
+        )
+        return None
+
+
 def _build_langsmith_recorder() -> _Recorder | None:
     api_key = os.getenv("LANGSMITH_API_KEY")
     if not api_key:
-        return None
-    try:
-        return LangSmithRecorder(
-            project=os.getenv("LANGSMITH_PROJECT") or "signal-alpha",
-            api_key=api_key,
-            endpoint=os.getenv("LANGSMITH_ENDPOINT") or None,
+        _warn_once(
+            "langsmith_no_key",
+            "LANGSMITH_TRACING이 켜졌지만 LANGSMITH_API_KEY가 없어 관측이 비활성화됩니다.",
         )
-    except Exception:  # noqa: BLE001 — langsmith 미설치/초기화 실패 → 관측 비활성(no-op)
         return None
+    return _cached_recorder(
+        os.getenv("LANGSMITH_PROJECT") or "signal-alpha",
+        api_key,
+        os.getenv("LANGSMITH_ENDPOINT") or None,
+    )
 
 
 async def _safe_to_thread(func: Any, *args: Any, **kwargs: Any) -> Any:
     """recorder 호출을 워커 스레드에서 실행하고 실패는 삼킨다(관측이 흐름·지연에 영향 X)."""
     try:
         return await asyncio.to_thread(func, *args, **kwargs)
-    except Exception:  # noqa: BLE001 — 관측 실패는 LLM 호출에 영향 주지 않는다
+    except Exception as exc:  # noqa: BLE001 — 관측 실패는 LLM 호출에 영향 주지 않는다
+        _warn_once("langsmith_record", f"LangSmith 기록 실패(관측만 영향): {exc}")
         return None
 
 
