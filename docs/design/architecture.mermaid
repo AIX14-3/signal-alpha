@@ -7,18 +7,17 @@ flowchart TD
 
     B --> C["데이터 적재<br/>PostgreSQL · pgvector<br/>(결정론 신호·피처·임베딩)"]:::det
 
-    C --> G2{"게이트2 = 결합/신호 품질<br/>AGGREGATE_SIGNAL<br/>(consensus·warning_level)"}:::ml
-
-    G2 -->|"ML_INFER (종목 OHLCV)"| D["ML/DL 추론<br/>게이트 통과 모델만<br/>(EWMA·HAR-RV·GARCH·LightGBM·GPU)"]:::ml
+    C -->|"ML_INFER (종목 OHLCV)"| D["ML/DL 추론<br/>게이트 통과 모델만<br/>(EWMA·HAR-RV·GARCH·LightGBM·GPU)"]:::ml
     D --> E["메타러너 결합 stacking<br/>META_COMBINE → meta_signals<br/>(학습 가중·없으면 균등 폴백)"]:::ml
+    E --> G2{"게이트2 = 신호·모델 품질<br/>(consensus·warning_level·모델 신뢰도)<br/>발행 여부 판정"}:::ml
 
-    G2 -->|"약함<br/>(WARNING·합의 미달)"| NR["needs_review<br/>is_published=false (미발행)"]:::ml
-    G2 -->|"발행"| V["리스크 veto<br/>치명 키워드 차단 (RISK_VETO)"]:::det
+    G2 -->|"약함<br/>(WARNING·합의/신뢰도 미달)"| NR["needs_review<br/>is_published=false (미발행)"]:::ml
+    G2 -->|"발행"| L["LLM 종합 · 설명<br/>SYNTHESIZE (내러티브)"]:::llm
 
-    V -->|"치명 키워드"| NR
-    V -->|"통과"| L["LLM 종합 · 설명<br/>SYNTHESIZE (내러티브만)"]:::llm
-    E -. "결합 변동성/신뢰도<br/>(best-effort 참조)" .-> L
-    L --> O["결과물<br/>리스크 리포트 (JSON)<br/>final_signals"]:::out
+    L --> V{"리스크 veto<br/>치명 키워드 검사<br/>(데이터 veto_keywords + LLM 종합 텍스트)"}:::det
+    V -->|"통과 (키워드 없음)"| O["결과물<br/>리스크 리포트 (JSON)<br/>final_signals"]:::out
+    V -. "치명 키워드 → 정제 (1회, 리스크 강조)" .-> L
+    V -->|"정제 후에도 치명적"| NR
 
     LS[("LangSmith<br/>관측 · 디버깅")]:::obs -. "관측만 (끝단 LLM뿐)" .-> L
 

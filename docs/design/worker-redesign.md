@@ -24,15 +24,51 @@ signal-alpha agent-worker를 `vol-benchmark`의 [`architecture.mermaid`](./archi
 
 ## 큐 체인 (자동 enqueue)
 
+**목표 순서(architecture.mermaid, 기획):** 판정이 단계를 빠짐없이 **선형**으로 통과하고,
+끝단 LLM 뒤에서 veto가 **정제 루프**로 동작한다(치명 키워드라고 버리지 않는다).
+
 ```
-COLLECT_<SRC> → 게이트1 → NORMALIZE_<SRC> → ANALYZE_<SRC>        (소스별)
+COLLECT_<SRC> → 게이트1 → NORMALIZE_<SRC> → (EMBED_DART) → ANALYZE_<SRC>   (소스별 전처리)
+        └─(fan-in)→ ML_INFER → META_COMBINE → 게이트2(신호·모델 품질)
+                       ├─ 약함 → needs_review (미발행)
+                       └─ 발행 → SYNTHESIZE(LLM 종합) → RISK_VETO(데이터+LLM텍스트 치명키워드)
+                                    ├─ 키워드 없음 → 발행(final_signals)
+                                    ├─ 키워드 & 미정제 → SYNTHESIZE 정제(1회, 리스크 강조) ↺
+                                    └─ 키워드 & 정제후에도 치명 → needs_review (미발행)
+```
+
+게이트2는 메타러너 결합(meta_signal: 모델 신뢰도) + consensus·warning_level을 보고 발행/needs_review를
+판정한다. veto는 **LLM 종합 아래**에서 동작하고, 치명 키워드가 나오면 LLM 정제를 1회 거쳐 발행한다.
+
+### ⚠️ 현재 코드(미정렬) — 재정렬 필요
+아직 아래 갈래형이다 — `AGGREGATE_SIGNAL`(게이트2)이 `ML_INFER` **앞**에서 ML 가지·veto 가지를
+동시 fan-out 하고, veto가 LLM **앞**에서 치명 키워드 시 미발행(`apply_risk_veto`)한다.
+
+```
         └─(fan-in)→ AGGREGATE_SIGNAL
                        ├─→ ML_INFER → META_COMBINE               (meta_signals 적재)
                        └─(발행 신호)→ RISK_VETO → SYNTHESIZE      (리스크 리포트)
 ```
 
+### 재정렬 구현 계획 (TODO — 오케스트레이션 변경)
+1. `dart/tasks.py`: 분석 후 트리거를 `AGGREGATE_SIGNAL` → **`ML_INFER`** 로. 단, AGGREGATE가
+   나중에 필요로 하는 컨텍스트(stock_code·signal_date·aggregation_key)를 **불투명 `aggregate_ctx`**
+   로 실어 ML→META가 그대로 통과시키게 한다.
+2. `ml/inference.py`·`ml/meta_combine.py`: **skip이어도 다음 단계를 항상 enqueue** 한다
+   (⚠️ **함정**: OHLCV 없는 종목은 ML이 graceful skip → 지금처럼 "ML과 무관히 AGGREGATE 실행"을
+   유지하려면 ML_INFER는 skip이어도 META를, META는 항상 AGGREGATE를 enqueue해야 리포트가 끊기지 않음).
+   META_COMBINE이 `aggregate_ctx`로 **AGGREGATE_SIGNAL**을 enqueue.
+3. `aggregation/tasks.py`: ML_INFER/RISK_VETO enqueue 제거. `meta_signal`(모델 신뢰도)을 읽어
+   발행 판정에 반영. 발행 시 **SYNTHESIZE** enqueue.
+4. `synthesis/tasks.py`: 종합 후 **RISK_VETO** enqueue(컨텍스트에 `refined` 플래그 전달).
+   `refined=true`면 리스크 강조 정제 프롬프트.
+5. `gates/risk_veto.py`: 검사 입력에 **LLM 종합 텍스트**(final_signal.summary 등) 추가.
+   치명 키워드 & `refined!=true` → **SYNTHESIZE(refine=true) 재enqueue**(미발행 금지);
+   `refined=true`인데도 치명 → `apply_risk_veto`(needs_review). 키워드 없으면 종료(발행 유지).
+6. 각 핸들러 체인 테스트 갱신(현 갈래형 가정 → 선형+정제 루프).
+
 - `ML_INFER`는 generic `POST /internal/tasks/ml_infer/enqueue`·`/run` 으로 수동/스케줄 트리거도 가능.
-- `SYNTHESIZE`는 `META_COMBINE`가 같은 run에 늦으면 **다음 run의 최근 meta_signal**을 참조(best-effort).
+- 재정렬되면 META_COMBINE → 게이트2 → SYNTHESIZE 가 한 체인이므로 현재의 best-effort meta 참조는 제거된다.
 
 ## 2중 모델 게이트 (`model_registry`)
 
