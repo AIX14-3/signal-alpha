@@ -7,12 +7,12 @@ ML_INFER가 적재한 ml_inferences(모델별 pred_vol)를 읽어 ``meta_learner
 
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping
 from typing import Any
 
 from app.ml.inference import DEFAULT_HORIZON, DEFAULT_RUN_KEY
 from app.ml.meta_learner import combine, load_weights
+from app.orchestrator.queue.context import parse_task_context
 
 
 class MetaCombineTaskHandler:
@@ -27,7 +27,7 @@ class MetaCombineTaskHandler:
 
     async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
         stock_id = int(task["stock_id"])
-        ctx = _task_context(task.get("task_context"))
+        ctx = parse_task_context(task.get("task_context"))
         run_key = str(ctx.get("run_key") or DEFAULT_RUN_KEY)
         asof_date = ctx.get("asof_date")
         horizon = int(ctx.get("horizon") or DEFAULT_HORIZON)
@@ -68,11 +68,3 @@ class MetaCombineTaskHandler:
             "method": result.method,
             "model_count": result.model_count,
         }
-
-
-def _task_context(value: Any) -> dict[str, Any]:
-    if value is None:
-        return {}
-    if isinstance(value, str):
-        return json.loads(value)
-    return dict(value)

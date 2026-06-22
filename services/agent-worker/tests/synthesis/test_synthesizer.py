@@ -61,6 +61,22 @@ def test_parse_rejects_investment_advice_korean() -> None:
         parse_synthesis_response(text)
 
 
+def test_parse_rejects_directive_advice_phrases() -> None:
+    # 지시(directive) 표현은 차단.
+    for phrase in ["지금 매수하세요", "매도 추천", "비중 확대 권장", "목표가 5만원"]:
+        text = json.dumps({"headline": "h", "narrative": phrase})
+        with pytest.raises(SynthesisError):
+            parse_synthesis_response(text)
+
+
+def test_parse_allows_descriptive_market_terms() -> None:
+    # 서술적 시장 표현(순매도/매수세 등)은 통과 — 더 이상 매수/매도 부분 문자열로 차단 안 함.
+    for phrase in ["외국인 순매도가 지속되었습니다.", "기관 매수세가 유입되었습니다.", "매도 우위 흐름."]:
+        text = json.dumps({"headline": "시장 동향", "narrative": phrase})
+        narrative = parse_synthesis_response(text)
+        assert narrative.narrative == phrase
+
+
 class _FakeClient:
     def __init__(self, response: str):
         self._response = response

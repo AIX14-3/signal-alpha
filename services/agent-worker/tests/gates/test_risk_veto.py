@@ -30,6 +30,27 @@ def test_scan_with_explicit_keywords_overrides_defaults() -> None:
     assert decision.matched_keywords == ["특수상황"]
 
 
+def test_scan_ignores_resolved_context() -> None:
+    # 사건이 해소/부인된 문맥은 veto하지 않는다(오탐 방지).
+    assert scan_for_veto(["상장폐지 우려가 해소되었다"]).vetoed is False
+    assert scan_for_veto(["횡령 혐의에 대해 무혐의 처분을 받았다"]).vetoed is False
+    assert scan_for_veto(["분식회계 의혹은 사실무근으로 밝혀졌다"]).vetoed is False
+
+
+def test_scan_still_vetoes_real_events() -> None:
+    # 해소어가 없는 진짜 치명 사건은 그대로 veto (recall 보존).
+    assert scan_for_veto(["상장폐지 결정 공시"]).vetoed is True
+    assert scan_for_veto(["분식회계 적발"]).vetoed is True
+    assert scan_for_veto(["파산"]).vetoed is True  # 단독 등장 = fail-safe veto
+
+
+def test_scan_vetoes_when_any_occurrence_is_unnegated() -> None:
+    # 한 번은 해소 문맥, 다른 한 번은 실제 사건 → 비부정 등장이 있으므로 veto.
+    decision = scan_for_veto(["횡령 혐의 무혐의", "신규 횡령 적발"])
+    assert decision.vetoed is True
+    assert "횡령" in decision.matched_keywords
+
+
 def test_env_keywords_are_added(monkeypatch) -> None:
     monkeypatch.setenv("RISK_VETO_KEYWORDS", "유상증자취소, 최대주주변경")
     keywords = veto_keywords()

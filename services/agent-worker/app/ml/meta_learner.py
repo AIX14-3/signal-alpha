@@ -82,17 +82,21 @@ def combine(
         normalized = {name: w / total for name, w in applicable.items()}
         method = METHOD_STACKING
         # 가중 적용 대상만 결합(학습 가중이 다루는 모델 부분집합).
-        combined = sum(normalized[name] * preds[name] for name in normalized)
+        contributing = {name: preds[name] for name in normalized}
     else:
         normalized = {name: 1.0 / len(preds) for name in preds}
         method = METHOD_EQUAL
-        combined = sum(normalized[name] * preds[name] for name in preds)
+        contributing = preds
+
+    # combined_vol·confidence·model_count·weight_breakdown 모두 *결합에 실제 기여한* 동일
+    # 집합(contributing) 기준 — stacking에서 가중 밖 모델을 셈에서만 포함시키던 불일치 제거.
+    combined = sum(normalized[name] * contributing[name] for name in normalized)
 
     return MetaResult(
         combined_vol=round(combined, 10),
-        confidence=_confidence(preds),
+        confidence=_confidence(contributing),
         method=method,
-        model_count=len(preds),
+        model_count=len(contributing),
         weight_breakdown={name: round(w, 6) for name, w in normalized.items()},
     )
 

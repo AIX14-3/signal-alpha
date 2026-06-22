@@ -47,6 +47,19 @@ def test_combine_stacking_restricts_to_present_models() -> None:
     assert set(result.weight_breakdown) == {"ewma", "har_rv"}
 
 
+def test_combine_stacking_counts_only_contributing_models() -> None:
+    # 가중이 일부 모델만 다루면 model_count·confidence·weight_breakdown 모두 그 부분집합 기준
+    # (combined_vol과 동일 집합) — 가중 밖 모델(garch)을 셈에만 포함하던 불일치 제거.
+    preds = {"ewma": 0.2, "har_rv": 0.4, "garch": 0.9}
+    result = combine(preds, weights={"ewma": 1.0, "har_rv": 1.0})
+    assert result.method == METHOD_STACKING
+    assert result.combined_vol == 0.3  # 0.5*0.2 + 0.5*0.4 (garch 제외)
+    assert result.model_count == 2
+    assert len(result.weight_breakdown) == result.model_count
+    # confidence는 결합에 쓰인 {ewma, har_rv}만 기준 — 전체(garch 포함)와 다른 값
+    assert result.confidence == combine({"ewma": 0.2, "har_rv": 0.4}).confidence
+
+
 def test_combine_falls_back_when_no_weight_applies() -> None:
     # learned weights exist but cover none of the present models → equal fallback
     result = combine({"ewma": 0.2}, weights={"garch": 1.0})

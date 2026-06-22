@@ -11,13 +11,36 @@ warning_level=WARNING)하고 사유를 ``validation_logs`` 에 남긴다.
 
 from __future__ import annotations
 
-import json
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
 from typing import Any
 
+from dataclasses import dataclass
+
 from app.gates.rules.veto_keywords import veto_keywords
+from app.orchestrator.queue.context import parse_int_list, parse_task_context
 from app.orchestrator.queue.task_types import SYNTHESIZE
+
+# 강한 해소/부인 신호만(보수적). 키워드 직후에 이런 표현이 있으면 치명 사건이 *해소/부인*된
+# 맥락("상장폐지 우려 해소", "횡령 혐의 무혐의")으로 보고 그 등장은 veto로 치지 않는다.
+# risk veto는 false negative(위험 신호 발행)가 false positive(정상 신호 보류)보다 위험하므로,
+# "없"/"아니" 같은 약한 일반 부정어는 일부러 넣지 않는다(recall 보존).
+_NEGATION_CUES: tuple[str, ...] = (
+    "해소",
+    "무혐의",
+    "기각",
+    "각하",
+    "사실무근",
+    "오보",
+    "루머",
+    "철회",
+    "혐의를 벗",
+    "혐의 없",
+    "혐의가 없",
+    "사실이 아니",
+    "사실 아니",
+)
+# 키워드 등장 직후 해소어를 살펴볼 문자 수.
+_NEGATION_WINDOW = 30
 
 
 @dataclass(frozen=True)
@@ -26,15 +49,37 @@ class VetoDecision:
     matched_keywords: list[str]
 
 
+def _has_unnegated_occurrence(blob: str, keyword: str) -> bool:
+    """``keyword`` 가 해소/부인 맥락 밖에서 한 번이라도 등장하면 True.
+
+    각 등장 위치 직후 ``_NEGATION_WINDOW`` 글자 안에 해소어가 있으면 그 등장은 무시하고,
+    비부정 등장이 하나라도 있으면 진짜 veto 매치로 본다.
+    """
+    start = blob.find(keyword)
+    while start != -1:
+        end = start + len(keyword)
+        window = blob[start : end + _NEGATION_WINDOW]
+        if not any(cue in window for cue in _NEGATION_CUES):
+            return True
+        start = blob.find(keyword, end)
+    return False
+
+
 def scan_for_veto(
     texts: Iterable[str | None],
     *,
     keywords: list[str] | None = None,
 ) -> VetoDecision:
-    """증거 텍스트에 치명 키워드가 있는지 검사(부분 문자열, 대소문자 무관)."""
+    """증거 텍스트에 치명 키워드가 있는지 검사(부분 문자열, 대소문자 무관).
+
+    단순 부분 문자열은 "상장폐지 우려 해소"·"횡령 혐의 무혐의"처럼 사건이 *해소/부인*된 문장도
+    걸어 정상 신호를 잘못 보류시킨다. 그래서 키워드 직후의 **강한 해소/부인 신호**(``_NEGATION_CUES``)
+    가 있는 등장은 제외하고, 비부정 등장이 1건 이상인 키워드만 matched 로 본다. 보수적으로 강한
+    해소어만 제외해 진짜 치명 사건은 그대로 veto 한다(false negative 회피).
+    """
     candidates = keywords if keywords is not None else veto_keywords()
     blob = "\n".join(text for text in texts if text).lower()
-    matched = [kw for kw in candidates if kw.lower() in blob]
+    matched = [kw for kw in candidates if _has_unnegated_occurrence(blob, kw.lower())]
     return VetoDecision(vetoed=bool(matched), matched_keywords=matched)
 
 
@@ -54,8 +99,8 @@ class RiskVetoTaskHandler:
 
     async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
         stock_id = int(task["stock_id"])
-        ctx = _task_context(task.get("task_context"))
-        signal_event_ids = _int_list(
+        ctx = parse_task_context(task.get("task_context"))
+        signal_event_ids = parse_int_list(
             task.get("source_signal_event_ids") or ctx.get("source_signal_event_ids")
         )
         final_signal_id = ctx.get("final_signal_id")
@@ -110,26 +155,3 @@ class RiskVetoTaskHandler:
             "applied": applied,
             "synthesize_task_id": synthesize_task_id,
         }
-
-
-def _task_context(value: Any) -> dict[str, Any]:
-    if value is None:
-        return {}
-    if isinstance(value, str):
-        return json.loads(value)
-    return dict(value)
-
-
-def _int_list(value: Any) -> list[int]:
-    if value is None:
-        return []
-    if isinstance(value, (list, tuple)):
-        return [int(item) for item in value]
-    if isinstance(value, str):
-        text = value.strip()
-        if text.startswith("{") and text.endswith("}"):
-            inner = text[1:-1].strip()
-            return [int(item.strip()) for item in inner.split(",") if item.strip()]
-        parsed = json.loads(text)
-        return [int(item) for item in parsed]
-    return [int(value)]

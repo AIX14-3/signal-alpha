@@ -22,13 +22,26 @@ from app.analyzers.dart.llm import LlmClient
 PROMPT_VERSION = "synthesis-v1"
 
 # 투자조언 표현 차단 — dart/llm.py 와 동일 취지(여기서는 설명 텍스트 전체에 적용).
+# 주의: "매수"/"매도" 단순 부분 문자열은 "순매도"·"매도세"·"매수세 유입" 같은 *서술적* 시장
+# 표현까지 걸어 불필요한 결정론 폴백을 유발한다. 그래서 **지시(directive) 표현**(추천/권유/
+# ~하세요/~하라 등)만 차단해 사실 묘사는 통과시킨다.
 _PROHIBITED_ADVICE_REGEXES = [
     re.compile(r"\bbuy\b", re.IGNORECASE),
     re.compile(r"\bsell\b", re.IGNORECASE),
     re.compile(r"\bhold\b", re.IGNORECASE),
     re.compile(r"\btarget\s+price\b", re.IGNORECASE),
+    re.compile(r"매[수도]\s*(?:추천|권장|권유|의견|하세요|하라|해야|하시)"),
+    re.compile(r"매[수도](?:를|을)\s*권"),
 ]
-_PROHIBITED_ADVICE_SUBSTRINGS = ("매수", "매도", "목표가", "투자 추천", "투자추천")
+_PROHIBITED_ADVICE_SUBSTRINGS = (
+    "목표가",
+    "투자 추천",
+    "투자추천",
+    "비중 확대",
+    "비중 축소",
+    "적극 매수",
+    "적극 매도",
+)
 
 
 class SynthesisError(ValueError):

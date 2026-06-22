@@ -8,11 +8,11 @@ veto 정보를 모아, LLM이 설정돼 있으면 **설명 내러티브만** 생
 
 from __future__ import annotations
 
-import json
 import os
 from collections.abc import Mapping
 from typing import Any
 
+from app.orchestrator.queue.context import parse_int_list, parse_task_context
 from app.schemas.risk_report import RiskReport
 from app.synthesis.synthesizer import RiskNarrative, Synthesizer
 
@@ -38,12 +38,12 @@ class SynthesizeTaskHandler:
 
     async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
         stock_id = int(task["stock_id"])
-        ctx = _task_context(task.get("task_context"))
+        ctx = parse_task_context(task.get("task_context"))
         final_signal_id = ctx.get("final_signal_id")
         if final_signal_id is None:
             return {"stock_id": stock_id, "skipped_reason": "final_signal_id_required"}
 
-        signal_event_ids = _int_list(
+        signal_event_ids = parse_int_list(
             task.get("source_signal_event_ids") or ctx.get("source_signal_event_ids")
         )
         vetoed = bool(ctx.get("vetoed"))
@@ -109,11 +109,14 @@ class SynthesizeTaskHandler:
         # 리포트(JSON)에는 어느 경우든 내러티브가 담겨 소비자에게 전달된다.
         narrative_persisted = source == "llm"
         if narrative_persisted:
+            bull_point, bear_point = _split_bull_bear(
+                report.signal, narrative.key_points, narrative.caution_points
+            )
             await self._analysis.update_final_signal_narrative(
                 final_signal_id=int(final_signal_id),
                 summary=narrative.narrative,
-                bull_point=("; ".join(narrative.key_points) or None),
-                bear_point=("; ".join(narrative.caution_points) or None),
+                bull_point=bull_point,
+                bear_point=bear_point,
             )
 
         return {
@@ -223,27 +226,26 @@ def _build_synthesizer(settings: Any) -> Synthesizer | None:
     return Synthesizer(client=maybe_trace(client, name="synthesis"), model=model, timeout_seconds=timeout)
 
 
-def _task_context(value: Any) -> dict[str, Any]:
-    if value is None:
-        return {}
-    if isinstance(value, str):
-        return json.loads(value)
-    return dict(value)
+def _split_bull_bear(
+    signal: str,
+    key_points: list[str],
+    caution_points: list[str],
+) -> tuple[str | None, str | None]:
+    """내러티브 포인트를 신호 방향에 맞춰 bull/bear 컬럼으로 매핑.
 
-
-def _int_list(value: Any) -> list[int]:
-    if value is None:
-        return []
-    if isinstance(value, (list, tuple)):
-        return [int(item) for item in value]
-    if isinstance(value, str):
-        text = value.strip()
-        if text.startswith("{") and text.endswith("}"):
-            inner = text[1:-1].strip()
-            return [int(item.strip()) for item in inner.split(",") if item.strip()]
-        parsed = json.loads(text)
-        return [int(item) for item in parsed]
-    return [int(value)]
+    ``caution_points``(주의/리스크)는 항상 bear 쪽. ``key_points``(핵심 근거)는 방향에 따라:
+    negative 신호면 핵심 근거가 곧 약세 근거이므로 bear 로, 그 외(positive/neutral/mixed)는
+    bull 로 둔다. 기존엔 방향과 무관하게 key→bull 고정이라 negative 신호의 약세 근거가
+    bull_point 에 들어가는 의미 불일치가 있었다.
+    """
+    direction = (signal or "").lower()
+    if "negative" in direction:
+        bull: list[str] = []
+        bear = [*key_points, *caution_points]
+    else:
+        bull = list(key_points)
+        bear = list(caution_points)
+    return ("; ".join(bull) or None, "; ".join(bear) or None)
 
 
 def _to_float(value: Any) -> float | None:

@@ -101,6 +101,22 @@ class SynthesizeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result["narrative_persisted"])
         self.assertEqual(connection.narrative_update[0], 55)
 
+    async def test_negative_signal_maps_key_points_to_bear(self):
+        # negative 신호: 핵심 근거(key_points)가 bear_point 로, bull_point 는 비움.
+        connection = _FakeConnection(dict(_FINAL), list(_EVENTS))
+        await self._run(connection, synthesizer=_OkSynth())
+        _id, _summary, bull_point, bear_point = connection.narrative_update
+        self.assertIsNone(bull_point)
+        self.assertEqual(bear_point, "p; c")
+
+    async def test_positive_signal_maps_key_points_to_bull(self):
+        positive = {**_FINAL, "signal": "positive", "is_published": True}
+        connection = _FakeConnection(positive, list(_EVENTS))
+        await self._run(connection, synthesizer=_OkSynth())
+        _id, _summary, bull_point, bear_point = connection.narrative_update
+        self.assertEqual(bull_point, "p")
+        self.assertEqual(bear_point, "c")
+
     async def test_llm_failure_falls_back(self):
         connection = _FakeConnection(dict(_FINAL), list(_EVENTS))
         result = await self._run(connection, synthesizer=_BoomSynth())
