@@ -1,0 +1,39 @@
+flowchart TD
+    A["수집기<br/>DART·PRICE·REPORT·HIRING·PATENT·DATALAB"]:::det --> G1{"게이트1<br/>데이터 검증 (hiring 3c 등)"}:::det
+
+    G1 -->|"통과 ✓"| B["분석기<br/>소스별 지표·분류 (DART규칙·PRICE지표·ALT)"]:::det
+    G1 -->|"일시적 실패<br/>(retry++ 한도 초과)"| DLQ["dead_letter (DLQ)<br/>아카이브 + replay"]:::det
+    G1 -->|"구조적 실패<br/>(레코드 손상)"| Q["quarantine + 알림<br/>(hiring_quarantine)"]:::det
+
+    B -. "옵션 소스 LLM<br/>(DART·DataLab)" .-> BL["소스별 LLM 분석"]:::llm
+    BL --> C
+    B --> C["데이터 적재<br/>PostgreSQL · pgvector"]:::det
+
+    C --> G2{"게이트2 = 결합/신호 품질<br/>AGGREGATE_SIGNAL<br/>(consensus·warning_level)"}:::ml
+
+    G2 -->|"ML_INFER (종목 OHLCV)"| D["ML/DL 추론<br/>게이트 통과 모델만<br/>(EWMA·HAR-RV·GARCH·LightGBM·GPU)"]:::ml
+    D --> E["메타러너 결합 stacking<br/>META_COMBINE → meta_signals<br/>(학습 가중·없으면 균등 폴백)"]:::ml
+
+    G2 -->|"약함<br/>(WARNING·합의 미달)"| NR["needs_review<br/>is_published=false (미발행)"]:::ml
+    G2 -->|"발행"| V["리스크 veto<br/>치명 키워드 차단 (RISK_VETO)"]:::det
+
+    V -->|"치명 키워드"| NR
+    V -->|"통과"| L["LLM 종합 · 설명<br/>SYNTHESIZE (내러티브만)"]:::llm
+    E -. "결합 변동성/신뢰도<br/>(best-effort 참조)" .-> L
+    L --> O["결과물<br/>리스크 리포트 (JSON)<br/>final_signals"]:::out
+
+    LS[("LangSmith<br/>관측 · 디버깅")]:::obs -. "관측만" .-> BL
+    LS -. "관측만" .-> L
+
+    subgraph 범례 [" 범례 "]
+        direction LR
+        K1["결정론 (순수 코드)"]:::det
+        K2["ML/DL (백테스트 검증)"]:::ml
+        K3["LLM (비결정)"]:::llm
+    end
+
+    classDef det fill:#dbeafe,stroke:#3b82f6,stroke-width:1.5px,color:#1e3a8a
+    classDef ml  fill:#dcfce7,stroke:#22c55e,stroke-width:1.5px,color:#14532d
+    classDef llm fill:#fef9c3,stroke:#eab308,stroke-width:1.5px,color:#713f12
+    classDef out fill:#f1f5f9,stroke:#64748b,stroke-width:1.5px,color:#0f172a
+    classDef obs fill:#fae8ff,stroke:#a855f7,stroke-width:1.5px,color:#581c87
