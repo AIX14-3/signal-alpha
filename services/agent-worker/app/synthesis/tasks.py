@@ -103,17 +103,24 @@ class SynthesizeTaskHandler:
         narrative, source = await self._narrate(report)
         report = _with_narrative(report, narrative, source)
 
-        await self._analysis.update_final_signal_narrative(
-            final_signal_id=int(final_signal_id),
-            summary=narrative.narrative,
-            bull_point=("; ".join(narrative.key_points) or None),
-            bear_point=("; ".join(narrative.caution_points) or None),
-        )
+        # final_signals.summary는 LLM이 실제로 더 풍부한 내러티브를 만들었을 때만 갱신한다.
+        # 결정론 폴백(deterministic/llm_fallback)으로 AGGREGATE_SIGNAL의 정보성 요약을
+        # 일반 문구로 덮어쓰면 기본(LLM off) 배포에서 요약 품질이 저하되므로 보존한다.
+        # 리포트(JSON)에는 어느 경우든 내러티브가 담겨 소비자에게 전달된다.
+        narrative_persisted = source == "llm"
+        if narrative_persisted:
+            await self._analysis.update_final_signal_narrative(
+                final_signal_id=int(final_signal_id),
+                summary=narrative.narrative,
+                bull_point=("; ".join(narrative.key_points) or None),
+                bear_point=("; ".join(narrative.caution_points) or None),
+            )
 
         return {
             "stock_id": stock_id,
             "final_signal_id": int(final_signal_id),
             "narrative_source": source,
+            "narrative_persisted": narrative_persisted,
             "vetoed": vetoed,
             "report": report.to_dict(),
         }

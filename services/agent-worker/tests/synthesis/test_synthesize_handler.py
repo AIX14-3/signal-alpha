@@ -86,8 +86,9 @@ class SynthesizeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(report["vetoed"])
         # veto 사유가 caution에 설명됨
         self.assertTrue(any("감사의견거절" in c for c in report["narrative"]["caution_points"]))
-        # 내러티브만 final_signal에 반영(요약 갱신)
-        self.assertEqual(connection.narrative_update[0], 55)
+        # 결정론 폴백은 집계 요약을 덮어쓰지 않는다(DB 미갱신).
+        self.assertFalse(result["narrative_persisted"])
+        self.assertIsNone(connection.narrative_update)
 
     async def test_llm_narrative_source(self):
         connection = _FakeConnection(dict(_FINAL), list(_EVENTS))
@@ -96,12 +97,18 @@ class SynthesizeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["report"]["narrative"]["headline"], "설명")
         # 수치는 여전히 결정론 값
         self.assertEqual(result["report"]["signal"], "negative")
+        # LLM 산출일 때만 final_signal 요약 갱신
+        self.assertTrue(result["narrative_persisted"])
+        self.assertEqual(connection.narrative_update[0], 55)
 
     async def test_llm_failure_falls_back(self):
         connection = _FakeConnection(dict(_FINAL), list(_EVENTS))
         result = await self._run(connection, synthesizer=_BoomSynth())
         self.assertEqual(result["narrative_source"], "llm_fallback")
         self.assertEqual(result["report"]["signal"], "negative")
+        # 폴백은 DB 요약을 덮어쓰지 않는다
+        self.assertFalse(result["narrative_persisted"])
+        self.assertIsNone(connection.narrative_update)
 
     async def test_includes_ml_risk_when_meta_present(self):
         meta = {"combined_vol": 0.31, "confidence": 0.8, "method": "stacking"}
