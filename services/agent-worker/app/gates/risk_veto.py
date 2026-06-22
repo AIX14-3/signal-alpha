@@ -116,42 +116,54 @@ class RiskVetoTaskHandler:
         for row in rows:
             texts.extend([row.get("title"), row.get("summary"), row.get("evidence_text")])
 
-        decision = scan_for_veto(texts)
-        applied = False
-        if decision.vetoed and final_signal_id is not None:
-            await self._analysis.apply_risk_veto(final_signal_id=int(final_signal_id))
-            await self._normalization.record_validation_log(
-                target_type="final_signal",
-                target_id_int=int(final_signal_id),
-                validation_type="risk_veto",
-                passed=False,
-                message="risk_veto: " + ", ".join(decision.matched_keywords),
-            )
-            applied = True
-
-        # 끝단 LLM 종합·설명으로 체인 — veto 여부와 무관하게(보류 신호도 사유를 설명).
-        synthesize_task_id: int | None = None
+        # 검사 대상에 LLM 종합 텍스트도 포함한다(요구사항: 데이터 veto_keywords + LLM 종합 텍스트).
         if final_signal_id is not None:
-            synthesize_task_id = await self._queue.enqueue(
-                stock_id=stock_id,
-                task_type=SYNTHESIZE,
-                priority=str(ctx.get("priority") or "batch"),
-                source_signal_event_ids=signal_event_ids,
-                task_context={
-                    "final_signal_id": int(final_signal_id),
-                    "stock_code": ctx.get("stock_code"),
-                    "run_key": ctx.get("run_key") or "ML",
-                    "vetoed": decision.vetoed,
-                    "matched_keywords": decision.matched_keywords,
-                },
-                dedupe=True,
-            )
+            fs = await self._analysis.get_final_signal_by_id(final_signal_id=int(final_signal_id))
+            if fs is not None:
+                fs = dict(fs)
+                texts.extend([fs.get("summary"), fs.get("bull_point"), fs.get("bear_point")])
+
+        decision = scan_for_veto(texts)
+        refined = bool(ctx.get("refined"))
+
+        # 리스크 veto는 LLM 종합 "뒤"에서 동작한다. 치명 키워드가 나와도 미발행으로 버리지 않고
+        # LLM 정제(리스크 강조)를 1회 거친다. 정제 후에도 치명적이면 그때 발행 보류(needs_review).
+        applied = False
+        synthesize_task_id: int | None = None
+        if decision.vetoed and final_signal_id is not None:
+            if not refined:
+                synthesize_task_id = await self._queue.enqueue(
+                    stock_id=stock_id,
+                    task_type=SYNTHESIZE,
+                    priority=str(ctx.get("priority") or "batch"),
+                    source_signal_event_ids=signal_event_ids,
+                    task_context={
+                        "final_signal_id": int(final_signal_id),
+                        "stock_code": ctx.get("stock_code"),
+                        "run_key": ctx.get("run_key") or "ML",
+                        "refine": True,
+                        "vetoed": True,
+                        "matched_keywords": decision.matched_keywords,
+                    },
+                    dedupe=True,
+                )
+            else:
+                await self._analysis.apply_risk_veto(final_signal_id=int(final_signal_id))
+                await self._normalization.record_validation_log(
+                    target_type="final_signal",
+                    target_id_int=int(final_signal_id),
+                    validation_type="risk_veto",
+                    passed=False,
+                    message="risk_veto(정제 후에도 치명): " + ", ".join(decision.matched_keywords),
+                )
+                applied = True
 
         return {
             "stock_id": stock_id,
             "final_signal_id": final_signal_id,
             "vetoed": decision.vetoed,
             "matched_keywords": decision.matched_keywords,
+            "refined": refined,
             "applied": applied,
             "synthesize_task_id": synthesize_task_id,
         }

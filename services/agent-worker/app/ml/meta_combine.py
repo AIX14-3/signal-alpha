@@ -12,7 +12,7 @@ from typing import Any
 
 from app.ml.inference import DEFAULT_HORIZON, DEFAULT_RUN_KEY
 from app.ml.meta_learner import combine, load_weights
-from app.orchestrator.queue.context import parse_task_context
+from app.orchestrator.queue.context import enqueue_aggregate, parse_task_context
 
 
 class MetaCombineTaskHandler:
@@ -20,10 +20,12 @@ class MetaCombineTaskHandler:
         from signal_alpha_data_access.repositories import (
             MetaSignalRepository,
             MlInferenceRepository,
+            ProcessingQueueRepository,
         )
 
         self._inferences = MlInferenceRepository(connection)
         self._meta = MetaSignalRepository(connection)
+        self._queue = ProcessingQueueRepository(connection)
 
     async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
         stock_id = int(task["stock_id"])
@@ -31,7 +33,15 @@ class MetaCombineTaskHandler:
         run_key = str(ctx.get("run_key") or DEFAULT_RUN_KEY)
         asof_date = ctx.get("asof_date")
         horizon = int(ctx.get("horizon") or DEFAULT_HORIZON)
+        aggregate_ctx = ctx.get("aggregate_ctx")
         if not asof_date:
+            # 결합 불가여도 선형 체인은 끊지 않는다 → 게이트2로 진행.
+            await enqueue_aggregate(
+                self._queue,
+                stock_id=stock_id,
+                aggregate_ctx=aggregate_ctx,
+                priority=str(ctx.get("priority") or "batch"),
+            )
             return {"stock_id": stock_id, "skipped_reason": "asof_date_required"}
 
         rows = [
@@ -58,8 +68,17 @@ class MetaCombineTaskHandler:
             model_count=result.model_count,
             weight_breakdown=result.weight_breakdown,
         )
+        # 선형 체인: 메타러너 결합(모델 신뢰도) 적재 후 게이트2(AGGREGATE)로 — 게이트2가
+        # 이 meta_signal을 읽어 발행 판정에 반영한다.
+        aggregate_task_id = await enqueue_aggregate(
+            self._queue,
+            stock_id=stock_id,
+            aggregate_ctx=aggregate_ctx,
+            priority=str(ctx.get("priority") or "batch"),
+        )
         return {
             "stock_id": stock_id,
+            "aggregate_task_id": aggregate_task_id,
             "run_key": run_key,
             "asof_date": asof_date,
             "horizon": horizon,

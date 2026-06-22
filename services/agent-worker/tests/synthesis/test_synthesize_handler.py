@@ -30,6 +30,9 @@ class _FakeConnection:
             return self._meta
         return None
 
+    async def fetchval(self, sql, *args):  # RISK_VETO enqueue (dedupe SELECT + INSERT)
+        return 999 if "INSERT INTO processing_queue" in sql else None
+
 
 _FINAL = {
     "id": 55,

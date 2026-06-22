@@ -10,6 +10,38 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from app.orchestrator.queue.task_types import AGGREGATE_SIGNAL
+
+
+async def enqueue_aggregate(
+    queue: Any,
+    *,
+    stock_id: int,
+    aggregate_ctx: dict[str, Any] | None,
+    priority: str = "batch",
+) -> int | None:
+    """선형 체인에서 게이트2(AGGREGATE_SIGNAL)를 인큐한다.
+
+    ``aggregate_ctx`` 는 DartAnalyze가 만들어 ML_INFER→META_COMBINE 를 불투명하게 통과시킨
+    컨텍스트(``source_analysis_result_ids``·``signal_date``·``stock_code``·``aggregation_key``).
+    AGGREGATE는 ``source_analysis_result_ids`` 가 없으면 skip하므로 그 경우 인큐하지 않는다.
+    """
+    if not aggregate_ctx:
+        return None
+    ids = aggregate_ctx.get("source_analysis_result_ids")
+    if not ids:
+        return None
+    ctx = {key: value for key, value in aggregate_ctx.items() if key != "source_analysis_result_ids"}
+    ctx.setdefault("priority", priority)
+    return await queue.enqueue(
+        stock_id=stock_id,
+        task_type=AGGREGATE_SIGNAL,
+        priority=priority,
+        source_analysis_result_ids=ids,
+        task_context=ctx,
+        dedupe=True,
+    )
+
 
 def parse_task_context(value: Any) -> dict[str, Any]:
     """task_context를 dict로 정규화(None→{}, JSON 문자열→dict)."""

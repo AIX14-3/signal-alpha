@@ -61,27 +61,37 @@ def test_env_keywords_are_added(monkeypatch) -> None:
 
 
 class _FakeConnection:
-    def __init__(self, event_rows):
+    def __init__(self, event_rows, final_signal=None):
         self._event_rows = event_rows
+        self._final_signal = final_signal or {
+            "id": 55, "summary": None, "bull_point": None, "bear_point": None,
+        }
         self.veto_applied_id = None
         self.validation_logged = None
+        self.enqueued = []  # processing_queue INSERT args
 
     async def fetch(self, sql, *args):  # list_signal_events_by_ids
         return self._event_rows
 
-    async def fetchrow(self, sql, *args):  # apply_risk_veto UPDATE ... RETURNING
-        self.veto_applied_id = args[0]
+    async def fetchrow(self, sql, *args):
+        if "FROM final_signals WHERE id" in sql:  # get_final_signal_by_id (읽기, LLM 텍스트 검사)
+            return self._final_signal
+        self.veto_applied_id = args[0]  # apply_risk_veto UPDATE ... RETURNING
         return {"id": args[0], "is_published": False, "warning_level": "WARNING"}
 
     async def fetchval(self, sql, *args):
         if "validation_logs" in sql:  # record_validation_log INSERT ... RETURNING id
             self.validation_logged = args  # (target_type, target_id_int, ...)
             return 1
-        return 777  # processing_queue enqueue (dedupe SELECT hit → returns existing id)
+        if "INSERT INTO processing_queue" in sql:
+            self.enqueued.append(args)  # (stock_id, task_type, priority, ...)
+            return 999
+        return None  # dedupe SELECT → 신규
 
 
 class RiskVetoTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
-    async def test_vetoes_published_signal_on_fatal_keyword(self):
+    async def test_fatal_keyword_first_pass_triggers_refine_not_unpublish(self):
+        # veto는 LLM 종합 뒤에서 동작 — 치명 키워드라도 미발행으로 버리지 않고 정제로 돌린다.
         rows = [
             {"title": "감사보고서", "summary": "감사의견거절", "evidence_text": "계속기업 불확실성"},
         ]
@@ -97,10 +107,36 @@ class RiskVetoTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertTrue(result["vetoed"])
-        self.assertTrue(result["applied"])
+        self.assertFalse(result["applied"])  # 미발행 아님
+        self.assertFalse(result["refined"])
         self.assertIn("감사의견거절", result["matched_keywords"])
-        self.assertEqual(connection.veto_applied_id, 55)  # apply_risk_veto called with id
-        self.assertEqual(connection.validation_logged[0], "final_signal")  # validation log target
+        self.assertIsNone(connection.veto_applied_id)  # apply_risk_veto 호출 안 됨
+        # SYNTHESIZE(refine=true)를 인큐해 LLM 정제로 돌린다.
+        import json
+        synth = [a for a in connection.enqueued if a[1] == "synthesize"]
+        self.assertEqual(len(synth), 1)
+        self.assertTrue(json.loads(synth[0][6])["refine"])
+
+    async def test_fatal_keyword_after_refine_holds_publication(self):
+        # 정제(refine) 후에도 치명적이면 그때 발행 보류(needs_review).
+        rows = [{"title": "감사보고서", "summary": "감사의견거절", "evidence_text": ""}]
+        connection = _FakeConnection(rows)
+        handler = RiskVetoTaskHandler(connection)
+
+        result = await handler(
+            {
+                "stock_id": 10,
+                "source_signal_event_ids": [101],
+                "task_context": {"final_signal_id": 55, "refined": True},
+            }
+        )
+
+        self.assertTrue(result["vetoed"])
+        self.assertTrue(result["applied"])
+        self.assertTrue(result["refined"])
+        self.assertEqual(connection.veto_applied_id, 55)
+        self.assertEqual(connection.validation_logged[0], "final_signal")
+        self.assertEqual([a for a in connection.enqueued if a[1] == "synthesize"], [])  # 루프 종료
 
     async def test_clean_signal_is_not_vetoed(self):
         rows = [{"title": "신규 수주", "summary": "매출 성장", "evidence_text": "흑자 전환"}]

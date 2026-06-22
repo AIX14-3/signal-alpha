@@ -13,6 +13,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from app.orchestrator.queue.context import parse_int_list, parse_task_context
+from app.orchestrator.queue.task_types import RISK_VETO
 from app.schemas.risk_report import RiskReport
 from app.synthesis.synthesizer import RiskNarrative, Synthesizer
 
@@ -29,11 +30,13 @@ class SynthesizeTaskHandler:
             AnalysisRepository,
             MetaSignalRepository,
             NormalizationRepository,
+            ProcessingQueueRepository,
         )
 
         self._analysis = AnalysisRepository(connection)
         self._normalization = NormalizationRepository(connection)
         self._meta = MetaSignalRepository(connection)
+        self._queue = ProcessingQueueRepository(connection)
         self._synthesizer = synthesizer if synthesizer is not None else _build_synthesizer(settings)
 
     async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
@@ -119,12 +122,33 @@ class SynthesizeTaskHandler:
                 bear_point=bear_point,
             )
 
+        # 선형 체인: 종합 "뒤"에서 리스크 veto가 동작한다(치명 키워드면 정제 루프). 이 종합이
+        # 정제(refine) 결과면 refined=true로 알려, 정제 후에도 치명적이면 미발행하게 한다.
+        refined = bool(ctx.get("refine"))
+        risk_veto_task_id: int | None = None
+        if signal_event_ids:
+            risk_veto_task_id = await self._queue.enqueue(
+                stock_id=stock_id,
+                task_type=RISK_VETO,
+                priority=str(ctx.get("priority") or "batch"),
+                source_signal_event_ids=signal_event_ids,
+                task_context={
+                    "final_signal_id": int(final_signal_id),
+                    "stock_code": stock_code,
+                    "run_key": run_key,
+                    "refined": refined,
+                },
+                dedupe=True,
+            )
+
         return {
             "stock_id": stock_id,
             "final_signal_id": int(final_signal_id),
             "narrative_source": source,
             "narrative_persisted": narrative_persisted,
             "vetoed": vetoed,
+            "refined": refined,
+            "risk_veto_task_id": risk_veto_task_id,
             "report": report.to_dict(),
         }
 

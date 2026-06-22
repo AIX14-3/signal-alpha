@@ -21,7 +21,7 @@ import numpy as np
 
 from app.ml.contract_adapter import build_contract
 from app.ml.model_registry import ModelSpec, resolve_models
-from app.orchestrator.queue.context import parse_task_context
+from app.orchestrator.queue.context import enqueue_aggregate, parse_task_context
 from app.orchestrator.queue.task_types import META_COMBINE
 from vol_models.common.data_contract import DataContract
 
@@ -106,6 +106,14 @@ class MlInferTaskHandler:
         )
         rows = [dict(record) for record in records]
         if not rows:
+            # OHLCV가 없어도 선형 체인은 끊지 않는다 — 결합할 모델이 없으니 메타 없이
+            # 게이트2(AGGREGATE)로 바로 보내 consensus-only로 발행 판정하게 한다.
+            await enqueue_aggregate(
+                self._queue,
+                stock_id=stock_id,
+                aggregate_ctx=task_context.get("aggregate_ctx"),
+                priority=str(task_context.get("priority") or "batch"),
+            )
             return {
                 "stock_id": stock_id,
                 "asof_date": None,
@@ -135,8 +143,10 @@ class MlInferTaskHandler:
             )
 
         succeeded = [r.model_name for r in results if r.error is None]
+        aggregate_ctx = task_context.get("aggregate_ctx")
 
-        # 메타러너 결합으로 체인 — 성공 추론이 있을 때만(없으면 결합할 입력이 없음).
+        # 선형 체인: 성공 추론이 있으면 메타러너 결합(META_COMBINE)으로 — META가 게이트2를
+        # 인큐한다. 성공 추론이 없으면 결합할 입력이 없으니 게이트2로 바로(메타 없이).
         meta_task_id: int | None = None
         if succeeded:
             meta_task_id = await self._queue.enqueue(
@@ -148,8 +158,16 @@ class MlInferTaskHandler:
                     "run_key": self._run_key,
                     "asof_date": asof_date.isoformat(),
                     "horizon": self._horizon,
+                    "aggregate_ctx": aggregate_ctx,
                 },
                 dedupe=True,
+            )
+        else:
+            await enqueue_aggregate(
+                self._queue,
+                stock_id=stock_id,
+                aggregate_ctx=aggregate_ctx,
+                priority=str(task_context.get("priority") or "batch"),
             )
 
         return {

@@ -16,9 +16,9 @@ from app.collectors.report.parsers.chunker import chunk_text
 from app.embeddings.provider import get_embedding_provider, to_pgvector
 from app.orchestrator.persistence import CollectionPersistence
 from app.orchestrator.queue.task_types import (
-    AGGREGATE_SIGNAL,
     ANALYZE_DART,
     EMBED_DART,
+    ML_INFER,
     NORMALIZE_DART,
 )
 from signal_alpha_data_access.repositories import (
@@ -394,23 +394,32 @@ class DartAnalyzeTaskHandler:
             llm_model=result.llm_model,
             prompt_ver=result.prompt_ver,
         )
-        aggregate_task_id = await self._queue_repository.enqueue(
+        # 선형 파이프라인: 분석 → ML_INFER → META_COMBINE → 게이트2(AGGREGATE) → 종합 → veto.
+        # 게이트2가 메타러너의 모델 신뢰도까지 보고 발행 판정하도록 ML_INFER를 먼저 인큐한다.
+        # AGGREGATE가 나중에 필요로 하는 컨텍스트(소스 분석결과·signal_date)는 aggregate_ctx로
+        # 실어 ML→META가 불투명하게 통과시킨다.
+        aggregate_ctx = {
+            "stock_code": task_context.get("stock_code"),
+            "signal_date": analysis_date.isoformat(),
+            "run_key": "AGGREGATED",
+            "aggregation_key": f"AGGREGATED:{stock_id}:{analysis_date.isoformat()}:final-agg-v1",
+            "source_analysis_result_ids": [int(analysis_result["id"])],
+        }
+        ml_infer_task_id = await self._queue_repository.enqueue(
             stock_id=stock_id,
-            task_type=AGGREGATE_SIGNAL,
+            task_type=ML_INFER,
             priority="batch",
-            source_analysis_result_ids=[int(analysis_result["id"])],
             task_context={
                 "stock_code": task_context.get("stock_code"),
-                "signal_date": analysis_date.isoformat(),
-                "run_key": "AGGREGATED",
-                "aggregation_key": f"AGGREGATED:{stock_id}:{analysis_date.isoformat()}:final-agg-v1",
+                "run_key": "ML",
+                "aggregate_ctx": aggregate_ctx,
             },
             dedupe=True,
         )
         return {
             "analysis_result_id": analysis_result["id"],
             "agent_result_id": agent_result["id"],
-            "aggregate_task_id": aggregate_task_id,
+            "ml_infer_task_id": ml_infer_task_id,
             "analyzed_count": len(events),
             "direction": result.direction,
             "score": result.score,
