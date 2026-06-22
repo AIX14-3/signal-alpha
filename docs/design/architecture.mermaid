@@ -1,13 +1,11 @@
 flowchart TD
     A["수집기<br/>DART·PRICE·REPORT·HIRING·PATENT·DATALAB"]:::det --> G1{"게이트1<br/>데이터 검증 (hiring 3c 등)"}:::det
 
-    G1 -->|"통과 ✓"| B["분석기<br/>소스별 지표·분류 (DART규칙·PRICE지표·ALT)"]:::det
+    G1 -->|"통과 ✓"| B["소스별 전처리 (분석기)<br/>규칙·임베딩·통계지표 → 피처<br/>DART규칙+공시임베딩·PRICE지표·DataLab지표·Report RAG검색"]:::det
     G1 -->|"일시적 실패<br/>(retry++ 한도 초과)"| DLQ["dead_letter (DLQ)<br/>아카이브 + replay"]:::det
     G1 -->|"구조적 실패<br/>(레코드 손상)"| Q["quarantine + 알림<br/>(hiring_quarantine)"]:::det
 
-    B -. "옵션 소스 LLM<br/>(DART·DataLab)" .-> BL["소스별 LLM 분석"]:::llm
-    BL --> C
-    B --> C["데이터 적재<br/>PostgreSQL · pgvector"]:::det
+    B --> C["데이터 적재<br/>PostgreSQL · pgvector<br/>(결정론 신호·피처·임베딩)"]:::det
 
     C --> G2{"게이트2 = 결합/신호 품질<br/>AGGREGATE_SIGNAL<br/>(consensus·warning_level)"}:::ml
 
@@ -22,8 +20,7 @@ flowchart TD
     E -. "결합 변동성/신뢰도<br/>(best-effort 참조)" .-> L
     L --> O["결과물<br/>리스크 리포트 (JSON)<br/>final_signals"]:::out
 
-    LS[("LangSmith<br/>관측 · 디버깅")]:::obs -. "관측만" .-> BL
-    LS -. "관측만" .-> L
+    LS[("LangSmith<br/>관측 · 디버깅")]:::obs -. "관측만 (끝단 LLM뿐)" .-> L
 
     subgraph 범례 [" 범례 "]
         direction LR

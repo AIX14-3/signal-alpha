@@ -48,10 +48,14 @@ def load_weights(path: str | Path | None = None) -> dict[str, float] | None:
     try:
         payload = json.loads(resolved.read_text(encoding="utf-8"))
         raw = payload.get("weights", payload)
+        # 비유한값(NaN/inf)은 제외 — 과적합/깨진 학습 산출물이 추론을 지배하지 못하게
+        # 한다(>0 필터는 NaN은 막지만 inf는 통과시키므로 isfinite 가드를 더한다).
+        # 학습측 과적합 규율(walk-forward OOF·정규화·피처 집계)은
+        # docs/design/meta-learner-training.md 참고.
         weights = {
             str(name): float(value)
             for name, value in raw.items()
-            if float(value) > 0.0
+            if math.isfinite(float(value)) and float(value) > 0.0
         }
     except (ValueError, AttributeError, TypeError):
         return None

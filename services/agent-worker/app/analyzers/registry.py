@@ -10,7 +10,6 @@ or aggregator change.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from os import getenv
 from typing import Any, Callable
 
 from app.analyzers.base import Analyzer
@@ -122,6 +121,11 @@ def build_registry(
 
 
 def _datalab_llm_enabled() -> bool:
-    """DataLab cause agent opt-in flag. Inline (no heavy import) so checking it
-    never pulls in the langgraph-dependent agent package."""
-    return str(getenv("DATALAB_LLM_ENABLED") or "").strip().lower() in {"1", "true", "yes", "on"}
+    """DataLab 생성형 cause agent는 판정 경로에서 비활성화됨(결정론 전처리 원칙 —
+    docs/design/worker-redesign.md). lead_lag 결정론 prelabel이 최종 라벨이며,
+    검색 시계열은 통계지표(indicators/rules)로만 피처화한다.
+
+    LLM cause agent 모듈(app/agents/datalab/*)은 보존하되 와이어링하지 않는다.
+    과거에는 ``DATALAB_LLM_ENABLED`` env로 opt-in 했으나, 비결정 입력이 판정을
+    흔드는 것을 막기 위해 영구 off로 고정한다."""
+    return False

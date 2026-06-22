@@ -12,7 +12,7 @@ signal-alpha agent-worker를 `vol-benchmark`의 [`architecture.mermaid`](./archi
 |---|---|---|---|
 | 수집기 | det | `app/collectors/*` | `collect_dart`, `collect_report`, … |
 | 게이트1 (데이터 검증) | det | hiring 3c 검증 게이트, DLQ(`dead_letter`), quarantine(`hiring_quarantine`) | 수집/정규화 단계에 분산 |
-| 분석기 (소스별) | det (+옵션 llm) | `app/analyzers/*` (DART 규칙+옵션 LLM, PRICE 지표, ALT) | `normalize_*`, `analyze_*` |
+| 소스별 전처리 (분석기) | det | `app/analyzers/*` — 규칙·통계지표·임베딩으로 결정론 피처 산출 (DART 규칙+공시 임베딩, PRICE 지표, DataLab 지표, Report RAG 검색). **생성형 LLM은 쓰지 않음** | `normalize_*`, `analyze_*` |
 | 적재 (PG·pgvector) | det | `orchestrator/persistence.py`, report 임베딩 | — |
 | 게이트2 (결합·신호 품질) | ml | `AggregateSignalTaskHandler` (consensus·warning_level·needs_review·is_published) | `aggregate_signal` |
 | ML/DL 추론 (게이트 통과 모델만) | ml | `app/ml/inference.py` + `model_registry`(2중 게이트) + `packages/vol-models` | `ml_infer` |
@@ -61,9 +61,12 @@ COLLECT_<SRC> → 게이트1 → NORMALIZE_<SRC> → ANALYZE_<SRC>        (소�
 
 ## 결정론/ML/LLM 경계
 
-- **결정론**: 수집·게이트1·분석기 규칙·적재·리스크 veto. 같은 입력 → 같은 출력.
+- **결정론**: 수집·게이트1·소스별 전처리(규칙·통계지표·임베딩)·적재·리스크 veto. 같은 입력 → 같은 출력.
+  공시 텍스트는 임베딩(pgvector)+규칙추출로, DataLab 검색 시계열은 통계지표로 피처화한다.
 - **ML/DL**: vol-benchmark 모델 추론·메타러너 stacking·결합 품질(게이트2). 백테스트로 검증.
-- **LLM**: 소스별 옵션 분석(DART/DataLab) + 끝단 종합. **수치/판정 불변, 설명만**, 투자조언 차단.
+  소스별 전처리 피처는 판정 입력이므로 **결정론(임베딩은 고정 가중치)** 이어야 백테스트·메타러너 학습이 가능하다.
+- **LLM**: **끝단 종합(설명)만**. 소스 전처리 단계에는 생성형 LLM을 두지 않는다(비결정 입력이 판정을 흔드는 것을 차단).
+  **수치/판정 불변, 설명만**, 투자조언 차단.
 - **관측**: LangSmith는 LLM 호출 trace만(점선). 흐름·결과·지연에 영향 없음(스레드 오프로딩·실패 삼킴).
 
 ## 후속 과제

@@ -1,6 +1,10 @@
 COLLECT_DART = "collect_dart"
 NORMALIZE_DART = "normalize_dart"
 ANALYZE_DART = "analyze_dart"
+
+# DART 공시 본문 임베딩 (결정론 전처리) — 본문을 BGE-M3(1024d)로 임베딩해 dart_chunks 적재.
+# NORMALIZE_DART가 문서별로 enqueue. 생성형 LLM 미사용. 10 chars (task_type VARCHAR(50)).
+EMBED_DART = "embed_dart"
 AGGREGATE_SIGNAL = "aggregate_signal"
 
 # ML/DL 추론 (게이트 통과 모델만) — 종목 OHLCV를 vol-benchmark 모델로 추론해 ml_inferences 적재.
