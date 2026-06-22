@@ -4,6 +4,11 @@
 > 관련: `parity_hiring.py`, `app/analyzers/hiring/{hiring_analyzer,analyzer}.py`,
 > `script/run_daily_hiring_pipeline.py`, `run_analyzers.py`,
 > `app/orchestrator/alternative_persistence.py`, `database/migrations/001_baseline.sql`
+>
+> **문서 역할 경계:** 본 문서는 **이행·결정 문서**(컷오버 게이트 + 네이밍 [DECISION])다.
+> 수집기·기준선·분석기 산식의 **운영·실행 방법**은
+> [agent-worker-hiring.md](agent-worker-hiring.md) 가 단독 관리한다(레거시 14일 산식·Warming-up 가드의
+> 상세 동작은 그쪽 참조 — 본 문서는 두 경로를 *대조*하는 수준만 기술).
 
 ---
 
@@ -102,6 +107,12 @@ uv run python parity_hiring.py --date <YYYY-MM-DD>   # 로컬 Docker DB. DB_SSL=
 - 참조: `score_history`, `backtest_results`, `signal_journals`, `user_signal_reads` 가 FK로 물려 있음.
 
 즉 **사용자에게 발행되는 "종목별 최종 발행 신호"** 로 설계됨(발행 플래그·플랜 게이팅·면책고지 포함).
+
+> **다운스트림 소비(2026-06-22):** `final_signals`는 main-server의 `GET /api/signals`(목록)·
+> `GET /api/signals/{signal_id}`(상세)로 사용자에게 노출된다. 현재 소스별(run_key) 다중 행(모델 B)은
+> 목록 API가 **`stock_id` 기준 런타임 그룹핑**으로 종목당 1개(모델 A shape)로 응집한다 — DB는 그대로.
+> 목록 API는 프론트(#335) 정합을 위해 `direction`을 **대문자**로 반환(상세는 소문자, 향후 통일).
+> 상세: [main-server-api-spec.md](main-server-api-spec.md) §9.
 
 ### 3.2 그런데 현재 **유일한 생산자는 Alternative 집계기뿐**
 - `app/orchestrator/alternative_persistence.py` 의 `AlternativeSignalPersistence` 만 `final_signals` 를 씀.

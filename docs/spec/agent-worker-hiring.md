@@ -4,6 +4,11 @@
 
 > 이 문서는 현행 코드(`services/agent-worker`) 기준으로 검증되어 작성되었습니다.
 > 구조 ERD는 `database/erd/signal_alpha_core_erd.md`, 라이브 적재현황은 `script/db_explorer.py`(Streamlit dev 도구) 참조.
+>
+> **문서 역할 경계:** 본 문서는 수집→분석→`hiring_signals` 의 **운영·구현 매뉴얼**이다.
+> 레거시(`hiring_analyzer`→`hiring_signals`) vs 신규(`analyzer`→`final_signals`) 중 무엇을 남길지의
+> **컷오버 기준(parity C0~C5)·`final_signals` 네이밍 결정**은 별도 문서
+> [hiring-cutover-and-final-signals-naming.md](hiring-cutover-and-final-signals-naming.md) 가 단독 관리한다.
 
 ---
 

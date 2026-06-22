@@ -21,8 +21,10 @@ from app.main import app
 
 
 class FakeConnection:
-    def __init__(self, *, detail_row=None):
+    def __init__(self, *, detail_row=None, list_rows=None):
         self.detail_row = detail_row
+        self.list_rows = list_rows or []
+        self.fetch_calls = []
         self.users_by_id = {
             1: {
                 "id": 1,
@@ -45,6 +47,13 @@ class FakeConnection:
             "signal": "neutral",
             "summary": "중립 신호",
         }
+
+    async def fetch(self, sql, *args):
+        self.fetch_calls.append((sql, args))
+        if "stock_id = ANY" in sql:
+            wanted = set(args[0])
+            return [row for row in self.list_rows if row["stock_id"] in wanted]
+        return self.list_rows
 
 
 class FakeAcquire:
@@ -120,6 +129,56 @@ class SignalRouteTest(unittest.TestCase):
         self.assertEqual(sources["PRICE"]["data_status"], "missing")
         self.assertEqual(sources["PRICE"]["evidence"], [])
 
+    def test_list_signals_requires_authentication(self):
+        response = self.client.get("/api/signals")
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json()["detail"]["code"], "AUTH_REQUIRED")
+
+    def test_list_signals_groups_sources_per_stock(self):
+        connection = FakeConnection(list_rows=_signal_list_rows())
+        app.dependency_overrides[get_database_pool] = lambda: FakePool(connection)
+
+        response = self.client.get("/api/signals", headers=self.auth_headers())
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(len(body), 1)  # 소스 3행 → 종목당 1개
+        item = body[0]
+        self.assertEqual(item["stock"]["stock_code"], "005930")
+        self.assertEqual(item["stock"]["stock_name"], "삼성전자")
+        self.assertEqual(item["direction"], "POSITIVE")  # 대문자, positive 2 vs neutral 1
+        self.assertEqual(item["score"], 75.0)  # (80+50+95)/3
+        self.assertEqual(item["alignment_rate"], 0.6)  # 평균 consensus 60 / 100
+        self.assertEqual(item["source_agreement"], "LOW")  # 가장 보수적(낮은 합의)
+        self.assertEqual(item["warning_level"], "WARNING")  # 가장 보수적
+        self.assertEqual(item["data_status"], "failed")  # WARNING → failed
+        self.assertEqual(item["summary"], "채용 신호 요약")  # 기준행(첫 행) summary
+        alternative = item["score_breakdown"]["alternative"]
+        self.assertEqual(set(alternative), {"hiring", "patent", "datalab"})
+        self.assertEqual(alternative["hiring"]["score"], 80)
+        self.assertEqual(alternative["patent"]["direction"], "NEUTRAL")  # 대문자
+
+    def test_list_signals_with_stock_ids_filter(self):
+        connection = FakeConnection(list_rows=_signal_list_rows() + _signal_list_rows(stock_id=20, ticker="000660"))
+        app.dependency_overrides[get_database_pool] = lambda: FakePool(connection)
+
+        response = self.client.get("/api/signals?stock_ids=10", headers=self.auth_headers())
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual([item["stock_id"] for item in body], [10])
+        self.assertTrue(any("stock_id = ANY" in sql for sql, _ in connection.fetch_calls))
+
+    def test_list_signals_blank_stock_ids_returns_empty(self):
+        connection = FakeConnection(list_rows=_signal_list_rows())
+        app.dependency_overrides[get_database_pool] = lambda: FakePool(connection)
+
+        response = self.client.get("/api/signals?stock_ids=abc", headers=self.auth_headers())
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), [])
+
     def test_get_signal_detail_returns_404_when_signal_missing(self):
         app.dependency_overrides[get_database_pool] = lambda: FakePool(FakeConnection(detail_row=None))
 
@@ -127,6 +186,16 @@ class SignalRouteTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.json()["detail"]["code"], "SIGNAL_NOT_FOUND")
+
+
+def _signal_list_rows(stock_id=10, ticker="005930"):
+    # 한 종목에 소스별(run_key) 3행 — 모델 B 적재를 그대로 흉내낸다.
+    base = {"stock_id": stock_id, "ticker": ticker, "name": "삼성전자", "market": "KOSPI"}
+    return [
+        {**base, "run_key": "HIRING", "final_score": 80, "signal": "positive", "warning_level": "NORMAL", "needs_review": False, "source_agreement": "HIGH", "consensus_score": 70, "summary": "채용 신호 요약"},
+        {**base, "run_key": "PATENT", "final_score": 50, "signal": "neutral", "warning_level": "NORMAL", "needs_review": False, "source_agreement": "MEDIUM", "consensus_score": 60, "summary": None},
+        {**base, "run_key": "DATALAB", "final_score": 95, "signal": "positive", "warning_level": "WARNING", "needs_review": True, "source_agreement": "LOW", "consensus_score": 50, "summary": None},
+    ]
 
 
 def _signal_detail_row():

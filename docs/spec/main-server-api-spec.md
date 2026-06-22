@@ -1,6 +1,6 @@
 # Signal Alpha Main Server API 스펙
 
-> 기준일: 2026-06-17
+> 기준일: 2026-06-17 (개정: 2026-06-22 — `GET /api/signals` 목록 엔드포인트 구현 반영)
 > 대상: `services/main-server`
 > 목적: Web 화면 디자인 확정 전, 사용자-facing API와 인증/세션/관심종목/시그널/저널 계약을 먼저 고정한다.
 
@@ -507,16 +507,67 @@ Response:
 }
 ```
 
-### `GET /api/signals/latest`
+### `GET /api/signals` (구현됨, 2026-06-22)
 
-현재 공개 가능한 최신 시그널 목록을 반환한다. 로그인 사용자의 관심종목 필터를 기본으로 사용할 수 있다.
+현재 발행(`is_published`) 중인 최신 시그널 목록을 **종목당 1개**로 반환한다. 인증 필요.
 
-Query 후보:
+`final_signals`는 대체데이터 소스별(`run_key` = HIRING/PATENT/DATALAB)로 **종목당 여러 행**(모델 B)이
+적재되므로, 이 엔드포인트가 **API 레이어에서 `stock_id` 기준 런타임 그룹핑**해 종목당 1개로 응집한다
+(DB 스키마/리네임 변경 없음 — "모델 A shape"으로 노출).
+
+Query:
 
 ```text
-watchlist_only=true
-limit=20
+stock_ids=1,2,3      # 옵션. 콤마 구분 정수(관심종목 필터). 파싱 후 빈 목록이면 [] 반환
 ```
+
+> **필터 구현 주의:** 스펙 초안의 `watchlist_only=true`(서버가 내 관심종목으로 자동 필터)는 **아직 미구현**이다.
+> 현재는 클라이언트(프론트)가 자신의 관심종목 `stock_id` 들을 모아 `stock_ids` 로 **명시 전달**하는 구조다.
+> 서버측 watchlist 자동 필터가 필요해지면 별도 추가한다.
+
+집계 규칙(종목 내 소스 행들을 1개로 합성):
+
+| 필드 | 규칙 |
+|---|---|
+| `direction` | 소스 방향 다수결(동률 → `NEUTRAL`). **대문자 반환** |
+| `score` | 가용 소스 `final_score`(0~100) 평균 |
+| `alignment_rate` | 소스 `consensus_score`(폴백 `confidence`) 평균 ÷ 100 |
+| `source_agreement` | 소스 중 **가장 보수적**(낮은 합의: LOW>MEDIUM>HIGH) |
+| `warning_level` / `data_status` | 가장 보수적 채택(WARNING→`failed`, CAUTION/needs_review→`partial`) |
+| `summary` | 기준행(최신 published) 요약 |
+| `score_breakdown.alternative.{hiring,patent,datalab}` | 각 소스 `{direction(대문자), score}` 또는 `null` |
+
+Response (배열):
+
+```json
+[
+  {
+    "stock_id": 10,
+    "stock": {"id": 10, "stock_code": "005930", "stock_name": "삼성전자", "market": "KOSPI"},
+    "direction": "POSITIVE",
+    "score": 75.0,
+    "alignment_rate": 0.6,
+    "source_agreement": "LOW",
+    "warning_level": "WARNING",
+    "data_status": "failed",
+    "summary": "채용 신호 요약",
+    "score_breakdown": {
+      "alternative": {
+        "hiring":  {"direction": "POSITIVE", "score": 80},
+        "patent":  {"direction": "NEUTRAL",  "score": 50},
+        "datalab": {"direction": "POSITIVE", "score": 95}
+      },
+      "dart": null,
+      "report": null
+    }
+  }
+]
+```
+
+> **direction 대소문자 주의:** 본 list 엔드포인트는 프론트(#335)의 `Direction`(대문자) 정합을 위해
+> **대문자**(`POSITIVE`/`NEGATIVE`/`NEUTRAL`/`MIXED`)로 반환한다. 반면 아래 상세(`GET /api/signals/{signal_id}`)와
+> dashboard 예시는 현재 **소문자**(`final_signals.signal` 원형) — 향후 통일 대상.
+> 이 엔드포인트가 스펙상 "최신 시그널 목록(`/api/signals/latest`)" 역할을 대신한다.
 
 ### `GET /api/signals/by-stock/{stock_code}`
 
@@ -807,7 +858,10 @@ Journal:
 현재 `services/main-server`에 구현된 API:
 
 - `GET /health`
-- `GET /signals/{ticker}`
+- `GET /signals/{ticker}` (호환 라우트 — `by-stock` 전신)
+- `GET /api/signals` (목록, 종목당 1개 그룹핑 — 2026-06-22)
+- `GET /api/signals/{signal_id}` (상세 — #333)
+- auth/users/stocks/watchlists/dashboard 라우터 등록됨(`app/main.py`)
 
 이번 스펙에서 확정한 canonical API는 `/api/...` prefix를 사용한다. 기존 `GET /signals/{ticker}`는 `GET /api/signals/by-stock/{stock_code}`로 이전하거나 호환 라우트로 유지한다.
 
