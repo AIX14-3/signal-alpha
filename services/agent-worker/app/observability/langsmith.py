@@ -11,6 +11,7 @@ LLM 클라이언트 계약은 ``app.analyzers.dart.llm.LlmClient`` (async ``comp
 
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 from typing import Any, Protocol
@@ -31,20 +32,24 @@ class TracedLlmClient:
         self._name = name
 
     async def complete(self, *, prompt: str, model: str, timeout_seconds: float) -> str:
-        handle = _safe(lambda: self._recorder.start(name=self._name, model=model, prompt=prompt))
+        # 관측 I/O(LangSmith HTTP)는 워커 스레드로 오프로딩 — 이벤트 루프를 막지 않고
+        # 핫패스(LLM 호출)에 지연을 더하지 않는다. 관측 실패는 삼키되 LLM 예외는 그대로 전파.
+        handle = await _safe_to_thread(
+            self._recorder.start, name=self._name, model=model, prompt=prompt
+        )
         started = time.perf_counter()
         try:
             output = await self._inner.complete(
                 prompt=prompt, model=model, timeout_seconds=timeout_seconds
             )
         except Exception as exc:
-            # 관측 실패는 삼키되 LLM 예외는 그대로 전파(관측이 흐름을 바꾸지 않음).
-            try:
-                self._recorder.error(handle, exc=exc, latency_ms=_elapsed_ms(started))
-            except Exception:  # noqa: BLE001
-                pass
+            await _safe_to_thread(
+                self._recorder.error, handle, exc=exc, latency_ms=_elapsed_ms(started)
+            )
             raise
-        _safe(lambda: self._recorder.end(handle, output=output, latency_ms=_elapsed_ms(started)))
+        await _safe_to_thread(
+            self._recorder.end, handle, output=output, latency_ms=_elapsed_ms(started)
+        )
         return output
 
 
@@ -124,9 +129,10 @@ def _build_langsmith_recorder() -> _Recorder | None:
         return None
 
 
-def _safe(fn: Any) -> Any:
+async def _safe_to_thread(func: Any, *args: Any, **kwargs: Any) -> Any:
+    """recorder 호출을 워커 스레드에서 실행하고 실패는 삼킨다(관측이 흐름·지연에 영향 X)."""
     try:
-        return fn()
+        return await asyncio.to_thread(func, *args, **kwargs)
     except Exception:  # noqa: BLE001 — 관측 실패는 LLM 호출에 영향 주지 않는다
         return None
 
