@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.gates.rules.veto_keywords import veto_keywords
+from app.orchestrator.queue.task_types import SYNTHESIZE
 
 
 @dataclass(frozen=True)
@@ -44,10 +45,12 @@ class RiskVetoTaskHandler:
         from signal_alpha_data_access.repositories import (
             AnalysisRepository,
             NormalizationRepository,
+            ProcessingQueueRepository,
         )
 
         self._analysis = AnalysisRepository(connection)
         self._normalization = NormalizationRepository(connection)
+        self._queue = ProcessingQueueRepository(connection)
 
     async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
         stock_id = int(task["stock_id"])
@@ -81,12 +84,31 @@ class RiskVetoTaskHandler:
             )
             applied = True
 
+        # 끝단 LLM 종합·설명으로 체인 — veto 여부와 무관하게(보류 신호도 사유를 설명).
+        synthesize_task_id: int | None = None
+        if final_signal_id is not None:
+            synthesize_task_id = await self._queue.enqueue(
+                stock_id=stock_id,
+                task_type=SYNTHESIZE,
+                priority=str(ctx.get("priority") or "batch"),
+                source_signal_event_ids=signal_event_ids,
+                task_context={
+                    "final_signal_id": int(final_signal_id),
+                    "stock_code": ctx.get("stock_code"),
+                    "run_key": ctx.get("run_key") or "ML",
+                    "vetoed": decision.vetoed,
+                    "matched_keywords": decision.matched_keywords,
+                },
+                dedupe=True,
+            )
+
         return {
             "stock_id": stock_id,
             "final_signal_id": final_signal_id,
             "vetoed": decision.vetoed,
             "matched_keywords": decision.matched_keywords,
             "applied": applied,
+            "synthesize_task_id": synthesize_task_id,
         }
 
 

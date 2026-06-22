@@ -68,6 +68,18 @@ class MetaSignalRepositoryTest(unittest.IsolatedAsyncioTestCase):
         sql = connection.calls[0][1]
         self.assertIn("WHERE stock_id = $1 AND run_key = $2 AND asof_date = $3 AND horizon = $4", sql)
 
+    async def test_latest_for_stock_orders_by_recency(self):
+        connection = FakeConnection()
+        repository = MetaSignalRepository(connection)
+
+        await repository.latest_for_stock(stock_id=10, run_key="ML")
+
+        sql = connection.calls[0][1]
+        self.assertIn("WHERE stock_id = $1 AND run_key = $2", sql)
+        self.assertIn("ORDER BY asof_date DESC", sql)
+        self.assertIn("LIMIT 1", sql)
+        self.assertEqual(connection.calls[0][2], (10, "ML"))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -413,6 +413,38 @@ class AnalysisRepository:
             final_signal_id,
         )
 
+    async def get_final_signal_by_id(self, *, final_signal_id: int) -> Any:
+        """발행 여부와 무관하게 final_signal 1건 조회(끝단 종합은 vetoed/미발행도 설명)."""
+        return await self._connection.fetchrow(
+            "SELECT * FROM final_signals WHERE id = $1",
+            final_signal_id,
+        )
+
+    async def update_final_signal_narrative(
+        self,
+        *,
+        final_signal_id: int,
+        summary: str,
+        bull_point: str | None = None,
+        bear_point: str | None = None,
+    ) -> Any:
+        """끝단 LLM 종합 결과(설명)만 갱신 — 점수/방향/발행 플래그는 건드리지 않는다."""
+        return await self._connection.fetchrow(
+            """
+            UPDATE final_signals
+            SET
+                summary = $2,
+                bull_point = $3,
+                bear_point = $4
+            WHERE id = $1
+            RETURNING *
+            """,
+            final_signal_id,
+            summary,
+            bull_point,
+            bear_point,
+        )
+
 
 def _jsonb(value: Any) -> str | None:
     if value is None:

@@ -52,9 +52,11 @@ class _FakeConnection:
         self.veto_applied_id = args[0]
         return {"id": args[0], "is_published": False, "warning_level": "WARNING"}
 
-    async def fetchval(self, sql, *args):  # record_validation_log INSERT ... RETURNING id
-        self.validation_logged = args  # (target_type, target_id_int, ...)
-        return 1
+    async def fetchval(self, sql, *args):
+        if "validation_logs" in sql:  # record_validation_log INSERT ... RETURNING id
+            self.validation_logged = args  # (target_type, target_id_int, ...)
+            return 1
+        return 777  # processing_queue enqueue (dedupe SELECT hit → returns existing id)
 
 
 class RiskVetoTaskHandlerTest(unittest.IsolatedAsyncioTestCase):

@@ -15,6 +15,10 @@ META_COMBINE = "meta_combine"
 # AGGREGATE_SIGNAL이 발행 신호에 대해 enqueue. 9 chars (task_type VARCHAR(50)).
 RISK_VETO = "risk_veto"
 
+# 끝단 LLM 종합·설명 + 리스크 리포트(JSON). RISK_VETO 다음 단계(수치 불변, 설명만).
+# 10 chars (task_type VARCHAR(50)).
+SYNTHESIZE = "synthesize"
+
 COLLECT_REPORT = "collect_report"
 PROCESS_REPORT = "process_report"
 EMBED_REPORT = "embed_report"

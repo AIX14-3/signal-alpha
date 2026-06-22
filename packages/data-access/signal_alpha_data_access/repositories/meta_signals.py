@@ -74,3 +74,17 @@ class MetaSignalRepository:
             asof_date,
             horizon,
         )
+
+    async def latest_for_stock(self, *, stock_id: int, run_key: str = "ML") -> Any:
+        """종목의 가장 최근 결합 신호(끝단 리포트가 결합 변동성/신뢰도를 참고)."""
+        return await self._connection.fetchrow(
+            """
+            SELECT *
+            FROM meta_signals
+            WHERE stock_id = $1 AND run_key = $2
+            ORDER BY asof_date DESC, horizon ASC
+            LIMIT 1
+            """,
+            stock_id,
+            run_key,
+        )
