@@ -55,7 +55,7 @@ Kick-off 이슈 열기  →  본인 self-assign  →  Project Status: In Progres
 
 ## 4. 주간 스냅샷 (멘토 보고용)
 
-보드 접근 없이도 보이도록 [`docs/STATUS.md`](./STATUS.md)에 주 1회 스냅샷을 남긴다
+보드 접근 없이도 보이도록 주 1회 스냅샷을 남긴다
 (수동, 또는 후속으로 GitHub Action 자동화 가능).
 
 ## 영역(Area) 정의
