@@ -12,6 +12,7 @@ from app.orchestrator.queue.task_types import (
     COLLECT_REPORT,
     EMBED_REPORT,
     ENRICH_PATENT,
+    ML_INFER,
     NORMALIZE_DART,
     NORMALIZE_DATALAB,
     NORMALIZE_HIRING,
@@ -36,6 +37,7 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
         DartNormalizeTaskHandler,
     )
     from app.orchestrator.aggregation.tasks import AggregateSignalTaskHandler
+    from app.ml.inference import MlInferTaskHandler
 
     settings = get_settings()
     llm_analyzer = None
@@ -93,6 +95,7 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
             llm_high_impact_only=settings.dart_llm_high_impact_only,
         ),
         AGGREGATE_SIGNAL: AggregateSignalTaskHandler(connection),
+        ML_INFER: MlInferTaskHandler(connection),
         COLLECT_REPORT: ReportCollectTaskHandler(connection=connection, settings=settings),
         PROCESS_REPORT: ReportProcessTaskHandler(connection=connection, settings=settings),
         EMBED_REPORT: ReportEmbedTaskHandler(connection=connection, settings=settings),
