@@ -147,14 +147,17 @@ class SignalRouteTest(unittest.TestCase):
         item = body[0]
         self.assertEqual(item["stock"]["stock_code"], "005930")
         self.assertEqual(item["stock"]["stock_name"], "삼성전자")
-        self.assertEqual(item["direction"], "positive")  # positive 2 vs neutral 1
+        self.assertEqual(item["direction"], "POSITIVE")  # 대문자, positive 2 vs neutral 1
         self.assertEqual(item["score"], 75.0)  # (80+50+95)/3
+        self.assertEqual(item["alignment_rate"], 0.6)  # 평균 consensus 60 / 100
+        self.assertEqual(item["source_agreement"], "LOW")  # 가장 보수적(낮은 합의)
         self.assertEqual(item["warning_level"], "WARNING")  # 가장 보수적
         self.assertEqual(item["data_status"], "failed")  # WARNING → failed
+        self.assertEqual(item["summary"], "채용 신호 요약")  # 기준행(첫 행) summary
         alternative = item["score_breakdown"]["alternative"]
         self.assertEqual(set(alternative), {"hiring", "patent", "datalab"})
         self.assertEqual(alternative["hiring"]["score"], 80)
-        self.assertEqual(alternative["patent"]["direction"], "neutral")
+        self.assertEqual(alternative["patent"]["direction"], "NEUTRAL")  # 대문자
 
     def test_list_signals_with_stock_ids_filter(self):
         connection = FakeConnection(list_rows=_signal_list_rows() + _signal_list_rows(stock_id=20, ticker="000660"))
@@ -189,9 +192,9 @@ def _signal_list_rows(stock_id=10, ticker="005930"):
     # 한 종목에 소스별(run_key) 3행 — 모델 B 적재를 그대로 흉내낸다.
     base = {"stock_id": stock_id, "ticker": ticker, "name": "삼성전자", "market": "KOSPI"}
     return [
-        {**base, "run_key": "HIRING", "final_score": 80, "signal": "positive", "warning_level": "NORMAL", "needs_review": False},
-        {**base, "run_key": "PATENT", "final_score": 50, "signal": "neutral", "warning_level": "NORMAL", "needs_review": False},
-        {**base, "run_key": "DATALAB", "final_score": 95, "signal": "positive", "warning_level": "WARNING", "needs_review": True},
+        {**base, "run_key": "HIRING", "final_score": 80, "signal": "positive", "warning_level": "NORMAL", "needs_review": False, "source_agreement": "HIGH", "consensus_score": 70, "summary": "채용 신호 요약"},
+        {**base, "run_key": "PATENT", "final_score": 50, "signal": "neutral", "warning_level": "NORMAL", "needs_review": False, "source_agreement": "MEDIUM", "consensus_score": 60, "summary": None},
+        {**base, "run_key": "DATALAB", "final_score": 95, "signal": "positive", "warning_level": "WARNING", "needs_review": True, "source_agreement": "LOW", "consensus_score": 50, "summary": None},
     ]
 
 

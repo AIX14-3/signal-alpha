@@ -14,6 +14,12 @@ SOURCE_ORDER = ("DART", "PRICE", "REPORT", "ALTERNATIVE")
 # final_signals.run_key (소스별 발행 모델 B) → 응답 score_breakdown.alternative 하위 키.
 ALT_RUN_KEYS = ("hiring", "patent", "datalab")
 _STATUS_PRIORITY = {"WARNING": 3, "CAUTION": 2, "NORMAL": 1}
+_AGREEMENT_PRIORITY = {"LOW": 3, "MEDIUM": 2, "HIGH": 1}  # 보수적 = 낮은 합의 우선
+
+
+def _to_direction(value: Any) -> str:
+    """final_signals.signal(소문자) → 응답 대문자(POSITIVE/NEGATIVE/NEUTRAL/MIXED)."""
+    return (value or "neutral").upper()
 
 router = APIRouter(tags=["signals"])
 
@@ -89,6 +95,8 @@ def _signal_list_item(stock_id: int, rows: list[dict[str, Any]]) -> dict[str, An
     scores: list[float] = []
     directions: list[str] = []
     warning_levels: list[str] = []
+    agreements: list[str] = []
+    consensus_values: list[float] = []
     needs_review = False
 
     for row in rows:
@@ -96,15 +104,26 @@ def _signal_list_item(stock_id: int, rows: list[dict[str, Any]]) -> dict[str, An
         if run_key not in alternative:
             continue
         signal = row.get("signal") or "neutral"
-        alternative[run_key] = {"direction": signal, "score": _number(row.get("final_score"))}
+        alternative[run_key] = {"direction": _to_direction(signal), "score": _number(row.get("final_score"))}
         directions.append(signal)
         if row.get("final_score") is not None:
             scores.append(float(row["final_score"]))
         warning_levels.append(row.get("warning_level") or "NORMAL")
+        if row.get("source_agreement"):
+            agreements.append(row["source_agreement"])
+        consensus = row.get("consensus_score")
+        if consensus is None:
+            consensus = row.get("confidence")
+        if consensus is not None:
+            consensus_values.append(float(consensus))
         needs_review = needs_review or bool(row.get("needs_review", False))
 
     warning_level = max(warning_levels, key=_STATUS_PRIORITY.get) if warning_levels else "NORMAL"
     avg_score = round(sum(scores) / len(scores), 2) if scores else None
+    source_agreement = (
+        max(agreements, key=lambda value: _AGREEMENT_PRIORITY.get(value, 0)) if agreements else None
+    )
+    avg_consensus = round(sum(consensus_values) / len(consensus_values), 2) if consensus_values else None
     return {
         "stock_id": stock_id,
         "stock": {
@@ -113,10 +132,13 @@ def _signal_list_item(stock_id: int, rows: list[dict[str, Any]]) -> dict[str, An
             "stock_name": base.get("name"),
             "market": base.get("market"),
         },
-        "direction": _determine_majority_direction(directions),
+        "direction": _to_direction(_determine_majority_direction(directions)),
         "score": _number(avg_score),
+        "alignment_rate": _alignment_rate(avg_consensus),
+        "source_agreement": source_agreement,
         "warning_level": warning_level,
         "data_status": _overall_data_status({"warning_level": warning_level, "needs_review": needs_review}),
+        "summary": base.get("summary"),
         "score_breakdown": {"alternative": alternative, "dart": None, "report": None},
     }
 
