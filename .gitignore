@@ -140,3 +140,6 @@ tempCodeRunnerFile.py
 # 공식 채용관 진단 덤프 (script/diagnose_official_sites.py 산출물 — 대용량·휘발성)
 diagnostics/
 samsungbio_raw.html
+
+# 발표용 PPTX 빌드 (로컬 전용, 리포 미포함)
+hiring-pptx/
