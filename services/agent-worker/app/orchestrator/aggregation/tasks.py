@@ -8,7 +8,12 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
-from signal_alpha_data_access.repositories import AnalysisRepository, NormalizationRepository
+from app.orchestrator.queue.task_types import RISK_VETO
+from signal_alpha_data_access.repositories import (
+    AnalysisRepository,
+    NormalizationRepository,
+    ProcessingQueueRepository,
+)
 
 
 AGGREGATE_RUN_KEY = "AGGREGATED"
@@ -46,6 +51,7 @@ class AggregateSignalTaskHandler:
     def __init__(self, connection: Any) -> None:
         self._analysis_repository = AnalysisRepository(connection)
         self._normalization_repository = NormalizationRepository(connection)
+        self._queue_repository = ProcessingQueueRepository(connection)
 
     async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
         stock_id = int(task["stock_id"])
@@ -119,6 +125,19 @@ class AggregateSignalTaskHandler:
             positive_evidence=aggregate["positive_evidence"],
             caution_evidence=aggregate["caution_evidence"],
         )
+        # 리스크 veto 체인 — 발행된 신호에 대해서만(미발행은 차단할 게 없음).
+        # 치명 키워드 탐지 시 RISK_VETO 핸들러가 이 final_signal 발행을 보류한다.
+        risk_veto_task_id: int | None = None
+        if aggregate["is_published"] and source_signal_event_ids:
+            risk_veto_task_id = await self._queue_repository.enqueue(
+                stock_id=stock_id,
+                task_type=RISK_VETO,
+                priority=str(task_context.get("priority") or "batch"),
+                source_signal_event_ids=source_signal_event_ids,
+                task_context={"final_signal_id": int(final_signal["id"])},
+                dedupe=True,
+            )
+
         return {
             "analysis_result_id": analysis_result["id"],
             "final_signal_id": final_signal["id"],
@@ -130,6 +149,7 @@ class AggregateSignalTaskHandler:
             "warning_level": aggregate["warning_level"],
             "needs_review": aggregate["needs_review"],
             "is_published": aggregate["is_published"],
+            "risk_veto_task_id": risk_veto_task_id,
         }
 
 

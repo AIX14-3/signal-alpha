@@ -393,6 +393,27 @@ class AnalysisRepository:
         )
 
 
+    async def apply_risk_veto(self, *, final_signal_id: int) -> Any:
+        """리스크 veto — 치명 키워드 탐지 시 해당 final_signal 발행 보류.
+
+        점수/방향은 그대로 두고 발행 플래그만 차단(is_published=FALSE), 검토 필요 표시,
+        경보 WARNING 승격. veto 사유는 validation_logs에 별도 기록한다.
+        """
+        return await self._connection.fetchrow(
+            """
+            UPDATE final_signals
+            SET
+                is_published = FALSE,
+                published_at = NULL,
+                needs_review = TRUE,
+                warning_level = 'WARNING'
+            WHERE id = $1
+            RETURNING *
+            """,
+            final_signal_id,
+        )
+
+
 def _jsonb(value: Any) -> str | None:
     if value is None:
         return None

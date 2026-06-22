@@ -19,6 +19,7 @@ from app.orchestrator.queue.task_types import (
     NORMALIZE_HIRING,
     NORMALIZE_PATENT,
     PROCESS_REPORT,
+    RISK_VETO,
 )
 from app.orchestrator.queue.tasks import TaskHandler
 
@@ -40,6 +41,7 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
     from app.orchestrator.aggregation.tasks import AggregateSignalTaskHandler
     from app.ml.inference import MlInferTaskHandler
     from app.ml.meta_combine import MetaCombineTaskHandler
+    from app.gates.risk_veto import RiskVetoTaskHandler
 
     settings = get_settings()
     llm_analyzer = None
@@ -99,6 +101,7 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
         AGGREGATE_SIGNAL: AggregateSignalTaskHandler(connection),
         ML_INFER: MlInferTaskHandler(connection),
         META_COMBINE: MetaCombineTaskHandler(connection),
+        RISK_VETO: RiskVetoTaskHandler(connection),
         COLLECT_REPORT: ReportCollectTaskHandler(connection=connection, settings=settings),
         PROCESS_REPORT: ReportProcessTaskHandler(connection=connection, settings=settings),
         EMBED_REPORT: ReportEmbedTaskHandler(connection=connection, settings=settings),
