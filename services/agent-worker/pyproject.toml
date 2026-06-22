@@ -21,6 +21,8 @@ dependencies = [
   "sentence-transformers>=3.0.0",  # app/embeddings/provider.py
   "selenium>=4.20.0",
   "signal-alpha-data-access",
+  # vol-benchmark 변동성 모델 + DataContract (ML/DL 추론 단계, app/ml/). base는 numpy/pandas만.
+  "signal-alpha-vol-models",
   "sqlalchemy>=2.0.0",
   "tzdata>=2024.1; sys_platform == 'win32'",
   "webdriver-manager>=4.0.0",
@@ -42,3 +44,4 @@ testpaths = ["tests"]
 
 [tool.uv.sources]
 signal-alpha-data-access = { workspace = true }
+signal-alpha-vol-models = { workspace = true }

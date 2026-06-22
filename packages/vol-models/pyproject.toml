@@ -1,0 +1,20 @@
+[project]
+name = "signal-alpha-vol-models"
+version = "0.1.0"
+description = "Vendored volatility benchmark models + point-in-time DataContract (from vol-benchmark) for Signal Alpha worker ML/DL inference"
+requires-python = ">=3.11"
+dependencies = [
+  "numpy>=1.26.0",
+  "pandas>=2.0.0",
+]
+
+# Heavier model backends are opt-in so the base install (DataContract + EWMA/HAR-RV
+# baselines, all pure numpy/pandas) stays light. PR2 wires these into the registry.
+[project.optional-dependencies]
+garch = ["arch>=6.0.0"]
+lgbm = ["lightgbm>=4.0.0"]
+gpu = ["torch>=2.2.0"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

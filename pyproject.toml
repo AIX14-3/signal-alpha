@@ -28,6 +28,7 @@ members = [
   "packages/data-access",
   "packages/market-data",
   "packages/signal-core",
+  "packages/vol-models",
   "services/agent-worker",
   "services/main-server",
 ]
