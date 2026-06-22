@@ -4,8 +4,12 @@ ANALYZE_DART = "analyze_dart"
 AGGREGATE_SIGNAL = "aggregate_signal"
 
 # ML/DL 추론 (게이트 통과 모델만) — 종목 OHLCV를 vol-benchmark 모델로 추론해 ml_inferences 적재.
-# architecture.mermaid의 ML/DL 단계. 메타러너 결합(PR3) 입력. 9 chars (task_type VARCHAR(50)).
+# architecture.mermaid의 ML/DL 단계. 메타러너 결합 입력. 9 chars (task_type VARCHAR(50)).
 ML_INFER = "ml_infer"
+
+# 메타러너 결합 (stacking) — ml_inferences를 학습 가중으로 결합해 meta_signals 적재.
+# ML_INFER가 성공 추론이 있을 때 enqueue. 12 chars (task_type VARCHAR(50)).
+META_COMBINE = "meta_combine"
 
 COLLECT_REPORT = "collect_report"
 PROCESS_REPORT = "process_report"

@@ -21,6 +21,7 @@ import numpy as np
 
 from app.ml.contract_adapter import build_contract
 from app.ml.model_registry import ModelSpec, resolve_models
+from app.orchestrator.queue.task_types import META_COMBINE
 from vol_models.common.data_contract import DataContract
 
 DEFAULT_HORIZON = 10
@@ -76,11 +77,13 @@ class MlInferTaskHandler:
         from signal_alpha_data_access.repositories import (
             MarketDataRepository,
             MlInferenceRepository,
+            ProcessingQueueRepository,
         )
 
         self._connection = connection
         self._market_data = MarketDataRepository(connection)
         self._inferences = MlInferenceRepository(connection)
+        self._queue = ProcessingQueueRepository(connection)
         self._horizon = horizon if horizon is not None else _int_env("ML_HORIZON", DEFAULT_HORIZON)
         self._lookback = (
             lookback_sessions
@@ -128,6 +131,24 @@ class MlInferTaskHandler:
                 error_message=result.error,
             )
 
+        succeeded = [r.model_name for r in results if r.error is None]
+
+        # 메타러너 결합으로 체인 — 성공 추론이 있을 때만(없으면 결합할 입력이 없음).
+        meta_task_id: int | None = None
+        if succeeded:
+            meta_task_id = await self._queue.enqueue(
+                stock_id=stock_id,
+                task_type=META_COMBINE,
+                priority=str(task_context.get("priority") or "batch"),
+                task_context={
+                    "stock_code": stock_code,
+                    "run_key": self._run_key,
+                    "asof_date": asof_date.isoformat(),
+                    "horizon": self._horizon,
+                },
+                dedupe=True,
+            )
+
         return {
             "stock_id": stock_id,
             "asof_date": asof_date.isoformat(),
@@ -135,8 +156,9 @@ class MlInferTaskHandler:
             "horizon": self._horizon,
             "model_count": len(results),
             "persisted": len(results),
-            "succeeded": [r.model_name for r in results if r.error is None],
+            "succeeded": succeeded,
             "failed": {r.model_name: r.error for r in results if r.error is not None},
+            "meta_combine_task_id": meta_task_id,
         }
 
 

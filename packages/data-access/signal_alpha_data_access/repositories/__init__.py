@@ -9,6 +9,7 @@ from signal_alpha_data_access.repositories.dart_ownership import DartOwnershipRe
 from signal_alpha_data_access.repositories.dart_employee import DartEmployeeStatsRepository
 from signal_alpha_data_access.repositories.market_data import MarketDataRepository
 from signal_alpha_data_access.repositories.ml_inferences import MlInferenceRepository
+from signal_alpha_data_access.repositories.meta_signals import MetaSignalRepository
 from signal_alpha_data_access.repositories.normalization import NormalizationRepository
 from signal_alpha_data_access.repositories.observability import ObservabilityRepository
 from signal_alpha_data_access.repositories.processing_queue import ProcessingQueueRepository
@@ -33,6 +34,7 @@ __all__ = [
     "DartEmployeeStatsRepository",
     "MarketDataRepository",
     "MlInferenceRepository",
+    "MetaSignalRepository",
     "NormalizationRepository",
     "ObservabilityRepository",
     "ProcessingQueueRepository",
