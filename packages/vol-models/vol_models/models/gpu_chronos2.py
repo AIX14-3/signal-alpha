@@ -26,6 +26,9 @@ from vol_models.common.rv import h_day_vol_from_daily_var, h_day_vol_from_path
 NAME = "chronos2"
 _PIPE = None
 
+# HF repo 기본값(cfg["model_repo"]로 오버라이드). repo/버전이 바뀌면 ModelSpec.cfg에서 지정.
+DEFAULT_MODEL_REPO = "amazon/chronos-2"
+
 try:
     import torch  # noqa: F401
     from chronos import Chronos2Pipeline  # type: ignore
@@ -35,14 +38,14 @@ except Exception:  # noqa: BLE001
     HAVE_LIB = False
 
 
-def _pipeline():
+def _pipeline(model_repo: str):
     global _PIPE
     if _PIPE is None:
         import torch
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
         # TODO(confirm): match the installed chronos-forecasting API/version.
-        _PIPE = Chronos2Pipeline.from_pretrained("amazon/chronos-2", device_map=device)
+        _PIPE = Chronos2Pipeline.from_pretrained(model_repo, device_map=device)
     return _PIPE
 
 
@@ -54,7 +57,7 @@ def predict(contract: DataContract, asof_idx: int, horizon: int, cfg: dict, rng)
     # Chronos-2 wants a 3-D tensor: (n_series, n_variates, history_length).
     # One univariate series -> (1, 1, L).
     context = torch.tensor(rv, dtype=torch.float32).reshape(1, 1, -1)
-    pipe = _pipeline()
+    pipe = _pipeline(cfg.get("model_repo", DEFAULT_MODEL_REPO))
     # Chronos-2 API: ``inputs`` is positional and the call returns (quantiles,
     # mean) as LISTS — one tensor per input series, each shaped
     # [prediction_length, n_quantiles]. We feed one univariate series, request

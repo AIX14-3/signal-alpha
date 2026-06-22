@@ -210,15 +210,19 @@ def _build_synthesizer(settings: Any) -> Synthesizer | None:
     from app.analyzers.dart.llm import GeminiGenerateContentClient, OpenAiChatClient
     from app.observability.langsmith import maybe_trace
 
+    # 엔드포인트 기본값은 dart/llm.py 클라이언트가 자체 보유한다. settings가 명시한 경우에만
+    # base_url을 넘겨, 공개 엔드포인트 URL이 두 곳에 중복되지 않게 한다.
     if provider == "gemini" and getattr(settings, "gemini_api_key", None):
+        gemini_base = getattr(settings, "gemini_base_url", None)
         client: Any = GeminiGenerateContentClient(
             api_key=settings.gemini_api_key,
-            base_url=getattr(settings, "gemini_base_url", "https://generativelanguage.googleapis.com/v1beta"),
+            **({"base_url": gemini_base} if gemini_base else {}),
         )
     elif provider == "openai" and getattr(settings, "openai_api_key", None):
+        openai_base = getattr(settings, "openai_base_url", None)
         client = OpenAiChatClient(
             api_key=settings.openai_api_key,
-            base_url=getattr(settings, "openai_base_url", "https://api.openai.com/v1"),
+            **({"base_url": openai_base} if openai_base else {}),
         )
     else:
         return None

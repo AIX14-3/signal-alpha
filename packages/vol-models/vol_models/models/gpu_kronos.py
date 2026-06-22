@@ -31,6 +31,11 @@ from vol_models.common.rv import h_day_vol_from_daily_var
 NAME = "kronos"
 _PREDICTOR = None
 
+# HF repo 기본값(cfg["tokenizer_repo"]/["model_repo"]로 오버라이드). repo/버전이 바뀌면
+# 코드 수정 없이 ModelSpec.cfg에서 지정한다.
+DEFAULT_TOKENIZER_REPO = "NeoQuasar/Kronos-Tokenizer-base"
+DEFAULT_MODEL_REPO = "NeoQuasar/Kronos-base"
+
 try:
     import torch  # noqa: F401
     from model import Kronos, KronosPredictor, KronosTokenizer  # type: ignore
@@ -40,15 +45,15 @@ except Exception:  # noqa: BLE001
     HAVE_LIB = False
 
 
-def _predictor(max_context: int):
+def _predictor(max_context: int, tokenizer_repo: str, model_repo: str):
     global _PREDICTOR
     if _PREDICTOR is None:
         import torch
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
         # TODO(confirm): repo ids / signature against the cloned Kronos repo.
-        tok = KronosTokenizer.from_pretrained("NeoQuasar/Kronos-Tokenizer-base")
-        model = Kronos.from_pretrained("NeoQuasar/Kronos-base")
+        tok = KronosTokenizer.from_pretrained(tokenizer_repo)
+        model = Kronos.from_pretrained(model_repo)
         _PREDICTOR = KronosPredictor(model, tok, device=device, max_context=max_context)
     return _PREDICTOR
 
@@ -67,7 +72,11 @@ def predict(contract: DataContract, asof_idx: int, horizon: int, cfg: dict, rng)
         drop=True
     )
 
-    predictor = _predictor(ctx_len)
+    predictor = _predictor(
+        ctx_len,
+        cfg.get("tokenizer_repo", DEFAULT_TOKENIZER_REPO),
+        cfg.get("model_repo", DEFAULT_MODEL_REPO),
+    )
     vols = []
     for _ in range(n_samples):
         pred_df = predictor.predict(
