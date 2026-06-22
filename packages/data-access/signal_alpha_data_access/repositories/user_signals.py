@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 
@@ -138,6 +139,163 @@ class UserSignalRepository:
             source_agreement_at_time,
         )
 
+    async def create_journal_entry(
+        self,
+        *,
+        user_id: int,
+        stock_id: int,
+        final_signal_id: int,
+        user_view: str,
+        user_memo: str | None = None,
+        tags: list[str] | None = None,
+        signal_score_at_time: Any | None = None,
+        signal_value_at_time: str | None = None,
+        source_agreement_at_time: str | None = None,
+    ) -> Any:
+        return await self._connection.fetchrow(
+            """
+            WITH inserted AS (
+                INSERT INTO signal_journals (
+                    user_id, final_signal_id, stock_id, user_view, user_memo,
+                    tags, signal_score_at_time, signal_value_at_time,
+                    source_agreement_at_time
+                )
+                VALUES ($1, $2, $3, $4, $5, $6::JSONB, $7, $8, $9)
+                RETURNING *
+            )
+            SELECT
+                inserted.*,
+                stocks.ticker,
+                stocks.name,
+                stocks.market,
+                stocks.sector
+            FROM inserted
+            INNER JOIN stocks
+                ON stocks.id = inserted.stock_id
+            """,
+            user_id,
+            final_signal_id,
+            stock_id,
+            user_view,
+            user_memo,
+            _jsonb(tags or []),
+            signal_score_at_time,
+            signal_value_at_time,
+            source_agreement_at_time,
+        )
+
+    async def list_journals(
+        self,
+        *,
+        user_id: int,
+        stock_code: str | None = None,
+        limit: int = 20,
+    ) -> list[Any]:
+        if stock_code:
+            return await self._connection.fetch(
+                """
+                SELECT
+                    signal_journals.*,
+                    stocks.ticker,
+                    stocks.name,
+                    stocks.market,
+                    stocks.sector
+                FROM signal_journals
+                INNER JOIN stocks
+                    ON stocks.id = signal_journals.stock_id
+                WHERE signal_journals.user_id = $1
+                  AND stocks.ticker = $2
+                ORDER BY signal_journals.created_at DESC
+                LIMIT $3
+                """,
+                user_id,
+                stock_code,
+                limit,
+            )
+        return await self._connection.fetch(
+            """
+            SELECT
+                signal_journals.*,
+                stocks.ticker,
+                stocks.name,
+                stocks.market,
+                stocks.sector
+            FROM signal_journals
+            INNER JOIN stocks
+                ON stocks.id = signal_journals.stock_id
+            WHERE signal_journals.user_id = $1
+            ORDER BY signal_journals.created_at DESC
+            LIMIT $2
+            """,
+            user_id,
+            limit,
+        )
+
+    async def get_journal(self, *, user_id: int, journal_id: int) -> Any:
+        return await self._connection.fetchrow(
+            """
+            SELECT
+                signal_journals.*,
+                stocks.ticker,
+                stocks.name,
+                stocks.market,
+                stocks.sector
+            FROM signal_journals
+            INNER JOIN stocks
+                ON stocks.id = signal_journals.stock_id
+            WHERE signal_journals.id = $1
+              AND signal_journals.user_id = $2
+            """,
+            journal_id,
+            user_id,
+        )
+
+    async def update_journal(
+        self,
+        *,
+        user_id: int,
+        journal_id: int,
+        user_view: str,
+        user_memo: str | None,
+        tags: list[str],
+    ) -> Any:
+        return await self._connection.fetchrow(
+            """
+            UPDATE signal_journals
+            SET
+                user_view = $3,
+                user_memo = $4,
+                tags = $5::JSONB,
+                updated_at = NOW()
+            FROM stocks
+            WHERE signal_journals.id = $1
+              AND signal_journals.user_id = $2
+              AND stocks.id = signal_journals.stock_id
+            RETURNING
+                signal_journals.*,
+                stocks.ticker,
+                stocks.name,
+                stocks.market,
+                stocks.sector
+            """,
+            journal_id,
+            user_id,
+            user_view,
+            user_memo,
+            _jsonb(tags),
+        )
+
+    async def delete_journal(self, *, user_id: int, journal_id: int) -> None:
+        await self._connection.execute(
+            """
+            DELETE FROM signal_journals
+            WHERE id = $1
+              AND user_id = $2
+            """,
+            journal_id,
+            user_id,
+        )
+
     async def list_latest_journals_by_stock_ids(self, *, user_id: int, stock_ids: list[int]) -> list[Any]:
         if not stock_ids:
             return []
@@ -181,3 +339,7 @@ class UserSignalRepository:
             outcome_price,
             outcome_change_pct,
         )
+
+
+def _jsonb(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False)

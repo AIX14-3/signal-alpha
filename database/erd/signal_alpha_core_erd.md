@@ -304,7 +304,8 @@ erDiagram
         BIGINT user_id FK
         BIGINT final_signal_id FK "nullable"
         BIGINT stock_id FK
-        VARCHAR user_view
+        VARCHAR user_view "watch/research_more/not_relevant"
+        JSONB tags
     }
 
     user_signal_reads {

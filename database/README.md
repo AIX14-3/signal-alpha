@@ -65,6 +65,9 @@ docker compose run --rm migrate
 
 이 외에 러너가 자동 생성하는 `schema_migrations` 원장이 있습니다. 총 **54개 테이블**.
 
+`018_signal_journal_mvp_policy.sql`은 기존 `signal_journals`를 확장해 `tags JSONB`를 추가하고,
+`user_view`를 사용자 복기용 값(`watch`, `research_more`, `not_relevant`)으로 제한합니다.
+
 이후 스키마 변경은 `001_baseline.sql`을 수정하지 않고 `002_*.sql`부터 증분 마이그레이션으로 추가합니다 ([`docs/migration_rules.md`](./docs/migration_rules.md) §3).
 
 DataLab은 종목이 아닌 **카테고리 단위**로 수집합니다: 원본은 `datalab_raw_documents`/`datalab_raw_details`(category_id 기반)에 저장하고, `datalab_category_stocks` 매핑으로 종목을 해석합니다. `processing_queue.stock_id`가 NULL 허용인 이유도 이것입니다.
