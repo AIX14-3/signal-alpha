@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import json
+from collections import Counter, OrderedDict
 from decimal import Decimal
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.api.routes.auth import NOTICE, get_current_user
 from app.core.database import get_database_pool
 
 SOURCE_ORDER = ("DART", "PRICE", "REPORT", "ALTERNATIVE")
+# final_signals.run_key (소스별 발행 모델 B) → 응답 score_breakdown.alternative 하위 키.
+ALT_RUN_KEYS = ("hiring", "patent", "datalab")
+_STATUS_PRIORITY = {"WARNING": 3, "CAUTION": 2, "NORMAL": 1}
 
 router = APIRouter(tags=["signals"])
 
@@ -42,6 +46,89 @@ async def get_signal_detail(
         raise _api_error(404, "SIGNAL_NOT_FOUND", "시그널을 찾을 수 없습니다.")
 
     return _signal_detail_response(dict(row))
+
+
+@router.get("/api/signals")
+async def list_signals(
+    stock_ids: str | None = Query(default=None, description="Comma-separated stock IDs (e.g. 1,2,3)"),
+    current_user: dict[str, Any] = Depends(get_current_user),
+    pool: Any = Depends(get_database_pool),
+) -> list[dict[str, Any]]:
+    """현재 발행 신호 목록을 종목별(Model A)로 런타임 그룹핑해 반환.
+
+    DB는 소스별(run_key HIRING/PATENT/DATALAB) 다중 행(모델 B)으로 적재되지만, 본
+    엔드포인트가 stock_id로 묶어 종목당 1개로 응집한다(스키마 변경 없음).
+    """
+    from signal_alpha_data_access.repositories import SignalRepository
+
+    parsed: list[int] = []
+    if stock_ids is not None:
+        parsed = [int(part) for part in (p.strip() for p in stock_ids.split(",")) if part.isdigit()]
+        if not parsed:
+            return []
+
+    async with pool.acquire() as connection:
+        repository = SignalRepository(connection)
+        rows = (
+            await repository.list_current_by_stock_ids(parsed)
+            if parsed
+            else await repository.list_current_published()
+        )
+
+    grouped: "OrderedDict[int, list[dict[str, Any]]]" = OrderedDict()
+    for row in rows:
+        record = dict(row)
+        grouped.setdefault(record["stock_id"], []).append(record)
+
+    return [_signal_list_item(stock_id, source_rows) for stock_id, source_rows in grouped.items()]
+
+
+def _signal_list_item(stock_id: int, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    base = rows[0]
+    alternative: dict[str, Any] = {key: None for key in ALT_RUN_KEYS}
+    scores: list[float] = []
+    directions: list[str] = []
+    warning_levels: list[str] = []
+    needs_review = False
+
+    for row in rows:
+        run_key = (row.get("run_key") or "").lower()
+        if run_key not in alternative:
+            continue
+        signal = row.get("signal") or "neutral"
+        alternative[run_key] = {"direction": signal, "score": _number(row.get("final_score"))}
+        directions.append(signal)
+        if row.get("final_score") is not None:
+            scores.append(float(row["final_score"]))
+        warning_levels.append(row.get("warning_level") or "NORMAL")
+        needs_review = needs_review or bool(row.get("needs_review", False))
+
+    warning_level = max(warning_levels, key=_STATUS_PRIORITY.get) if warning_levels else "NORMAL"
+    avg_score = round(sum(scores) / len(scores), 2) if scores else None
+    return {
+        "stock_id": stock_id,
+        "stock": {
+            "id": stock_id,
+            "stock_code": base.get("ticker"),
+            "stock_name": base.get("name"),
+            "market": base.get("market"),
+        },
+        "direction": _determine_majority_direction(directions),
+        "score": _number(avg_score),
+        "warning_level": warning_level,
+        "data_status": _overall_data_status({"warning_level": warning_level, "needs_review": needs_review}),
+        "score_breakdown": {"alternative": alternative, "dart": None, "report": None},
+    }
+
+
+def _determine_majority_direction(directions: list[str]) -> str:
+    valid = [direction for direction in directions if direction]
+    if not valid:
+        return "neutral"
+    ranked = Counter(valid).most_common(2)
+    if len(ranked) > 1 and ranked[0][1] == ranked[1][1]:
+        return "neutral"  # 동률 → 중립
+    return ranked[0][0]
 
 
 def _signal_detail_response(row: dict[str, Any]) -> dict[str, Any]:
