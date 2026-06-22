@@ -10,6 +10,7 @@ DataContract로 변환하고, 추론 결과를 ``ml_inferences`` 에 멱등 적�
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
@@ -47,11 +48,13 @@ def run_inference(
     seed: int = DEFAULT_SEED,
 ) -> list[InferenceResult]:
     """Run each spec's ``predict`` at the latest origin; isolate per-model failures."""
-    rng = np.random.default_rng(seed)
     asof_idx = len(contract) - 1
     results: list[InferenceResult] = []
     for spec in specs:
         cfg = {**spec.cfg, "seed": seed}
+        # 모델마다 독립·재현 가능한 rng — 모델 추가/순서 변경에도 다른 모델 예측이 흔들리지 않게
+        # (이름 기반 안정 시드; 단일 공유 rng는 소비 순서에 따라 결과가 바뀜).
+        rng = np.random.default_rng(_model_seed(seed, spec.name))
         try:
             value = float(spec.load()(contract, asof_idx, horizon, cfg, rng))
             if not math.isfinite(value):
@@ -173,3 +176,9 @@ def _task_context(value: Any) -> dict[str, Any]:
 def _int_env(name: str, default: int) -> int:
     raw = os.getenv(name)
     return int(raw) if raw not in (None, "") else default
+
+
+def _model_seed(seed: int, model_name: str) -> int:
+    """모델별 안정·재현 시드(이름 기반). PYTHONHASHSEED 영향 없는 sha256 사용."""
+    digest = hashlib.sha256(f"{seed}:{model_name}".encode()).digest()
+    return int.from_bytes(digest[:8], "big")

@@ -8,7 +8,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
-from app.orchestrator.queue.task_types import RISK_VETO
+from app.orchestrator.queue.task_types import ML_INFER, RISK_VETO
 from signal_alpha_data_access.repositories import (
     AnalysisRepository,
     NormalizationRepository,
@@ -125,6 +125,20 @@ class AggregateSignalTaskHandler:
             positive_evidence=aggregate["positive_evidence"],
             caution_evidence=aggregate["caution_evidence"],
         )
+        priority = str(task_context.get("priority") or "batch")
+        stock_code = task_context.get("stock_code")
+
+        # ML/DL 추론 체인 — 종목 변동성 모델 추론(ML_INFER)을 인큐해 메타러너 결합(meta_signals)이
+        # 채워지도록 한다. ML 핸들러는 OHLCV가 없으면 graceful skip. 이후 SYNTHESIZE가 최근
+        # meta_signal을 best-effort로 참조한다(같은 run에 늦으면 다음 run에 반영).
+        ml_infer_task_id = await self._queue_repository.enqueue(
+            stock_id=stock_id,
+            task_type=ML_INFER,
+            priority=priority,
+            task_context={"stock_code": stock_code, "run_key": "ML"},
+            dedupe=True,
+        )
+
         # 리스크 veto 체인 — 발행된 신호에 대해서만(미발행은 차단할 게 없음).
         # 치명 키워드 탐지 시 RISK_VETO 핸들러가 이 final_signal 발행을 보류한다.
         risk_veto_task_id: int | None = None
@@ -132,9 +146,13 @@ class AggregateSignalTaskHandler:
             risk_veto_task_id = await self._queue_repository.enqueue(
                 stock_id=stock_id,
                 task_type=RISK_VETO,
-                priority=str(task_context.get("priority") or "batch"),
+                priority=priority,
                 source_signal_event_ids=source_signal_event_ids,
-                task_context={"final_signal_id": int(final_signal["id"])},
+                task_context={
+                    "final_signal_id": int(final_signal["id"]),
+                    "stock_code": stock_code,
+                    "run_key": "ML",
+                },
                 dedupe=True,
             )
 
@@ -149,6 +167,7 @@ class AggregateSignalTaskHandler:
             "warning_level": aggregate["warning_level"],
             "needs_review": aggregate["needs_review"],
             "is_published": aggregate["is_published"],
+            "ml_infer_task_id": ml_infer_task_id,
             "risk_veto_task_id": risk_veto_task_id,
         }
 
