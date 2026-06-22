@@ -11,7 +11,6 @@ DataContract로 변환하고, 추론 결과를 ``ml_inferences`` 에 멱등 적�
 from __future__ import annotations
 
 import hashlib
-import json
 import math
 import os
 from collections.abc import Mapping
@@ -22,6 +21,7 @@ import numpy as np
 
 from app.ml.contract_adapter import build_contract
 from app.ml.model_registry import ModelSpec, resolve_models
+from app.orchestrator.queue.context import parse_task_context
 from app.orchestrator.queue.task_types import META_COMBINE
 from vol_models.common.data_contract import DataContract
 
@@ -98,7 +98,7 @@ class MlInferTaskHandler:
 
     async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
         stock_id = int(task["stock_id"])
-        task_context = _task_context(task.get("task_context"))
+        task_context = parse_task_context(task.get("task_context"))
         stock_code = str(task_context.get("stock_code") or task_context.get("ticker") or "")
 
         records = await self._market_data.list_recent_ohlcv(
@@ -163,14 +163,6 @@ class MlInferTaskHandler:
             "failed": {r.model_name: r.error for r in results if r.error is not None},
             "meta_combine_task_id": meta_task_id,
         }
-
-
-def _task_context(value: Any) -> dict[str, Any]:
-    if value is None:
-        return {}
-    if isinstance(value, str):
-        return json.loads(value)
-    return dict(value)
 
 
 def _int_env(name: str, default: int) -> int:
