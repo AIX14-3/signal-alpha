@@ -582,10 +582,12 @@ exit
 target_price
 ```
 
-현재 DB 차이:
+DB 반영 상태:
 
-- `signal_journals.user_view` CHECK는 현재 `watch`, `bullish`, `bearish`, `neutral`이다.
-- MVP 정책에 맞추려면 새 migration으로 `research_more`, `not_relevant`를 허용하고 `bullish`, `bearish` 사용을 중단해야 한다.
+- `018_signal_journal_mvp_policy.sql`에서 `signal_journals.user_view` CHECK를
+  `watch`, `research_more`, `not_relevant`로 변경한다.
+- 기존 `bullish`, `bearish`, `neutral` 값은 migration에서 `watch`로 정리한다.
+- `signal_journals.tags JSONB NOT NULL DEFAULT '[]'`를 추가한다.
 
 ### `GET /api/journals`
 
@@ -694,16 +696,16 @@ worker 실패 시:
 | 변경 | 이유 |
 |---|---|
 | `user_sessions` 추가 | refresh token 서버 세션 관리 |
-| `signal_journals.user_view` CHECK 변경 | `watch`, `research_more`, `not_relevant` 사용 |
+| `signal_journals.user_view` CHECK 변경 | `watch`, `research_more`, `not_relevant` 사용. `018_signal_journal_mvp_policy.sql` 반영 |
 | 무료/MVP 플랜 `max_watchlist=10` 반영 | 관심종목 최대 10개 정책 |
 | watchlist 기본 알림 false 반영 | MVP 알림 비활성 정책 |
+| `signal_journals.tags JSONB` 추가 | 저널 태그 저장. `018_signal_journal_mvp_policy.sql` 반영 |
 
 검토 변경:
 
 | 변경 | 이유 |
 |---|---|
 | `analysis_requests.status` CHECK 확장 | `queued`, `partial`, `cancelled` 표현 |
-| `signal_journals.tags JSONB` 추가 | 저널 태그를 DB에 저장하려면 필요 |
 | `signal_journals.deleted_at` 추가 | 저널 soft delete가 필요하면 추가 |
 
 이미 있는 테이블:

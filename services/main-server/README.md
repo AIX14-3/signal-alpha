@@ -43,6 +43,12 @@ GET /api/dashboard
 
 GET /signals/{ticker}
 GET /api/signals/{signal_id}
+
+GET    /api/journals
+POST   /api/journals
+GET    /api/journals/{journal_id}
+PATCH  /api/journals/{journal_id}
+DELETE /api/journals/{journal_id}
 ```
 
 ## Responsibilities
