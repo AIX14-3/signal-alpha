@@ -12,6 +12,7 @@ LLM 클라이언트 계약은 ``app.analyzers.dart.llm.LlmClient`` (async ``comp
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
 import time
@@ -131,9 +132,16 @@ class LangSmithRecorder:
 
 
 @lru_cache(maxsize=4)
-def _cached_recorder(project: str, api_key: str, endpoint: str | None) -> _Recorder | None:
-    """설정(project/key/endpoint)당 recorder 1개만 생성·재사용 — langsmith.Client(백그라운드
-    배치 스레드 동반)가 태스크마다 새로 만들어지지 않게 한다. 실패는 1회 경고 후 None 캐시."""
+def _cached_recorder(project: str, endpoint: str | None, key_fingerprint: str) -> _Recorder | None:
+    """설정(project/endpoint/키지문)당 recorder 1개만 생성·재사용 — langsmith.Client(백그라운드
+    배치 스레드 동반)가 태스크마다 새로 만들어지지 않게 한다. 실패는 1회 경고 후 None 캐시.
+
+    실제 API 키는 캐시 키에 넣지 않고(시크릿이 캐시에 상주하지 않게) 짧은 지문만 키로 써서
+    키 교체 시 재생성되게 한다. 진짜 키는 호출 시점에 env에서 읽는다.
+    """
+    api_key = os.getenv("LANGSMITH_API_KEY")
+    if not api_key:
+        return None
     try:
         return LangSmithRecorder(project=project, api_key=api_key, endpoint=endpoint)
     except Exception as exc:  # noqa: BLE001 — langsmith 미설치/초기화 실패 → 관측 비활성(no-op)
@@ -152,10 +160,11 @@ def _build_langsmith_recorder() -> _Recorder | None:
             "LANGSMITH_TRACING이 켜졌지만 LANGSMITH_API_KEY가 없어 관측이 비활성화됩니다.",
         )
         return None
+    fingerprint = hashlib.sha256(api_key.encode()).hexdigest()[:16]
     return _cached_recorder(
         os.getenv("LANGSMITH_PROJECT") or "signal-alpha",
-        api_key,
         os.getenv("LANGSMITH_ENDPOINT") or None,
+        fingerprint,
     )
 
 
