@@ -205,6 +205,7 @@ def _build_synthesizer(settings: Any) -> Synthesizer | None:
     timeout = float(os.getenv("SYNTHESIS_LLM_TIMEOUT_SECONDS") or 20.0)
 
     from app.analyzers.dart.llm import GeminiGenerateContentClient, OpenAiChatClient
+    from app.observability.langsmith import maybe_trace
 
     if provider == "gemini" and getattr(settings, "gemini_api_key", None):
         client: Any = GeminiGenerateContentClient(
@@ -218,7 +219,8 @@ def _build_synthesizer(settings: Any) -> Synthesizer | None:
         )
     else:
         return None
-    return Synthesizer(client=client, model=model, timeout_seconds=timeout)
+    # LangSmith 관측(켜져 있을 때만; 아니면 동일 클라이언트 반환).
+    return Synthesizer(client=maybe_trace(client, name="synthesis"), model=model, timeout_seconds=timeout)
 
 
 def _task_context(value: Any) -> dict[str, Any]:

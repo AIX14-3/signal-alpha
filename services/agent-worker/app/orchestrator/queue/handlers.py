@@ -44,23 +44,30 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
     from app.ml.meta_combine import MetaCombineTaskHandler
     from app.gates.risk_veto import RiskVetoTaskHandler
     from app.synthesis.tasks import SynthesizeTaskHandler
+    from app.observability.langsmith import maybe_trace
 
     settings = get_settings()
     llm_analyzer = None
     if settings.dart_use_llm and settings.dart_llm_provider == "gemini" and settings.gemini_api_key and settings.dart_llm_model:
         llm_analyzer = DartLlmAnalyzer(
-            client=GeminiGenerateContentClient(
-                api_key=settings.gemini_api_key,
-                base_url=settings.gemini_base_url,
+            client=maybe_trace(
+                GeminiGenerateContentClient(
+                    api_key=settings.gemini_api_key,
+                    base_url=settings.gemini_base_url,
+                ),
+                name="dart_llm",
             ),
             model=settings.dart_llm_model,
             timeout_seconds=settings.dart_llm_timeout_seconds,
         )
     elif settings.dart_use_llm and settings.dart_llm_provider == "openai" and settings.openai_api_key and settings.dart_llm_model:
         llm_analyzer = DartLlmAnalyzer(
-            client=OpenAiChatClient(
-                api_key=settings.openai_api_key,
-                base_url=settings.openai_base_url,
+            client=maybe_trace(
+                OpenAiChatClient(
+                    api_key=settings.openai_api_key,
+                    base_url=settings.openai_base_url,
+                ),
+                name="dart_llm",
             ),
             model=settings.dart_llm_model,
             timeout_seconds=settings.dart_llm_timeout_seconds,
@@ -77,15 +84,21 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
     report_llm_model = None
     if settings.report_use_llm and settings.report_llm_model:
         if settings.report_llm_provider == "gemini" and settings.gemini_api_key:
-            report_llm_client = GeminiGenerateContentClient(
-                api_key=settings.gemini_api_key,
-                base_url=settings.gemini_base_url,
+            report_llm_client = maybe_trace(
+                GeminiGenerateContentClient(
+                    api_key=settings.gemini_api_key,
+                    base_url=settings.gemini_base_url,
+                ),
+                name="report_llm",
             )
             report_llm_model = settings.report_llm_model
         elif settings.report_llm_provider == "openai" and settings.openai_api_key:
-            report_llm_client = OpenAiChatClient(
-                api_key=settings.openai_api_key,
-                base_url=settings.openai_base_url,
+            report_llm_client = maybe_trace(
+                OpenAiChatClient(
+                    api_key=settings.openai_api_key,
+                    base_url=settings.openai_base_url,
+                ),
+                name="report_llm",
             )
             report_llm_model = settings.report_llm_model
 
