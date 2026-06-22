@@ -56,15 +56,28 @@ def build_frame(
     if missing:
         raise ValueError(f"OHLCV rows missing required keys: {missing}")
 
-    frame["date"] = pd.to_datetime(frame["trade_date"])
+    # trade_date is always an ISO string (OhlcvReader) or date; coerce to string so
+    # ISO8601 parsing is exact/fast and works for both.
+    frame["date"] = pd.to_datetime(frame["trade_date"].astype("string"), format="ISO8601")
     frame["ticker"] = str(ticker)
     for column in _BASE_COLUMNS:
         frame[column] = pd.to_numeric(frame[column])
-    frame = frame.sort_values("date").reset_index(drop=True)
+    # Sort ascending and collapse any duplicate sessions (defensive: the DB enforces
+    # UNIQUE(stock_id, trade_date), but this is a public pure fn that may later be fed
+    # merged sources). keep="last" wins so a corrected candle supersedes an earlier one.
+    frame = (
+        frame.sort_values("date")
+        .drop_duplicates(subset="date", keep="last")
+        .reset_index(drop=True)
+    )
 
     # Derived, point-in-time-safe columns (same code path as build_dataset.py).
     frame["ret"] = log_returns(frame["close"])
     frame["rv_d"] = daily_variance(frame, estimator=estimator)
+
+    # NOTE: build_frame does not enforce a minimum history length. Models with a
+    # warmup requirement (GARCH/LightGBM/HAR-RV) gate sufficiency at the inference
+    # layer (PR2 model registry), not here, so the adapter stays a pure transform.
 
     return frame[
         ["date", "ticker", "open", "high", "low", "close", "volume", "ret", "rv_d"]
