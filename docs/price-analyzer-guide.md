@@ -68,4 +68,4 @@ uv run uvicorn app.main:app --reload --port 8011
 2. 최종 합산(D-1) 가중치에 PRICE를 몇 %로 넣을지 팀 결정
 3. 별도 브랜치에서 "예측 점수 vs 실제 주가" 검증 파이프라인 구축 (백테스트)
 
-상세 설계 근거는 `docs/superpowers/plans/2026-06-11-kiwoom-price-analyzer.md`, 구조도는 같은 폴더의 `.svg` 참고.
+구조도는 `docs/superpowers/plans/2026-06-11-kiwoom-price-analyzer.svg` 참고.
