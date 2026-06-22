@@ -78,16 +78,10 @@ def build_registry(
     patent_config = patent_config or PatentRuleConfig.from_env()
     datalab_config = datalab_config or DataLabRuleConfig.from_env()
 
-    # DataLab cause agent (협업안 §4) is opt-in. The env is checked inline (no
-    # import) and the agent package — which pulls in langgraph — is imported lazily
-    # inside the factory, so the rule-only path never requires langgraph.
-    datalab_agent_factory: Callable[[Any], Any] | None = None
-    if _datalab_llm_enabled():
-        def datalab_agent_factory(connection: Any, cfg: DataLabRuleConfig = datalab_config) -> Any:
-            from app.agents.datalab import build_datalab_cause_agent
-
-            return build_datalab_cause_agent(connection, config=cfg)
-
+    # DataLab 생성형 cause agent는 판정 경로에서 영구 비활성(결정론 전처리 원칙 —
+    # docs/design/worker-redesign.md). lead_lag 결정론 prelabel이 최종 라벨이고, 검색
+    # 시계열은 통계지표(indicators/rules)로만 피처화한다. cause agent 모듈
+    # (app/agents/datalab/*)은 보존하되 와이어링하지 않으므로 agent_factory를 두지 않는다.
     return [
         SourceRegistration(
             source="HIRING",
@@ -115,17 +109,5 @@ def build_registry(
             loader_factory=lambda repo, cfg=datalab_config: DataLabEvidenceLoader(
                 repo, lookback_days=cfg.lookback_days
             ),
-            agent_factory=datalab_agent_factory,
         ),
     ]
-
-
-def _datalab_llm_enabled() -> bool:
-    """DataLab 생성형 cause agent는 판정 경로에서 비활성화됨(결정론 전처리 원칙 —
-    docs/design/worker-redesign.md). lead_lag 결정론 prelabel이 최종 라벨이며,
-    검색 시계열은 통계지표(indicators/rules)로만 피처화한다.
-
-    LLM cause agent 모듈(app/agents/datalab/*)은 보존하되 와이어링하지 않는다.
-    과거에는 ``DATALAB_LLM_ENABLED`` env로 opt-in 했으나, 비결정 입력이 판정을
-    흔드는 것을 막기 위해 영구 off로 고정한다."""
-    return False

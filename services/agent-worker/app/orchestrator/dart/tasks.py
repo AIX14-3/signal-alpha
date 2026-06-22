@@ -225,7 +225,11 @@ class DartEmbedTaskHandler:
             return {"status": "not_found", "raw_document_id": raw_document_id}
         row = rows[0]
 
-        full_text = _dart_evidence_text(row)
+        # 본문이 있을 때만 임베딩한다 — 제목만 있는 공시(report_name 폴백)는 임베딩
+        # 가치가 낮고 BGE-M3 호출만 낭비하므로 건너뛴다.
+        full_text = _dart_document_text(row)
+        if not full_text:
+            return {"status": "no_document_text", "raw_document_id": raw_document_id}
         chunks = chunk_text(full_text)
         if not chunks:
             return {"status": "no_text", "raw_document_id": raw_document_id}
@@ -539,14 +543,20 @@ def _dart_client_from_settings(settings: Any) -> DartDisclosureClient:
     )
 
 
-def _dart_evidence_text(row: Mapping[str, Any]) -> str:
+def _dart_document_text(row: Mapping[str, Any]) -> str | None:
+    """공시 본문(extra_payload.document_text)만 반환. 본문이 없으면 None.
+
+    임베딩은 본문이 있을 때만 의미가 있으므로 제목(report_name) 폴백을 쓰지 않는다.
+    """
     extra_payload = row.get("extra_payload") or {}
     if isinstance(extra_payload, str):
         extra_payload = json.loads(extra_payload)
     document_text = extra_payload.get("document_text")
-    if document_text:
-        return str(document_text)
-    return str(row["report_name"])
+    return str(document_text) if document_text else None
+
+
+def _dart_evidence_text(row: Mapping[str, Any]) -> str:
+    return _dart_document_text(row) or str(row["report_name"])
 
 
 def _truthy(value: Any) -> bool:

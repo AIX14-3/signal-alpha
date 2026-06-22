@@ -123,6 +123,18 @@ class DartEmbedTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         result = await handler({"task_context": {"raw_document_id": 99}})
         self.assertEqual(result["status"], "not_found")
 
+    async def test_skips_embedding_when_only_title_no_body(self):
+        conn = DartEmbedConn()
+        handler = DartEmbedTaskHandler(conn)
+        # 본문(document_text) 없이 제목만 있는 공시 → 임베딩 스킵(BGE-M3 호출 낭비 방지)
+        handler._raw_detail_repository = FakeRawDetailRepo(
+            [{"raw_document_id": 5, "stock_id": 2, "report_name": "사업보고서", "extra_payload": {}}]
+        )
+        result = await handler({"task_context": {"raw_document_id": 5}})
+        self.assertEqual(result["status"], "no_document_text")
+        self.assertEqual(conn.inserts, [])
+        self.assertEqual(conn.feature_upserts, [])
+
 
 class MeanVectorTest(unittest.TestCase):
     def test_componentwise_mean(self):
