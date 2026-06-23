@@ -52,7 +52,7 @@ DataLab은 종목이 아닌 **카테고리 단위**로 수집하므로 자체 �
 | --- | --- |
 | `datalab_categories` | DataLab 검색 트렌드 수집 단위인 카테고리(섹터/테마) 마스터 |
 | `datalab_category_stocks` | 카테고리 ↔ 종목 N:M 매핑. 카테고리 트렌드를 종목으로 해석하는 가중치(`weight`) 보유 |
-| `datalab_category_keywords` | 카테고리에 속한 검색 키워드 목록(키워드 그룹 포함). `polarity`(demand/risk/neutral)로 검색량 방향성 태깅. `polarity_source`/`polarity_confidence`/`polarity_model`/`polarity_rationale`/`polarity_classified_at`(003)로 분류 출처(manual/llm/default; 기본값 `'default'` — 015)·신뢰도·모델·근거 기록 → 분석기가 `agent_results.llm_model`로 전파 |
+| `datalab_category_keywords` | 카테고리에 속한 검색 키워드 목록(키워드 그룹 포함). `polarity`(demand/risk/neutral)로 검색량 방향성 태깅. `polarity_source`/`polarity_confidence`/`polarity_model`/`polarity_rationale`/`polarity_classified_at`(003)로 분류 출처(manual/llm/default; 기본값 `'default'` — 015)·신뢰도·모델·근거 기록 → 분석기가 `agent_results.llm_model`로 전파. `review_status`(approved/pending/rejected — 024)로 검색량 검증 관문 결과에 따른 라이프사이클 관리: approved=수집 대상(is_active=TRUE), pending=관리자 검수 대기(is_active=FALSE, 수집 제외). `validation_active_days`/`validation_window_days`/`validation_coverage`/`validated_at`로 검증 근거 기록 |
 | `datalab_raw_documents` | DataLab 수집 원본의 공통 메타데이터(카테고리 기반). `raw_documents`의 DataLab판 |
 | `datalab_raw_details` | 키워드·일자·세그먼트(기간/디바이스/성별/연령)별 검색지수 원본 상세. 급등 여부(`is_spike`) 포함 |
 
