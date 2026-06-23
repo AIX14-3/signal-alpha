@@ -7,6 +7,7 @@ dependencies = []
 
 [dependency-groups]
 dev = [
+  "alembic>=1.13.0",          # ORM 기반 DB 마이그레이션(database/alembic). env.py 는 psycopg2 사용.
   "httpx>=0.27.0",
   "psycopg2-binary>=2.9.0",
   "pytest>=8.0.0",
