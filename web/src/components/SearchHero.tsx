@@ -61,10 +61,19 @@ function useTypingPlaceholder(active: boolean): string {
   return text ? `${text}` : FALLBACK_PLACEHOLDER;
 }
 
+/** 검색어와 가장 잘 맞는 종목 1건 선택: 코드 정확일치 > 종목명 정확일치 > 첫 결과. */
+function pickBest(items: Stock[], term: string): Stock {
+  const clean = term.trim().toLowerCase();
+  return (
+    items.find((s) => s.stock_code.toLowerCase() === clean) ??
+    items.find((s) => s.stock_name.toLowerCase() === clean) ??
+    items[0]
+  );
+}
+
 export function SearchHero() {
   const router = useRouter();
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<Stock[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -78,8 +87,12 @@ export function SearchHero() {
     setError(null);
     try {
       const data = await searchStocks(clean);
-      setResults(data.items);
-      if (data.items.length === 0) setError("검색 결과가 없습니다.");
+      if (data.items.length === 0) {
+        setError("검색 결과가 없습니다.");
+        return;
+      }
+      // 엔터/분석 시 가장 잘 맞는 종목 리포트로 바로 이동.
+      router.push(`/report/${pickBest(data.items, clean).stock_code}`);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -154,25 +167,6 @@ export function SearchHero() {
       </form>
 
       {error && <p className="mt-5 text-[14px] text-muted">{error}</p>}
-
-      {results.length > 0 && (
-        <ul className="mx-auto mt-6 max-w-[560px] space-y-2 text-left">
-          {results.map((stock) => (
-            <li key={stock.id}>
-              <button
-                type="button"
-                onClick={() => router.push(`/report/${stock.stock_code}`)}
-                className="card flex w-full items-center justify-between px-5 py-3 transition hover:border-sky"
-              >
-                <span className="font-bold">{stock.stock_name}</span>
-                <span className="text-[13px] text-muted">
-                  {stock.stock_code} · {stock.market ?? "-"}
-                </span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
     </section>
   );
 }
