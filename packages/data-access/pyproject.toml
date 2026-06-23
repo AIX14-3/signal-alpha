@@ -4,11 +4,7 @@ version = "0.1.0"
 description = "Shared database access repositories for Signal Alpha"
 requires-python = ">=3.11"
 dependencies = [
-  "asyncpg>=0.29.0",
-  # 런타임 쿼리는 asyncpg 원시 SQL을 유지하되, SQLAlchemy 모델(models/)을 Alembic
-  # autogenerate 의 스키마 진실원천으로 둔다. pgvector 는 VECTOR 컬럼 모델링용.
-  "sqlalchemy>=2.0.0",
-  "pgvector>=0.3.0"
+  "asyncpg>=0.29.0"
 ]
 
 [tool.pytest.ini_options]
