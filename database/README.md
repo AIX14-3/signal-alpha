@@ -91,10 +91,11 @@ DataLab은 종목이 아닌 **카테고리 단위**로 수집합니다: 원본�
 
 ## 4. 새 테이블/컬럼 추가 절차 ← 스키마 변경 시 필독
 
-> 협업 규칙·PR 체크리스트 전문은 [`docs/migration_rules.md`](./docs/migration_rules.md)에 있습니다. `001_baseline.sql`은 freeze 상태이므로 수정하지 말고 `002_*.sql`부터 증분으로 추가합니다.
+> 협업 규칙·PR 체크리스트 전문은 [`docs/migration_rules.md`](./docs/migration_rules.md)에 있습니다. 적용된 파일은 freeze이므로 수정하지 말고, 새 변경은 **타임스탬프 파일**(`python database/migrate.py new "..."`)로 추가합니다(정수 순번 `NNN_`은 폐기).
 
 1. **§2 인벤토리에서 중복 확인** — 같은 역할의 테이블이 이미 있으면 재사용/확장.
-2. `database/migrations/`에서 **다음 번호**로 파일 생성: `NNN_짧은설명.sql`
+2. **타임스탬프 파일** 생성: `python database/migrate.py new "짧은설명"` → `YYYYMMDD_HHMM_짧은설명.sql`.
+   - 정수 순번(`NNN_`)은 폐기(브랜치 병렬 충돌). 레거시 `001~023`은 freeze, 새 건 타임스탬프로.
    - 논리적 변경 1건 = 파일 1개 (테이블 신설 + 무관한 ALTER를 한 파일에 섞지 않기)
 3. §3 컨벤션 준수 (plain `CREATE TABLE`, TIMESTAMPTZ, 명명 규칙, updated_at 트리거).
 4. 로컬 검증:
@@ -104,7 +105,7 @@ DataLab은 종목이 아닌 **카테고리 단위**로 수집합니다: 원본�
    ```
 5. **문서 동기화 (필수):** 이 README §2 표 + `database/erd/signal_alpha_core_erd.md`(ERD) + `database/docs/table_descriptions.md`(테이블 역할 한 줄 설명)에 새 테이블 반영.
 6. PR 체크리스트의 "DB 변경" 섹션 체크.
-7. **번호 충돌 시** (동시에 두 PR이 같은 번호 사용): 늦게 머지되는 쪽이 리넘버. 이미 로컬에 적용했다면 DB를 재생성(`docker compose down -v`)하거나 원장에서 구 파일명을 삭제 후 재적용.
+7. **번호 충돌 없음:** 타임스탬프 접두사라 동시 PR끼리 파일명이 겹치지 않아 리넘버가 불필요합니다(`NNN_` 순번을 폐기한 이유). 정확히 같은 분·같은 slug로만 드물게 겹치면 한쪽 파일명을 1분 조정.
 
 ## 5. Collector별 저장 흐름
 

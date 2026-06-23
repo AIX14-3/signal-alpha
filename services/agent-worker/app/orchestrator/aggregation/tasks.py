@@ -8,7 +8,12 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
-from signal_alpha_data_access.repositories import AnalysisRepository, NormalizationRepository
+from app.orchestrator.queue.task_types import SYNTHESIZE
+from signal_alpha_data_access.repositories import (
+    AnalysisRepository,
+    NormalizationRepository,
+    ProcessingQueueRepository,
+)
 
 
 AGGREGATE_RUN_KEY = "AGGREGATED"
@@ -46,6 +51,7 @@ class AggregateSignalTaskHandler:
     def __init__(self, connection: Any) -> None:
         self._analysis_repository = AnalysisRepository(connection)
         self._normalization_repository = NormalizationRepository(connection)
+        self._queue_repository = ProcessingQueueRepository(connection)
 
     async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
         stock_id = int(task["stock_id"])
@@ -119,6 +125,28 @@ class AggregateSignalTaskHandler:
             positive_evidence=aggregate["positive_evidence"],
             caution_evidence=aggregate["caution_evidence"],
         )
+        priority = str(task_context.get("priority") or "batch")
+        stock_code = task_context.get("stock_code")
+
+        # 선형 체인(게이트2 = 신호·모델 품질): ML_INFER→META_COMBINE이 앞단에서 끝나고
+        # 이 게이트가 발행 판정을 내린다. 발행분만 끝단 LLM 종합(SYNTHESIZE)으로 보내고,
+        # 리스크 veto는 종합 "뒤"에서 동작한다(SYNTHESIZE가 RISK_VETO를 인큐). 미발행/needs_review는
+        # 종합으로 보내지 않는다(버릴 게 아니라 처음부터 발행 대상이 아님).
+        synthesize_task_id: int | None = None
+        if aggregate["is_published"] and source_signal_event_ids:
+            synthesize_task_id = await self._queue_repository.enqueue(
+                stock_id=stock_id,
+                task_type=SYNTHESIZE,
+                priority=priority,
+                source_signal_event_ids=source_signal_event_ids,
+                task_context={
+                    "final_signal_id": int(final_signal["id"]),
+                    "stock_code": stock_code,
+                    "run_key": "ML",
+                },
+                dedupe=True,
+            )
+
         return {
             "analysis_result_id": analysis_result["id"],
             "final_signal_id": final_signal["id"],
@@ -130,6 +158,7 @@ class AggregateSignalTaskHandler:
             "warning_level": aggregate["warning_level"],
             "needs_review": aggregate["needs_review"],
             "is_published": aggregate["is_published"],
+            "synthesize_task_id": synthesize_task_id,
         }
 
 

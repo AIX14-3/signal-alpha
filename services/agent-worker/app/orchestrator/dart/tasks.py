@@ -10,9 +10,17 @@ from app.agents.dart.graph import DartAnalysisGraphAgent
 from app.analyzers.dart.financials import extract_dart_financial_metrics
 from app.analyzers.dart.llm import DartLlmAnalyzer
 from app.analyzers.dart.rules import classify_dart_report, make_dart_event_hash
+from app.analyzers.dart.embedding_features import mean_vector
 from app.collectors.dart.disclosure import DartCollector, DartDisclosureClient
+from app.collectors.report.parsers.chunker import chunk_text
+from app.embeddings.provider import get_embedding_provider, to_pgvector
 from app.orchestrator.persistence import CollectionPersistence
-from app.orchestrator.queue.task_types import AGGREGATE_SIGNAL, ANALYZE_DART, NORMALIZE_DART
+from app.orchestrator.queue.task_types import (
+    ANALYZE_DART,
+    EMBED_DART,
+    ML_INFER,
+    NORMALIZE_DART,
+)
 from signal_alpha_data_access.repositories import (
     AnalysisRepository,
     DartRepository,
@@ -167,6 +175,19 @@ class DartNormalizeTaskHandler:
                 dedupe=True,
             )
             analysis_task_ids.append(analysis_task_id)
+            # 결정론 전처리: 공시 본문을 BGE-M3로 임베딩해 dart_chunks 적재(생성형 LLM 미사용).
+            # 파싱/임베딩 실패를 분석과 격리하고 독립 재시도하도록 별도 EMBED_DART 태스크로 분리.
+            await self._queue_repository.enqueue(
+                stock_id=int(row["stock_id"]),
+                task_type=EMBED_DART,
+                priority="batch",
+                task_context={
+                    "stock_code": stock_code,
+                    "source_type": "DART",
+                    "raw_document_id": int(row["raw_document_id"]),
+                },
+                dedupe=True,
+            )
 
         return {
             "normalized_count": len(rows),
@@ -174,6 +195,125 @@ class DartNormalizeTaskHandler:
             "analysis_task_id": analysis_task_ids[0] if analysis_task_ids else None,
             "analysis_task_ids": analysis_task_ids,
         }
+
+
+class DartEmbedTaskHandler:
+    """DART 공시 본문 임베딩(결정론 전처리) — BGE-M3(1024d) → dart_chunks 적재.
+
+    1. task_context.raw_document_id 로 공시 원문(extra_payload.document_text 우선,
+       없으면 report_name)을 회수
+    2. report와 동일한 chunker로 분할 → BGE-M3로 임베딩(고정 가중치 = 결정론)
+    3. dart_chunks 적재. UNIQUE(raw_document_id, chunk_index) → ON CONFLICT DO NOTHING 으로 멱등.
+
+    생성형 LLM은 쓰지 않는다(docs/design/worker-redesign.md). 적재된 임베딩은 추후
+    DART 분석기의 결정론 피처(유사도·신규성 등)로 소비된다.
+    """
+
+    def __init__(self, connection: Any) -> None:
+        self._connection = connection
+        self._raw_detail_repository = RawDetailRepository(connection)
+
+    async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
+        task_context = _task_context(task.get("task_context"))
+        raw_document_id = task_context.get("raw_document_id")
+        if raw_document_id is None:
+            return {"status": "skipped", "reason": "raw_document_id_required"}
+        raw_document_id = int(raw_document_id)
+
+        rows = await self._raw_detail_repository.list_dart_documents_by_raw_ids([raw_document_id])
+        if not rows:
+            return {"status": "not_found", "raw_document_id": raw_document_id}
+        row = rows[0]
+
+        # 본문이 있을 때만 임베딩한다 — 제목만 있는 공시(report_name 폴백)는 임베딩
+        # 가치가 낮고 BGE-M3 호출만 낭비하므로 건너뛴다.
+        full_text = _dart_document_text(row)
+        if not full_text:
+            return {"status": "no_document_text", "raw_document_id": raw_document_id}
+        chunks = chunk_text(full_text)
+        if not chunks:
+            return {"status": "no_text", "raw_document_id": raw_document_id}
+
+        embeddings = await get_embedding_provider().embed(chunks)
+        stock_id = int(row["stock_id"])
+        for idx, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
+            await self._connection.execute(
+                """
+                INSERT INTO dart_chunks (
+                    raw_document_id, stock_id, chunk_index,
+                    chunk_text, token_count, embedding
+                ) VALUES ($1, $2, $3, $4, $5, $6::vector)
+                ON CONFLICT (raw_document_id, chunk_index) DO NOTHING
+                """,
+                raw_document_id,
+                stock_id,
+                idx,
+                chunk,
+                len(chunk.split()),
+                to_pgvector(embedding),
+            )
+
+        novelty = await self._upsert_document_features(
+            raw_document_id=raw_document_id,
+            stock_id=stock_id,
+            embeddings=embeddings,
+        )
+
+        return {
+            "status": "embedded",
+            "raw_document_id": raw_document_id,
+            "chunks": len(chunks),
+            "mean_prior_distance": novelty,
+        }
+
+    async def _upsert_document_features(
+        self,
+        *,
+        raw_document_id: int,
+        stock_id: int,
+        embeddings: list[list[float]],
+    ) -> float | None:
+        """결정론 임베딩 피처(신규성)를 dart_document_features에 적재.
+
+        현재 공시 중심벡터 ↔ 같은 종목의 선적재 공시 청크들의 평균 코사인거리(pgvector
+        `<=>`)를 DB에서 계산한다(1024차원 raw를 모델에 직접 넣지 않음 = 과적합 방지).
+        과거 공시가 없으면 거리 NULL(insufficient_history). 같은 입력·적재순서 → 같은 값.
+        """
+        centroid = mean_vector(embeddings)
+        if not centroid:
+            return None
+        feature_row = await self._connection.fetchrow(
+            """
+            SELECT AVG(embedding <=> $1::vector) AS mean_prior_distance,
+                   COUNT(*) AS prior_chunk_count
+            FROM dart_chunks
+            WHERE stock_id = $2 AND raw_document_id <> $3
+            """,
+            to_pgvector(centroid),
+            stock_id,
+            raw_document_id,
+        )
+        mean_prior_distance = feature_row["mean_prior_distance"] if feature_row else None
+        prior_chunk_count = (
+            int(feature_row["prior_chunk_count"])
+            if feature_row and feature_row["prior_chunk_count"] is not None
+            else 0
+        )
+        await self._connection.execute(
+            """
+            INSERT INTO dart_document_features (
+                raw_document_id, stock_id, mean_prior_distance, prior_chunk_count
+            ) VALUES ($1, $2, $3, $4)
+            ON CONFLICT (raw_document_id) DO UPDATE
+                SET mean_prior_distance = EXCLUDED.mean_prior_distance,
+                    prior_chunk_count = EXCLUDED.prior_chunk_count
+            """,
+            raw_document_id,
+            stock_id,
+            float(mean_prior_distance) if mean_prior_distance is not None else None,
+            prior_chunk_count,
+        )
+        return float(mean_prior_distance) if mean_prior_distance is not None else None
 
 
 class DartAnalyzeTaskHandler:
@@ -254,23 +394,32 @@ class DartAnalyzeTaskHandler:
             llm_model=result.llm_model,
             prompt_ver=result.prompt_ver,
         )
-        aggregate_task_id = await self._queue_repository.enqueue(
+        # 선형 파이프라인: 분석 → ML_INFER → META_COMBINE → 게이트2(AGGREGATE) → 종합 → veto.
+        # 게이트2가 메타러너의 모델 신뢰도까지 보고 발행 판정하도록 ML_INFER를 먼저 인큐한다.
+        # AGGREGATE가 나중에 필요로 하는 컨텍스트(소스 분석결과·signal_date)는 aggregate_ctx로
+        # 실어 ML→META가 불투명하게 통과시킨다.
+        aggregate_ctx = {
+            "stock_code": task_context.get("stock_code"),
+            "signal_date": analysis_date.isoformat(),
+            "run_key": "AGGREGATED",
+            "aggregation_key": f"AGGREGATED:{stock_id}:{analysis_date.isoformat()}:final-agg-v1",
+            "source_analysis_result_ids": [int(analysis_result["id"])],
+        }
+        ml_infer_task_id = await self._queue_repository.enqueue(
             stock_id=stock_id,
-            task_type=AGGREGATE_SIGNAL,
+            task_type=ML_INFER,
             priority="batch",
-            source_analysis_result_ids=[int(analysis_result["id"])],
             task_context={
                 "stock_code": task_context.get("stock_code"),
-                "signal_date": analysis_date.isoformat(),
-                "run_key": "AGGREGATED",
-                "aggregation_key": f"AGGREGATED:{stock_id}:{analysis_date.isoformat()}:final-agg-v1",
+                "run_key": "ML",
+                "aggregate_ctx": aggregate_ctx,
             },
             dedupe=True,
         )
         return {
             "analysis_result_id": analysis_result["id"],
             "agent_result_id": agent_result["id"],
-            "aggregate_task_id": aggregate_task_id,
+            "ml_infer_task_id": ml_infer_task_id,
             "analyzed_count": len(events),
             "direction": result.direction,
             "score": result.score,
@@ -403,14 +552,20 @@ def _dart_client_from_settings(settings: Any) -> DartDisclosureClient:
     )
 
 
-def _dart_evidence_text(row: Mapping[str, Any]) -> str:
+def _dart_document_text(row: Mapping[str, Any]) -> str | None:
+    """공시 본문(extra_payload.document_text)만 반환. 본문이 없으면 None.
+
+    임베딩은 본문이 있을 때만 의미가 있으므로 제목(report_name) 폴백을 쓰지 않는다.
+    """
     extra_payload = row.get("extra_payload") or {}
     if isinstance(extra_payload, str):
         extra_payload = json.loads(extra_payload)
     document_text = extra_payload.get("document_text")
-    if document_text:
-        return str(document_text)
-    return str(row["report_name"])
+    return str(document_text) if document_text else None
+
+
+def _dart_evidence_text(row: Mapping[str, Any]) -> str:
+    return _dart_document_text(row) or str(row["report_name"])
 
 
 def _truthy(value: Any) -> bool:

@@ -1,0 +1,89 @@
+"""META_COMBINE 큐 핸들러 — 메타러너 stacking 결합 단계.
+
+ML_INFER가 적재한 ml_inferences(모델별 pred_vol)를 읽어 ``meta_learner.combine`` 으로
+하나의 결합 변동성 + 신뢰도로 합치고 meta_signals에 멱등 적재한다. ML_INFER가 성공 추론이
+있을 때 이 태스크를 enqueue 한다(task_context: run_key, asof_date, horizon).
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Any
+
+from app.ml.inference import DEFAULT_HORIZON, DEFAULT_RUN_KEY
+from app.ml.meta_learner import combine, load_weights
+from app.orchestrator.queue.context import enqueue_aggregate, parse_task_context
+
+
+class MetaCombineTaskHandler:
+    def __init__(self, connection: Any) -> None:
+        from signal_alpha_data_access.repositories import (
+            MetaSignalRepository,
+            MlInferenceRepository,
+            ProcessingQueueRepository,
+        )
+
+        self._inferences = MlInferenceRepository(connection)
+        self._meta = MetaSignalRepository(connection)
+        self._queue = ProcessingQueueRepository(connection)
+
+    async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
+        stock_id = int(task["stock_id"])
+        ctx = parse_task_context(task.get("task_context"))
+        run_key = str(ctx.get("run_key") or DEFAULT_RUN_KEY)
+        asof_date = ctx.get("asof_date")
+        horizon = int(ctx.get("horizon") or DEFAULT_HORIZON)
+        aggregate_ctx = ctx.get("aggregate_ctx")
+        if not asof_date:
+            # 결합 불가여도 선형 체인은 끊지 않는다 → 게이트2로 진행.
+            await enqueue_aggregate(
+                self._queue,
+                stock_id=stock_id,
+                aggregate_ctx=aggregate_ctx,
+                priority=str(ctx.get("priority") or "batch"),
+            )
+            return {"stock_id": stock_id, "skipped_reason": "asof_date_required"}
+
+        rows = [
+            dict(row)
+            for row in await self._inferences.list_for_run(
+                stock_id=stock_id, run_key=run_key, asof_date=asof_date, horizon=horizon
+            )
+        ]
+        predictions = {
+            str(row["model_name"]): float(row["pred_value"])
+            for row in rows
+            if row.get("pred_value") is not None and bool(row.get("gate_passed", True))
+        }
+
+        result = combine(predictions, weights=load_weights())
+        await self._meta.upsert_meta_signal(
+            stock_id=stock_id,
+            run_key=run_key,
+            asof_date=asof_date,
+            horizon=horizon,
+            combined_vol=result.combined_vol,
+            confidence=result.confidence,
+            method=result.method,
+            model_count=result.model_count,
+            weight_breakdown=result.weight_breakdown,
+        )
+        # 선형 체인: 메타러너 결합(모델 신뢰도) 적재 후 게이트2(AGGREGATE)로 — 게이트2가
+        # 이 meta_signal을 읽어 발행 판정에 반영한다.
+        aggregate_task_id = await enqueue_aggregate(
+            self._queue,
+            stock_id=stock_id,
+            aggregate_ctx=aggregate_ctx,
+            priority=str(ctx.get("priority") or "batch"),
+        )
+        return {
+            "stock_id": stock_id,
+            "aggregate_task_id": aggregate_task_id,
+            "run_key": run_key,
+            "asof_date": asof_date,
+            "horizon": horizon,
+            "combined_vol": result.combined_vol,
+            "confidence": result.confidence,
+            "method": result.method,
+            "model_count": result.model_count,
+        }

@@ -1,0 +1,198 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="1200" viewBox="0 0 1100 1200" font-family="'Segoe UI','Malgun Gothic','Noto Sans KR',sans-serif">
+  <defs>
+    <marker id="arrow" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L7,3 L0,6 Z" fill="#475569"/>
+    </marker>
+    <marker id="arrowDash" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L7,3 L0,6 Z" fill="#94a3b8"/>
+    </marker>
+    <marker id="arrowMl" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L7,3 L0,6 Z" fill="#22c55e"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1100" height="1200" fill="#ffffff"/>
+  <text x="40" y="40" font-size="22" font-weight="700" fill="#0f172a">Signal Alpha — 게이트형 워커 파이프라인</text>
+  <text x="40" y="62" font-size="13" fill="#64748b">수집 → 게이트1 → 전처리 → 적재 → ML/DL → 메타러너 → 게이트2(소스 합의) → LLM 종합 → 리스크 veto(정제 루프) → 리포트</text>
+
+  <!-- ============ EDGES (drawn first, nodes paint on top) ============ -->
+  <g stroke="#475569" stroke-width="1.6" fill="none">
+    <line x1="470" y1="142" x2="470" y2="173" marker-end="url(#arrow)"/>
+    <line x1="470" y1="283" x2="470" y2="306" marker-end="url(#arrow)"/>
+    <line x1="620" y1="228" x2="703" y2="200" marker-end="url(#arrow)"/>
+    <path d="M575,257 C650,292 670,302 703,302" marker-end="url(#arrow)"/>
+    <line x1="470" y1="376" x2="470" y2="405" marker-end="url(#arrow)"/>
+    <line x1="470" y1="469" x2="470" y2="500" marker-end="url(#arrow)"/>
+    <line x1="470" y1="564" x2="470" y2="595" marker-end="url(#arrow)"/>
+    <line x1="470" y1="659" x2="470" y2="665" marker-end="url(#arrow)"/>
+    <!-- G2 -> NR (약함) -->
+    <path d="M305,725 C235,760 185,800 185,908" marker-end="url(#arrow)"/>
+    <!-- G2 -> L (발행) -->
+    <line x1="470" y1="785" x2="470" y2="815" marker-end="url(#arrow)"/>
+    <!-- L -> V -->
+    <line x1="470" y1="879" x2="470" y2="885" marker-end="url(#arrow)"/>
+    <!-- V -> O (통과) -->
+    <line x1="470" y1="985" x2="470" y2="1025" marker-end="url(#arrow)"/>
+    <!-- V -> NR (정제 후에도 치명) -->
+    <line x1="320" y1="935" x2="282" y2="932" marker-end="url(#arrow)"/>
+  </g>
+
+  <!-- dashed edges (정제 루프 / 관측) -->
+  <g stroke="#94a3b8" stroke-width="1.5" fill="none" stroke-dasharray="5 4">
+    <!-- V -.-> L (치명 키워드 → 정제 1회) -->
+    <path d="M620,935 C690,910 690,860 589,845" marker-end="url(#arrowDash)"/>
+    <!-- LS -.-> L (관측) -->
+    <line x1="260" y1="843" x2="353" y2="849" marker-end="url(#arrowDash)"/>
+  </g>
+
+  <!-- ml 데이터 참조: meta_signal(결합 변동성·신뢰도)을 게이트2가 아니라 끝단 SYNTHESIZE가 ml_risk로 읽는다 -->
+  <g stroke="#22c55e" stroke-width="1.5" fill="none" stroke-dasharray="5 4">
+    <!-- E (메타러너) -.-> L (LLM 종합), 우측 우회로 게이트2를 가로지르지 않음 -->
+    <path d="M585,627 C688,660 688,800 589,840" marker-end="url(#arrowMl)"/>
+  </g>
+
+  <!-- ============ EDGE LABELS ============ -->
+  <g font-size="11.5" text-anchor="middle">
+    <g fill="#16a34a"><text x="470" y="300">통과 ✓</text></g>
+    <g fill="#b45309"><text x="690" y="205">일시적 실패 (retry 초과)</text></g>
+    <g fill="#b91c1c"><text x="643" y="300">구조적 실패 (손상)</text></g>
+    <g fill="#15803d"><text x="568" y="490">ML_INFER (OHLCV)</text></g>
+    <g fill="#b45309"><text x="232" y="770">약함 (warning_level=WARNING)</text></g>
+    <g fill="#16a34a"><text x="500" y="805">발행</text></g>
+    <g fill="#16a34a"><text x="556" y="1010">통과 (키워드 없음)</text></g>
+    <g fill="#b91c1c"><text x="300" y="908">정제 후에도 치명 → 미발행</text></g>
+    <g fill="#a855f7"><text x="745" y="892">치명 키워드 → 정제 (1회)</text></g>
+    <g fill="#a855f7"><text x="300" y="868">관측만</text></g>
+    <g fill="#166534"><text x="722" y="702">결합 변동성·신뢰도 → ml_risk</text></g>
+  </g>
+
+  <!-- ============ NODES ============ -->
+  <!-- A 수집기 (det) -->
+  <g>
+    <rect x="290" y="86" width="360" height="56" rx="9" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.5"/>
+    <text x="470" y="108" text-anchor="middle" font-size="14" font-weight="700" fill="#1e3a8a">수집기</text>
+    <text x="470" y="128" text-anchor="middle" font-size="10.5" fill="#1e40af">DART · PRICE · REPORT · HIRING · PATENT · DATALAB</text>
+  </g>
+
+  <!-- G1 게이트1 (det, diamond) -->
+  <g>
+    <polygon points="470,173 620,228 470,283 320,228" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.5"/>
+    <text x="470" y="222" text-anchor="middle" font-size="13" font-weight="700" fill="#1e3a8a">게이트1</text>
+    <text x="470" y="240" text-anchor="middle" font-size="10.5" fill="#1e40af">데이터 검증 (hiring 3c 등)</text>
+  </g>
+
+  <!-- DLQ (det) -->
+  <g>
+    <rect x="703" y="170" width="234" height="60" rx="9" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.5"/>
+    <text x="820" y="194" text-anchor="middle" font-size="13" font-weight="700" fill="#1e3a8a">dead_letter (DLQ)</text>
+    <text x="820" y="214" text-anchor="middle" font-size="10.5" fill="#1e40af">아카이브 + replay</text>
+  </g>
+
+  <!-- Q quarantine (det) -->
+  <g>
+    <rect x="703" y="274" width="234" height="60" rx="9" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.5"/>
+    <text x="820" y="298" text-anchor="middle" font-size="13" font-weight="700" fill="#1e3a8a">quarantine + 알림</text>
+    <text x="820" y="318" text-anchor="middle" font-size="10.5" fill="#1e40af">hiring_quarantine</text>
+  </g>
+
+  <!-- B 소스별 전처리 (det) -->
+  <g>
+    <rect x="320" y="306" width="300" height="70" rx="9" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.5"/>
+    <text x="470" y="330" text-anchor="middle" font-size="14" font-weight="700" fill="#1e3a8a">소스별 전처리 (분석기)</text>
+    <text x="470" y="349" text-anchor="middle" font-size="10.5" fill="#1e40af">규칙 · 임베딩 · 통계지표 → 피처 (결정론)</text>
+    <text x="470" y="366" text-anchor="middle" font-size="9.5" fill="#1e40af">DART규칙+공시임베딩 · PRICE지표 · DataLab지표 · Report RAG검색</text>
+  </g>
+
+  <!-- C 데이터 적재 (det) -->
+  <g>
+    <rect x="355" y="405" width="230" height="64" rx="9" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.5"/>
+    <text x="470" y="429" text-anchor="middle" font-size="14" font-weight="700" fill="#1e3a8a">데이터 적재</text>
+    <text x="470" y="448" text-anchor="middle" font-size="10.5" fill="#1e40af">PostgreSQL · pgvector</text>
+    <text x="470" y="463" text-anchor="middle" font-size="9.5" fill="#1e40af">결정론 신호 · 피처 · 임베딩</text>
+  </g>
+
+  <!-- D ML/DL 추론 (ml) -->
+  <g>
+    <rect x="355" y="500" width="230" height="64" rx="9" fill="#dcfce7" stroke="#22c55e" stroke-width="1.5"/>
+    <text x="470" y="524" text-anchor="middle" font-size="14" font-weight="700" fill="#14532d">ML/DL 추론 (게이트 통과만)</text>
+    <text x="470" y="543" text-anchor="middle" font-size="9.5" fill="#166534">EWMA·HAR-RV·GARCH·LightGBM·GPU</text>
+    <text x="470" y="558" text-anchor="middle" font-size="9.5" fill="#166534">ml_inferences 적재</text>
+  </g>
+
+  <!-- E 메타러너 (ml) -->
+  <g>
+    <rect x="355" y="595" width="230" height="64" rx="9" fill="#dcfce7" stroke="#22c55e" stroke-width="1.5"/>
+    <text x="470" y="619" text-anchor="middle" font-size="14" font-weight="700" fill="#14532d">메타러너 결합 (stacking)</text>
+    <text x="470" y="638" text-anchor="middle" font-size="10.5" fill="#166534">META_COMBINE → meta_signals</text>
+    <text x="470" y="653" text-anchor="middle" font-size="9.5" fill="#166534">학습 가중 · 없으면 균등 폴백</text>
+  </g>
+
+  <!-- G2 게이트2 (ml, diamond) -->
+  <g>
+    <polygon points="470,665 635,725 470,785 305,725" fill="#dcfce7" stroke="#22c55e" stroke-width="1.5"/>
+    <text x="470" y="713" text-anchor="middle" font-size="13" font-weight="700" fill="#14532d">게이트2 = 신호 품질(소스 합의)</text>
+    <text x="470" y="731" text-anchor="middle" font-size="10" fill="#166534">consensus · warning_level</text>
+    <text x="470" y="747" text-anchor="middle" font-size="10" fill="#166534">발행 여부 판정 (WARNING이면 미발행)</text>
+  </g>
+
+  <!-- L LLM 종합 (llm) -->
+  <g>
+    <rect x="355" y="815" width="232" height="64" rx="9" fill="#fef9c3" stroke="#eab308" stroke-width="1.5"/>
+    <text x="471" y="841" text-anchor="middle" font-size="14" font-weight="700" fill="#713f12">LLM 종합 · 설명</text>
+    <text x="471" y="861" text-anchor="middle" font-size="10.5" fill="#854d0e">SYNTHESIZE (내러티브)</text>
+  </g>
+
+  <!-- V 리스크 veto (det, diamond) -->
+  <g>
+    <polygon points="470,885 620,935 470,985 320,935" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.5"/>
+    <text x="470" y="930" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1e3a8a">리스크 veto</text>
+    <text x="470" y="947" text-anchor="middle" font-size="9" fill="#1e40af">치명 키워드 검사</text>
+    <text x="470" y="959" text-anchor="middle" font-size="9" fill="#1e40af">(데이터 + LLM 텍스트)</text>
+  </g>
+
+  <!-- NR needs_review (ml) -->
+  <g>
+    <rect x="60" y="908" width="222" height="54" rx="9" fill="#dcfce7" stroke="#22c55e" stroke-width="1.5"/>
+    <text x="171" y="932" text-anchor="middle" font-size="13" font-weight="700" fill="#14532d">needs_review</text>
+    <text x="171" y="951" text-anchor="middle" font-size="10.5" fill="#166534">is_published=false (미발행)</text>
+  </g>
+
+  <!-- LS LangSmith (obs, cylinder) -->
+  <g>
+    <path d="M95,820 a76,9 0 0,1 152,0 v30 a76,9 0 0,1 -152,0 z" fill="#fae8ff" stroke="#a855f7" stroke-width="1.5"/>
+    <ellipse cx="171" cy="820" rx="76" ry="9" fill="#fae8ff" stroke="#a855f7" stroke-width="1.5"/>
+    <text x="171" y="841" text-anchor="middle" font-size="12.5" font-weight="700" fill="#581c87">LangSmith 관측·디버깅</text>
+  </g>
+
+  <!-- O 결과물 (out) -->
+  <g>
+    <rect x="355" y="1025" width="230" height="64" rx="9" fill="#f1f5f9" stroke="#64748b" stroke-width="1.5"/>
+    <text x="470" y="1051" text-anchor="middle" font-size="14" font-weight="700" fill="#0f172a">결과물 · 리스크 리포트 (JSON)</text>
+    <text x="470" y="1071" text-anchor="middle" font-size="10.5" fill="#334155">final_signals</text>
+  </g>
+
+  <!-- ============ LEGEND ============ -->
+  <g>
+    <rect x="690" y="980" width="370" height="170" rx="10" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.2"/>
+    <text x="710" y="1008" font-size="13" font-weight="700" fill="#0f172a">범례</text>
+
+    <rect x="710" y="1022" width="22" height="16" rx="4" fill="#dbeafe" stroke="#3b82f6"/>
+    <text x="742" y="1035" font-size="12" fill="#1e3a8a">결정론 (순수 코드)</text>
+
+    <rect x="710" y="1048" width="22" height="16" rx="4" fill="#dcfce7" stroke="#22c55e"/>
+    <text x="742" y="1061" font-size="12" fill="#14532d">ML/DL (백테스트 검증)</text>
+
+    <rect x="710" y="1074" width="22" height="16" rx="4" fill="#fef9c3" stroke="#eab308"/>
+    <text x="742" y="1087" font-size="12" fill="#713f12">LLM (비결정, 끝단만)</text>
+
+    <rect x="710" y="1100" width="22" height="16" rx="4" fill="#fae8ff" stroke="#a855f7"/>
+    <text x="742" y="1113" font-size="12" fill="#581c87">관측 (LangSmith)</text>
+
+    <line x1="900" y1="1032" x2="940" y2="1032" stroke="#475569" stroke-width="1.6" marker-end="url(#arrow)"/>
+    <text x="948" y="1036" font-size="11.5" fill="#475569">흐름</text>
+    <line x1="900" y1="1084" x2="940" y2="1084" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#arrowDash)"/>
+    <text x="948" y="1088" font-size="11.5" fill="#94a3b8">정제·관측</text>
+    <line x1="900" y1="1110" x2="940" y2="1110" stroke="#22c55e" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#arrowMl)"/>
+    <text x="948" y="1114" font-size="11.5" fill="#166534">ml 데이터(meta→종합)</text>
+  </g>
+</svg>
