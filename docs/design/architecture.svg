@@ -6,11 +6,14 @@
     <marker id="arrowDash" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
       <path d="M0,0 L7,3 L0,6 Z" fill="#94a3b8"/>
     </marker>
+    <marker id="arrowMl" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L7,3 L0,6 Z" fill="#22c55e"/>
+    </marker>
   </defs>
 
   <rect x="0" y="0" width="1100" height="1200" fill="#ffffff"/>
   <text x="40" y="40" font-size="22" font-weight="700" fill="#0f172a">Signal Alpha — 게이트형 워커 파이프라인</text>
-  <text x="40" y="62" font-size="13" fill="#64748b">수집 → 게이트1 → 전처리 → 적재 → ML/DL → 메타러너 → 게이트2(신호·모델 품질) → LLM 종합 → 리스크 veto(정제 루프) → 리포트</text>
+  <text x="40" y="62" font-size="13" fill="#64748b">수집 → 게이트1 → 전처리 → 적재 → ML/DL → 메타러너 → 게이트2(소스 합의) → LLM 종합 → 리스크 veto(정제 루프) → 리포트</text>
 
   <!-- ============ EDGES (drawn first, nodes paint on top) ============ -->
   <g stroke="#475569" stroke-width="1.6" fill="none">
@@ -42,18 +45,25 @@
     <line x1="260" y1="843" x2="353" y2="849" marker-end="url(#arrowDash)"/>
   </g>
 
+  <!-- ml 데이터 참조: meta_signal(결합 변동성·신뢰도)을 게이트2가 아니라 끝단 SYNTHESIZE가 ml_risk로 읽는다 -->
+  <g stroke="#22c55e" stroke-width="1.5" fill="none" stroke-dasharray="5 4">
+    <!-- E (메타러너) -.-> L (LLM 종합), 우측 우회로 게이트2를 가로지르지 않음 -->
+    <path d="M585,627 C688,660 688,800 589,840" marker-end="url(#arrowMl)"/>
+  </g>
+
   <!-- ============ EDGE LABELS ============ -->
   <g font-size="11.5" text-anchor="middle">
     <g fill="#16a34a"><text x="470" y="300">통과 ✓</text></g>
     <g fill="#b45309"><text x="690" y="205">일시적 실패 (retry 초과)</text></g>
     <g fill="#b91c1c"><text x="643" y="300">구조적 실패 (손상)</text></g>
     <g fill="#15803d"><text x="568" y="490">ML_INFER (OHLCV)</text></g>
-    <g fill="#b45309"><text x="232" y="770">약함 (합의/신뢰도 미달)</text></g>
+    <g fill="#b45309"><text x="232" y="770">약함 (warning_level=WARNING)</text></g>
     <g fill="#16a34a"><text x="500" y="805">발행</text></g>
     <g fill="#16a34a"><text x="556" y="1010">통과 (키워드 없음)</text></g>
     <g fill="#b91c1c"><text x="300" y="908">정제 후에도 치명 → 미발행</text></g>
     <g fill="#a855f7"><text x="745" y="892">치명 키워드 → 정제 (1회)</text></g>
     <g fill="#a855f7"><text x="300" y="868">관측만</text></g>
+    <g fill="#166534"><text x="722" y="702">결합 변동성·신뢰도 → ml_risk</text></g>
   </g>
 
   <!-- ============ NODES ============ -->
@@ -120,9 +130,9 @@
   <!-- G2 게이트2 (ml, diamond) -->
   <g>
     <polygon points="470,665 635,725 470,785 305,725" fill="#dcfce7" stroke="#22c55e" stroke-width="1.5"/>
-    <text x="470" y="713" text-anchor="middle" font-size="13" font-weight="700" fill="#14532d">게이트2 = 신호·모델 품질</text>
-    <text x="470" y="731" text-anchor="middle" font-size="10" fill="#166534">consensus · warning · 모델 신뢰도</text>
-    <text x="470" y="747" text-anchor="middle" font-size="10" fill="#166534">발행 여부 판정</text>
+    <text x="470" y="713" text-anchor="middle" font-size="13" font-weight="700" fill="#14532d">게이트2 = 신호 품질(소스 합의)</text>
+    <text x="470" y="731" text-anchor="middle" font-size="10" fill="#166534">consensus · warning_level</text>
+    <text x="470" y="747" text-anchor="middle" font-size="10" fill="#166534">발행 여부 판정 (WARNING이면 미발행)</text>
   </g>
 
   <!-- L LLM 종합 (llm) -->
@@ -182,5 +192,7 @@
     <text x="948" y="1036" font-size="11.5" fill="#475569">흐름</text>
     <line x1="900" y1="1084" x2="940" y2="1084" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#arrowDash)"/>
     <text x="948" y="1088" font-size="11.5" fill="#94a3b8">정제·관측</text>
+    <line x1="900" y1="1110" x2="940" y2="1110" stroke="#22c55e" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#arrowMl)"/>
+    <text x="948" y="1114" font-size="11.5" fill="#166534">ml 데이터(meta→종합)</text>
   </g>
 </svg>

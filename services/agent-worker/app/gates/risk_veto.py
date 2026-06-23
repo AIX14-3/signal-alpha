@@ -86,7 +86,7 @@ def scan_for_veto(
 class RiskVetoTaskHandler:
     """RISK_VETO 큐 핸들러 — 종목 증거를 스캔해 치명 키워드 시 발행 보류."""
 
-    def __init__(self, connection: Any) -> None:
+    def __init__(self, connection: Any, *, settings: Any = None) -> None:
         from signal_alpha_data_access.repositories import (
             AnalysisRepository,
             NormalizationRepository,
@@ -96,6 +96,22 @@ class RiskVetoTaskHandler:
         self._analysis = AnalysisRepository(connection)
         self._normalization = NormalizationRepository(connection)
         self._queue = ProcessingQueueRepository(connection)
+        self._settings = settings
+
+    def _llm_refine_available(self) -> bool:
+        """끝단 종합 LLM이 구성돼 있어 정제 루프가 의미가 있는지.
+
+        LLM이 없으면 정제 패스의 SYNTHESIZE는 신호를 바꾸지 못하고(결정론 폴백) RISK_VETO만 한 번
+        더 돌다 결국 같은 보류로 끝난다. 그 무의미한 왕복을 피하려 LLM 미구성 시 정제를 건너뛴다.
+        """
+        from app.synthesis.tasks import synthesis_llm_enabled
+
+        settings = self._settings
+        if settings is None:
+            from app.core.config import get_settings
+
+            settings = get_settings()
+        return synthesis_llm_enabled(settings)
 
     async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
         stock_id = int(task["stock_id"])
@@ -128,10 +144,12 @@ class RiskVetoTaskHandler:
 
         # 리스크 veto는 LLM 종합 "뒤"에서 동작한다. 치명 키워드가 나와도 미발행으로 버리지 않고
         # LLM 정제(리스크 강조)를 1회 거친다. 정제 후에도 치명적이면 그때 발행 보류(needs_review).
+        # 단, LLM이 구성돼 있지 않으면 정제는 무동작이므로 정제 왕복 없이 곧장 보류한다.
         applied = False
         synthesize_task_id: int | None = None
         if decision.vetoed and final_signal_id is not None:
-            if not refined:
+            do_refine = not refined and self._llm_refine_available()
+            if do_refine:
                 synthesize_task_id = await self._queue.enqueue(
                     stock_id=stock_id,
                     task_type=SYNTHESIZE,
@@ -148,13 +166,14 @@ class RiskVetoTaskHandler:
                     dedupe=True,
                 )
             else:
+                reason = "정제 후에도 치명" if refined else "LLM 미구성 → 정제 생략"
                 await self._analysis.apply_risk_veto(final_signal_id=int(final_signal_id))
                 await self._normalization.record_validation_log(
                     target_type="final_signal",
                     target_id_int=int(final_signal_id),
                     validation_type="risk_veto",
                     passed=False,
-                    message="risk_veto(정제 후에도 치명): " + ", ".join(decision.matched_keywords),
+                    message=f"risk_veto({reason}): " + ", ".join(decision.matched_keywords),
                 )
                 applied = True
 

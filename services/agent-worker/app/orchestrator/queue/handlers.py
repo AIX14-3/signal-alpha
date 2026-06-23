@@ -78,7 +78,7 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
         AGGREGATE_SIGNAL: AggregateSignalTaskHandler(connection),
         ML_INFER: MlInferTaskHandler(connection),
         META_COMBINE: MetaCombineTaskHandler(connection),
-        RISK_VETO: RiskVetoTaskHandler(connection),
+        RISK_VETO: RiskVetoTaskHandler(connection, settings=settings),
         SYNTHESIZE: SynthesizeTaskHandler(connection, settings=settings),
         COLLECT_REPORT: ReportCollectTaskHandler(connection=connection, settings=settings),
         PROCESS_REPORT: ReportProcessTaskHandler(connection=connection, settings=settings),

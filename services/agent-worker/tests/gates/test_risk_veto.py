@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import os
 import unittest
+from types import SimpleNamespace
+from unittest import mock
 
 from app.gates.risk_veto import RiskVetoTaskHandler, scan_for_veto
 from app.gates.rules.veto_keywords import veto_keywords
@@ -90,21 +93,29 @@ class _FakeConnection:
 
 
 class RiskVetoTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
-    async def test_fatal_keyword_first_pass_triggers_refine_not_unpublish(self):
-        # veto는 LLM 종합 뒤에서 동작 — 치명 키워드라도 미발행으로 버리지 않고 정제로 돌린다.
+    async def test_fatal_keyword_first_pass_triggers_refine_when_llm_on(self):
+        # LLM 종합이 켜져 있으면 — 치명 키워드라도 미발행으로 버리지 않고 정제(refine)로 돌린다.
         rows = [
             {"title": "감사보고서", "summary": "감사의견거절", "evidence_text": "계속기업 불확실성"},
         ]
         connection = _FakeConnection(rows)
-        handler = RiskVetoTaskHandler(connection)
+        handler = RiskVetoTaskHandler(connection, settings=SimpleNamespace(gemini_api_key="k"))
 
-        result = await handler(
+        with mock.patch.dict(
+            os.environ,
             {
-                "stock_id": 10,
-                "source_signal_event_ids": [101, 102],
-                "task_context": {"final_signal_id": 55},
-            }
-        )
+                "SYNTHESIS_USE_LLM": "1",
+                "SYNTHESIS_LLM_MODEL": "test-model",
+                "SYNTHESIS_LLM_PROVIDER": "gemini",
+            },
+        ):
+            result = await handler(
+                {
+                    "stock_id": 10,
+                    "source_signal_event_ids": [101, 102],
+                    "task_context": {"final_signal_id": 55},
+                }
+            )
 
         self.assertTrue(result["vetoed"])
         self.assertFalse(result["applied"])  # 미발행 아님
@@ -116,6 +127,23 @@ class RiskVetoTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         synth = [a for a in connection.enqueued if a[1] == "synthesize"]
         self.assertEqual(len(synth), 1)
         self.assertTrue(json.loads(synth[0][6])["refine"])
+
+    async def test_fatal_keyword_first_pass_holds_directly_when_llm_off(self):
+        # LLM 미구성(기본 배포)이면 정제는 무동작이므로 정제 왕복 없이 곧장 발행 보류.
+        rows = [{"title": "감사보고서", "summary": "감사의견거절", "evidence_text": ""}]
+        connection = _FakeConnection(rows)
+        # settings에 api 키 없음 → synthesis_llm_enabled=False → 정제 생략.
+        handler = RiskVetoTaskHandler(connection, settings=SimpleNamespace())
+
+        result = await handler(
+            {"stock_id": 10, "source_signal_event_ids": [101], "task_context": {"final_signal_id": 55}}
+        )
+
+        self.assertTrue(result["vetoed"])
+        self.assertTrue(result["applied"])  # 곧장 보류
+        self.assertFalse(result["refined"])
+        self.assertEqual(connection.veto_applied_id, 55)
+        self.assertEqual([a for a in connection.enqueued if a[1] == "synthesize"], [])  # 정제 생략
 
     async def test_fatal_keyword_after_refine_holds_publication(self):
         # 정제(refine) 후에도 치명적이면 그때 발행 보류(needs_review).

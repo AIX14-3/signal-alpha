@@ -6,7 +6,7 @@ benchmark-kospi20)을 signal-alpha 파이프라인 DB에 적재해 ML/DL(변동�
 
   - stocks       : 20종목 upsert(is_target=TRUE)
   - ohlcv_data   : OHLCV + 외국인/기관/개인 순매수 (UNIQUE stock_id,trade_date)
-  - program_trading / fx_rates : 신규 테이블 (022_kospi20_benchmark_data 마이그레이션)
+  - program_trading / fx_rates : 신규 테이블 (023_kospi20_benchmark_data 마이그레이션)
 
 사용:
     python tools/load_kospi20_benchmark.py \

@@ -29,7 +29,7 @@ signal-alpha agent-worker를 `vol-benchmark`의 [`architecture.mermaid`](./archi
 
 ```
 COLLECT_<SRC> → 게이트1 → NORMALIZE_<SRC> → (EMBED_DART) → ANALYZE_<SRC>   (소스별 전처리)
-        └─(fan-in)→ ML_INFER → META_COMBINE → 게이트2(신호·모델 품질)
+        └─(fan-in)→ ML_INFER → META_COMBINE → 게이트2(소스 합의: consensus·warning_level)
                        ├─ 약함 → needs_review (미발행)
                        └─ 발행 → SYNTHESIZE(LLM 종합) → RISK_VETO(데이터+LLM텍스트 치명키워드)
                                     ├─ 키워드 없음 → 발행(final_signals)
@@ -37,8 +37,11 @@ COLLECT_<SRC> → 게이트1 → NORMALIZE_<SRC> → (EMBED_DART) → ANALYZE_<S
                                     └─ 키워드 & 정제후에도 치명 → needs_review (미발행)
 ```
 
-게이트2는 메타러너 결합(meta_signal: 모델 신뢰도) + consensus·warning_level을 보고 발행/needs_review를
-판정한다. veto는 **LLM 종합 아래**에서 동작하고, 치명 키워드가 나오면 LLM 정제를 1회 거쳐 발행한다.
+게이트2(`aggregation/tasks.py`)는 **consensus·warning_level(소스 합의)** 만 보고 발행/needs_review를
+판정한다(`is_published = warning_level != "WARNING"`). meta_signal(모델 신뢰도)은 게이트2가 읽지
+않고, 끝단 **SYNTHESIZE가 `ml_risk`로 읽어** 리스크 리포트에 싣는다(게이트2 발행 임계 직접 반영은
+아래 "후속(선택)" 항목 참조 — 미구현). veto는 **LLM 종합 아래**에서 동작하고, 치명 키워드가 나오면
+LLM 정제를 1회 거쳐 발행한다.
 
 ### 구현 메모 (선형 체인, ✅ 적용됨)
 - `dart/tasks.py`: 분석 후 트리거 = **`ML_INFER`**. AGGREGATE가 나중에 쓸 컨텍스트
@@ -66,8 +69,8 @@ COLLECT_<SRC> → 게이트1 → NORMALIZE_<SRC> → (EMBED_DART) → ANALYZE_<S
 
 ## 신규 테이블 (forward-only 마이그레이션)
 
-- `018_ml_inferences` — 모델별 `pred_vol`(실패 시 NULL+error), `gate_passed`, `device`. 자연키 멱등.
-- `019_meta_signals` — 결합 변동성/신뢰도/method(`stacking`|`equal_fallback`|`empty`)/weight_breakdown.
+- `019_ml_inferences` — 모델별 `pred_vol`(실패 시 NULL+error), `gate_passed`, `device`. 자연키 멱등.
+- `020_meta_signals` — 결합 변동성/신뢰도/method(`stacking`|`equal_fallback`|`empty`)/weight_breakdown.
 
 리스크 veto·끝단 종합은 신규 테이블 없이 기존 `final_signals`(is_published/needs_review/warning_level/summary)를 재사용한다.
 

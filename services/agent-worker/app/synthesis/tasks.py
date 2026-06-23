@@ -219,15 +219,32 @@ def _with_narrative(report: RiskReport, narrative: RiskNarrative, source: str) -
     )
 
 
+def synthesis_llm_enabled(settings: Any) -> bool:
+    """끝단 종합 LLM이 실제로 구성돼 있는지(=``_build_synthesizer`` 가 클라이언트를 만들 수 있는지).
+
+    ``_build_synthesizer`` 와 **동일 조건**만 평가하되 클라이언트를 만들지 않는다(부작용 없음).
+    RISK_VETO가 'LLM 정제 루프를 돌릴 가치가 있는지' 판단에 쓴다 — LLM이 없으면 정제는 무동작이라
+    정제 왕복 없이 곧장 발행 보류하는 게 맞다(``gates/risk_veto.py`` 참고).
+    """
+    if settings is None:
+        return False
+    if str(os.getenv("SYNTHESIS_USE_LLM") or "").strip().lower() not in {"1", "true", "yes", "on"}:
+        return False
+    if not os.getenv("SYNTHESIS_LLM_MODEL"):
+        return False
+    provider = (os.getenv("SYNTHESIS_LLM_PROVIDER") or "gemini").strip().lower()
+    if provider == "gemini":
+        return bool(getattr(settings, "gemini_api_key", None))
+    if provider == "openai":
+        return bool(getattr(settings, "openai_api_key", None))
+    return False
+
+
 def _build_synthesizer(settings: Any) -> Synthesizer | None:
     """env(SYNTHESIS_*) + settings api 키로 LLM 종합기를 만든다. 미설정 시 None(결정론 폴백)."""
-    if settings is None:
-        return None
-    if str(os.getenv("SYNTHESIS_USE_LLM") or "").strip().lower() not in {"1", "true", "yes", "on"}:
+    if not synthesis_llm_enabled(settings):
         return None
     model = os.getenv("SYNTHESIS_LLM_MODEL")
-    if not model:
-        return None
     provider = (os.getenv("SYNTHESIS_LLM_PROVIDER") or "gemini").strip().lower()
     timeout = float(os.getenv("SYNTHESIS_LLM_TIMEOUT_SECONDS") or 20.0)
 

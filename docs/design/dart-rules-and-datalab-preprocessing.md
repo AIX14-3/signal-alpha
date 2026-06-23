@@ -138,7 +138,7 @@ LLM이 재서술했지만 그 LLM 단계는 제거됨 — 결정론 라벨만 �
 
 ## 관련 파일
 - DART: `analyzers/dart/rules.py`, `financials.py`, `embedding_features.py`,
-  `orchestrator/dart/tasks.py`(EMBED_DART), 마이그레이션 `020_dart_chunks`·`021_dart_document_features`
+  `orchestrator/dart/tasks.py`(EMBED_DART), 마이그레이션 `021_dart_chunks`·`022_dart_document_features`
 - DataLab: `analyzers/datalab/indicators.py`, `rules.py`, `normalize_rules.py`,
   `agents/datalab/lead_lag.py`
 - 설계/원칙: [worker-redesign.md](worker-redesign.md), [architecture.mermaid](architecture.mermaid),

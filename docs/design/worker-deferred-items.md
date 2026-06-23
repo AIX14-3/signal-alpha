@@ -13,7 +13,7 @@
 
 ## 1. `ml_inferences.gate_passed` 컬럼이 사실상 항상 `TRUE`
 - **위치**: `services/agent-worker/app/ml/inference.py` (`upsert_inference(..., gate_passed=True)`),
-  `database/migrations/018_ml_inferences.sql`
+  `database/migrations/019_ml_inferences.sql`
 - **현상**: 추론 전에 `model_registry.resolve_models()`가 게이트 통과+가용 모델만 남기므로,
   적재 단계에 도달하는 행은 전부 `gate_passed=True`. 즉 컬럼에 `FALSE`가 들어올 경로가 없다.
 - **보류 사유**: 버그 아님. 컬럼은 "게이트 탈락 모델도 관측용으로 기록"하는 미래 용도를 위한 여지.
@@ -24,7 +24,7 @@
   (b)면 컬럼 드롭 마이그레이션(forward-only).
 
 ## 2. `ml_inferences` / `meta_signals` 무한 증가(retention 부재)
-- **위치**: `database/migrations/018_ml_inferences.sql`, `019_meta_signals.sql`
+- **위치**: `database/migrations/019_ml_inferences.sql`, `020_meta_signals.sql`
 - **현상**: 종목×asof×모델×horizon 단위로 행이 계속 쌓이고 보존/정리 정책이 없다. FK는 `stocks`만.
 - **보류 사유**: 현 데이터량에선 무방. 조기 파티셔닝/정리는 과설계.
 - **수정 트리거**: 테이블 행수/디스크가 운영상 문제가 되거나, 일/월 단위 적재가 정착돼 증가율이
