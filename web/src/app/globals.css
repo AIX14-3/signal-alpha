@@ -66,11 +66,62 @@ a {
   font-weight: 600;
 }
 
-.converge-bg {
-  background:
-    radial-gradient(60% 60% at 20% 10%, rgba(14, 165, 233, 0.1), transparent 60%),
-    radial-gradient(50% 50% at 85% 20%, rgba(16, 185, 129, 0.1), transparent 60%),
-    var(--color-bg);
+/* ---------- Converging-signals 배경 (v2_converge 시안) ---------- */
+.bg-fx {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.bg-fx canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.bg-fx .grid-lines {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(15, 27, 51, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(15, 27, 51, 0.04) 1px, transparent 1px);
+  background-size: 46px 46px;
+  -webkit-mask-image: radial-gradient(circle at 50% 34%, #000, transparent 60%);
+  mask-image: radial-gradient(circle at 50% 34%, #000, transparent 60%);
+}
+.bg-fx .core {
+  position: absolute;
+  top: 34%;
+  left: 50%;
+  width: 340px;
+  height: 340px;
+  transform: translate(-50%, -50%);
+  background: radial-gradient(circle, rgba(16, 185, 129, 0.18), rgba(14, 165, 233, 0.12) 40%, transparent 70%);
+  border-radius: 50%;
+  animation: corepulse 3.4s var(--ease-out) infinite;
+}
+@keyframes corepulse {
+  0%, 100% { transform: translate(-50%, -50%) scale(0.85); opacity: 0.7; }
+  50% { transform: translate(-50%, -50%) scale(1.05); opacity: 1; }
+}
+@keyframes livepulse {
+  0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.45); }
+  70% { box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+}
+.live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-green);
+  animation: livepulse 2s infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .bg-fx .core,
+  .live-dot {
+    animation: none;
+  }
 }
 
 input,

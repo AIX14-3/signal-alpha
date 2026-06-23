@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect } from "react";
 import type { ReactNode } from "react";
+import { BackgroundFX } from "@/components/BackgroundFX";
 import { useAuthStore } from "@/stores/authStore";
 
 const NAV = [
@@ -24,8 +25,9 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, [status, hydrate]);
 
   return (
-    <div className="min-h-screen">
-      <nav className="sticky top-0 z-50 border-b border-line bg-bg/80 backdrop-blur">
+    <div className="relative min-h-screen">
+      <BackgroundFX />
+      <nav className="sticky top-0 z-50 border-b border-line bg-bg/70 backdrop-blur-md">
         <div className="mx-auto flex h-16 max-w-[1080px] items-center justify-between px-6">
           <Link href="/" className="flex items-center gap-2 text-[18px] font-bold">
             <span className="brand-grad grid h-7 w-7 place-items-center rounded-[8px] text-[15px] font-extrabold text-white">
@@ -64,9 +66,9 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
       </nav>
 
-      <main className="mx-auto max-w-[1080px] px-6">{children}</main>
+      <main className="relative z-10 mx-auto max-w-[1080px] px-6">{children}</main>
 
-      <footer className="mt-16 border-t border-line py-8 text-center text-[13px] text-muted">
+      <footer className="relative z-10 mt-16 border-t border-line py-8 text-center text-[13px] text-muted">
         Signal α · 데이터 방향성과 근거를 제공하는 서비스 (투자 권유·수익 보장 아님)
       </footer>
     </div>

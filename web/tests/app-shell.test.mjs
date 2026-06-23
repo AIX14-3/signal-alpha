@@ -4,11 +4,12 @@ import test from "node:test";
 
 test("home page wires the search hero and report links", async () => {
   const page = await readFile(new URL("../src/app/page.tsx", import.meta.url), "utf8");
+  const hero = await readFile(new URL("../src/components/SearchHero.tsx", import.meta.url), "utf8");
   const layout = await readFile(new URL("../src/app/layout.tsx", import.meta.url), "utf8");
   const apiClient = await readFile(new URL("../src/lib/apiClient.ts", import.meta.url), "utf8");
 
   assert.match(page, /SearchHero/);
-  assert.match(page, /\/report\//);
+  assert.match(hero, /\/report\//);
   assert.match(layout, /AppShell/);
   assert.match(apiClient, /MAIN_API_BASE_URL/);
 });
