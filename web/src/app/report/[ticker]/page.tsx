@@ -46,17 +46,41 @@ function mapRisks(value: unknown): RiskItem[] {
   });
 }
 
+function mapTags(value: unknown): string[] {
+  const list = parseJson(value);
+  if (!Array.isArray(list)) return [];
+  return list
+    .map((raw) => {
+      if (typeof raw === "string") return raw;
+      const item = asRecord(raw);
+      return typeof item.title === "string" ? item.title : null;
+    })
+    .filter((t): t is string => Boolean(t))
+    .slice(0, 4);
+}
+
+function mapMetrics(scoreBreakdown: Record<string, unknown>): { label: string; value: string }[] {
+  const metrics = asRecord(scoreBreakdown.metrics);
+  return Object.entries(metrics)
+    .map(([label, value]) => ({ label, value: String(value) }))
+    .slice(0, 4);
+}
+
 function toReportData(ticker: string, row: Record<string, unknown>): ReportData {
+  const scoreBreakdown = asRecord(row.score_breakdown);
   return {
     stockCode: String(row.ticker ?? ticker),
     stockName: String(row.name ?? ticker),
     market: typeof row.market === "string" ? row.market : null,
-    meta: typeof row.sector === "string" ? row.sector : null,
+    sector: typeof row.sector === "string" ? row.sector : null,
     finalScore: numberOrNull(row.final_score),
     direction: typeof row.signal === "string" ? row.signal : null,
     summary: typeof row.summary === "string" ? row.summary : null,
+    thesis: typeof row.bull_point === "string" ? row.bull_point : null,
     sourceAgreement: typeof row.source_agreement === "string" ? row.source_agreement : null,
-    scoreBreakdown: asRecord(row.score_breakdown) as ReportData["scoreBreakdown"],
+    scoreBreakdown: scoreBreakdown as ReportData["scoreBreakdown"],
+    metrics: mapMetrics(scoreBreakdown),
+    tags: mapTags(row.positive_evidence),
     risks: mapRisks(row.caution_evidence),
     notice: typeof row.notice === "string" ? row.notice : undefined,
   };
@@ -112,12 +136,5 @@ export default function ReportPage() {
     return <p className="py-16 text-center text-red">{error ?? "리포트를 불러오지 못했습니다."}</p>;
   }
 
-  return (
-    <div>
-      <div className="flex justify-end pt-6">
-        <WatchlistButton stockCode={data.stockCode} />
-      </div>
-      <ReportView data={data} />
-    </div>
-  );
+  return <ReportView data={data} actions={<WatchlistButton stockCode={data.stockCode} />} />;
 }

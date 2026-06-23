@@ -15,6 +15,7 @@ class SignalRepository:
                 stocks.ticker,
                 stocks.name,
                 stocks.market,
+                stocks.sector,
                 analysis_results.analysis_mode,
                 analysis_results.base_score,
                 analysis_results.warning AS analysis_warning

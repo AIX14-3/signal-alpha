@@ -24,7 +24,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, [status, hydrate]);
 
   return (
-    <div className="relative min-h-screen">
+    <div className="relative flex min-h-screen flex-col">
       <div className="bg-static" aria-hidden="true" />
       <nav className="sticky top-0 z-50 border-b border-line bg-bg/70 backdrop-blur-md">
         <div className="mx-auto flex h-16 max-w-[1080px] items-center justify-between px-6">
@@ -65,9 +65,9 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
       </nav>
 
-      <main className="relative z-10 mx-auto max-w-[1080px] px-6">{children}</main>
+      <main className="relative z-10 mx-auto w-full max-w-[1080px] flex-1 px-6">{children}</main>
 
-      <footer className="relative z-10 mt-16 border-t border-line py-8 text-center text-[13px] text-muted">
+      <footer className="relative z-10 border-t border-line py-8 text-center text-[13px] text-muted">
         Signal α · 데이터 방향성과 근거를 제공하는 서비스 (투자 권유·수익 보장 아님)
       </footer>
     </div>
