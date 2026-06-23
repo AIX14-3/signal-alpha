@@ -1,5 +1,11 @@
+import { BackgroundFX } from "@/components/BackgroundFX";
 import { SearchHero } from "@/components/SearchHero";
 
 export default function HomePage() {
-  return <SearchHero />;
+  return (
+    <>
+      <BackgroundFX />
+      <SearchHero />
+    </>
+  );
 }

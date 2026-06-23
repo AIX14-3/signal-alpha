@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useEffect } from "react";
 import type { ReactNode } from "react";
-import { BackgroundFX } from "@/components/BackgroundFX";
 import { useAuthStore } from "@/stores/authStore";
 
 const NAV = [
@@ -26,7 +25,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="relative min-h-screen">
-      <BackgroundFX />
+      <div className="bg-static" aria-hidden="true" />
       <nav className="sticky top-0 z-50 border-b border-line bg-bg/70 backdrop-blur-md">
         <div className="mx-auto flex h-16 max-w-[1080px] items-center justify-between px-6">
           <Link href="/" className="flex items-center gap-2 text-[18px] font-bold">

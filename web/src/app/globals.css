@@ -66,7 +66,19 @@ a {
   font-weight: 600;
 }
 
-/* ---------- Converging-signals 배경 (v2_converge 시안) ---------- */
+/* ---------- 정적 그라데이션 배경 (홈 외 전 페이지, 애니메이션 없음) ---------- */
+.bg-static {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(60% 60% at 18% 8%, rgba(14, 165, 233, 0.08), transparent 60%),
+    radial-gradient(55% 55% at 85% 14%, rgba(16, 185, 129, 0.08), transparent 60%),
+    var(--color-bg);
+}
+
+/* ---------- Converging-signals 배경 (v2_converge 시안, 홈 전용) ---------- */
 .bg-fx {
   position: fixed;
   inset: 0;

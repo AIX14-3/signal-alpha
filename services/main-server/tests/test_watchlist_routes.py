@@ -101,6 +101,8 @@ class FakeConnection:
                 for stock in self.stocks_by_ticker.values()
                 if query in stock["ticker"] or query in stock["name"]
             ][: args[1]]
+        if "FROM stocks" in sql and "is_active = TRUE" in sql:
+            return list(self.stocks_by_ticker.values())[: args[0]]
         if "FROM watchlists" in sql:
             rows = []
             for watchlist in self.watchlists:
@@ -174,6 +176,13 @@ class WatchlistRoutesTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["items"][0]["stock_code"], "005930")
         self.assertEqual(response.json()["items"][0]["stock_name"], "삼성전자")
+
+    def test_list_stocks_returns_active_stocks(self):
+        response = self.client.get("/api/stocks")
+
+        self.assertEqual(response.status_code, 200)
+        codes = {item["stock_code"] for item in response.json()["items"]}
+        self.assertEqual(codes, {"005930", "000660"})
 
     def test_watchlist_requires_authentication(self):
         response = self.client.get("/api/watchlists")

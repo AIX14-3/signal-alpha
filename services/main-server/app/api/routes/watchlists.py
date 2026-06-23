@@ -20,6 +20,17 @@ class WatchlistCreateRequest(BaseModel):
     stock_code: str
 
 
+@stocks_router.get("")
+async def list_stocks(
+    limit: int = 100,
+    pool: Any = Depends(get_database_pool),
+) -> dict[str, Any]:
+    """활성 종목 목록(공개). 검색창 placeholder 회전용 종목명 소스로 사용."""
+    async with pool.acquire() as connection:
+        rows = await StockRepository(connection).list_active(limit=min(limit, 200))
+    return {"items": [_stock_response(dict(row)) for row in rows]}
+
+
 @stocks_router.get("/search")
 async def search_stocks(
     query: str,

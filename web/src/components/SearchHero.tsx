@@ -1,10 +1,65 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
-import { searchStocks, type Stock } from "@/lib/apiClient";
+import { useEffect, useRef, useState } from "react";
+import { listStocks, searchStocks, type Stock } from "@/lib/apiClient";
 
-const SAMPLES = ["삼성전자", "SK하이닉스", "NAVER", "카카오", "현대차"];
+const FALLBACK_PLACEHOLDER = "종목명 또는 코드 입력";
+
+/** 실제 종목명을 받아와 타이핑되듯 흘러가는 placeholder 훅. */
+function useTypingPlaceholder(active: boolean): string {
+  const [names, setNames] = useState<string[]>([]);
+  const [text, setText] = useState("");
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    listStocks(100)
+      .then((data) => setNames(data.items.map((s) => s.stock_name).filter(Boolean)))
+      .catch(() => setNames([]));
+  }, []);
+
+  useEffect(() => {
+    if (!active || names.length === 0) {
+      setText("");
+      return;
+    }
+    let nameIndex = 0;
+    let charIndex = 0;
+    let deleting = false;
+
+    function tick() {
+      const current = names[nameIndex % names.length];
+      if (!deleting) {
+        charIndex += 1;
+        setText(current.slice(0, charIndex));
+        if (charIndex >= current.length) {
+          deleting = true;
+          timer.current = setTimeout(tick, 1400); // 완성 후 잠시 머무름
+          return;
+        }
+        timer.current = setTimeout(tick, 110);
+      } else {
+        charIndex -= 1;
+        setText(current.slice(0, Math.max(0, charIndex)));
+        if (charIndex <= 0) {
+          deleting = false;
+          nameIndex += 1;
+          timer.current = setTimeout(tick, 350); // 다음 종목 전 간격
+          return;
+        }
+        timer.current = setTimeout(tick, 55);
+      }
+    }
+
+    timer.current = setTimeout(tick, 300);
+    return () => {
+      if (timer.current) clearTimeout(timer.current);
+    };
+  }, [active, names]);
+
+  if (!active) return FALLBACK_PLACEHOLDER;
+  return text ? `${text}` : FALLBACK_PLACEHOLDER;
+}
 
 export function SearchHero() {
   const router = useRouter();
@@ -12,6 +67,9 @@ export function SearchHero() {
   const [results, setResults] = useState<Stock[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // 입력값이 없을 때만 안내(타이핑) placeholder 노출. 사용자가 글자를 적으면 사라짐.
+  const placeholder = useTypingPlaceholder(query.length === 0);
 
   async function search(term: string) {
     const clean = term.trim();
@@ -34,13 +92,8 @@ export function SearchHero() {
     void search(query);
   }
 
-  function pick(term: string) {
-    setQuery(term);
-    void search(term);
-  }
-
   return (
-    <section className="px-2 pb-14 pt-24 text-center sm:pt-28">
+    <section className="relative z-10 px-2 pb-14 pt-24 text-center sm:pt-28">
       <span className="pill mb-7 border border-line bg-surface-2 px-[13px] py-1.5 text-[13px] font-semibold text-navy-soft">
         <span className="live-dot" /> 멀티에이전트가 실시간으로 분석합니다
       </span>
@@ -77,7 +130,7 @@ export function SearchHero() {
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="종목명 또는 코드 입력 (예: 삼성전자)"
+          placeholder={placeholder}
           aria-label="종목 검색"
           className="min-w-0 flex-1 bg-transparent text-[16.5px] outline-none placeholder:text-muted"
         />
@@ -89,19 +142,6 @@ export function SearchHero() {
           {loading ? "분석 중…" : "분석"}
         </button>
       </form>
-
-      <div className="mt-[18px] flex flex-wrap justify-center gap-2">
-        {SAMPLES.map((sample) => (
-          <button
-            key={sample}
-            type="button"
-            onClick={() => pick(sample)}
-            className="rounded-full border border-line bg-surface px-3.5 py-[7px] text-[13.5px] font-medium text-navy-soft transition hover:-translate-y-px hover:border-sky hover:text-sky-deep"
-          >
-            {sample}
-          </button>
-        ))}
-      </div>
 
       {error && <p className="mt-5 text-[14px] text-muted">{error}</p>}
 

@@ -215,6 +215,10 @@ export async function searchStocks(query: string): Promise<{ items: Stock[] }> {
   return apiFetch(`/api/stocks/search?query=${encodeURIComponent(query)}`, { auth: "none" });
 }
 
+export async function listStocks(limit = 100): Promise<{ items: Stock[] }> {
+  return apiFetch(`/api/stocks?limit=${limit}`, { auth: "none" });
+}
+
 export type WatchlistItem = { stock: Stock; notification_enabled: boolean; created_at: string | null };
 
 export async function listWatchlists(): Promise<{ limit: number; count: number; items: WatchlistItem[] }> {
