@@ -217,6 +217,12 @@ async def main() -> None:
     parser.add_argument("--ticker", required=True)
     parser.add_argument("--days", type=int, default=DEFAULT_DAYS, help="Disclosure lookback window.")
     parser.add_argument("--apply", action="store_true", help="Apply the reviewed draft to the DB.")
+    parser.add_argument(
+        "--auto-apply",
+        action="store_true",
+        help="Validate via Naver search volume and apply by tier (approved/pending) "
+        "WITHOUT human review. Rejected (no-search) keywords are dropped.",
+    )
     parser.add_argument("--review-file", help="Apply an existing reviewed JSON instead of calling Gemini.")
     args = parser.parse_args()
 
@@ -239,13 +245,27 @@ async def main() -> None:
         if not draft["categories"]:
             print("new_keywords=0 — events implied no new searchable keywords; nothing to apply.")
             return
+        if args.auto_apply:
+            from datalab_keyword_validator import build_client, validate_draft_volume
+
+            draft, summary = await validate_draft_volume(draft, build_client())
+            print(
+                f"validation auto={summary['auto']} review={summary['review']} "
+                f"reject={summary['reject']} capped={summary['capped']} calls={summary['calls']}"
+            )
         review_path = write_review(draft, args.ticker)
 
     n_demand = sum(1 for c in draft["categories"] for k in c["keywords"] if k["polarity"] == "demand")
     n_risk = sum(1 for c in draft["categories"] for k in c["keywords"] if k["polarity"] == "risk")
     print(f"review_file={review_path}")
     print(f"categories={len(draft['categories'])} new_demand_kw={n_demand} new_risk_kw={n_risk}")
-    if args.apply:
+    if args.auto_apply:
+        if not draft["categories"]:
+            print("applied=false (all new keywords rejected by the search-volume gate)")
+            return
+        await apply_draft(draft, manual=False)
+        print("applied=auto (approved->active; pending->held for admin review)")
+    elif args.apply:
         if not draft["categories"]:
             print("applied=false (nothing new to apply)")
             return

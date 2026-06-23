@@ -1,0 +1,68 @@
+name: DataLab Daily
+
+# 매일 DataLab 수집 전에 키워드를 생성·검증·자동적재한다.
+#   1) daily_keyword_pipeline.py — refresh 드래프트 → 네이버 검색량 검증 → 티어별 자동적재
+#        (approved=즉시 active, pending=관리자 검수 대기, reject=드롭)
+#   2) run_collectors.py --datalab-only — 승인된(is_active=TRUE) 키워드로 수집
+#
+# 활성화 전제: 아래 Secrets를 리포지토리에 등록해야 한다.
+#   DATABASE_URL, NAVER_CLIENT_ID, NAVER_CLIENT_SECRET, GEMINI_API_KEY
+#   (선택) GEMINI_MODEL, COLLECTOR_VERSION
+# 수동 실행도 가능(workflow_dispatch).
+
+on:
+  schedule:
+    - cron: "0 21 * * *" # 매일 06:00 KST (21:00 UTC) — 전일 검색 데이터 확정 후
+  workflow_dispatch:
+    inputs:
+      ticker:
+        description: "단일 종목만 처리(비우면 전체 활성 종목)"
+        required: false
+        default: ""
+
+concurrency:
+  group: datalab-daily
+  cancel-in-progress: false
+
+jobs:
+  datalab-daily:
+    name: Generate keywords, validate, collect
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
+      NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GEMINI_MODEL: ${{ secrets.GEMINI_MODEL }}
+      COLLECTOR_VERSION: ${{ secrets.COLLECTOR_VERSION }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install Python (from .python-version)
+        run: uv python install
+
+      - name: Sync dependencies
+        run: uv sync --all-packages --group dev
+
+      - name: Generate + validate + auto-apply keywords
+        working-directory: services/agent-worker
+        run: uv run python daily_keyword_pipeline.py ${{ inputs.ticker && format('--ticker {0}', inputs.ticker) || '' }}
+
+      - name: Collect DataLab
+        working-directory: services/agent-worker
+        run: uv run python run_collectors.py --datalab-only ${{ inputs.ticker && format('--ticker {0}', inputs.ticker) || '' }}
+
+      - name: Upload keyword review artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: keyword-reviews
+          path: services/agent-worker/keyword_reviews/
+          if-no-files-found: ignore
+          retention-days: 14
