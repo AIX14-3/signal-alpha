@@ -8,17 +8,35 @@ import { WatchlistButton } from "@/components/WatchlistButton";
 import { ReportView, type ReportData } from "@/components/report/ReportView";
 import type { RiskItem } from "@/components/report/RiskList";
 
+// /signals/{ticker}는 raw row를 반환해 JSONB가 문자열로 올 수 있다 → 파싱.
+function parseJson(value: unknown): unknown {
+  if (typeof value === "string") {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+  return value;
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  const v = parseJson(value);
+  return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
 }
 
 function numberOrNull(value: unknown): number | null {
-  return typeof value === "number" ? value : null;
+  if (typeof value === "number") return value;
+  if (typeof value === "string" && value.trim() !== "" && !Number.isNaN(Number(value))) {
+    return Number(value);
+  }
+  return null;
 }
 
 function mapRisks(value: unknown): RiskItem[] {
-  if (!Array.isArray(value)) return [];
-  return value.slice(0, 5).map((raw) => {
+  const list = parseJson(value);
+  if (!Array.isArray(list)) return [];
+  return list.slice(0, 5).map((raw) => {
     const item = asRecord(raw);
     return {
       level: String(item.impact_level ?? item.level ?? "LOW"),
