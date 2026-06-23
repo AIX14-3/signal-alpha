@@ -92,6 +92,15 @@ export function SearchHero() {
     void search(query);
   }
 
+  // 한글 IME: 조합 중 Enter는 form submit을 삼켜 두 번 눌러야 하는 문제를
+  // 직접 처리한다. query에는 이미 입력값이 반영돼 있어 첫 Enter로 검색된다.
+  function onKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void search(query);
+    }
+  }
+
   return (
     <section className="relative z-10 px-2 pb-14 pt-24 text-center sm:pt-28">
       <span className="pill mb-7 border border-line bg-surface-2 px-[13px] py-1.5 text-[13px] font-semibold text-navy-soft">
@@ -130,6 +139,7 @@ export function SearchHero() {
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={onKeyDown}
           placeholder={placeholder}
           aria-label="종목 검색"
           className="min-w-0 flex-1 bg-transparent text-[16.5px] outline-none placeholder:text-muted"
