@@ -54,6 +54,32 @@ async def get_signal_detail(
     return _signal_detail_response(dict(row))
 
 
+@router.post("/api/signals/{signal_id}/read")
+async def mark_signal_read(
+    signal_id: int,
+    current_user: dict[str, Any] = Depends(get_current_user),
+    pool: Any = Depends(get_database_pool),
+) -> dict[str, Any]:
+    from signal_alpha_data_access.repositories import SignalRepository, UserSignalRepository
+
+    async with pool.acquire() as connection:
+        signal = await SignalRepository(connection).get_detail_by_id(signal_id)
+        if signal is None:
+            raise _api_error(404, "SIGNAL_NOT_FOUND", "시그널을 찾을 수 없습니다.")
+        read_state = await UserSignalRepository(connection).mark_signal_read(
+            user_id=int(current_user["id"]),
+            final_signal_id=int(signal["id"]),
+        )
+
+    return {
+        "status": "read",
+        "signal_id": signal_id,
+        "read_at": _timestamp(read_state.get("read_at")),
+        "read_date": _timestamp(read_state.get("read_date")),
+        "notice": NOTICE,
+    }
+
+
 @router.get("/api/signals")
 async def list_signals(
     stock_ids: str | None = Query(default=None, description="Comma-separated stock IDs (e.g. 1,2,3)"),

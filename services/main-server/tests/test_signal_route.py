@@ -25,6 +25,7 @@ class FakeConnection:
         self.detail_row = detail_row
         self.list_rows = list_rows or []
         self.fetch_calls = []
+        self.reads = []
         self.users_by_id = {
             1: {
                 "id": 1,
@@ -40,6 +41,16 @@ class FakeConnection:
             return self.users_by_id.get(args[0])
         if "final_signals.id = $1" in sql:
             return self.detail_row
+        if "INSERT INTO user_signal_reads" in sql:
+            row = {
+                "id": len(self.reads) + 1,
+                "user_id": args[0],
+                "final_signal_id": args[1],
+                "read_at": datetime(2026, 6, 23, tzinfo=UTC),
+                "read_date": "2026-06-23",
+            }
+            self.reads.append(row)
+            return row
         return {
             "id": 7,
             "ticker": args[0],
@@ -183,6 +194,32 @@ class SignalRouteTest(unittest.TestCase):
         app.dependency_overrides[get_database_pool] = lambda: FakePool(FakeConnection(detail_row=None))
 
         response = self.client.get("/api/signals/999", headers=self.auth_headers())
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["detail"]["code"], "SIGNAL_NOT_FOUND")
+
+    def test_mark_signal_read_requires_authentication(self):
+        response = self.client.post("/api/signals/200/read")
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json()["detail"]["code"], "AUTH_REQUIRED")
+
+    def test_mark_signal_read_records_user_read_state(self):
+        response = self.client.post("/api/signals/200/read", headers=self.auth_headers())
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["status"], "read")
+        self.assertEqual(body["signal_id"], 200)
+        self.assertEqual(body["read_at"], "2026-06-23T00:00:00+00:00")
+        self.assertIn("데이터 방향성", body["notice"])
+        self.assertEqual(self.connection.reads[0]["user_id"], 1)
+        self.assertEqual(self.connection.reads[0]["final_signal_id"], 200)
+
+    def test_mark_signal_read_returns_404_when_signal_missing(self):
+        app.dependency_overrides[get_database_pool] = lambda: FakePool(FakeConnection(detail_row=None))
+
+        response = self.client.post("/api/signals/999/read", headers=self.auth_headers())
 
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.json()["detail"]["code"], "SIGNAL_NOT_FOUND")
