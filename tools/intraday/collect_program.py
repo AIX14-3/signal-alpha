@@ -9,7 +9,10 @@ Output: date,ticker,prog_buy_qty,prog_sell_qty,prog_net_qty,prog_net_amt
 -> vol-benchmark/raw/kospi20_program.csv
 """
 from __future__ import annotations
-import asyncio, csv, os, sys
+import asyncio
+import csv
+import os
+import sys
 import datetime as dt
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -26,7 +29,8 @@ CODES = {"000660", "005930", "373220", "207940", "012450", "005380", "009150",
 for line in (REPO_ROOT / ".env").read_text(encoding="utf-8").splitlines():
     line = line.strip()
     if line and not line.startswith("#") and "=" in line:
-        k, v = line.split("=", 1); os.environ.setdefault(k.strip(), v.strip())
+        k, v = line.split("=", 1)
+        os.environ.setdefault(k.strip(), v.strip())
 
 
 def _int(v: object) -> int | str:
@@ -43,7 +47,8 @@ async def _req(client, body):
             return await client.request("ka90004", body, path="/api/dostk/stkinfo")
         except httpx.HTTPStatusError as e:
             if e.response is not None and e.response.status_code == 429:
-                await asyncio.sleep(2.0 + 2.0 * attempt); continue
+                await asyncio.sleep(2.0 + 2.0 * attempt)
+                continue
             raise
     raise RuntimeError("429 retries exhausted")
 
@@ -70,7 +75,8 @@ async def main() -> None:
                 r = await _req(client, {"dt": ymd, "amt_qty_tp": "1",
                                         "mrkt_tp": "P00101", "stex_tp": "1"})
             except Exception as e:
-                print(f"  {ymd} ERR {type(e).__name__}: {str(e)[:80]}"); continue
+                print(f"  {ymd} ERR {type(e).__name__}: {str(e)[:80]}")
+                continue
             lst = r.get("stk_prm_trde_prst") or []
             if not lst:
                 empty += 1
@@ -90,7 +96,8 @@ async def main() -> None:
     with OUT.open("w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=["date", "ticker", "prog_buy_qty", "prog_sell_qty",
                                            "prog_net_qty", "prog_net_amt"])
-        w.writeheader(); w.writerows(rows)
+        w.writeheader()
+        w.writerows(rows)
     per = {}
     for r in rows:
         per[r["ticker"]] = per.get(r["ticker"], 0) + 1

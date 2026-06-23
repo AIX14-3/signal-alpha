@@ -8,7 +8,10 @@ date with shift>=1 downstream.
 Output CSV: date, usdkrw_rate, usdkrw_mid   (-> vol-benchmark/raw/fx_usdkrw.csv)
 """
 from __future__ import annotations
-import asyncio, csv, os, sys
+import asyncio
+import csv
+import os
+import sys
 import datetime as dt
 from pathlib import Path
 
@@ -24,7 +27,8 @@ KST = dt.timezone(dt.timedelta(hours=9))
 for line in (REPO_ROOT / ".env").read_text(encoding="utf-8").splitlines():
     line = line.strip()
     if line and not line.startswith("#") and "=" in line:
-        k, v = line.split("=", 1); os.environ.setdefault(k.strip(), v.strip())
+        k, v = line.split("=", 1)
+        os.environ.setdefault(k.strip(), v.strip())
 
 
 async def main() -> None:
@@ -64,7 +68,8 @@ async def main() -> None:
     OUT.parent.mkdir(parents=True, exist_ok=True)
     with OUT.open("w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=["date", "usdkrw_rate", "usdkrw_mid"])
-        w.writeheader(); w.writerows(rows)
+        w.writeheader()
+        w.writerows(rows)
     span = f"{rows[0]['date']}..{rows[-1]['date']}" if rows else "EMPTY"
     print(f"DONE ok={ok} fail={fail} -> {OUT} ({len(rows)} rows, {span})")
 

@@ -9,7 +9,10 @@ amt_qty_tp=1 (수량), trde_tp=0 (순매수). Output combined CSV:
 -> vol-benchmark/raw/kospi20_investor.csv
 """
 from __future__ import annotations
-import asyncio, csv, os, sys
+import asyncio
+import csv
+import os
+import sys
 import datetime as dt
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -33,7 +36,8 @@ TICKERS = [
 for line in (REPO_ROOT / ".env").read_text(encoding="utf-8").splitlines():
     line = line.strip()
     if line and not line.startswith("#") and "=" in line:
-        k, v = line.split("=", 1); os.environ.setdefault(k.strip(), v.strip())
+        k, v = line.split("=", 1)
+        os.environ.setdefault(k.strip(), v.strip())
 
 
 def _int(v: object) -> str:
@@ -101,18 +105,24 @@ async def main() -> None:
             try:
                 rows = await collect_symbol(client, code, start)
                 if not rows:
-                    fail.append((code, name, "0 rows")); print(f"  FAIL {code} {name}: 0 rows"); continue
-                all_rows.extend(rows); ok.append((code, name, len(rows)))
+                    fail.append((code, name, "0 rows"))
+                    print(f"  FAIL {code} {name}: 0 rows")
+                    continue
+                all_rows.extend(rows)
+                ok.append((code, name, len(rows)))
                 print(f"  OK   {code} {name}: {len(rows)} rows ({rows[0]['date']}..{rows[-1]['date']})")
             except KiwoomRestError as e:
-                fail.append((code, name, str(e)[:50])); print(f"  FAIL {code} {name}: {e}")
+                fail.append((code, name, str(e)[:50]))
+                print(f"  FAIL {code} {name}: {e}")
             except Exception as e:
-                fail.append((code, name, type(e).__name__)); print(f"  FAIL {code} {name}: {type(e).__name__} {str(e)[:80]}")
+                fail.append((code, name, type(e).__name__))
+                print(f"  FAIL {code} {name}: {type(e).__name__} {str(e)[:80]}")
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
     with OUT.open("w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=["date", "ticker", "foreign_net", "inst_net", "indiv_net"])
-        w.writeheader(); w.writerows(all_rows)
+        w.writeheader()
+        w.writerows(all_rows)
     print(f"\nDONE ok={len(ok)} fail={len(fail)} total_rows={len(all_rows)} -> {OUT}")
     if fail:
         print("실패:", ", ".join(f"{c}({n}:{w})" for c, n, w in fail))
