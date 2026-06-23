@@ -7,7 +7,10 @@ does not abort the run.
 Output: vol-benchmark/raw/kospi20_ohlcv.csv
 """
 from __future__ import annotations
-import asyncio, csv, os, sys
+import asyncio
+import csv
+import os
+import sys
 import datetime as dt
 from pathlib import Path
 
@@ -34,7 +37,8 @@ TICKERS = [
 for line in (REPO_ROOT / ".env").read_text(encoding="utf-8").splitlines():
     line = line.strip()
     if line and not line.startswith("#") and "=" in line:
-        k, v = line.split("=", 1); os.environ.setdefault(k.strip(), v.strip())
+        k, v = line.split("=", 1)
+        os.environ.setdefault(k.strip(), v.strip())
 
 
 def _candles(resp: object) -> list:
@@ -112,20 +116,24 @@ async def main() -> None:
             try:
                 rows = await collect_symbol(toss, code, start)
                 if not rows:
-                    fail.append((code, name, "0 rows")); print(f"  FAIL {code} {name}: 0 rows")
+                    fail.append((code, name, "0 rows"))
+                    print(f"  FAIL {code} {name}: 0 rows")
                     continue
                 all_rows.extend(rows)
                 ok.append((code, name, len(rows)))
                 print(f"  OK   {code} {name}: {len(rows)} rows ({rows[0]['date']}..{rows[-1]['date']})")
             except TossApiError as e:
-                fail.append((code, name, f"HTTP{e.status}")); print(f"  FAIL {code} {name}: HTTP{e.status} {e.body[:70]}")
+                fail.append((code, name, f"HTTP{e.status}"))
+                print(f"  FAIL {code} {name}: HTTP{e.status} {e.body[:70]}")
             except Exception as e:
-                fail.append((code, name, type(e).__name__)); print(f"  FAIL {code} {name}: {type(e).__name__} {str(e)[:70]}")
+                fail.append((code, name, type(e).__name__))
+                print(f"  FAIL {code} {name}: {type(e).__name__} {str(e)[:70]}")
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
     with OUT.open("w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=["date", "ticker", "open", "high", "low", "close", "volume"])
-        w.writeheader(); w.writerows(all_rows)
+        w.writeheader()
+        w.writerows(all_rows)
     print(f"\nDONE  ok={len(ok)} fail={len(fail)}  total_rows={len(all_rows)} -> {OUT}")
     if fail:
         print("실패 종목:", ", ".join(f"{c}({n}:{why})" for c, n, why in fail))
