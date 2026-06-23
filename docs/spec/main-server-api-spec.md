@@ -569,9 +569,34 @@ Response (배열):
 > dashboard 예시는 현재 **소문자**(`final_signals.signal` 원형) — 향후 통일 대상.
 > 이 엔드포인트가 스펙상 "최신 시그널 목록(`/api/signals/latest`)" 역할을 대신한다.
 
-### `GET /api/signals/by-stock/{stock_code}`
+### `GET /api/signals/by-stock/{stock_code}` (구현됨, 2026-06-23)
 
-종목별 최신 시그널을 반환한다. 현재 구현된 `GET /signals/{ticker}`는 이 API로 이전하거나 호환 라우트로 유지한다.
+종목별 최신 published 시그널 요약을 반환한다. 인증 필요.
+기존 `GET /signals/{ticker}`는 호환 라우트로 유지한다.
+
+Response 주요 필드:
+
+```json
+{
+  "signal_id": 100,
+  "stock": {
+    "id": 10,
+    "stock_code": "005930",
+    "stock_name": "삼성전자",
+    "market": "KOSPI"
+  },
+  "direction": "neutral",
+  "score": 50,
+  "alignment_rate": 0.5,
+  "source_agreement": "LOW",
+  "warning_level": "CAUTION",
+  "data_status": "partial",
+  "needs_review": true,
+  "summary": "DART 데이터 방향성은 중립입니다.",
+  "updated_at": "2026-06-23T00:00:00+09:00",
+  "notice": "Signal Alpha는 매수·매도 추천이 아니라 데이터 방향성과 근거를 제공하는 서비스입니다."
+}
+```
 
 ### `GET /api/signals/{signal_id}`
 
@@ -872,8 +897,9 @@ Journal:
 - `GET /health`
 - `GET /signals/{ticker}` (호환 라우트 — `by-stock` 전신)
 - `GET /api/signals` (목록, 종목당 1개 그룹핑 — 2026-06-22)
+- `GET /api/signals/by-stock/{stock_code}` (종목별 최신 시그널 요약 — 2026-06-23)
 - `GET /api/signals/{signal_id}` (상세 — #333)
 - auth/users/stocks/watchlists/dashboard 라우터 등록됨(`app/main.py`)
 
-이번 스펙에서 확정한 canonical API는 `/api/...` prefix를 사용한다. 기존 `GET /signals/{ticker}`는 `GET /api/signals/by-stock/{stock_code}`로 이전하거나 호환 라우트로 유지한다.
+이번 스펙에서 확정한 canonical API는 `/api/...` prefix를 사용한다. 기존 `GET /signals/{ticker}`는 호환 라우트로 유지한다.
 

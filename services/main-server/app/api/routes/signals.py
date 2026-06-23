@@ -37,6 +37,23 @@ async def get_current_signal(ticker: str, pool: Any = Depends(get_database_pool)
     return dict(row)
 
 
+@router.get("/api/signals/by-stock/{stock_code}")
+async def get_signal_by_stock(
+    stock_code: str,
+    current_user: dict[str, Any] = Depends(get_current_user),
+    pool: Any = Depends(get_database_pool),
+) -> dict[str, Any]:
+    from signal_alpha_data_access.repositories import SignalRepository
+
+    async with pool.acquire() as connection:
+        row = await SignalRepository(connection).get_current_by_ticker(stock_code)
+
+    if row is None:
+        raise _api_error(404, "SIGNAL_NOT_FOUND", "시그널을 찾을 수 없습니다.")
+
+    return _signal_by_stock_response(dict(row))
+
+
 @router.get("/api/signals/{signal_id}")
 async def get_signal_detail(
     signal_id: int,
@@ -166,6 +183,28 @@ def _signal_list_item(stock_id: int, rows: list[dict[str, Any]]) -> dict[str, An
         "data_status": _overall_data_status({"warning_level": warning_level, "needs_review": needs_review}),
         "summary": base.get("summary"),
         "score_breakdown": {"alternative": alternative, "dart": None, "report": None},
+    }
+
+
+def _signal_by_stock_response(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "signal_id": row["id"],
+        "stock": {
+            "id": row.get("stock_id"),
+            "stock_code": row.get("ticker"),
+            "stock_name": row.get("name"),
+            "market": row.get("market"),
+        },
+        "direction": row.get("signal"),
+        "score": _number(row.get("final_score")),
+        "alignment_rate": _alignment_rate(row.get("consensus_score") or row.get("confidence")),
+        "source_agreement": row.get("source_agreement"),
+        "warning_level": row.get("warning_level"),
+        "data_status": _overall_data_status(row),
+        "needs_review": bool(row.get("needs_review", False)),
+        "summary": row.get("summary"),
+        "updated_at": _timestamp(row.get("published_at") or row.get("created_at")),
+        "notice": NOTICE,
     }
 
 
