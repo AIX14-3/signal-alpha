@@ -10,6 +10,8 @@ from app.core.database import get_database_pool
 from signal_alpha_data_access.repositories import StockRepository, UserSignalRepository
 
 
+# 관심종목 최대 개수(단일 출처). 응답 limit·차단·안내 메시지가 모두 이 값을 참조한다.
+# MVP는 등급 무관 고정 10. 등급별(plan max_watchlist) 적용은 후속.
 WATCHLIST_LIMIT = 10
 
 stocks_router = APIRouter(prefix="/api/stocks", tags=["stocks"])
@@ -84,7 +86,7 @@ async def add_watchlist(
             raise _api_error(
                 400,
                 "WATCHLIST_LIMIT_EXCEEDED",
-                "관심종목은 최대 10개까지 등록할 수 있습니다.",
+                f"관심종목은 최대 {WATCHLIST_LIMIT}개까지 등록할 수 있습니다.",
             )
         watchlist = await user_signal_repository.add_watchlist(
             user_id=int(current_user["id"]),

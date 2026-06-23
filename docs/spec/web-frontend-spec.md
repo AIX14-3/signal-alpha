@@ -95,7 +95,8 @@ AppShell                       상단 nav(홈/요금제/마이 + 로그인 토�
 BackgroundFX                   홈 전용 컨버전스 파티클 캔버스(파티클→코어 트레일)
 SearchHero                     홈 검색 hero + 타이핑 placeholder
 PipelineStepper                분석 진행 스테이지(폴링 표시)
-WatchlistButton                관심종목 추가/삭제 토글
+WatchlistButton                관심종목 추가/삭제 토글(결과를 토스트로 안내)
+Toaster                        전역 토스트(toastStore) — 액션 결과/오류 표시
 AuthForm                       로그인/회원가입 공용 폼(소셜 버튼 자리표시)
 report/ReportView              리포트 컨테이너(mast + 블롭 히어로 + 그리드 + prose)
 report/FactorGrid              6타일(5팩터 chip+점수+dots + 핵심지표 타일)
@@ -115,6 +116,7 @@ report/RiskList                리스크 행(항목 · HIGH/MID/LOW)
 | `authStore` | `user`, `status(idle/loading/authenticated/anonymous)`, `error` | `login`, `signup`, `logout`, `hydrate` |
 | `watchlistStore` | `items`, `limit`, `count`, `loading` | `load`, `add`, `remove` |
 | `analysisStore` | `ticker`, `status`, `polling` | `start`, `poll`, `reset` |
+| `toastStore` | `toasts` | `show(message, tone)`, `dismiss` |
 
 `hydrate()`는 앱 진입 시 저장된 access token으로 `GET /api/users/me`를 호출해 세션을 복원한다(`AppShell`에서 1회).
 
@@ -163,7 +165,7 @@ report/RiskList                리스크 행(항목 · HIGH/MID/LOW)
 - `GET /signals/{ticker}`로 발행 시그널 조회.
 - 발행 시그널이 없으면(404) "분석 준비 중" + `PipelineStepper`(`GET /api/analytics/{ticker}/status` 폴링) 표시.
 - 발행 시그널이 있으면 `ReportView`(v61 레이아웃) 렌더:
-  - **mast**: 종목명 + `코드 · 시장 · 섹터` + 관심종목 버튼.
+  - **mast**: 종목명 + `코드 · 시장 · 섹터` + 관심종목 버튼(`WatchlistButton`). 추가/삭제 결과와 한도 초과(`WATCHLIST_LIMIT_EXCEEDED`, 최대 10개) 안내는 **전역 토스트**로 표시.
   - **히어로**: 블롭 `AI Score(/10)` + `BUY · 매수 우위` 필 + thesis(`bull_point`).
   - **6타일**: 5팩터(chip ↗/→/↘ + 점수 + dots 5점) + 핵심 지표 타일(`score_breakdown.metrics`).
   - **prose**: 01 핵심 요약(`summary` + 태그 `positive_evidence`) / 02 리스크(`caution_evidence` HIGH/MID/LOW).
@@ -214,7 +216,7 @@ report/RiskList                리스크 행(항목 · HIGH/MID/LOW)
 ## 12. 알려진 갭 / 별도 트랙
 
 - **회원 테이블 재설계 + 소셜 로그인(구글/네이버/카카오)**: 사용자가 별도 설계/개발. 현재는 이메일/비번 인증 + 소셜 버튼 자리표시만.
-- **관심종목 한도 불일치**: 프론트는 plan `max_watchlist`(free 3 / pro 20 / premium 100)를 표시하되, 백엔드 `WATCHLIST_LIMIT=10` 하드코딩과의 일원화는 백엔드 과제([[main-server-api-spec]] §7).
+- **관심종목 한도**: MVP는 **등급 무관 고정 10개**로 확정(2026-06-23). 한도/메시지는 백엔드 `WATCHLIST_LIMIT` 단일 출처([[main-server-api-spec]] §7)에서 오고, 초과 시 토스트로 안내한다. 등급별(plan `max_watchlist`) 적용은 후속.
 - **팩터 5 ↔ 소스 4 매핑**: `FACTOR_MAP` 잠정. 팀 확정 필요.
 - **후속**: 실 PG(PortOne) 결제 연동, 분석 진행 SSE 실시간화(현재 폴링).
 
@@ -262,7 +264,8 @@ report/RiskList                리스크 행(항목 · HIGH/MID/LOW)
 구현됨:
 
 - 디자인 토큰(@theme), `AppShell`/`BackgroundFX`(홈 애니메이션·그 외 정적), 푸터 하단 고정.
-- apiClient(토큰 갱신 인터셉터) + 3 Zustand 스토어 + 변환 유틸(`format.ts`).
+- apiClient(토큰 갱신 인터셉터) + 4 Zustand 스토어(auth/watchlist/analysis/toast) + 변환 유틸(`format.ts`).
+- 전역 토스트(`Toaster`) — 관심종목 추가/삭제·한도 초과(최대 10개) 안내.
 - 페이지 7종(홈/리포트/로그인/회원가입/마이/요금제/관리자) — 전부 실 API 연동.
 - 홈 타이핑 placeholder(실 종목명), Enter 즉시 리포트 이동, 한글 IME 단일 Enter 처리.
 - 리포트 v61 레이아웃(mast·블롭 히어로·6타일·prose), 삼성전자(005930) 목업 시그널 1건 시드.

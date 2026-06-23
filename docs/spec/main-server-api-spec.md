@@ -308,12 +308,17 @@ Response:
 - 기본 정렬은 최근 추가순이다.
 - 알림 설정은 MVP에서 기본 `false`다.
 
+한도 정책 (확정, 2026-06-23):
+
+- MVP는 **등급 무관 고정 10개**다. `app/api/routes/watchlists.py`의 `WATCHLIST_LIMIT = 10` 상수가 **단일 출처**이며, 응답 `limit`·차단·안내 메시지가 모두 이 값을 참조한다(메시지 동적화 — 하드코딩 숫자 제거).
+- 초과 시 `POST /api/watchlists`는 `400 WATCHLIST_LIMIT_EXCEEDED`와 `"관심종목은 최대 {WATCHLIST_LIMIT}개까지 등록할 수 있습니다."`를 반환한다. 프론트는 이 메시지를 토스트로 노출한다.
+- 등급별(plan `max_watchlist`: free 3 / pro 20 / premium 100) 적용은 **후속**이다. 적용 시 `WATCHLIST_LIMIT`를 사용자 활성 구독 기준 resolver로 대체한다.
+
 현재 DB/Repository 차이:
 
 - `watchlists.notification_enabled` DB 기본값은 현재 `TRUE`다.
 - `UserSignalRepository.add_watchlist()` 기본값도 현재 `True`다.
 - MVP 정책을 맞추려면 migration 또는 repository 기본값 조정이 필요하다.
-- `subscription_plans.max_watchlist` 기본값은 현재 3이다. MVP 무료 플랜 기준 10으로 seed 또는 정책 조정이 필요하다.
 
 ### `GET /api/watchlists`
 

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect } from "react";
 import type { ReactNode } from "react";
+import { Toaster } from "@/components/Toaster";
 import { useAuthStore } from "@/stores/authStore";
 
 const NAV = [
@@ -70,6 +71,8 @@ export function AppShell({ children }: { children: ReactNode }) {
       <footer className="relative z-10 border-t border-line py-8 text-center text-[13px] text-muted">
         Signal α · 데이터 방향성과 근거를 제공하는 서비스 (투자 권유·수익 보장 아님)
       </footer>
+
+      <Toaster />
     </div>
   );
 }
