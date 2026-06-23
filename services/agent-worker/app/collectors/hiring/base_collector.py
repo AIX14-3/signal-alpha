@@ -392,6 +392,10 @@ class BaseCollector(ABC):
             "unique_key": data.get("unique_key"),
             "quarter": quarter,
             "seasonal_baseline": seasonal_baseline,
+            # 직군 수요 신호(자소설 duty-groups 등) — 소스에 없으면 None/[] 로 무해.
+            "duty_groups": data.get("duty_groups"),
+            "duty_group_ids": data.get("duty_group_ids"),
+            "employment_page_url": data.get("employment_page_url"),
         }
         db.execute(
             text("""

@@ -231,10 +231,18 @@ class MultiSourceCrawler(BaseCollector):
     # ── BaseSiteCrawler import ────────────────────────────────────────────────
     def _get_portal_crawlers(self):
         try:
-            from sites import SaraminCrawler, JobkoreaCrawler
+            from sites import SaraminCrawler, JobkoreaCrawler, JasoseolCrawler
         except ImportError:
-            from app.collectors.hiring.sites import SaraminCrawler, JobkoreaCrawler
-        return SaraminCrawler(driver=self.driver), JobkoreaCrawler(driver=self.driver)
+            from app.collectors.hiring.sites import (
+                SaraminCrawler, JobkoreaCrawler, JasoseolCrawler,
+            )
+        # 자소설닷컴은 공개 JSON API(Selenium 불필요) — driver 무관. 런당 1회 fetch 후
+        # 모듈 캐시에서 기업별 필터하므로 기업마다 재생성돼도 재fetch 하지 않는다.
+        return (
+            SaraminCrawler(driver=self.driver),
+            JobkoreaCrawler(driver=self.driver),
+            JasoseolCrawler(driver=self.driver),
+        )
 
     # ── 수집 ─────────────────────────────────────────────────────────────────
     def collect(self, target_companies: list[str]) -> list:
@@ -317,9 +325,9 @@ class MultiSourceCrawler(BaseCollector):
                 logger.info("🏢 [%d/%d] %s 수집 시작",
                             idx + 1, len(target_companies), company)
 
-                # 1) 포털 수집 (사람인 + 잡코리아)
+                # 1) 포털 수집 (사람인 + 잡코리아 + 자소설닷컴)
                 if self.use_portals:
-                    saramin, jobkorea = self._get_portal_crawlers()
+                    saramin, jobkorea, jasoseol = self._get_portal_crawlers()
 
                     # 사람인: 키워드 검색(현행)
                     try:
@@ -347,6 +355,15 @@ class MultiSourceCrawler(BaseCollector):
                         )
                     except Exception as exc:
                         logger.warning("  ⚠️  [%s] 오류: %s", jobkorea.source_label, exc)
+                    time.sleep(self.rate_limit_sec)
+
+                    # 자소설닷컴: 공개 JSON API(현재 열린 공고). 런당 1회 fetch+기업별 필터.
+                    try:
+                        results = jasoseol.crawl(company)
+                        company_jobs.extend(results)
+                        logger.info("  ✓ [%s] %d건", jasoseol.source_label, len(results))
+                    except Exception as exc:
+                        logger.warning("  ⚠️  [%s] 오류: %s", jasoseol.source_label, exc)
                     time.sleep(self.rate_limit_sec)
 
                 # 2) 공식 사이트 수집 (hiring_sources DB 기반)
