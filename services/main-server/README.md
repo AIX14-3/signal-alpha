@@ -43,6 +43,7 @@ GET /api/dashboard
 
 GET /signals/{ticker}
 GET /api/signals/{signal_id}
+POST /api/signals/{signal_id}/read
 
 GET    /api/journals
 POST   /api/journals

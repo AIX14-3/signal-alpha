@@ -696,7 +696,7 @@ MVP에서는 hard delete 또는 soft delete 중 하나를 선택해야 한다. �
 
 ## 11. Read State API
 
-읽음 상태는 P1이지만, 대시보드/상세 화면의 사용성을 위해 빠르게 추가할 수 있다.
+읽음 상태는 대시보드/상세 화면의 사용성을 위한 사용자별 상태 기록이다.
 
 ```text
 POST /api/signals/{signal_id}/read
@@ -706,6 +706,18 @@ POST /api/signals/{signal_id}/read
 
 - `user_signal_reads`에 upsert한다.
 - 상세 화면 진입 시 자동 호출하거나 명시 버튼으로 호출한다.
+
+Response:
+
+```json
+{
+  "status": "read",
+  "signal_id": 100,
+  "read_at": "2026-06-23T00:00:00+09:00",
+  "read_date": "2026-06-23",
+  "notice": "Signal Alpha는 매수·매도 추천이 아니라 데이터 방향성과 근거를 제공하는 서비스입니다."
+}
+```
 
 ---
 
@@ -796,7 +808,7 @@ worker 실패 시:
 2. latest signal by watchlist
 3. source summary missing 처리
 4. signal detail
-5. read state
+5. read state - 구현됨
 
 ### Phase 4 — Analysis Job
 
