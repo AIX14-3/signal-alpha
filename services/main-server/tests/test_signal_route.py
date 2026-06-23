@@ -20,8 +20,12 @@ from app.core.security import create_access_token
 from app.main import app
 
 
+_MISSING = object()
+
+
 class FakeConnection:
-    def __init__(self, *, detail_row=None, list_rows=None):
+    def __init__(self, *, current_row=_MISSING, detail_row=None, list_rows=None):
+        self.current_row = _current_signal_row() if current_row is _MISSING else current_row
         self.detail_row = detail_row
         self.list_rows = list_rows or []
         self.fetch_calls = []
@@ -41,6 +45,8 @@ class FakeConnection:
             return self.users_by_id.get(args[0])
         if "final_signals.id = $1" in sql:
             return self.detail_row
+        if "stocks.ticker = $1" in sql:
+            return self.current_row
         if "INSERT INTO user_signal_reads" in sql:
             row = {
                 "id": len(self.reads) + 1,
@@ -51,13 +57,7 @@ class FakeConnection:
             }
             self.reads.append(row)
             return row
-        return {
-            "id": 7,
-            "ticker": args[0],
-            "name": "삼성전자",
-            "signal": "neutral",
-            "summary": "중립 신호",
-        }
+        raise AssertionError(f"Unexpected fetchrow SQL: {sql}")
 
     async def fetch(self, sql, *args):
         self.fetch_calls.append((sql, args))
@@ -110,6 +110,35 @@ class SignalRouteTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["ticker"], "005930")
         self.assertEqual(response.json()["signal"], "neutral")
+
+    def test_get_signal_by_stock_requires_authentication(self):
+        response = self.client.get("/api/signals/by-stock/005930")
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json()["detail"]["code"], "AUTH_REQUIRED")
+
+    def test_get_signal_by_stock_returns_current_signal_summary(self):
+        response = self.client.get("/api/signals/by-stock/005930", headers=self.auth_headers())
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["signal_id"], 7)
+        self.assertEqual(body["stock"]["stock_code"], "005930")
+        self.assertEqual(body["stock"]["stock_name"], "삼성전자")
+        self.assertEqual(body["direction"], "neutral")
+        self.assertEqual(body["score"], 50)
+        self.assertEqual(body["alignment_rate"], 0.5)
+        self.assertEqual(body["data_status"], "partial")
+        self.assertTrue(body["needs_review"])
+        self.assertIn("데이터 방향성", body["notice"])
+
+    def test_get_signal_by_stock_returns_404_when_missing(self):
+        app.dependency_overrides[get_database_pool] = lambda: FakePool(FakeConnection(current_row=None))
+
+        response = self.client.get("/api/signals/by-stock/999999", headers=self.auth_headers())
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["detail"]["code"], "SIGNAL_NOT_FOUND")
 
     def test_get_signal_detail_requires_authentication(self):
         response = self.client.get("/api/signals/200")
@@ -233,6 +262,30 @@ def _signal_list_rows(stock_id=10, ticker="005930"):
         {**base, "run_key": "PATENT", "final_score": 50, "signal": "neutral", "warning_level": "NORMAL", "needs_review": False, "source_agreement": "MEDIUM", "consensus_score": 60, "summary": None},
         {**base, "run_key": "DATALAB", "final_score": 95, "signal": "positive", "warning_level": "WARNING", "needs_review": True, "source_agreement": "LOW", "consensus_score": 50, "summary": None},
     ]
+
+
+def _current_signal_row():
+    return {
+        "id": 7,
+        "stock_id": 10,
+        "ticker": "005930",
+        "name": "삼성전자",
+        "market": "KOSPI",
+        "signal": "neutral",
+        "final_score": Decimal("50.00"),
+        "confidence": Decimal("50.00"),
+        "consensus_score": Decimal("50.00"),
+        "source_agreement": "LOW",
+        "warning_level": "CAUTION",
+        "needs_review": True,
+        "summary": "중립 신호",
+        "score_breakdown": {},
+        "published_at": datetime(2026, 6, 23, tzinfo=UTC),
+        "created_at": datetime(2026, 6, 23, tzinfo=UTC),
+        "analysis_mode": "full",
+        "base_score": Decimal("50.00"),
+        "analysis_warning": "missing_source",
+    }
 
 
 def _signal_detail_row():
