@@ -53,6 +53,18 @@ async def admin_login(
     }
 
 
+@admin_router.post("/logout")
+async def admin_logout(
+    admin: dict[str, Any] = Depends(get_current_admin),
+    pool: Any = Depends(get_database_pool),
+) -> dict[str, str]:
+    async with pool.acquire() as connection:
+        await AdminRepository(connection).delete_session(
+            session_token=str(admin["session_token"])
+        )
+    return {"status": "ok"}
+
+
 @admin_router.get("/users")
 async def list_users(
     page: int = Query(default=1, ge=1),
@@ -88,8 +100,9 @@ async def get_user_detail(
     return _user_detail(dict(row))
 
 
+@admin_router.post("/users/{user_id}/subscription")
 @admin_router.put("/users/{user_id}/subscription")
-async def update_user_subscription(
+async def set_user_subscription(
     user_id: int,
     payload: UpdateSubscriptionRequest,
     _admin: dict[str, Any] = Depends(get_current_admin),
@@ -113,6 +126,17 @@ async def update_user_subscription(
             payment_method="admin",
         )
     return {"status": "updated", "user_id": user_id, "plan_type": payload.plan_type}
+
+
+@admin_router.delete("/users/{user_id}/subscription")
+async def cancel_user_subscription(
+    user_id: int,
+    _admin: dict[str, Any] = Depends(get_current_admin),
+    pool: Any = Depends(get_database_pool),
+) -> dict[str, Any]:
+    async with pool.acquire() as connection:
+        await UserBillingRepository(connection).cancel_subscription(user_id=user_id)
+    return {"status": "cancelled", "user_id": user_id}
 
 
 @admin_router.get("/stats")

@@ -6,7 +6,6 @@ from typing import Any
 from fastapi import APIRouter, Depends
 
 from app.api.routes.auth import NOTICE, get_current_user
-from app.api.routes.watchlists import WATCHLIST_LIMIT
 from app.core.database import get_database_pool
 from signal_alpha_data_access.repositories import SignalRepository, UserSignalRepository
 
@@ -56,7 +55,6 @@ async def get_dashboard(
             "email": current_user["email"],
             "nickname": current_user.get("nickname"),
         },
-        "watchlist_limit": WATCHLIST_LIMIT,
         "watchlist_count": len(items),
         "items": items,
         "notice": NOTICE,

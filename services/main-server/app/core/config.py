@@ -17,6 +17,31 @@ class Settings:
             if origin.strip()
         ]
 
+        # --- 신규 기획 ---
+        # 포트원(아임포트) REST API. key/secret 미설정 시 dev 모드(외부 호출 없이 결정적 모의값).
+        self.portone_api_base = getenv("PORTONE_API_BASE", "https://api.iamport.kr")
+        self.portone_api_key = getenv("PORTONE_API_KEY")
+        self.portone_api_secret = getenv("PORTONE_API_SECRET")
+
+        # 단일 구독 상품가(원) + 무료 리포트 열람 횟수.
+        self.subscription_price_krw = int(getenv("SUBSCRIPTION_PRICE_KRW", "9900"))
+        self.subscription_plan_type = getenv("SUBSCRIPTION_PLAN_TYPE", "monthly_9900")
+        self.free_report_quota = int(getenv("FREE_REPORT_QUOTA", "3"))
+
+        # 소셜 OAuth(naver/google/kakao) — provider별 client id/secret.
+        self.social_providers = {
+            provider: {
+                "client_id": getenv(f"{provider.upper()}_CLIENT_ID"),
+                "client_secret": getenv(f"{provider.upper()}_CLIENT_SECRET"),
+            }
+            for provider in ("naver", "google", "kakao")
+        }
+
+    @property
+    def portone_dev_mode(self) -> bool:
+        """key/secret 미설정이면 외부 호출 없이 결정적 모의값으로 동작(로컬/CI)."""
+        return not (self.portone_api_key and self.portone_api_secret)
+
 
 @lru_cache
 def get_settings() -> Settings:

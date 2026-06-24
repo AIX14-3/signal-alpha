@@ -66,6 +66,72 @@ class UserBillingRepository:
             user_id,
         )
 
+    async def get_user_by_phone(self, phone: str) -> Any:
+        """활성(미탈퇴) 사용자만 조회. 본인인증 로그인·재가입 dedup 용."""
+        return await self._connection.fetchrow(
+            """
+            SELECT *
+            FROM users
+            WHERE phone = $1
+              AND deleted_at IS NULL
+            """,
+            phone,
+        )
+
+    async def insert_identity_user(
+        self,
+        *,
+        member_code: str,
+        email: str,
+        phone: str,
+        nickname: str | None = None,
+        agreed_risk: bool = True,
+    ) -> Any:
+        """포트원 본인인증 가입 전용 INSERT(평문 INSERT — member_code 충돌 시 UniqueViolation 발생).
+
+        create_user 의 ON CONFLICT(member_code) DO UPDATE 는 충돌 시 기존 계정을 덮어쓰므로
+        신규 가입에는 쓰지 않는다. 호출부가 member_code 충돌 시 재시도한다.
+        """
+        return await self._connection.fetchrow(
+            """
+            INSERT INTO users (
+                member_code, email, phone, nickname, agreed_risk, is_verified
+            )
+            VALUES ($1, $2, $3, $4, $5, TRUE)
+            RETURNING *
+            """,
+            member_code,
+            email,
+            phone,
+            nickname,
+            agreed_risk,
+        )
+
+    async def update_user_nickname(self, *, user_id: int, nickname: str | None) -> Any:
+        return await self._connection.fetchrow(
+            """
+            UPDATE users
+            SET nickname = $2
+            WHERE id = $1
+              AND deleted_at IS NULL
+            RETURNING *
+            """,
+            user_id,
+            nickname,
+        )
+
+    async def soft_delete_user(self, *, user_id: int) -> None:
+        """회원탈퇴(soft delete). 활성 phone 유니크가 해제되어 동일 번호 재가입 가능."""
+        await self._connection.execute(
+            """
+            UPDATE users
+            SET deleted_at = NOW()
+            WHERE id = $1
+              AND deleted_at IS NULL
+            """,
+            user_id,
+        )
+
     async def upsert_subscription_plan(
         self,
         *,
@@ -260,6 +326,55 @@ class UserBillingRepository:
             access_token,
             refresh_token,
             token_expires_at,
+        )
+
+    async def get_social_account(self, *, provider: str, provider_user_id: str) -> Any:
+        return await self._connection.fetchrow(
+            """
+            SELECT social_accounts.*, users.email AS user_email
+            FROM social_accounts
+            INNER JOIN users ON users.id = social_accounts.user_id
+            WHERE social_accounts.provider = $1
+              AND social_accounts.provider_user_id = $2
+              AND users.deleted_at IS NULL
+            """,
+            provider,
+            provider_user_id,
+        )
+
+    async def list_social_accounts(self, *, user_id: int) -> list[Any]:
+        return await self._connection.fetch(
+            """
+            SELECT provider, created_at
+            FROM social_accounts
+            WHERE user_id = $1
+            ORDER BY provider
+            """,
+            user_id,
+        )
+
+    async def delete_social_account(self, *, user_id: int, provider: str) -> Any:
+        """연동 해제(토큰/행 삭제). 삭제된 행을 반환(없으면 None)."""
+        return await self._connection.fetchrow(
+            """
+            DELETE FROM social_accounts
+            WHERE user_id = $1 AND provider = $2
+            RETURNING *
+            """,
+            user_id,
+            provider,
+        )
+
+    async def get_latest_payment_verification(self, *, user_id: int) -> Any:
+        return await self._connection.fetchrow(
+            """
+            SELECT *
+            FROM portone_verifications
+            WHERE user_id = $1 AND verification_type = 'payment'
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            user_id,
         )
 
     async def record_portone_verification(
