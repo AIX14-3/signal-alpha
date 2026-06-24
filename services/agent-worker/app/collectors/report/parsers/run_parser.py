@@ -135,26 +135,44 @@ def parse_report_deterministic(text: str) -> dict:
 
 def _extract_target_price(text: str) -> int | None:
     patterns = [
-        r"(?:목표\s*주가|목표주가|Target\s*Price|TP)(?:\s*\([^)]*\))?\D{0,80}([0-9][0-9,]{2,})\s*(?:원|KRW)?",
-        r"([0-9][0-9,]{2,})\s*원\D{0,30}(?:목표\s*주가|목표주가|Target\s*Price|TP)",
+        r"(?:목표\s*주가|목표주가|목표가|Target\s*Price|TP)(?:\s*\([^)]*\))?\D{0,80}([0-9][0-9,.]*)\s*(만원|원|KRW)?",
+        r"([0-9][0-9,.]*)\s*(만원|원|KRW)?\D{0,30}(?:목표\s*주가|목표주가|목표가|Target\s*Price|TP)",
     ]
     for pattern in patterns:
         match = re.search(pattern, text, flags=re.IGNORECASE | re.DOTALL)
         if match:
-            return int(match.group(1).replace(",", ""))
+            return _parse_price(match.group(1), match.group(2) if len(match.groups()) > 1 else None)
     return None
 
 
 def _extract_opinion(text: str) -> str:
     opinion_window = _window_around_keywords(text, ["투자의견", "Investment opinion", "Rating"], size=300)
     target = opinion_window or text[:3000]
-    if re.search(r"\b(strong\s*buy|buy)\b|매수|강력매수", target, flags=re.IGNORECASE):
+    if re.search(
+        r"\b(strong\s*buy|trading\s*buy|buy|outperform|overweight)\b|매수|강력매수",
+        target,
+        flags=re.IGNORECASE,
+    ):
         return "buy"
-    if re.search(r"\b(hold|neutral)\b|중립|보유", target, flags=re.IGNORECASE):
+    if re.search(
+        r"\b(hold|neutral|market\s*perform|marketperform)\b|중립|보유",
+        target,
+        flags=re.IGNORECASE,
+    ):
         return "neutral"
-    if re.search(r"\b(sell)\b|매도", target, flags=re.IGNORECASE):
+    if re.search(r"\b(sell|underperform|reduce|underweight)\b|매도", target, flags=re.IGNORECASE):
         return "sell"
     return "unknown"
+
+
+def _parse_price(raw_number: str, unit: str | None) -> int | None:
+    try:
+        value = float(raw_number.replace(",", ""))
+    except ValueError:
+        return None
+
+    multiplier = 10000 if unit == "만원" else 1
+    return int(value * multiplier)
 
 
 def _extract_key_rationale(text: str) -> str:

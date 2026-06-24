@@ -175,3 +175,47 @@ def test_process_from_s3_builds_llm_config_from_settings(monkeypatch):
     assert observed["llm_config"].model == "gemini-test-model"
     assert result["target_price"] == 125000
     assert result["opinion"] == "buy"
+
+
+def test_deterministic_parser_handles_common_broker_price_and_opinion_formats():
+    cases = [
+        (
+            "목표가 12만원\n투자의견 Outperform\n실적 개선과 수요 회복이 근거입니다.",
+            120000,
+            "buy",
+        ),
+        (
+            "Target Price KRW 95,000\nRating Marketperform\n업황 둔화 리스크가 남아 있습니다.",
+            95000,
+            "neutral",
+        ),
+        (
+            "TP 70,000원\nInvestment opinion Underperform\n수익성 저하와 공급 부담이 리스크입니다.",
+            70000,
+            "sell",
+        ),
+    ]
+
+    for text, expected_price, expected_opinion in cases:
+        result = run_parser.parse_report_deterministic(text)
+
+        assert result["target_price"] == expected_price
+        assert result["opinion"] == expected_opinion
+        assert result["key_rationale"]
+
+
+def test_deterministic_parser_handles_table_like_target_price_layouts():
+    text = """
+    Buy(Maintain)
+    목표주가(12M)
+    480,000원(상향)
+    종가(2026.06.19)
+    354,000원
+    메모리 업황 개선과 서버 수요 회복이 실적 전망 상향의 근거입니다.
+    """
+
+    result = run_parser.parse_report_deterministic(text)
+
+    assert result["target_price"] == 480000
+    assert result["opinion"] == "buy"
+    assert "서버 수요 회복" in result["key_rationale"]

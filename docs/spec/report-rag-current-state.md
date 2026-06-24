@@ -89,6 +89,9 @@ ReportProcessTaskHandler
 - report storage에 파일이 없으면 원천 PDF URL에서 다운로드한 뒤 선택된 backend에 업로드합니다.
 - report storage에 저장된 PDF의 전체 텍스트를 추출합니다.
 - 기본값(`REPORT_USE_LLM=false`)에서는 LLM을 호출하지 않고 규칙 기반 fallback으로 목표주가, 원문 의견, 근거 후보를 추출합니다.
+  - 목표주가 표기: `목표주가`, `목표가`, `TP`, `Target Price`
+  - 가격 단위: `원`, `KRW`, `만원`
+  - 의견 표기: `Buy`, `Outperform`, `Marketperform`, `Underperform`, `Hold`, `Neutral`, `Sell` 및 한국어 매수/중립/매도 계열
 - `REPORT_USE_LLM=true`일 때만 규칙 기반 후보 텍스트를 LLM에 전달해 파싱 결과를 보강합니다.
 - LLM 보강은 `REPORT_LLM_PROVIDER`(`gemini` 또는 `openai`)와 `REPORT_LLM_MODEL` 설정을 사용합니다.
 - 파싱 결과를 `report_raw_details`에 갱신합니다.
