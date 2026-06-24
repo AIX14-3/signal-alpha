@@ -1,6 +1,12 @@
+import tempfile
 import unittest
+from pathlib import Path
 
-from app.collectors.report.storage import GcsReportStorageClient, get_report_storage_client
+from app.collectors.report.storage import (
+    GcsReportStorageClient,
+    LocalReportStorageClient,
+    get_report_storage_client,
+)
 
 
 class FakeBlob:
@@ -46,6 +52,13 @@ class Settings:
     gcs_report_bucket = "signal-alpha-report-fixtures"
 
 
+class LocalSettings:
+    report_storage_backend = "local"
+
+    def __init__(self, base_dir: Path) -> None:
+        self.report_local_storage_dir = str(base_dir)
+
+
 class ReportStorageTest(unittest.TestCase):
     def test_gcs_report_storage_uses_bucket_blob_operations(self):
         client = FakeGcsClient()
@@ -73,7 +86,40 @@ class ReportStorageTest(unittest.TestCase):
         storage.upload_pdf(b"%PDF-fake", "reports/005930/a.pdf")
         self.assertTrue(client.bucket(Settings.gcs_report_bucket).blob("reports/005930/a.pdf").exists())
 
+    def test_local_report_storage_writes_and_reads_pdf_under_base_dir(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base_dir = Path(temp_dir)
+            storage = LocalReportStorageClient(base_dir=base_dir)
+
+            self.assertFalse(storage.exists("reports/005930/a.pdf"))
+
+            returned_key = storage.upload_pdf(b"%PDF-local", "reports/005930/a.pdf")
+
+            self.assertEqual(returned_key, "reports/005930/a.pdf")
+            self.assertTrue(storage.exists("reports/005930/a.pdf"))
+            self.assertEqual(storage.download_pdf("reports/005930/a.pdf"), b"%PDF-local")
+            self.assertEqual((base_dir / "reports" / "005930" / "a.pdf").read_bytes(), b"%PDF-local")
+
+    def test_local_report_storage_rejects_path_traversal_keys(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base_dir = Path(temp_dir) / "storage"
+            storage = LocalReportStorageClient(base_dir=base_dir)
+
+            with self.assertRaises(ValueError):
+                storage.upload_pdf(b"%PDF-local", "../escape.pdf")
+
+            self.assertFalse((Path(temp_dir) / "escape.pdf").exists())
+
+    def test_factory_builds_local_storage_from_settings(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            settings = LocalSettings(Path(temp_dir))
+
+            storage = get_report_storage_client(settings)
+
+            self.assertIsInstance(storage, LocalReportStorageClient)
+            storage.upload_pdf(b"%PDF-local", "reports/005930/a.pdf")
+            self.assertTrue((Path(temp_dir) / "reports" / "005930" / "a.pdf").exists())
+
 
 if __name__ == "__main__":
     unittest.main()
-

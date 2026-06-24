@@ -82,8 +82,8 @@ ReportProcessTaskHandler
 현재 동작:
 
 - `report_raw_details`에서 `pdf_url`, `s3_key`, `parsing_status`를 조회합니다.
-- 기본 storage로 GCS 기반 `ReportStorageClient`를 사용합니다.
-- report storage에 파일이 없으면 원천 PDF URL에서 다운로드한 뒤 GCS bucket에 업로드합니다.
+- 기본 storage backend는 GCS이며, 로컬 테스트에서는 `REPORT_STORAGE_BACKEND=local`로 파일시스템 저장소를 사용할 수 있습니다.
+- report storage에 파일이 없으면 원천 PDF URL에서 다운로드한 뒤 선택된 backend에 업로드합니다.
 - report storage에 저장된 PDF의 첫 3페이지를 파싱합니다.
 - 파싱 결과를 `report_raw_details`에 갱신합니다.
   - `s3_key`
@@ -98,10 +98,12 @@ ReportProcessTaskHandler
 
 저장소 관련 주의:
 
-- 현재 canonical queue 경로는 로컬 개발 환경에서도 기본적으로 GCS를 사용합니다.
+- 현재 canonical queue 경로의 기본 backend는 GCS입니다.
+- 로컬 테스트 파일 저장은 `REPORT_STORAGE_BACKEND=local`과 `REPORT_LOCAL_STORAGE_DIR`로 활성화합니다. 기본 경로는 저장소 루트 기준 `data/report-storage`입니다.
+- local backend는 object key와 같은 상대 경로로 PDF를 저장하며, `..` 같은 경로 이탈 key는 거부합니다.
 - `pdf_downloader.py`, `run_parser.py` 같은 과거 CLI 경로는 `data/reports/` 아래에 PDF를 저장할 수 있습니다.
-- queue handler는 `REPORT_STORAGE_BACKEND=gcs`와 `GCS_REPORT_BUCKET` 설정을 사용합니다.
-- DB 컬럼명은 아직 `s3_key`이지만, 현재 구현에서는 GCS object key로 사용합니다.
+- queue handler는 `REPORT_STORAGE_BACKEND` 값에 따라 GCS 또는 local storage client를 사용합니다.
+- DB 컬럼명은 아직 `s3_key`이지만, 현재 구현에서는 선택된 storage backend의 object key로 사용합니다.
 
 ### 4. `embed_report`
 
@@ -114,7 +116,7 @@ ReportEmbedTaskHandler
 현재 동작:
 
 - `report_raw_details.s3_key`를 확인합니다.
-- GCS에서 PDF를 다시 다운로드합니다.
+- 선택된 storage backend에서 PDF를 다시 다운로드합니다.
 - PyMuPDF로 PDF 전체 텍스트를 추출합니다.
 - `chunk_text`로 텍스트를 청크로 나눕니다.
 - BGE-M3 embedding provider로 1024차원 벡터를 생성합니다.
@@ -297,7 +299,7 @@ Invoke-RestMethod `
 후속 개발 전에 아래 결정을 먼저 내리는 것이 좋습니다.
 
 1. 저장 backend
-   - canonical queue 경로는 GCS를 사용합니다. 개발과 테스트용 local storage adapter가 추가로 필요한지 결정합니다.
+   - canonical queue 경로의 기본 backend는 GCS입니다. 개발과 테스트용 local storage adapter도 구현되어 있으므로, 운영 환경에서는 GCS bucket/권한을 확정하고 로컬 환경에서는 `REPORT_STORAGE_BACKEND=local` 사용 여부를 정하면 됩니다.
 2. 정규화 경로
    - Report도 `source_documents`, `signal_events`, `signal_metrics`를 만들지, Aggregator 통합 전까지 RAG-only 분석으로 둘지 결정합니다.
 3. LLM 연결
