@@ -35,14 +35,14 @@ users_router = APIRouter(prefix="/api/users", tags=["users"])
 
 
 class SignupRequest(BaseModel):
-    imp_uid: str
+    identity_verification_id: str
     agreed_risk: bool
     nickname: str | None = None
     agreed_terms: list[str] = []
 
 
 class LoginRequest(BaseModel):
-    imp_uid: str
+    identity_verification_id: str
 
 
 class RefreshRequest(BaseModel):
@@ -109,7 +109,7 @@ async def signup(
 ) -> dict[str, Any]:
     if not payload.agreed_risk:
         raise _api_error(400, "RISK_AGREEMENT_REQUIRED", "투자 위험 고지 동의가 필요합니다.")
-    identity = await _verify_identity(portone, payload.imp_uid)
+    identity = await _verify_identity(portone, payload.identity_verification_id)
 
     async with pool.acquire() as connection:
         user_repository = UserBillingRepository(connection)
@@ -125,8 +125,8 @@ async def signup(
 
         await user_repository.record_portone_verification(
             user_id=user_id,
-            imp_uid=identity.imp_uid,
-            merchant_uid=f"identity:{identity.imp_uid}",
+            imp_uid=identity.id,
+            merchant_uid=f"identity:{identity.id}",
             status=identity.status,
             verification_type="identity",
             verified_at=datetime.now(UTC),
@@ -157,7 +157,7 @@ async def login(
     settings: Settings = Depends(get_settings),
     portone: PortOneClient = Depends(get_portone_client),
 ) -> dict[str, Any]:
-    identity = await _verify_identity(portone, payload.imp_uid)
+    identity = await _verify_identity(portone, payload.identity_verification_id)
     async with pool.acquire() as connection:
         user_repository = UserBillingRepository(connection)
         user_row = await user_repository.get_user_by_phone(identity.phone)
@@ -384,9 +384,9 @@ def _iso(value: Any) -> str | None:
     return isoformat() if callable(isoformat) else str(value)
 
 
-async def _verify_identity(portone: PortOneClient, imp_uid: str) -> Any:
+async def _verify_identity(portone: PortOneClient, identity_verification_id: str) -> Any:
     try:
-        identity = await portone.verify_identity(imp_uid)
+        identity = await portone.verify_identity(identity_verification_id)
     except PortOneError as exc:
         raise _api_error(400, "IDENTITY_VERIFICATION_FAILED", str(exc)) from None
     if identity.status != "certified" or not identity.phone:

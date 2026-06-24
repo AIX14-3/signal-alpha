@@ -142,11 +142,11 @@ class SubscriptionRoutesTest(unittest.TestCase):
         checkout = self.client.post("/api/payments/checkout", headers=self.auth_headers())
         self.assertEqual(checkout.status_code, 200)
         self.assertEqual(checkout.json()["amount"], 9900)
-        merchant_uid = checkout.json()["merchant_uid"]
+        payment_id = checkout.json()["payment_id"]
 
         confirm = self.client.post(
             "/api/payments/confirm",
-            json={"imp_uid": "imp_PAY", "merchant_uid": merchant_uid},
+            json={"payment_id": payment_id},
             headers=self.auth_headers(),
         )
         self.assertEqual(confirm.status_code, 200, confirm.text)

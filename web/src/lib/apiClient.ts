@@ -225,16 +225,16 @@ export type Journal = {
 };
 
 export type CheckoutInfo = {
-  merchant_uid: string;
+  payment_id: string;
   amount: number;
-  name: string;
-  pg: string;
+  order_name: string;
+  currency: string;
   plan_type: string;
 };
 
-/* ===== 인증(포트원 본인인증) ===== */
+/* ===== 인증(포트원 V2 본인인증) ===== */
 export async function signup(body: {
-  imp_uid: string;
+  identity_verification_id: string;
   agreed_risk: boolean;
   nickname?: string;
   agreed_terms?: string[];
@@ -242,7 +242,7 @@ export async function signup(body: {
   return apiFetch("/api/auth/signup", { method: "POST", auth: "none", body: JSON.stringify(body) });
 }
 
-export async function login(body: { imp_uid: string }): Promise<AuthResult> {
+export async function login(body: { identity_verification_id: string }): Promise<AuthResult> {
   return apiFetch("/api/auth/login", { method: "POST", auth: "none", body: JSON.stringify(body) });
 }
 
@@ -370,7 +370,7 @@ export async function checkout(): Promise<CheckoutInfo> {
   return apiFetch("/api/payments/checkout", { method: "POST" });
 }
 
-export async function confirmPayment(body: { imp_uid: string; merchant_uid: string }): Promise<{
+export async function confirmPayment(body: { payment_id: string }): Promise<{
   subscription: Subscription;
 }> {
   return apiFetch("/api/payments/confirm", { method: "POST", body: JSON.stringify(body) });

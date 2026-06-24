@@ -30,8 +30,8 @@ export default function PricingPage() {
     setBusy(true);
     try {
       const info = await checkout();
-      const imp_uid = await pay({ merchant_uid: info.merchant_uid, amount: info.amount, name: info.name, pg: info.pg });
-      await confirmPayment({ imp_uid, merchant_uid: info.merchant_uid });
+      const payment_id = await pay({ paymentId: info.payment_id, orderName: info.order_name, amount: info.amount });
+      await confirmPayment({ payment_id });
       await refreshMe();
       showToast("구독이 시작되었습니다.", "success");
       router.push("/mypage");

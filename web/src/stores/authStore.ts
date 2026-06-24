@@ -39,8 +39,8 @@ export const useAuthStore = create<AuthState>((set) => ({
   async loginWithIdentity() {
     set({ status: "loading", error: null });
     try {
-      const imp_uid = await certify();
-      apply(set, await apiLogin({ imp_uid }));
+      const identity_verification_id = await certify();
+      apply(set, await apiLogin({ identity_verification_id }));
     } catch (error) {
       set({ status: "anonymous", error: (error as Error).message });
       throw error;
@@ -50,11 +50,11 @@ export const useAuthStore = create<AuthState>((set) => ({
   async signupWithIdentity(input) {
     set({ status: "loading", error: null });
     try {
-      const imp_uid = await certify();
+      const identity_verification_id = await certify();
       apply(
         set,
         await apiSignup({
-          imp_uid,
+          identity_verification_id,
           agreed_risk: true,
           nickname: input.nickname,
           agreed_terms: input.agreed_terms ?? ["service", "privacy"],

@@ -43,7 +43,7 @@ class FakeConnection:
             self.users_by_id[user["id"]] = user
             return user
         if "INSERT INTO portone_verifications" in sql:
-            return {"id": 1, "imp_uid": args[1]}
+            return {"id": 1, "identity_verification_id": args[1]}
         if "INSERT INTO terms_agreements" in sql:
             return {"id": 1}
         if "FROM signal_subscriptions" in sql:
@@ -109,7 +109,7 @@ class AuthRoutesTest(unittest.TestCase):
     def test_signup_creates_user_session_and_returns_tokens(self):
         response = self.client.post(
             "/api/auth/signup",
-            json={"imp_uid": "imp_AAA", "nickname": "사용자", "agreed_risk": True},
+            json={"identity_verification_id": "imp_AAA", "nickname": "사용자", "agreed_risk": True},
         )
 
         self.assertEqual(response.status_code, 200)
@@ -129,28 +129,28 @@ class AuthRoutesTest(unittest.TestCase):
     def test_signup_requires_risk_agreement(self):
         response = self.client.post(
             "/api/auth/signup",
-            json={"imp_uid": "imp_AAA", "agreed_risk": False},
+            json={"identity_verification_id": "imp_AAA", "agreed_risk": False},
         )
 
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["detail"]["code"], "RISK_AGREEMENT_REQUIRED")
 
     def test_signup_rejects_duplicate_phone(self):
-        self.client.post("/api/auth/signup", json={"imp_uid": "imp_AAA", "agreed_risk": True})
+        self.client.post("/api/auth/signup", json={"identity_verification_id": "imp_AAA", "agreed_risk": True})
         # 같은 imp_uid → 같은 phone → 중복 가입 차단
         response = self.client.post(
-            "/api/auth/signup", json={"imp_uid": "imp_AAA", "agreed_risk": True}
+            "/api/auth/signup", json={"identity_verification_id": "imp_AAA", "agreed_risk": True}
         )
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.json()["detail"]["code"], "IDENTITY_ALREADY_REGISTERED")
 
     def test_login_refresh_logout_and_me_flow(self):
         signup = self.client.post(
-            "/api/auth/signup", json={"imp_uid": "imp_AAA", "agreed_risk": True}
+            "/api/auth/signup", json={"identity_verification_id": "imp_AAA", "agreed_risk": True}
         ).json()
         member_code = signup["user"]["member_code"]
 
-        login_response = self.client.post("/api/auth/login", json={"imp_uid": "imp_AAA"})
+        login_response = self.client.post("/api/auth/login", json={"identity_verification_id": "imp_AAA"})
         self.assertEqual(login_response.status_code, 200)
         login_body = login_response.json()
         self.assertEqual(login_body["user"]["member_code"], member_code)
@@ -175,7 +175,7 @@ class AuthRoutesTest(unittest.TestCase):
         self.assertEqual(logout_response.json(), {"status": "ok"})
 
     def test_login_rejects_unknown_user(self):
-        response = self.client.post("/api/auth/login", json={"imp_uid": "imp_NEVER"})
+        response = self.client.post("/api/auth/login", json={"identity_verification_id": "imp_NEVER"})
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.json()["detail"]["code"], "USER_NOT_FOUND")
 
