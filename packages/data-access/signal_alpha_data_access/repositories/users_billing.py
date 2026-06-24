@@ -120,6 +120,24 @@ class UserBillingRepository:
             nickname,
         )
 
+    async def update_user_profile(
+        self, *, user_id: int, nickname: str | None, email: str | None
+    ) -> Any:
+        """nickname/email 부분 수정(None 은 기존 값 유지)."""
+        return await self._connection.fetchrow(
+            """
+            UPDATE users
+            SET nickname = COALESCE($2, nickname),
+                email = COALESCE($3, email)
+            WHERE id = $1
+              AND deleted_at IS NULL
+            RETURNING *
+            """,
+            user_id,
+            nickname,
+            email,
+        )
+
     async def soft_delete_user(self, *, user_id: int) -> None:
         """회원탈퇴(soft delete). 활성 phone 유니크가 해제되어 동일 번호 재가입 가능."""
         await self._connection.execute(

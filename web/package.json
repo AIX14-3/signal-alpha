@@ -10,6 +10,7 @@
     "test": "node --test tests/*.test.mjs"
   },
   "dependencies": {
+    "@portone/browser-sdk": "^0.1.9",
     "next": "^15.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

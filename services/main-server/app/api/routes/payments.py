@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from app.api.routes.auth import NOTICE, _subscription_active, get_current_user
 from app.core.config import Settings, get_settings
 from app.core.database import get_database_pool
-from app.core.portone import PortOneClient, PortOneError, get_portone_client
+from app.core.portone import PortOneClient, PortOneError, get_portone_client, normalize_phone
 from signal_alpha_data_access.repositories import UserBillingRepository
 
 router = APIRouter(prefix="/api/payments", tags=["payments"])
@@ -20,8 +20,7 @@ _SUBSCRIPTION_DAYS = 30
 
 
 class ConfirmRequest(BaseModel):
-    imp_uid: str
-    merchant_uid: str
+    payment_id: str
 
 
 @router.post("/checkout")
@@ -29,14 +28,20 @@ async def checkout(
     current_user: dict[str, Any] = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
-    """포트원 결제창 파라미터 발급. merchant_uid 를 생성해 반환한다."""
-    merchant_uid = f"sa_pay_{secrets.token_hex(10)}"
+    """포트원 V2 결제 파라미터 발급. paymentId 를 생성해 반환한다(프론트가 requestPayment 에 사용)."""
+    payment_id = f"sa-pay-{secrets.token_hex(10)}"
     return {
-        "merchant_uid": merchant_uid,
+        "payment_id": payment_id,
         "amount": settings.subscription_price_krw,
-        "name": "Signal Alpha 월 구독",
-        "pg": "html5_inicis",
+        "order_name": "Signal Alpha 월 구독",
+        "currency": "CURRENCY_KRW",
         "plan_type": settings.subscription_plan_type,
+        # 결제창(이니시스)용 구매자 정보. 전체 전화번호는 결제 컨텍스트에만 노출.
+        "customer": {
+            "email": current_user.get("email"),
+            "full_name": current_user.get("nickname"),
+            "phone_number": normalize_phone(current_user.get("phone")) or None,
+        },
     }
 
 
@@ -50,15 +55,13 @@ async def confirm(
 ) -> dict[str, Any]:
     user_id = int(current_user["id"])
     try:
-        payment = await portone.verify_payment(payload.imp_uid)
+        payment = await portone.verify_payment(payload.payment_id)
     except PortOneError as exc:
         raise _api_error(400, "PAYMENT_VERIFICATION_FAILED", str(exc)) from None
 
-    # 서버 검증: 상태=paid, 금액=상품가. real 모드는 merchant_uid 도 대조.
+    # 서버 검증: 상태=paid, 금액=상품가.
     if payment.status != "paid" or payment.amount != settings.subscription_price_krw:
         raise _api_error(400, "PAYMENT_VERIFICATION_FAILED", "결제 검증에 실패했습니다.")
-    if not portone.dev_mode and payment.merchant_uid != payload.merchant_uid:
-        raise _api_error(400, "PAYMENT_VERIFICATION_FAILED", "주문 정보가 일치하지 않습니다.")
 
     async with pool.acquire() as connection:
         repository = UserBillingRepository(connection)
@@ -72,8 +75,8 @@ async def confirm(
 
         await repository.record_portone_verification(
             user_id=user_id,
-            imp_uid=payload.imp_uid,
-            merchant_uid=payload.merchant_uid,
+            imp_uid=payload.payment_id,
+            merchant_uid=payload.payment_id,
             status="paid",
             verification_type="payment",
             verified_at=datetime.now(UTC),

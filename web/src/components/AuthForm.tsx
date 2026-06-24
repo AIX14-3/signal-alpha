@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { useAuthStore } from "@/stores/authStore";
 import { isPortoneDevMode } from "@/lib/portone";
-import { SOCIAL_PROVIDERS, socialAuthCode } from "@/lib/social";
+import { isSocialDevMode, SOCIAL_PROVIDERS, socialAuthCode, startSocialOAuth } from "@/lib/social";
 
 export function AuthForm({ mode }: { mode: "login" | "signup" }) {
   const router = useRouter();
@@ -13,6 +13,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
   const signupWithIdentity = useAuthStore((s) => s.signupWithIdentity);
   const socialLoginWith = useAuthStore((s) => s.socialLoginWith);
 
+  const [email, setEmail] = useState("");
   const [nickname, setNickname] = useState("");
   const [agreedRisk, setAgreedRisk] = useState(false);
   const [agreedTerms, setAgreedTerms] = useState(false);
@@ -21,20 +22,33 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
 
   const isSignup = mode === "signup";
 
+  function getReturnTo(): string {
+    if (typeof window === "undefined") return "/mypage";
+    const to = new URLSearchParams(window.location.search).get("returnTo");
+    // 오픈 리다이렉트 방지: 내부 경로만 허용
+    return to && to.startsWith("/") ? to : "/mypage";
+  }
+
   async function onIdentity() {
     setError(null);
-    if (isSignup && (!agreedRisk || !agreedTerms)) {
-      setError("필수 약관에 동의해야 가입할 수 있습니다.");
-      return;
+    if (isSignup) {
+      if (!email.trim() || !nickname.trim()) {
+        setError("이메일과 닉네임을 입력해 주세요.");
+        return;
+      }
+      if (!agreedRisk || !agreedTerms) {
+        setError("필수 약관에 동의해야 가입할 수 있습니다.");
+        return;
+      }
     }
     setBusy(true);
     try {
       if (isSignup) {
-        await signupWithIdentity({ nickname: nickname || undefined });
+        await signupWithIdentity({ email: email.trim(), nickname: nickname.trim() });
       } else {
         await loginWithIdentity();
       }
-      router.push("/mypage");
+      router.push(getReturnTo());
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -44,10 +58,14 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
 
   async function onSocial(provider: (typeof SOCIAL_PROVIDERS)[number]["key"]) {
     setError(null);
+    if (!isSocialDevMode(provider)) {
+      startSocialOAuth(provider, "login", getReturnTo()); // provider 로 리다이렉트
+      return;
+    }
     setBusy(true);
     try {
       await socialLoginWith(provider, socialAuthCode(provider));
-      router.push("/mypage");
+      router.push(getReturnTo());
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -67,9 +85,16 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
       {isSignup && (
         <div className="mt-7 space-y-3">
           <input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="이메일 (결제·안내에 사용)"
+            className="card w-full px-4 py-3 text-[15px] outline-none focus:border-sky"
+          />
+          <input
             value={nickname}
             onChange={(e) => setNickname(e.target.value)}
-            placeholder="닉네임 (선택)"
+            placeholder="닉네임"
             className="card w-full px-4 py-3 text-[15px] outline-none focus:border-sky"
           />
           <label className="flex items-start gap-2 px-1 text-[13px] text-navy-soft">

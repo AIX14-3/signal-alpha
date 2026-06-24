@@ -99,6 +99,7 @@ export type User = {
   id: number;
   member_code: string | null;
   nickname: string | null;
+  email: string | null;
   phone_masked: string | null;
   agreed_risk: boolean;
   subscription_active: boolean;
@@ -225,24 +226,30 @@ export type Journal = {
 };
 
 export type CheckoutInfo = {
-  merchant_uid: string;
+  payment_id: string;
   amount: number;
-  name: string;
-  pg: string;
+  order_name: string;
+  currency: string;
   plan_type: string;
+  customer: {
+    email: string | null;
+    full_name: string | null;
+    phone_number: string | null;
+  };
 };
 
-/* ===== 인증(포트원 본인인증) ===== */
+/* ===== 인증(포트원 V2 본인인증) ===== */
 export async function signup(body: {
-  imp_uid: string;
+  identity_verification_id: string;
+  email: string;
+  nickname: string;
   agreed_risk: boolean;
-  nickname?: string;
   agreed_terms?: string[];
 }): Promise<AuthResult> {
   return apiFetch("/api/auth/signup", { method: "POST", auth: "none", body: JSON.stringify(body) });
 }
 
-export async function login(body: { imp_uid: string }): Promise<AuthResult> {
+export async function login(body: { identity_verification_id: string }): Promise<AuthResult> {
   return apiFetch("/api/auth/login", { method: "POST", auth: "none", body: JSON.stringify(body) });
 }
 
@@ -258,7 +265,7 @@ export async function getMe(): Promise<User> {
   return apiFetch("/api/users/me");
 }
 
-export async function updateMe(body: { nickname?: string | null }): Promise<User> {
+export async function updateMe(body: { nickname?: string | null; email?: string | null }): Promise<User> {
   return apiFetch("/api/users/me", { method: "PATCH", body: JSON.stringify(body) });
 }
 
@@ -273,14 +280,14 @@ export async function listSocial(): Promise<{ items: SocialLink[] }> {
 
 export async function linkSocial(
   provider: Provider,
-  body: { code: string; redirect_uri?: string },
+  body: { code: string; redirect_uri?: string; state?: string },
 ): Promise<SocialLink> {
   return apiFetch(`/api/auth/social/link/${provider}`, { method: "POST", body: JSON.stringify(body) });
 }
 
 export async function socialLogin(
   provider: Provider,
-  body: { code: string; redirect_uri?: string },
+  body: { code: string; redirect_uri?: string; state?: string },
 ): Promise<AuthResult> {
   return apiFetch(`/api/auth/social/login/${provider}`, {
     method: "POST",
@@ -370,7 +377,7 @@ export async function checkout(): Promise<CheckoutInfo> {
   return apiFetch("/api/payments/checkout", { method: "POST" });
 }
 
-export async function confirmPayment(body: { imp_uid: string; merchant_uid: string }): Promise<{
+export async function confirmPayment(body: { payment_id: string }): Promise<{
   subscription: Subscription;
 }> {
   return apiFetch("/api/payments/confirm", { method: "POST", body: JSON.stringify(body) });

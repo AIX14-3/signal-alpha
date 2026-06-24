@@ -17,7 +17,7 @@ import {
 } from "@/lib/apiClient";
 import { won } from "@/lib/format";
 import { pay } from "@/lib/portone";
-import { SOCIAL_PROVIDERS, socialAuthCode } from "@/lib/social";
+import { isSocialDevMode, SOCIAL_PROVIDERS, socialAuthCode, startSocialOAuth } from "@/lib/social";
 import { useAuthStore } from "@/stores/authStore";
 import { useSocialStore } from "@/stores/socialStore";
 import { useWatchlistStore } from "@/stores/watchlistStore";
@@ -133,8 +133,15 @@ function SubscriptionTab() {
     setBusy(true);
     try {
       const info = await checkout();
-      const imp_uid = await pay({ merchant_uid: info.merchant_uid, amount: info.amount, name: info.name, pg: info.pg });
-      await confirmPayment({ imp_uid, merchant_uid: info.merchant_uid });
+      const payment_id = await pay({
+        paymentId: info.payment_id,
+        orderName: info.order_name,
+        amount: info.amount,
+        customerEmail: info.customer.email ?? undefined,
+        customerName: info.customer.full_name ?? undefined,
+        customerPhone: info.customer.phone_number ?? undefined,
+      });
+      await confirmPayment({ payment_id });
       await reload();
       await refreshMe();
       showToast("구독이 시작되었습니다.", "success");
@@ -229,9 +236,17 @@ function SocialTab() {
 
   async function toggle(provider: (typeof SOCIAL_PROVIDERS)[number]["key"], linked: boolean) {
     try {
-      if (linked) await unlink(provider);
-      else await link(provider, socialAuthCode(provider));
-      showToast(linked ? "연동을 해제했습니다." : "연동했습니다.", "success");
+      if (linked) {
+        await unlink(provider);
+        showToast("연동을 해제했습니다.", "success");
+        return;
+      }
+      if (isSocialDevMode(provider)) {
+        await link(provider, socialAuthCode(provider));
+        showToast("연동했습니다.", "success");
+      } else {
+        startSocialOAuth(provider, "link"); // provider 로 리다이렉트
+      }
     } catch (err) {
       showToast((err as Error).message, "error");
     }
@@ -269,12 +284,17 @@ function ProfileTab() {
   const logout = useAuthStore((s) => s.logout);
   const showToast = useToastStore((s) => s.show);
   const [nickname, setNickname] = useState(user?.nickname ?? "");
+  const [email, setEmail] = useState(user?.email ?? "");
   const [busy, setBusy] = useState(false);
 
   async function save() {
+    if (!nickname.trim() || !email.trim()) {
+      showToast("이메일과 닉네임을 입력해 주세요.", "error");
+      return;
+    }
     setBusy(true);
     try {
-      await updateMe({ nickname });
+      await updateMe({ nickname: nickname.trim(), email: email.trim() });
       await refreshMe();
       showToast("회원정보를 수정했습니다.", "success");
     } catch (err) {
@@ -307,7 +327,14 @@ function ProfileTab() {
           <dd className="font-semibold">{user?.phone_masked ?? "—"}</dd>
         </div>
       </dl>
-      <label className="mt-5 block text-[13px] font-semibold text-navy-soft">닉네임</label>
+      <label className="mt-5 block text-[13px] font-semibold text-navy-soft">이메일</label>
+      <input
+        type="email"
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+        className="card mt-1 w-full px-4 py-2.5 text-[14px] outline-none focus:border-sky"
+      />
+      <label className="mt-4 block text-[13px] font-semibold text-navy-soft">닉네임</label>
       <div className="mt-1 flex gap-2">
         <input value={nickname} onChange={(e) => setNickname(e.target.value)} className="card flex-1 px-4 py-2.5 text-[14px] outline-none focus:border-sky" />
         <button type="button" onClick={() => void save()} disabled={busy} className="brand-grad rounded-full px-5 text-[14px] font-bold text-white disabled:opacity-60">저장</button>
