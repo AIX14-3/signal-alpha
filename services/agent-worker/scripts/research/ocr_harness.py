@@ -161,20 +161,35 @@ def _load_tesseract(lang: str):
 
 
 def _load_paddle(lang: str):
-    """PaddleOCR. 모델 1회 적재 후 재사용."""
+    """PaddleOCR. 모델 1회 적재 후 재사용. 3.x(predict/rec_texts) 우선, 2.x(.ocr 중첩) 폴백."""
+    import os
+
+    # PP-OCRv5 가 CPU oneDNN+PIR 경로에서 attribute 변환 버그를 일으킨다(onednn_instruction.cc).
+    # paddle import 전에 oneDNN 비활성 → CPU 순정 커널로 우회.
+    os.environ.setdefault("FLAGS_use_mkldnn", "0")
+
     import numpy as np
     from paddleocr import PaddleOCR
     from PIL import Image
 
     plang = "korean" if lang.startswith("kor") else (lang.split("+")[0] or "en")
-    ocr = PaddleOCR(use_angle_cls=True, lang=plang, show_log=False)
+    try:
+        ocr = PaddleOCR(lang=plang, use_textline_orientation=True,  # PaddleOCR 3.x
+                        enable_mkldnn=False)
+    except Exception:  # noqa: BLE001 — 구버전 인자 폴백
+        ocr = PaddleOCR(lang=plang, use_angle_cls=True)             # 2.x
 
     def predict(image_path: Path) -> str:
         with Image.open(image_path) as im:
             arr = np.asarray(im.convert("RGB"))
-        result = ocr.ocr(arr, cls=True)
-        lines = [ln[1][0] for page in (result or []) for ln in (page or [])]
-        return "\n".join(lines)
+        result = ocr.predict(arr) if hasattr(ocr, "predict") else ocr.ocr(arr)
+        texts: list[str] = []
+        for res in (result or []):
+            if hasattr(res, "get") and res.get("rec_texts") is not None:   # 3.x
+                texts.extend(res["rec_texts"])
+            elif isinstance(res, (list, tuple)):                           # 2.x: [box,(text,score)]
+                texts.extend(ln[1][0] for ln in res if ln)
+        return "\n".join(texts)
     return predict
 
 
