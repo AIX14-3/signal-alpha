@@ -99,6 +99,7 @@ export type User = {
   id: number;
   member_code: string | null;
   nickname: string | null;
+  email: string | null;
   phone_masked: string | null;
   agreed_risk: boolean;
   subscription_active: boolean;
@@ -235,8 +236,9 @@ export type CheckoutInfo = {
 /* ===== 인증(포트원 V2 본인인증) ===== */
 export async function signup(body: {
   identity_verification_id: string;
+  email: string;
+  nickname: string;
   agreed_risk: boolean;
-  nickname?: string;
   agreed_terms?: string[];
 }): Promise<AuthResult> {
   return apiFetch("/api/auth/signup", { method: "POST", auth: "none", body: JSON.stringify(body) });
@@ -258,7 +260,7 @@ export async function getMe(): Promise<User> {
   return apiFetch("/api/users/me");
 }
 
-export async function updateMe(body: { nickname?: string | null }): Promise<User> {
+export async function updateMe(body: { nickname?: string | null; email?: string | null }): Promise<User> {
   return apiFetch("/api/users/me", { method: "PATCH", body: JSON.stringify(body) });
 }
 

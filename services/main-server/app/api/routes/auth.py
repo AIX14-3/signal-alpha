@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import secrets
 from datetime import UTC, datetime, timedelta
 from ipaddress import ip_address
@@ -29,6 +30,7 @@ NOTICE = "Signal Alpha는 매수·매도 추천이 아니라 데이터 방향성
 _CODE_LETTERS = "ABCDEFGHJKLMNPQRSTUVWXYZ"
 _CODE_DIGITS = "23456789"
 _MEMBER_CODE_RETRIES = 6
+_EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 auth_router = APIRouter(prefix="/api/auth", tags=["auth"])
 users_router = APIRouter(prefix="/api/users", tags=["users"])
@@ -36,8 +38,9 @@ users_router = APIRouter(prefix="/api/users", tags=["users"])
 
 class SignupRequest(BaseModel):
     identity_verification_id: str
+    email: str
+    nickname: str
     agreed_risk: bool
-    nickname: str | None = None
     agreed_terms: list[str] = []
 
 
@@ -55,6 +58,7 @@ class LogoutRequest(BaseModel):
 
 class UpdateMeRequest(BaseModel):
     nickname: str | None = None
+    email: str | None = None
 
 
 class SocialAuthRequest(BaseModel):
@@ -110,17 +114,22 @@ async def signup(
 ) -> dict[str, Any]:
     if not payload.agreed_risk:
         raise _api_error(400, "RISK_AGREEMENT_REQUIRED", "투자 위험 고지 동의가 필요합니다.")
+    email = _normalize_email(payload.email)
+    nickname = _clean_nickname(payload.nickname)
     identity = await _verify_identity(portone, payload.identity_verification_id)
 
     async with pool.acquire() as connection:
         user_repository = UserBillingRepository(connection)
         if await user_repository.get_user_by_phone(identity.phone) is not None:
             raise _api_error(409, "IDENTITY_ALREADY_REGISTERED", "이미 가입된 본인인증 정보입니다.")
+        if await user_repository.get_user_by_email(email) is not None:
+            raise _api_error(409, "EMAIL_ALREADY_EXISTS", "이미 사용 중인 이메일입니다.")
 
         user = await _create_identity_user(
             user_repository,
             phone=identity.phone,
-            nickname=payload.nickname,
+            nickname=nickname,
+            email=email,
         )
         user_id = int(user["id"])
 
@@ -232,10 +241,18 @@ async def update_me(
     current_user: dict[str, Any] = Depends(get_current_user),
     pool: Any = Depends(get_database_pool),
 ) -> dict[str, Any]:
+    nickname = _clean_nickname(payload.nickname) if payload.nickname is not None else None
+    email = _normalize_email(payload.email) if payload.email is not None else None
     async with pool.acquire() as connection:
-        updated = await UserBillingRepository(connection).update_user_nickname(
+        repository = UserBillingRepository(connection)
+        if email is not None:
+            existing = await repository.get_user_by_email(email)
+            if existing is not None and int(existing["id"]) != int(current_user["id"]):
+                raise _api_error(409, "EMAIL_ALREADY_EXISTS", "이미 사용 중인 이메일입니다.")
+        updated = await repository.update_user_profile(
             user_id=int(current_user["id"]),
-            nickname=payload.nickname,
+            nickname=nickname,
+            email=email,
         )
         subscription_active = await _subscription_active(connection, int(current_user["id"]))
     return _user_response(dict(updated), subscription_active=subscription_active)
@@ -399,7 +416,8 @@ async def _create_identity_user(
     user_repository: UserBillingRepository,
     *,
     phone: str,
-    nickname: str | None,
+    nickname: str,
+    email: str,
 ) -> dict[str, Any]:
     """member_code 충돌 시 재시도하며 신규 회원을 INSERT 한다."""
     for _ in range(_MEMBER_CODE_RETRIES):
@@ -407,7 +425,7 @@ async def _create_identity_user(
         try:
             row = await user_repository.insert_identity_user(
                 member_code=member_code,
-                email=_synth_email(member_code),
+                email=email,
                 phone=phone,
                 nickname=nickname,
             )
@@ -418,7 +436,9 @@ async def _create_identity_user(
                 raise _api_error(
                     409, "IDENTITY_ALREADY_REGISTERED", "이미 가입된 본인인증 정보입니다."
                 ) from None
-            # member_code/email 충돌 → 재생성 재시도
+            if "email" in constraint:
+                raise _api_error(409, "EMAIL_ALREADY_EXISTS", "이미 사용 중인 이메일입니다.") from None
+            # member_code 충돌 → 재생성 재시도
             continue
     raise _api_error(500, "MEMBER_CODE_GENERATION_FAILED", "회원 식별번호 생성에 실패했습니다.")
 
@@ -484,9 +504,18 @@ def _new_member_code() -> str:
     return f"{letters}{digits}"
 
 
-def _synth_email(member_code: str) -> str:
-    """users.email 은 NOT NULL UNIQUE — 본인인증 모델은 이메일을 받지 않으므로 합성한다(미노출)."""
-    return f"{member_code.lower()}@portone.local"
+def _normalize_email(email: str) -> str:
+    value = (email or "").strip().lower()
+    if not _EMAIL_PATTERN.match(value):
+        raise _api_error(400, "INVALID_EMAIL", "이메일 형식이 올바르지 않습니다.")
+    return value
+
+
+def _clean_nickname(nickname: str | None) -> str:
+    value = (nickname or "").strip()
+    if not value:
+        raise _api_error(400, "INVALID_NICKNAME", "닉네임을 입력해 주세요.")
+    return value[:50]
 
 
 def _mask_phone(phone: str | None) -> str | None:
@@ -512,6 +541,7 @@ def _user_response(user: dict[str, Any], *, subscription_active: bool) -> dict[s
         "id": user["id"],
         "member_code": user.get("member_code"),
         "nickname": user.get("nickname"),
+        "email": user.get("email"),
         "phone_masked": _mask_phone(user.get("phone")),
         "agreed_risk": user.get("agreed_risk", False),
         "subscription_active": subscription_active,

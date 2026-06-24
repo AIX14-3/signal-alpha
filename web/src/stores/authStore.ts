@@ -19,7 +19,7 @@ type AuthState = {
   status: "idle" | "loading" | "authenticated" | "anonymous";
   error: string | null;
   loginWithIdentity: () => Promise<void>;
-  signupWithIdentity: (input: { nickname?: string; agreed_terms?: string[] }) => Promise<void>;
+  signupWithIdentity: (input: { email: string; nickname: string; agreed_terms?: string[] }) => Promise<void>;
   socialLoginWith: (provider: Provider, code: string) => Promise<void>;
   refreshMe: () => Promise<void>;
   logout: () => Promise<void>;
@@ -55,8 +55,9 @@ export const useAuthStore = create<AuthState>((set) => ({
         set,
         await apiSignup({
           identity_verification_id,
-          agreed_risk: true,
+          email: input.email,
           nickname: input.nickname,
+          agreed_risk: true,
           agreed_terms: input.agreed_terms ?? ["service", "privacy"],
         }),
       );

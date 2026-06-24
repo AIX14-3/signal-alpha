@@ -46,11 +46,14 @@ export async function certify(): Promise<string> {
   return res.identityVerificationId;
 }
 
-/** 결제 → paymentId. 백엔드 checkout 이 발급한 paymentId 로 결제창을 띄운다. */
+/** 결제 → paymentId. 백엔드 checkout 이 발급한 paymentId 로 결제창을 띄운다.
+ *  이니시스는 고객 이메일을 요구하므로 customer.email 을 함께 전달한다. */
 export async function pay(opts: {
   paymentId: string;
   orderName: string;
   amount: number;
+  customerEmail?: string;
+  customerName?: string;
 }): Promise<string> {
   if (isPortoneDevMode()) return opts.paymentId;
   const res = await PortOne.requestPayment({
@@ -61,6 +64,7 @@ export async function pay(opts: {
     totalAmount: opts.amount,
     currency: "KRW",
     payMethod: "CARD",
+    customer: { email: opts.customerEmail, fullName: opts.customerName },
   });
   if (!res || res.code) throw new Error(res?.message ?? "결제에 실패했습니다.");
   return res.paymentId;

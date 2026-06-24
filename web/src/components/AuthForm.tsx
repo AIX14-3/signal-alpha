@@ -13,6 +13,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
   const signupWithIdentity = useAuthStore((s) => s.signupWithIdentity);
   const socialLoginWith = useAuthStore((s) => s.socialLoginWith);
 
+  const [email, setEmail] = useState("");
   const [nickname, setNickname] = useState("");
   const [agreedRisk, setAgreedRisk] = useState(false);
   const [agreedTerms, setAgreedTerms] = useState(false);
@@ -23,14 +24,20 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
 
   async function onIdentity() {
     setError(null);
-    if (isSignup && (!agreedRisk || !agreedTerms)) {
-      setError("필수 약관에 동의해야 가입할 수 있습니다.");
-      return;
+    if (isSignup) {
+      if (!email.trim() || !nickname.trim()) {
+        setError("이메일과 닉네임을 입력해 주세요.");
+        return;
+      }
+      if (!agreedRisk || !agreedTerms) {
+        setError("필수 약관에 동의해야 가입할 수 있습니다.");
+        return;
+      }
     }
     setBusy(true);
     try {
       if (isSignup) {
-        await signupWithIdentity({ nickname: nickname || undefined });
+        await signupWithIdentity({ email: email.trim(), nickname: nickname.trim() });
       } else {
         await loginWithIdentity();
       }
@@ -71,9 +78,16 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
       {isSignup && (
         <div className="mt-7 space-y-3">
           <input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="이메일 (결제·안내에 사용)"
+            className="card w-full px-4 py-3 text-[15px] outline-none focus:border-sky"
+          />
+          <input
             value={nickname}
             onChange={(e) => setNickname(e.target.value)}
-            placeholder="닉네임 (선택)"
+            placeholder="닉네임"
             className="card w-full px-4 py-3 text-[15px] outline-none focus:border-sky"
           />
           <label className="flex items-start gap-2 px-1 text-[13px] text-navy-soft">

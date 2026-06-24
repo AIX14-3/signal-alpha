@@ -30,7 +30,13 @@ export default function PricingPage() {
     setBusy(true);
     try {
       const info = await checkout();
-      const payment_id = await pay({ paymentId: info.payment_id, orderName: info.order_name, amount: info.amount });
+      const payment_id = await pay({
+        paymentId: info.payment_id,
+        orderName: info.order_name,
+        amount: info.amount,
+        customerEmail: user?.email ?? undefined,
+        customerName: user?.nickname ?? undefined,
+      });
       await confirmPayment({ payment_id });
       await refreshMe();
       showToast("구독이 시작되었습니다.", "success");
