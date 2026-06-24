@@ -372,6 +372,8 @@ Invoke-RestMethod `
 6. collector 실행 로그
    - `collect_report`는 `collector_runs` 생성과 완료/실패 집계를 기록합니다.
    - Report 저장은 `CollectionRepository` 기반으로 정리되어 `collector_runs`와 raw 문서 추적이 이어집니다.
+   - 성공/실패 시 agent-worker 로그에 `report_collection_summary` 이벤트를 남깁니다.
+   - 로그 payload에는 `collected_reports`, `saved_reports`, `inserted_reports`, `duplicate_reports`, `invalid_date_reports`, `missing_pdf_reports`, `enqueued_reports`, `skip_reasons`가 포함됩니다.
 7. 테스트 범위
    - storage backend, queue chaining, Report 분석 저장은 unit/integration 테스트로 유지합니다.
    - fake DB connection 기반 Report E2E queue pipeline으로 canonical 링크와 후속 enqueue를 회귀 검증합니다.

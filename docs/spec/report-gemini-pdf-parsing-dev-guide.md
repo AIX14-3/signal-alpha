@@ -158,6 +158,14 @@ Invoke-RestMethod `
 - `max_pages`를 늘려 오래된 리포트까지 탐색합니다.
 - `collect_stock()`을 컨테이너에서 직접 실행해 목록 파싱 결과를 확인합니다.
 
+agent-worker 로그에서 `report_collection_summary`를 확인합니다.
+
+- `collected_reports`: 크롤러가 찾은 후보 수
+- `saved_reports`: DB에 저장 또는 갱신된 raw 문서 수
+- `invalid_date_reports`: 날짜 파싱 실패로 저장하지 않은 수
+- `missing_pdf_reports`: 후보에는 있으나 PDF URL이 없는 수
+- `enqueued_reports`: `process_report`로 넘긴 수
+
 ```powershell
 docker compose exec -T agent-worker python -c "from datetime import datetime; from app.collectors.report.crawler import collect_stock; reports=collect_stock('', '005930', max_pages=1, date_start=datetime(2026,6,17), date_end=datetime(2026,6,24,23,59,59)); print(len(reports)); [print(r.get('firm'), r.get('date'), r.get('title'), r.get('pdf_direct_url')) for r in reports]"
 ```

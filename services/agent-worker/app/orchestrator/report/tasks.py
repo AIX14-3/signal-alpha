@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from collections.abc import Mapping
 from datetime import date, datetime, timedelta
 from typing import Any
@@ -31,6 +32,8 @@ from signal_alpha_data_access.repositories import (
     RawDetailRepository,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class ReportCollectTaskHandler:
     """
@@ -53,7 +56,8 @@ class ReportCollectTaskHandler:
         collector_run_id = await collection_repository.create_collector_run("REPORT", "batch")
 
         reports: list[dict] = []
-        saved_ids: list[int] = []
+        save_result = _new_report_collection_result()
+        enqueued_count = 0
         try:
             # 절대 날짜(date_start/date_end)가 있으면 우선, 없으면 days_back으로 fallback.
             ds = task_context.get("date_start")
@@ -69,7 +73,7 @@ class ReportCollectTaskHandler:
                 date_end=date_end,
             )
 
-            saved_ids = await _save_to_db(
+            save_result = await _save_to_db(
                 collection_repository,
                 reports,
                 stock_id,
@@ -77,7 +81,7 @@ class ReportCollectTaskHandler:
             )
 
             queue = ProcessingQueueRepository(self._connection)
-            for raw_document_id in saved_ids:
+            for raw_document_id in save_result["raw_document_ids"]:
                 await queue.enqueue(
                     stock_id=stock_id,
                     task_type=PROCESS_REPORT,
@@ -89,15 +93,33 @@ class ReportCollectTaskHandler:
                     },
                     dedupe=True,
                 )
+                enqueued_count += 1
         except Exception as exc:
             await collection_repository.finish_collector_run(
                 run_id=collector_run_id,
                 status="failed",
                 collected_count=len(reports),
-                inserted_count=len(saved_ids),
-                skipped_count=max(0, len(reports) - len(saved_ids)),
+                inserted_count=save_result["inserted_reports"],
+                skipped_count=save_result["duplicate_reports"] + save_result["invalid_date_reports"],
                 failed_count=1,
                 error_message=str(exc),
+            )
+            logger.warning(
+                "report_collection_summary %s",
+                json.dumps(
+                    _report_collection_log_payload(
+                        status="failed",
+                        collector_run_id=collector_run_id,
+                        stock_id=stock_id,
+                        stock_code=stock_code,
+                        reports=reports,
+                        save_result=save_result,
+                        enqueued_count=enqueued_count,
+                        error_message=str(exc),
+                    ),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
             )
             raise
 
@@ -105,12 +127,40 @@ class ReportCollectTaskHandler:
             run_id=collector_run_id,
             status="success",
             collected_count=len(reports),
-            inserted_count=len(saved_ids),
-            skipped_count=max(0, len(reports) - len(saved_ids)),
+            inserted_count=save_result["inserted_reports"],
+            skipped_count=save_result["duplicate_reports"] + save_result["invalid_date_reports"],
             failed_count=0,
         )
 
-        return {"collector_run_id": collector_run_id, "collected": len(saved_ids)}
+        logger.info(
+            "report_collection_summary %s",
+            json.dumps(
+                _report_collection_log_payload(
+                    status="success",
+                    collector_run_id=collector_run_id,
+                    stock_id=stock_id,
+                    stock_code=stock_code,
+                    reports=reports,
+                    save_result=save_result,
+                    enqueued_count=enqueued_count,
+                ),
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+        )
+
+        return {
+            "collector_run_id": collector_run_id,
+            "collected": save_result["saved_reports"],
+            "collected_reports": len(reports),
+            "saved_reports": save_result["saved_reports"],
+            "inserted_reports": save_result["inserted_reports"],
+            "duplicate_reports": save_result["duplicate_reports"],
+            "invalid_date_reports": save_result["invalid_date_reports"],
+            "missing_pdf_reports": save_result["missing_pdf_reports"],
+            "enqueued_reports": enqueued_count,
+            "skip_reasons": save_result["skip_reasons"],
+        }
 
 
 class ReportProcessTaskHandler:
@@ -724,20 +774,25 @@ async def _save_to_db(
     stock_id: int,
     *,
     collector_run_id: int | None = None,
-) -> list[int]:
+) -> dict[str, Any]:
     """
     raw_documents + report_raw_details 동시 INSERT.
     트랜잭션 전략: 리포트 1건 = 트랜잭션 1개.
     source_hash UNIQUE 충돌 시 기존 id를 조회해 process_report 태스크를 재등록한다.
     """
-    saved_ids: list[int] = []
+    result = _new_report_collection_result()
     for report in reports:
         source_hash = _compute_source_hash(report, stock_id)
         publish_date = _parse_report_date(report.get("date", ""))
         if publish_date is None:
+            result["invalid_date_reports"] += 1
+            result["skip_reasons"]["invalid_date"] = result["skip_reasons"].get("invalid_date", 0) + 1
             continue
 
         pdf_url = report.get("pdf_direct_url") or report.get("pdf_url")
+        if not pdf_url:
+            result["missing_pdf_reports"] += 1
+
         row = await collection_repository.upsert_raw_document(
             stock_id=stock_id,
             collector_run_id=collector_run_id,
@@ -752,6 +807,11 @@ async def _save_to_db(
         )
 
         raw_document_id = row["id"]
+        inserted = bool(row.get("inserted", True))
+        if inserted:
+            result["inserted_reports"] += 1
+        else:
+            result["duplicate_reports"] += 1
 
         await collection_repository.upsert_report_detail(
             raw_document_id=raw_document_id,
@@ -764,8 +824,51 @@ async def _save_to_db(
             extra_payload={"report_type": report.get("report_type")},
         )
 
-        saved_ids.append(raw_document_id)
-    return saved_ids
+        result["raw_document_ids"].append(raw_document_id)
+        result["saved_reports"] += 1
+    return result
+
+
+def _new_report_collection_result() -> dict[str, Any]:
+    return {
+        "raw_document_ids": [],
+        "saved_reports": 0,
+        "inserted_reports": 0,
+        "duplicate_reports": 0,
+        "invalid_date_reports": 0,
+        "missing_pdf_reports": 0,
+        "skip_reasons": {},
+    }
+
+
+def _report_collection_log_payload(
+    *,
+    status: str,
+    collector_run_id: int,
+    stock_id: int,
+    stock_code: str,
+    reports: list[dict],
+    save_result: Mapping[str, Any],
+    enqueued_count: int,
+    error_message: str | None = None,
+) -> dict[str, Any]:
+    payload = {
+        "status": status,
+        "collector_run_id": collector_run_id,
+        "stock_id": stock_id,
+        "stock_code": stock_code,
+        "collected_reports": len(reports),
+        "saved_reports": save_result["saved_reports"],
+        "inserted_reports": save_result["inserted_reports"],
+        "duplicate_reports": save_result["duplicate_reports"],
+        "invalid_date_reports": save_result["invalid_date_reports"],
+        "missing_pdf_reports": save_result["missing_pdf_reports"],
+        "enqueued_reports": enqueued_count,
+        "skip_reasons": save_result["skip_reasons"],
+    }
+    if error_message:
+        payload["error_message"] = error_message
+    return payload
 
 
 def _compute_source_hash(report: dict, stock_id: int) -> str:

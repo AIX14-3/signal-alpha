@@ -619,6 +619,71 @@ class ReportCollectRunLoggingTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("collector_run_id", raw_insert[1])
         self.assertEqual(raw_insert[2][1], 900)
 
+    async def test_returns_collection_diagnostics_for_skipped_and_enqueued_reports(self):
+        def _fake_collect_stock(**kwargs):
+            return [
+                {
+                    "firm": "Test Securities",
+                    "title": "Report with pdf",
+                    "date": "2026.06.24",
+                    "pdf_direct_url": "https://example.com/report.pdf",
+                    "report_type": "cr",
+                },
+                {
+                    "firm": "Test Securities",
+                    "title": "Report without pdf",
+                    "date": "2026.06.24",
+                    "report_type": "cr",
+                },
+                {
+                    "firm": "Test Securities",
+                    "title": "Report without valid date",
+                    "date": "not-a-date",
+                    "pdf_direct_url": "https://example.com/invalid-date.pdf",
+                    "report_type": "cr",
+                },
+            ]
+
+        report_tasks.collect_stock = _fake_collect_stock
+        conn = CollectHandlerConn()
+        handler = ReportCollectTaskHandler(connection=conn, settings=None)
+
+        result = await handler(
+            {"stock_id": 1, "task_context": {"stock_code": "005930"}}
+        )
+
+        self.assertEqual(result["collected_reports"], 3)
+        self.assertEqual(result["saved_reports"], 2)
+        self.assertEqual(result["inserted_reports"], 2)
+        self.assertEqual(result["duplicate_reports"], 0)
+        self.assertEqual(result["invalid_date_reports"], 1)
+        self.assertEqual(result["missing_pdf_reports"], 1)
+        self.assertEqual(result["enqueued_reports"], 2)
+        self.assertEqual(result["skip_reasons"], {"invalid_date": 1})
+
+    async def test_logs_collection_diagnostics_summary(self):
+        def _fake_collect_stock(**kwargs):
+            return [
+                {
+                    "firm": "Test Securities",
+                    "title": "Report title",
+                    "date": "2026.06.24",
+                    "pdf_direct_url": "https://example.com/report.pdf",
+                    "report_type": "cr",
+                }
+            ]
+
+        report_tasks.collect_stock = _fake_collect_stock
+        handler = ReportCollectTaskHandler(connection=CollectHandlerConn(), settings=None)
+
+        with self.assertLogs("app.orchestrator.report.tasks", level="INFO") as cm:
+            await handler({"stock_id": 1, "task_context": {"stock_code": "005930"}})
+
+        self.assertTrue(
+            any("report_collection_summary" in message for message in cm.output),
+            cm.output,
+        )
+
     async def test_records_failed_collector_run_when_collection_raises(self):
         def _raise_collect_stock(**kwargs):
             raise RuntimeError("crawler failed")
