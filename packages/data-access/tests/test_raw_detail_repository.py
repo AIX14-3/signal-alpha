@@ -121,6 +121,18 @@ class RawDetailRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("report_raw_details.key_rationale", connection.calls[0][1])
         self.assertEqual(connection.calls[0][2], ([1, 2],))
 
+    async def test_list_report_normalize_backfill_candidates_excludes_existing_source_documents(self):
+        connection = FakeConnection()
+        repository = RawDetailRepository(connection)
+
+        await repository.list_report_normalize_backfill_candidates(stock_id=10, limit=25)
+
+        self.assertIn("FROM report_raw_details", connection.calls[0][1])
+        self.assertIn("LEFT JOIN source_documents", connection.calls[0][1])
+        self.assertIn("source_documents.id IS NULL", connection.calls[0][1])
+        self.assertIn("report_raw_details.parsing_status = 'success'", connection.calls[0][1])
+        self.assertEqual(connection.calls[0][2], (10, 25))
+
     async def test_list_stocks_for_datalab_category_filters_active(self):
         connection = FakeConnection()
         repository = RawDetailRepository(connection)

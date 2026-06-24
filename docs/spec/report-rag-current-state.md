@@ -374,3 +374,49 @@ uv run pytest services\agent-worker\tests\test_report_task_handlers.py services\
 uv run pytest packages\data-access\tests\test_collection_repository.py packages\data-access\tests\test_report_chunk_repository.py packages\data-access\tests\test_raw_detail_repository.py -q
 ```
 
+## normalize_report backfill runbook
+
+기존에 `process_report`까지 완료되어 `report_raw_details.parsing_status = 'success'` 상태지만 아직 `source_documents`로 승격되지 않은 리포트는 운영 backfill API로 `normalize_report` 작업을 다시 등록할 수 있습니다. 이 작업은 원천 데이터를 새로 수집하지 않고 canonical 정규화 경로만 복구합니다.
+
+기본값은 dry-run입니다. 먼저 후보 건수와 raw 문서 ID를 확인합니다.
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://localhost:8011/internal/schedules/report/normalize-backfill" `
+  -ContentType "application/json" `
+  -Body '{"limit":100}'
+```
+
+특정 종목만 확인하려면 `stock_code`를 지정합니다.
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://localhost:8011/internal/schedules/report/normalize-backfill" `
+  -ContentType "application/json" `
+  -Body '{"stock_code":"005930","limit":100}'
+```
+
+후보가 맞으면 `dry_run=false`로 `normalize_report` 작업을 등록합니다. 등록된 작업은 기존 큐 실행 API로 처리합니다.
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://localhost:8011/internal/schedules/report/normalize-backfill" `
+  -ContentType "application/json" `
+  -Body '{"limit":100,"dry_run":false,"priority":"batch"}'
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://localhost:8011/internal/queue/normalize_report/run-batch" `
+  -ContentType "application/json" `
+  -Body '{"max_runs":100}'
+```
+
+주의:
+
+- 후보 조건은 `parsing_status = 'success'`이고 `source_documents(source_type='REPORT')`가 아직 없는 raw 문서입니다.
+- enqueue 컨텍스트는 `process_report`가 자동 등록하는 `normalize_report`와 동일하게 유지해 pending/running/retrying 작업 dedupe가 동작하게 합니다.
+- 이 backfill은 사용자-facing 데이터 방향성, 근거, 소스 간 일치도 계산의 원천 후보를 canonical 경로로 승격하는 작업이며, 매수/매도/보유 추천을 생성하지 않습니다.
+
