@@ -171,10 +171,16 @@ def evaluate_model(
             continue  # can't train/score a degenerate fold
         from sklearn.base import clone
 
-        est = clone(model)
-        est.fit(Xtr, ytr)
-        pred = est.predict(Xte)
-        score = _bullish_score(est, Xte)
+        try:
+            est = clone(model)
+            est.fit(Xtr, ytr)
+            pred = est.predict(Xte)
+            score = _bullish_score(est, Xte)
+        except Exception:
+            # A model that can't fit/predict this (often tiny, long-horizon) fold is
+            # skipped for the fold rather than crashing the whole bake-off run, e.g.
+            # KNN when n_neighbors > the fold's train size. Other models/folds stand.
+            continue
         both_classes = len(np.unique(yte)) == 2
         report.folds.append(
             FoldMetrics(

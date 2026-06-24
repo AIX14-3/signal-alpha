@@ -108,3 +108,30 @@ def test_walk_forward_window_expands():
 def test_walk_forward_requires_enough_dates():
     with pytest.raises(ValueError):
         walk_forward_folds(np.array([1, 1, 2, 2]), n_folds=5)
+
+
+def test_evaluate_model_skips_a_model_that_errors_on_a_fold():
+    # A model failing on a (typically tiny, long-horizon) fold must be skipped for
+    # that fold, not crash the whole bake-off — e.g. KNN when n_neighbors > train size.
+    from sklearn.base import BaseEstimator, ClassifierMixin
+
+    from app.ml.evaluation import evaluate_model
+
+    class _Exploding(BaseEstimator, ClassifierMixin):
+        def fit(self, X, y):
+            raise ValueError("cannot fit this fold")
+
+        def predict(self, X):  # pragma: no cover - never reached
+            return np.zeros(len(X))
+
+    dates = np.repeat(np.arange(8), 3)
+    n = len(dates)
+    X = np.random.default_rng(0).normal(size=(n, 4))
+    y = np.tile([0, 1, 1], 8)
+    excess = np.random.default_rng(1).normal(size=n)
+    folds = walk_forward_folds(dates, n_folds=3)
+
+    report = evaluate_model("exploding", _Exploding(), X, y, excess, folds)
+
+    assert report.folds == []  # every fold skipped, no exception raised
+    assert np.isnan(report.summary()["rank_ic_mean"])  # degrades to nan, not a crash
