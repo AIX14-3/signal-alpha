@@ -34,18 +34,18 @@ logger = logging.getLogger("fetch_eval_images")
 _DEFAULT_OUT = _AW_ROOT / "data" / "eval_set"
 _IMG_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 
-# IT/개발 직군 키워드 — posting employments[].field + duty group 이름에 매칭(소문자 비교).
-# '영업 엔지니어' 등 오탐을 줄이려 bare 'engineer'는 제외, 개발 맥락 단어 위주.
+# 개발자(코딩) 직군 키워드 — posting employments[].field + duty group 이름 매칭(소문자).
+# '개발' 앵커 위주로 좁혀 비개발(보안·데이터분석·인프라·영업엔지니어 등) 과다유입을 차단한다.
+# (보안/데이터/인프라/네트워크/AI/클라우드 단독은 의도적으로 제외 — '개발'과 함께면 통과.)
 _IT_KEYWORDS = (
-    "개발", "소프트웨어", "sw", "s/w", "백엔드", "프론트", "풀스택", "서버", "웹개발",
-    "데이터", "ai", "인공지능", "머신러닝", "딥러닝", "ml", "인프라", "devops", "클라우드",
-    "정보보안", "보안", "네트워크", "임베디드", "펌웨어", "qa엔지니어", "안드로이드", "ios",
-    "프로그래", "developer", "backend", "frontend", "fullstack", "software", "platform",
+    "개발", "개발자", "백엔드", "프론트엔드", "프론트", "풀스택", "서버", "웹개발",
+    "소프트웨어", "sw개발", "s/w", "안드로이드", "ios", "임베디드", "펌웨어", "게임개발",
+    "프로그래", "developer", "backend", "frontend", "fullstack",
 )
 
 
 def _is_it_dev(posting: dict) -> bool:
-    """공고가 IT/개발 직군인가 — list 단계에서 detail fetch 전에 걸러 비용 절약."""
+    """공고가 개발자(코딩) 직군인가 — list 단계에서 detail fetch 전에 걸러 비용 절약."""
     fields = [(e.get("field") or "") for e in (posting.get("employments") or []) if isinstance(e, dict)]
     _, duty_names = jaso._duty_info(posting)
     haystack = " ".join(fields + duty_names).lower()
