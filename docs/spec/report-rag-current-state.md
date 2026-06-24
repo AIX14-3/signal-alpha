@@ -211,31 +211,25 @@ ReportAnalyzeTaskHandler
 
 ## 레거시 경로
 
-아래 경로는 아직 남아 있지만, 명시적인 이전 또는 삭제 작업이 아니라면 신규 개발 기준으로 삼지 않습니다.
+아래 런타임 경로는 canonical queue 기반 흐름으로 대체되어 제거되었습니다. 신규 개발은 `collect_report -> process_report -> normalize_report -> embed_report -> analyze_report` 경로를 기준으로 진행합니다.
 
 ### `/agents/report`
 
-관련 파일:
+제거된 내용:
 
-- `services/agent-worker/app/api/routes/report.py`
-- `services/agent-worker/app/collectors/report/collector.py`
-- `services/agent-worker/app/analyzers/report/analyzer.py`
-
-특징:
-
+- `services/agent-worker/app/api/routes/report.py` 삭제
+- `services/agent-worker/app/collectors/report/collector.py` 삭제
+- `services/agent-worker/app/analyzers/report/analyzer.py` 삭제
+- `services/agent-worker/app/main.py`에서 `/agents/report`, `/agents/analyze` 라우터 등록 제거
 - 허용 종목 코드가 하드코딩되어 있습니다.
 - 오래된 `ReportAnalyzer`가 `report_signal`에 결과를 저장합니다.
 - 일부 로직은 `price_raw`, `report_chunks.stock_code`처럼 현재 canonical schema와 맞지 않는 테이블 또는 컬럼을 가정합니다.
-- 현재 queue 기반 canonical 흐름과 정렬되어 있지 않습니다.
 
 ### `vector_store.py`
 
-관련 파일:
+제거된 내용:
 
-- `services/agent-worker/app/collectors/report/parsers/vector_store.py`
-
-특징:
-
+- `services/agent-worker/app/collectors/report/parsers/vector_store.py` 삭제
 - 과거 `parsed_reports.json` 기반 로컬 배치 흐름을 위해 만들어졌습니다.
 - `report_raw`에 데이터를 저장합니다.
 - 현재 `report_chunks` canonical schema에는 없는 구식 메타데이터 컬럼을 insert하려는 경로가 있습니다.
@@ -348,7 +342,8 @@ Invoke-RestMethod `
 4. Aggregator 통합
    - Report `agent_results`는 `source='REPORT'`와 `source_signal_event_ids`를 갖고 ML/aggregation 체인으로 넘겨집니다. DART, PRICE, ALTERNATIVE와 함께 운영 스케줄에서 어떻게 묶을지 정해야 합니다.
 5. 레거시 정리
-   - `/agents/report`, `ReportAnalyzer`, `ReportCollector`, `vector_store.py`, `report_raw`, `report_signal` 참조를 이전하거나 제거합니다.
+   - `/agents/report`, `ReportAnalyzer`, `ReportCollector`, `vector_store.py` 런타임 경로는 제거되었습니다.
+   - `report_raw`, `report_signal` 테이블은 호환성을 위해 DB에 남아 있지만 신규 코드에서 참조하지 않습니다.
 6. collector 실행 로그
    - `collect_report`에 `collector_runs` 생성과 완료 집계를 추가합니다.
 7. 테스트 범위
