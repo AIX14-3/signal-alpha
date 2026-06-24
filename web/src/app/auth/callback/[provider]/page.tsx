@@ -58,7 +58,7 @@ export default function SocialCallbackPage() {
           setUserTokens(res.access_token, res.refresh_token);
           await hydrate();
           showToast("로그인되었습니다.", "success");
-          router.replace("/mypage");
+          router.replace(saved.returnTo || "/mypage");
         })
         .catch((err) => fail((err as Error).message));
     }

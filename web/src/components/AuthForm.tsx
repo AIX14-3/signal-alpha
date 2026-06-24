@@ -22,6 +22,13 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
 
   const isSignup = mode === "signup";
 
+  function getReturnTo(): string {
+    if (typeof window === "undefined") return "/mypage";
+    const to = new URLSearchParams(window.location.search).get("returnTo");
+    // 오픈 리다이렉트 방지: 내부 경로만 허용
+    return to && to.startsWith("/") ? to : "/mypage";
+  }
+
   async function onIdentity() {
     setError(null);
     if (isSignup) {
@@ -41,7 +48,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
       } else {
         await loginWithIdentity();
       }
-      router.push("/mypage");
+      router.push(getReturnTo());
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -52,13 +59,13 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
   async function onSocial(provider: (typeof SOCIAL_PROVIDERS)[number]["key"]) {
     setError(null);
     if (!isSocialDevMode(provider)) {
-      startSocialOAuth(provider, "login"); // provider 로 리다이렉트
+      startSocialOAuth(provider, "login", getReturnTo()); // provider 로 리다이렉트
       return;
     }
     setBusy(true);
     try {
       await socialLoginWith(provider, socialAuthCode(provider));
-      router.push("/mypage");
+      router.push(getReturnTo());
     } catch (err) {
       setError((err as Error).message);
     } finally {

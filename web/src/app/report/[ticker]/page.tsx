@@ -55,6 +55,16 @@ export default function ReportPage() {
   const unlocked = report.access.unlocked;
   const isMember = report.access.is_member;
   const byKey = new Map(report.sources.map((s) => [s.source, s] as const));
+  const loginHref = `/login?returnTo=${encodeURIComponent(`/report/${ticker}`)}`;
+  const issueLabel = quota?.subscription_active
+    ? "리포트 열람"
+    : quota
+      ? `무료로 열람하기 (${quota.free_remaining}회 남음)`
+      : "리포트 발행(열람)";
+  const onUnlock = () => {
+    if (isMember) void onIssue();
+    else router.push(loginHref);
+  };
 
   return (
     <div className="py-10">
@@ -103,10 +113,10 @@ export default function ReportPage() {
             <div className="mt-4">
               {isMember ? (
                 <button onClick={() => void onIssue()} disabled={issuing} className="brand-grad rounded-full px-6 py-3 text-[15px] font-bold text-white disabled:opacity-60">
-                  {issuing ? "발행 중…" : "리포트 발행(열람)"}
+                  {issuing ? "열람 중…" : issueLabel}
                 </button>
               ) : (
-                <Link href="/login" className="brand-grad inline-block rounded-full px-6 py-3 text-[15px] font-bold text-white">
+                <Link href={loginHref} className="brand-grad inline-block rounded-full px-6 py-3 text-[15px] font-bold text-white">
                   로그인하고 무료 3회 열람
                 </Link>
               )}
@@ -119,7 +129,17 @@ export default function ReportPage() {
       <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {SOURCE_ORDER.map((key) => {
           const src = byKey.get(key);
-          return <SourceCard key={key} sourceKey={key} src={src} ticker={ticker} />;
+          return (
+            <SourceCard
+              key={key}
+              sourceKey={key}
+              src={src}
+              ticker={ticker}
+              isMember={isMember}
+              busy={issuing}
+              onUnlock={onUnlock}
+            />
+          );
         })}
       </div>
 
@@ -132,21 +152,34 @@ function SourceCard({
   sourceKey,
   src,
   ticker,
+  isMember,
+  busy,
+  onUnlock,
 }: {
   sourceKey: "price" | "dart" | "hiring" | "datalab" | "report";
   src: ReportSource | undefined;
   ticker: string;
+  isMember: boolean;
+  busy: boolean;
+  onUnlock: () => void;
 }) {
   const meta = SOURCE_META[sourceKey];
   if (!src || src.locked) {
     return (
-      <div className="card relative grid min-h-[140px] place-items-center overflow-hidden p-5 text-center">
+      <button
+        type="button"
+        onClick={onUnlock}
+        disabled={busy}
+        className="card relative grid min-h-[140px] place-items-center overflow-hidden p-5 text-center disabled:opacity-70"
+      >
         <div className="font-bold">{meta.icon} {meta.label}</div>
         <div className="absolute inset-0 grid place-items-center bg-surface/60 backdrop-blur-[6px]">
           <div className="text-[22px]">🔒</div>
-          <div className="text-[12.5px] font-semibold text-navy-soft">로그인·발행 후 공개</div>
+          <div className="text-[12.5px] font-semibold text-navy-soft">
+            {busy ? "열람 중…" : isMember ? "클릭해서 무료 열람" : "로그인하고 열람"}
+          </div>
         </div>
-      </div>
+      </button>
     );
   }
   const dir = directionLabel(src.direction);

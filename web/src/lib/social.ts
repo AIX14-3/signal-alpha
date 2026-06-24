@@ -46,18 +46,23 @@ function authorizeUrl(provider: Provider, redirectUri: string, state: string): s
   return `https://accounts.google.com/o/oauth2/v2/auth?response_type=code&client_id=${clientId}&redirect_uri=${cb}&scope=openid&state=${state}`;
 }
 
-/** real 모드: provider 인증요청으로 리다이렉트. 호출 전 intent/state 를 sessionStorage 에 저장. */
-export function startSocialOAuth(provider: Provider, intent: SocialIntent): void {
+/** real 모드: provider 인증요청으로 리다이렉트. intent/state/returnTo 를 sessionStorage 에 저장. */
+export function startSocialOAuth(provider: Provider, intent: SocialIntent, returnTo?: string): void {
   const state = randomState();
   const redirectUri = callbackUri(provider);
   window.sessionStorage.setItem(
     OAUTH_STATE_KEY,
-    JSON.stringify({ provider, intent, state }),
+    JSON.stringify({ provider, intent, state, returnTo }),
   );
   window.location.href = authorizeUrl(provider, redirectUri, state);
 }
 
-export function readOAuthState(): { provider: Provider; intent: SocialIntent; state: string } | null {
+export function readOAuthState(): {
+  provider: Provider;
+  intent: SocialIntent;
+  state: string;
+  returnTo?: string;
+} | null {
   const raw = window.sessionStorage.getItem(OAUTH_STATE_KEY);
   if (!raw) return null;
   try {
