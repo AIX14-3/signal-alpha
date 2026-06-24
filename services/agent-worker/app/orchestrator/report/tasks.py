@@ -70,7 +70,7 @@ class ReportCollectTaskHandler:
             )
 
             saved_ids = await _save_to_db(
-                self._connection,
+                collection_repository,
                 reports,
                 stock_id,
                 collector_run_id=collector_run_id,
@@ -717,7 +717,7 @@ def _to_date(value: Any) -> date:
 
 
 async def _save_to_db(
-    connection: Any,
+    collection_repository: CollectionRepository,
     reports: list[dict],
     stock_id: int,
     *,
@@ -735,56 +735,32 @@ async def _save_to_db(
         if publish_date is None:
             continue
 
-        async with connection.transaction():
-            row = await connection.fetchrow(
-                """
-                INSERT INTO raw_documents (
-                    stock_id, collector_run_id, source_type, source_name,
-                    external_id, source_hash,
-                    title, source_url, published_at,
-                    collector_ver, collected_at
-                )
-                VALUES ($1, $2, 'REPORT', $3, $4, $5, $6, $7, $8, $9, NOW())
-                ON CONFLICT (source_hash) DO NOTHING
-                RETURNING id
-                """,
-                stock_id,
-                collector_run_id,
-                report.get("firm", ""),
-                source_hash,          # external_id: source_hash로 통일 (VARCHAR 200 이내)
-                source_hash,
-                report.get("title", ""),
-                report.get("pdf_direct_url") or report.get("pdf_url"),
-                publish_date,
-                "1.0",
-            )
+        pdf_url = report.get("pdf_direct_url") or report.get("pdf_url")
+        row = await collection_repository.upsert_raw_document(
+            stock_id=stock_id,
+            collector_run_id=collector_run_id,
+            source_type="REPORT",
+            source_name=report.get("firm", ""),
+            external_id=source_hash,
+            source_hash=source_hash,
+            title=report.get("title", ""),
+            source_url=pdf_url,
+            published_at=publish_date,
+            collector_ver="1.0",
+        )
 
-            if row is None:
-                # 이미 존재하는 문서 → id만 조회
-                row = await connection.fetchrow(
-                    "SELECT id FROM raw_documents WHERE source_hash = $1",
-                    source_hash,
-                )
+        raw_document_id = row["id"]
 
-            raw_document_id = row["id"]
-
-            await connection.execute(
-                """
-                INSERT INTO report_raw_details (
-                    raw_document_id, stock_id,
-                    securities_firm, publish_date,
-                    pdf_url, parsing_status, extra_payload
-                )
-                VALUES ($1, $2, $3, $4, $5, 'pending', $6::jsonb)
-                ON CONFLICT (raw_document_id) DO NOTHING
-                """,
-                raw_document_id,
-                stock_id,
-                report.get("firm", ""),
-                publish_date,
-                report.get("pdf_direct_url") or report.get("pdf_url"),
-                json.dumps({"report_type": report.get("report_type")}),
-            )
+        await collection_repository.upsert_report_detail(
+            raw_document_id=raw_document_id,
+            stock_id=stock_id,
+            securities_firm=report.get("firm", ""),
+            publish_date=publish_date,
+            has_pdf=bool(pdf_url),
+            pdf_url=pdf_url,
+            parsing_status="pending",
+            extra_payload={"report_type": report.get("report_type")},
+        )
 
         saved_ids.append(raw_document_id)
     return saved_ids
