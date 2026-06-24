@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from app.api.routes.auth import NOTICE, _subscription_active, get_current_user
 from app.core.config import Settings, get_settings
 from app.core.database import get_database_pool
-from app.core.portone import PortOneClient, PortOneError, get_portone_client
+from app.core.portone import PortOneClient, PortOneError, get_portone_client, normalize_phone
 from signal_alpha_data_access.repositories import UserBillingRepository
 
 router = APIRouter(prefix="/api/payments", tags=["payments"])
@@ -36,6 +36,12 @@ async def checkout(
         "order_name": "Signal Alpha 월 구독",
         "currency": "CURRENCY_KRW",
         "plan_type": settings.subscription_plan_type,
+        # 결제창(이니시스)용 구매자 정보. 전체 전화번호는 결제 컨텍스트에만 노출.
+        "customer": {
+            "email": current_user.get("email"),
+            "full_name": current_user.get("nickname"),
+            "phone_number": normalize_phone(current_user.get("phone")) or None,
+        },
     }
 
 

@@ -34,8 +34,9 @@ export default function PricingPage() {
         paymentId: info.payment_id,
         orderName: info.order_name,
         amount: info.amount,
-        customerEmail: user?.email ?? undefined,
-        customerName: user?.nickname ?? undefined,
+        customerEmail: info.customer.email ?? undefined,
+        customerName: info.customer.full_name ?? undefined,
+        customerPhone: info.customer.phone_number ?? undefined,
       });
       await confirmPayment({ payment_id });
       await refreshMe();

@@ -231,6 +231,11 @@ export type CheckoutInfo = {
   order_name: string;
   currency: string;
   plan_type: string;
+  customer: {
+    email: string | null;
+    full_name: string | null;
+    phone_number: string | null;
+  };
 };
 
 /* ===== 인증(포트원 V2 본인인증) ===== */

@@ -54,6 +54,7 @@ export async function pay(opts: {
   amount: number;
   customerEmail?: string;
   customerName?: string;
+  customerPhone?: string;
 }): Promise<string> {
   if (isPortoneDevMode()) return opts.paymentId;
   const res = await PortOne.requestPayment({
@@ -64,7 +65,11 @@ export async function pay(opts: {
     totalAmount: opts.amount,
     currency: "KRW",
     payMethod: "CARD",
-    customer: { email: opts.customerEmail, fullName: opts.customerName },
+    customer: {
+      email: opts.customerEmail,
+      fullName: opts.customerName,
+      phoneNumber: opts.customerPhone,
+    },
   });
   if (!res || res.code) throw new Error(res?.message ?? "결제에 실패했습니다.");
   return res.paymentId;

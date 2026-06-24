@@ -119,7 +119,6 @@ function SubscriptionTab() {
   const [busy, setBusy] = useState(false);
   const showToast = useToastStore((s) => s.show);
   const refreshMe = useAuthStore((s) => s.refreshMe);
-  const user = useAuthStore((s) => s.user);
 
   async function reload() {
     const data = await getMySubscription();
@@ -138,8 +137,9 @@ function SubscriptionTab() {
         paymentId: info.payment_id,
         orderName: info.order_name,
         amount: info.amount,
-        customerEmail: user?.email ?? undefined,
-        customerName: user?.nickname ?? undefined,
+        customerEmail: info.customer.email ?? undefined,
+        customerName: info.customer.full_name ?? undefined,
+        customerPhone: info.customer.phone_number ?? undefined,
       });
       await confirmPayment({ payment_id });
       await reload();
