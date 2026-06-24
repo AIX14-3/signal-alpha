@@ -10,7 +10,9 @@ pdf_direct_url → data/reports/{종목폴더}/{파일명}.pdf 자동 다운로�
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -48,6 +50,22 @@ FIRM_CODE_MAP = {
     "신한투자증권": "shinhan",
     "미래에셋증권": "mirae",
     "유진투자증권": "eugene",
+    "하나증권": "hana",
+    "iM증권": "im",
+    "한국투자증권": "korea_investment",
+    "KB증권": "kb",
+    "NH투자증권": "nh",
+    "대신증권": "daishin",
+    "키움증권": "kiwoom",
+    "메리츠증권": "meritz",
+    "유안타증권": "yuanta",
+    "현대차증권": "hyundai_motor",
+    "LS증권": "ls",
+    "DS투자증권": "ds",
+    "IBK투자증권": "ibk",
+    "BNK투자증권": "bnk",
+    "DB금융투자": "db",
+    "흥국증권": "heungkuk",
 }
 
 REPORT_TYPE_CODE = {
@@ -60,10 +78,22 @@ REPORT_TYPE_CODE = {
 
 def make_filename(report: dict) -> str:
     """리포트 메타 → 파일명: mirae_20250714_cr.pdf"""
-    firm_code = FIRM_CODE_MAP.get(report.get("firm", ""), "unknown")
+    firm_code = _firm_code(report.get("firm", ""))
     date_str = report.get("date", "").replace(".", "")   # "2025.07.14" → "20250714"
     type_code = REPORT_TYPE_CODE.get(report.get("report_type", ""), "cr")
     return f"{firm_code}_{date_str}_{type_code}.pdf"
+
+
+def _firm_code(firm: str) -> str:
+    if firm in FIRM_CODE_MAP:
+        return FIRM_CODE_MAP[firm]
+
+    slug = re.sub(r"[^a-z0-9]+", "_", firm.lower()).strip("_")
+    if slug:
+        return slug
+
+    digest = hashlib.sha1(firm.encode("utf-8")).hexdigest()[:8]
+    return f"firm_{digest}"
 
 
 def make_s3_key(stock_code: str, filename: str) -> str:

@@ -10,9 +10,10 @@ input_data.context(정량 메타)로만 동작한다.
   3. LLM 종합(provider는 dart/llm.py의 LlmClient 재사용) → SourceAgentOutput
      - LLM 미설정/실패/근거 없음 → 보수적 fallback(needs_review, data_status 강등)
 
-결정 B(2026-06-15): 신한·미래에셋·유진 3사만 수집 → 표본 작음. 컨센서스/conflict 신호는
-약하므로 점수보다 **근거 청크**를 신뢰하고 needs_review를 보수적으로. 한계를
-method_detail.coverage에 기계가 읽을 수 있게 박는다(사용자 면책은 Phase 5 final_signals).
+수집기는 증권사명으로 표본을 제한하지 않는다. 다만 네이버 금융 리서치 목록과 수집 기간,
+종목 범위에 의존하므로 시장 전체 컨센서스로 단정하지 않는다. 컨센서스/conflict 신호는
+점수보다 **근거 청크**를 신뢰하고 needs_review를 보수적으로. 한계를 method_detail.coverage에
+기계가 읽을 수 있게 박는다(사용자 면책은 Phase 5 final_signals).
 """
 from __future__ import annotations
 
@@ -34,10 +35,10 @@ QUESTIONS = [
     "밸류에이션 판단",
 ]
 
-# 결정 B — 3사 한정 커버리지(기계가 읽는 메타). 사용자 면책은 final_signals disclaimer에서.
+# 수집 커버리지(기계가 읽는 메타). 사용자 면책은 final_signals disclaimer에서.
 COVERAGE = {
-    "firms": ["신한투자증권", "미래에셋증권", "유진투자증권"],
-    "note": "3개 증권사 한정 — 시장 전체 컨센서스 아님",
+    "firms": ["all_available_from_naver_research"],
+    "note": "네이버 금융 리서치 목록과 수집 기간 기준 표본 — 시장 전체 컨센서스 아님",
 }
 
 _ALLOWED_DIRECTIONS: set[Direction] = {"positive", "neutral", "negative", "mixed", "unknown"}
@@ -229,7 +230,7 @@ def _build_prompt(
     }
     instructions = (
         "당신은 증권사 리포트 근거(evidence_chunks)와 정량 메타(report_quant)를 종합하는 애널리스트입니다.\n"
-        "신한·미래에셋·유진 3개 증권사 리포트만 수집된 표본이므로 시장 전체 컨센서스가 아닙니다.\n"
+        "증권사명으로 표본을 제한하지 않지만 네이버 금융 리서치 목록과 수집 기간 기준 표본이므로 시장 전체 컨센서스가 아닙니다.\n"
         "표본이 작으면 confidence를 낮추고 needs_review를 true로 두십시오. 근거에 없는 내용을 지어내지 마십시오.\n"
         "아래 JSON 입력만을 근거로, 반드시 다음 스키마의 JSON 객체 하나만 출력하십시오:\n"
         "{\n"
