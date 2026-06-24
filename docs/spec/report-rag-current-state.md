@@ -376,12 +376,13 @@ Invoke-RestMethod `
 - Report RAG retriever
 - Report LLM wiring
 - Report analysis agent fallback과 LLM 응답 파싱
+- Report E2E queue pipeline
 - data-access의 Report chunk, raw detail, collection repository 메서드
 
 유용한 테스트 명령:
 
 ```powershell
-uv run pytest services\agent-worker\tests\test_report_task_handlers.py services\agent-worker\tests\test_report_llm_wiring.py services\agent-worker\tests\test_report_scheduler.py services\agent-worker\tests\test_report_schedule_route.py services\agent-worker\tests\test_report_agent.py services\agent-worker\tests\test_report_rag_retriever.py -q
+uv run pytest services\agent-worker\tests\test_report_e2e_pipeline.py services\agent-worker\tests\test_report_task_handlers.py services\agent-worker\tests\test_report_llm_wiring.py services\agent-worker\tests\test_report_scheduler.py services\agent-worker\tests\test_report_schedule_route.py services\agent-worker\tests\test_report_agent.py services\agent-worker\tests\test_report_rag_retriever.py -q
 
 uv run pytest packages\data-access\tests\test_collection_repository.py packages\data-access\tests\test_report_chunk_repository.py packages\data-access\tests\test_raw_detail_repository.py -q
 ```
