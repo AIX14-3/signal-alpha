@@ -377,6 +377,8 @@ Invoke-RestMethod `
 - Report LLM wiring
 - Report analysis agent fallback과 LLM 응답 파싱
 - Report E2E queue pipeline
+  - fake connection 기반 직접 핸들러 체인 검증
+  - `QueueTaskRunner` 기반 claim/mark_success와 `aggregate_signal` enqueue 검증
 - data-access의 Report chunk, raw detail, collection repository 메서드
 
 유용한 테스트 명령:

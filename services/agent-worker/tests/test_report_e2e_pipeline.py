@@ -8,6 +8,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "packages" / "data-
 
 from app.agents.base import SourceAgentOutput
 from app.embeddings.provider import EMBEDDING_DIM, set_embedding_provider
+from app.ml.inference import MlInferTaskHandler
+from app.orchestrator.queue.task_types import (
+    AGGREGATE_SIGNAL,
+    ANALYZE_REPORT,
+    COLLECT_REPORT,
+    EMBED_REPORT,
+    ML_INFER,
+    NORMALIZE_REPORT,
+    PROCESS_REPORT,
+)
+from app.orchestrator.queue.tasks import QueueTaskRunner
 from app.orchestrator.report import tasks as report_tasks
 from app.orchestrator.report.tasks import (
     ReportAnalyzeTaskHandler,
@@ -109,6 +120,7 @@ class FakeReportPipelineConnection:
                     "source_signal_event_ids": args[4],
                     "source_analysis_result_ids": args[5],
                     "task_context": args[6],
+                    "status": "pending",
                     "retry_count": 0,
                     "max_retry_count": 3,
                 }
@@ -131,6 +143,8 @@ class FakeReportPipelineConnection:
 
     async def fetchrow(self, sql, *args):
         self.calls.append(("fetchrow", sql, args))
+        if "UPDATE processing_queue" in sql and "RETURNING *" in sql:
+            return self._claim_task(sql, args)
         if "INSERT INTO raw_documents" in sql:
             raw_document_id = self._take("raw_document")
             row = {
@@ -288,10 +302,16 @@ class FakeReportPipelineConnection:
                 for detail in self.report_raw_details.values()
                 if detail["stock_id"] == stock_id and detail["parsing_status"] == "success"
             ]
+        if "FROM ohlcv_data" in sql:
+            return []
         raise AssertionError(f"unexpected fetch SQL: {sql}")
 
     async def execute(self, sql, *args):
         self.calls.append(("execute", sql, args))
+        if "UPDATE processing_queue" in sql and "status = 'success'" in sql:
+            task = self._task_by_id(args[0])
+            task["status"] = "success"
+            return "UPDATE 1"
         if "UPDATE collector_runs" in sql:
             self.finished_collector_runs.append(
                 {
@@ -337,6 +357,56 @@ class FakeReportPipelineConnection:
         value = self._next[key]
         self._next[key] += 1
         return value
+
+    def seed_task(
+        self,
+        *,
+        task_type,
+        stock_id,
+        task_context=None,
+        source_raw_ids=None,
+        source_signal_event_ids=None,
+        source_analysis_result_ids=None,
+    ):
+        task_id = self._take("queue")
+        self.processing_queue.append(
+            {
+                "id": task_id,
+                "stock_id": stock_id,
+                "task_type": task_type,
+                "priority": "batch",
+                "source_raw_ids": source_raw_ids,
+                "source_signal_event_ids": source_signal_event_ids,
+                "source_analysis_result_ids": source_analysis_result_ids,
+                "task_context": task_context,
+                "status": "pending",
+                "retry_count": 0,
+                "max_retry_count": 3,
+            }
+        )
+        return task_id
+
+    def _claim_task(self, sql, args):
+        if "WHERE id = $1" in sql:
+            task_id, task_type = args[0], args[1]
+            candidates = [
+                task for task in self.processing_queue
+                if task["id"] == task_id and task["task_type"] == task_type
+            ]
+        else:
+            task_type = args[0]
+            candidates = [
+                task for task in self.processing_queue
+                if task["task_type"] == task_type and task["status"] in {"pending", "retrying"}
+            ]
+        if not candidates:
+            return None
+        task = candidates[0]
+        task["status"] = "running"
+        return dict(task)
+
+    def _task_by_id(self, task_id):
+        return next(task for task in self.processing_queue if task["id"] == task_id)
 
     def task(self, task_type):
         return next(task for task in self.processing_queue if task["task_type"] == task_type)
@@ -513,6 +583,80 @@ class ReportE2EPipelineTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ml_context["aggregate_ctx"]["signal_date"], date(2026, 6, 24).isoformat())
         self.assertEqual(agent.received.events[0]["id"], signal_event_id)
         self.assertEqual(agent.received.context["report_quant"]["report_count"], 1)
+
+    async def test_report_pipeline_runs_through_queue_runner_to_aggregate_enqueue(self):
+        conn = FakeReportPipelineConnection()
+        storage = FakeReportStorage()
+        agent = FakeReportAgent()
+
+        report_tasks.collect_stock = lambda **kwargs: [
+            {
+                "firm": "Test Securities",
+                "title": "005930 데이터 방향성 점검",
+                "date": "2026.06.24",
+                "pdf_direct_url": "https://example.com/report.pdf",
+                "report_type": "cr",
+            }
+        ]
+        report_tasks.download_and_upload = lambda url, key, passed_storage: bool(
+            passed_storage.upload_pdf(b"%PDF-fake", key)
+        )
+        report_tasks.process_from_s3 = lambda key, passed_storage: {
+            "opinion": "neutral",
+            "target_price": 90000,
+            "key_rationale": "실적 데이터와 수요 지표를 근거로 추가 확인 필요",
+            "raw_text": "데이터 방향성 근거 " * 20,
+        }
+        report_tasks.extract_text = lambda pdf_bytes: "데이터 방향성 근거 소스 간 일치도 " * 300
+
+        conn.seed_task(
+            task_type=COLLECT_REPORT,
+            stock_id=1,
+            task_context={
+                "stock_code": "005930",
+                "date_start": "2026-06-24",
+                "date_end": "2026-06-24",
+                "max_pages": 1,
+            },
+        )
+        runner = QueueTaskRunner(
+            conn,
+            {
+                COLLECT_REPORT: ReportCollectTaskHandler(connection=conn, settings=None),
+                PROCESS_REPORT: ReportProcessTaskHandler(
+                    connection=conn, settings=None, storage=storage
+                ),
+                NORMALIZE_REPORT: ReportNormalizeTaskHandler(connection=conn),
+                EMBED_REPORT: ReportEmbedTaskHandler(connection=conn, settings=None, storage=storage),
+                ANALYZE_REPORT: ReportAnalyzeTaskHandler(
+                    connection=conn, settings=None, analysis_agent=agent
+                ),
+                ML_INFER: MlInferTaskHandler(conn),
+            },
+        )
+
+        for task_type in (
+            COLLECT_REPORT,
+            PROCESS_REPORT,
+            NORMALIZE_REPORT,
+            EMBED_REPORT,
+            ANALYZE_REPORT,
+            ML_INFER,
+        ):
+            result = await runner.run_task(task_type)
+            self.assertEqual(result["status"], "success", task_type)
+
+        aggregate_task = conn.task(AGGREGATE_SIGNAL)
+        self.assertEqual(aggregate_task["source_analysis_result_ids"], [100])
+        self.assertEqual(json.loads(aggregate_task["task_context"])["signal_date"], "2026-06-24")
+        self.assertEqual(
+            [
+                task["task_type"]
+                for task in conn.processing_queue
+                if task["status"] == "success"
+            ],
+            [COLLECT_REPORT, PROCESS_REPORT, NORMALIZE_REPORT, EMBED_REPORT, ANALYZE_REPORT, ML_INFER],
+        )
 
 
 if __name__ == "__main__":
