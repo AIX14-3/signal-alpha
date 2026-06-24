@@ -45,11 +45,11 @@ from datalab_polarity_refresh import (  # noqa: E402
     build_prompt,
     drop_existing,
     fetch_existing_keywords,
-    fetch_recent_disclosures,
     validate_draft,
     write_review,
 )
 from keyword_gen_common import call_gemini, fetch_stock, load_env, parse_dsn  # noqa: E402
+from news_event_source import gather_events  # noqa: E402
 
 
 async def _active_tickers(limit: int | None) -> list[str]:
@@ -69,17 +69,19 @@ async def _active_tickers(limit: int | None) -> list[str]:
     return [r["ticker"] for r in rows]
 
 
-async def _process_ticker(ticker: str, *, days: int, client, calls_remaining: int) -> dict[str, int]:
+async def _process_ticker(
+    ticker: str, *, days: int, source: str, ground: bool, client, calls_remaining: int
+) -> dict[str, int]:
     """Draft → validate → auto-apply one ticker. Returns a per-tier summary."""
-    empty = {"auto": 0, "review": 0, "reject": 0, "capped": 0, "calls": 0}
+    empty = {"auto": 0, "review": 0, "reject": 0, "capped": 0, "calls": 0, "spike": 0}
     stock = await fetch_stock(ticker)
     existing = await fetch_existing_keywords(stock["id"])
     existing_set = {e["keyword"] for e in existing}
 
-    disclosures = await fetch_recent_disclosures(stock["id"], days=days)
-    if not disclosures:
+    events = await gather_events(stock, days=days, source=source, ground=ground)
+    if not events:
         return empty
-    draft = validate_draft(call_gemini(build_prompt(stock, disclosures, existing)), ticker)
+    draft = validate_draft(call_gemini(build_prompt(stock, events, existing)), ticker)
     draft = drop_existing(draft, existing_set)
     if not draft["categories"]:
         return empty
@@ -103,18 +105,44 @@ async def main() -> None:
         default=MAX_VALIDATION_CALLS,
         help="Total Naver validation calls allowed across this run (quota guard).",
     )
+    parser.add_argument(
+        "--source",
+        choices=("news", "dart", "both"),
+        default="both",
+        help="Event source for keyword drafting (default: both).",
+    )
+    ground_default = os.getenv("KEYWORD_GROUNDING", "on").lower() != "off"
+    ground_group = parser.add_mutually_exclusive_group()
+    ground_group.add_argument(
+        "--ground", dest="ground", action="store_true", default=ground_default,
+        help="Deepen news headlines via Gemini Google-Search grounding (default).",
+    )
+    ground_group.add_argument(
+        "--no-ground", dest="ground", action="store_false",
+        help="Skip grounding enrichment.",
+    )
     args = parser.parse_args()
 
     tickers = [args.ticker] if args.ticker else await _active_tickers(args.limit)
     client = build_client()
-    totals = {"auto": 0, "review": 0, "reject": 0, "capped": 0, "calls": 0}
+    totals = {"auto": 0, "review": 0, "reject": 0, "capped": 0, "calls": 0, "spike": 0}
 
-    print(f"DAILY KEYWORD PIPELINE — {len(tickers)} stock(s), max_calls={args.max_calls}")
+    print(
+        f"DAILY KEYWORD PIPELINE — {len(tickers)} stock(s), max_calls={args.max_calls}, "
+        f"source={args.source}, ground={'on' if args.ground else 'off'}"
+    )
     print("=" * 60)
     for ticker in tickers:
         remaining = args.max_calls - totals["calls"]
         try:
-            summary = await _process_ticker(ticker, days=args.days, client=client, calls_remaining=remaining)
+            summary = await _process_ticker(
+                ticker,
+                days=args.days,
+                source=args.source,
+                ground=args.ground,
+                client=client,
+                calls_remaining=remaining,
+            )
         except Exception as exc:  # one bad ticker must not abort the daily batch
             print(f"> {ticker} ERROR {type(exc).__name__}: {exc}")
             continue
@@ -128,7 +156,8 @@ async def main() -> None:
     print("=" * 60)
     print(
         f"TOTAL approved(auto)={totals['auto']} pending(review)={totals['review']} "
-        f"dropped(reject)={totals['reject']} capped={totals['capped']} naver_calls={totals['calls']}"
+        f"dropped(reject)={totals['reject']} capped={totals['capped']} "
+        f"spike_fasttrack={totals['spike']} naver_calls={totals['calls']}"
     )
     if totals["review"]:
         print(f"NOTE: {totals['review']} borderline keyword(s) await admin approval (review_status='pending').")

@@ -1,18 +1,22 @@
 name: DataLab Daily
 
-# 매일 DataLab 수집 전에 키워드를 생성·검증·자동적재한다.
-#   1) daily_keyword_pipeline.py — refresh 드래프트 → 네이버 검색량 검증 → 티어별 자동적재
-#        (approved=즉시 active, pending=관리자 검수 대기, reject=드롭)
+# 키워드 생성은 하루 여러 번(뉴스는 실시간이라 신규 사건을 더 빨리 포착),
+# DataLab 검색량 수집은 하루 1번(검색량 데이터가 일 단위·전일 확정이라 더 자주는 무의미).
+#   1) daily_keyword_pipeline.py — 뉴스/DART 사건 → 검증 관문(+스파이크) → 티어별 자동적재
+#        (approved=즉시 active, pending=관리자 검수 대기, reject=드롭)  ← 매 스케줄마다 실행
 #   2) run_collectors.py --datalab-only — 승인된(is_active=TRUE) 키워드로 수집
+#        ← 아침 1회(06:00 KST) 또는 수동 실행 때만
 #
 # 활성화 전제: 아래 Secrets를 리포지토리에 등록해야 한다.
 #   DATABASE_URL, NAVER_CLIENT_ID, NAVER_CLIENT_SECRET, GEMINI_API_KEY
 #   (선택) GEMINI_MODEL, COLLECTOR_VERSION
-# 수동 실행도 가능(workflow_dispatch).
+# 수동 실행도 가능(workflow_dispatch) — 이 경우 생성+수집을 모두 수행한다.
 
 on:
   schedule:
-    - cron: "0 21 * * *" # 매일 06:00 KST (21:00 UTC) — 전일 검색 데이터 확정 후
+    - cron: "0 21 * * *" # 06:00 KST — 생성 + 수집 (전일 검색 데이터 확정 후)
+    - cron: "0 5 * * *" # 14:00 KST — 생성만
+    - cron: "0 13 * * *" # 22:00 KST — 생성만
   workflow_dispatch:
     inputs:
       ticker:
@@ -55,6 +59,8 @@ jobs:
         run: uv run python daily_keyword_pipeline.py ${{ inputs.ticker && format('--ticker {0}', inputs.ticker) || '' }}
 
       - name: Collect DataLab
+        # 검색량 수집은 하루 1회(06:00 KST)만 — 또는 수동 실행. 낮/저녁 생성 슬롯에선 건너뜀.
+        if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 21 * * *'
         working-directory: services/agent-worker
         run: uv run python run_collectors.py --datalab-only ${{ inputs.ticker && format('--ticker {0}', inputs.ticker) || '' }}
 
