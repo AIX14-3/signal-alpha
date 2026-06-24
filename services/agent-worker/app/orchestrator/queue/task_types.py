@@ -25,6 +25,7 @@ SYNTHESIZE = "synthesize"
 
 COLLECT_REPORT = "collect_report"
 PROCESS_REPORT = "process_report"
+NORMALIZE_REPORT = "normalize_report"
 EMBED_REPORT = "embed_report"
 ANALYZE_REPORT = "analyze_report"
 

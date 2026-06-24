@@ -94,7 +94,7 @@ ReportProcessTaskHandler
   - `target_price`
   - `key_rationale`
   - `extracted_text`
-- 파싱이 끝나면 `embed_report` 작업을 등록합니다.
+- 파싱이 끝나면 `normalize_report` 작업을 등록합니다.
 
 저장소 관련 주의:
 
@@ -105,7 +105,28 @@ ReportProcessTaskHandler
 - queue handler는 `REPORT_STORAGE_BACKEND` 값에 따라 GCS 또는 local storage client를 사용합니다.
 - DB 컬럼명은 아직 `s3_key`이지만, 현재 구현에서는 선택된 storage backend의 object key로 사용합니다.
 
-### 4. `embed_report`
+### 4. `normalize_report`
+
+Handler:
+
+```text
+ReportNormalizeTaskHandler
+```
+
+현재 동작:
+
+- `parsing_status = 'success'`인 `report_raw_details`와 `raw_documents`를 조회합니다.
+- 리포트 raw 문서를 `source_documents`로 승격합니다.
+- 리포트 1건마다 `signal_events`를 생성합니다.
+  - `source_type = 'REPORT'`
+  - `event_type = 'report_published'`
+  - 증권사 원문 의견은 데이터 방향성으로만 매핑합니다.
+  - 알 수 없는 의견 값은 `signal_direction='unknown'`, `needs_review=true`로 둡니다.
+- 목표가, 이전 목표가, 발간 시점 현재가, 상승여력 원천 값이 있으면 `signal_metrics`에 저장합니다.
+- source trace 검증 로그를 `validation_logs`에 남깁니다.
+- 생성된 `signal_event_id`를 `embed_report` 작업의 `source_signal_event_ids`로 넘깁니다.
+
+### 5. `embed_report`
 
 Handler:
 
@@ -121,6 +142,7 @@ ReportEmbedTaskHandler
 - `chunk_text`로 텍스트를 청크로 나눕니다.
 - BGE-M3 embedding provider로 1024차원 벡터를 생성합니다.
 - `report_chunks`에 청크와 embedding을 저장합니다.
+- `source_signal_event_ids`가 있으면 `analyze_report` 작업을 자동 등록합니다.
 
 저장 필드:
 
@@ -136,7 +158,7 @@ ReportEmbedTaskHandler
 - `report_chunks.embedding`은 `VECTOR(1024)`입니다.
 - embedding 모델을 교체할 경우 차원이 맞는지 확인해야 하며, 차원이 달라지면 migration이 필요합니다.
 
-### 5. 분석 스케줄 등록
+### 6. 분석 스케줄 등록
 
 Endpoint:
 
@@ -147,10 +169,10 @@ POST /internal/schedules/report/analyze
 현재 동작:
 
 - 단일 종목 또는 active 종목 전체에 대해 `analyze_report` 작업을 등록합니다.
-- `embed_report` 성공 후 `analyze_report`가 자동으로 이어지지는 않습니다.
-- 분석은 별도 스케줄 또는 수동 enqueue로 실행해야 합니다.
+- 신규 queue 체인에서는 `embed_report` 성공 후 `analyze_report`가 자동으로 이어집니다.
+- 기존 수동 분석은 별도 스케줄 또는 수동 enqueue로 계속 실행할 수 있습니다.
 
-### 6. `analyze_report`
+### 7. `analyze_report`
 
 Handler:
 
@@ -168,14 +190,15 @@ ReportAnalyzeTaskHandler
   - 의견 값이 여러 종류일 때 단순 충돌 여부
 - `ReportAnalysisAgent`를 호출합니다.
 - RAG 검색은 `stock_id`로 격리하며, embedding이 있는 `report_chunks`만 조회합니다.
-- 분석 결과를 `analysis_results`, `agent_results`에 저장합니다.
+- `source_signal_event_ids`가 있으면 이벤트를 `SourceAgentInput.events`로 넘깁니다.
+- 분석 결과를 `analysis_results`, `agent_results`에 저장하며, 두 테이블 모두 `source_signal_event_ids`를 보존합니다.
+- Report 분석 결과는 DB 제약에 맞춰 `analysis_mode='quick'`으로 저장합니다.
+- canonical 이벤트 기반 분석이면 후속 `ML_INFER` 작업을 등록해 Aggregator 체인에 합류할 수 있게 합니다.
 
 현재 빈틈:
 
-- Report는 아직 canonical `source_documents`, `signal_events`, `signal_metrics` 정규화 경로가 없습니다.
-- 이 때문에 `source_signal_event_ids`는 빈 배열로 저장됩니다.
 - Report 분석은 `final_signals`를 직접 쓰지 않습니다.
-- 사용자-facing 최종 데이터 방향성까지 연결하려면 Aggregator 통합이 필요합니다.
+- 사용자-facing 최종 데이터 방향성 발행 여부는 Aggregator와 후속 gate가 결정합니다.
 - 현재 queue handler는 `llm_client=None`, `llm_model=None`을 넘기므로, 근거 청크가 있어도 Report Agent는 보수적 fallback을 사용합니다.
   - 방향성: `unknown`
   - 점수: `50`
@@ -257,21 +280,35 @@ Invoke-RestMethod `
   -ContentType "application/json" `
   -Body '{"max_runs":10}'
 
-# 4. PDF 청크 embedding 작업 실행
+# 4. 리포트 canonical 정규화 작업 실행
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://localhost:8011/internal/queue/normalize_report/run-batch" `
+  -ContentType "application/json" `
+  -Body '{"max_runs":10}'
+
+# 5. PDF 청크 embedding 작업 실행
 Invoke-RestMethod `
   -Method Post `
   -Uri "http://localhost:8011/internal/queue/embed_report/run-batch" `
   -ContentType "application/json" `
   -Body '{"max_runs":10}'
 
-# 5. 리포트 분석 작업 등록
+# 6. 리포트 분석 작업 실행
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://localhost:8011/internal/queue/analyze_report/run-batch" `
+  -ContentType "application/json" `
+  -Body '{"max_runs":10}'
+
+# 7. 기존 수동 리포트 분석 작업 등록
 Invoke-RestMethod `
   -Method Post `
   -Uri "http://localhost:8011/internal/schedules/report/analyze" `
   -ContentType "application/json" `
   -Body '{"stock_code":"005930","run_key":"REPORT","priority":"batch"}'
 
-# 6. 리포트 분석 작업 실행
+# 8. 수동 등록한 리포트 분석 작업 실행
 Invoke-RestMethod `
   -Method Post `
   -Uri "http://localhost:8011/internal/queue/analyze_report/run-batch" `
@@ -301,11 +338,11 @@ Invoke-RestMethod `
 1. 저장 backend
    - canonical queue 경로의 기본 backend는 GCS입니다. 개발과 테스트용 local storage adapter도 구현되어 있으므로, 운영 환경에서는 GCS bucket/권한을 확정하고 로컬 환경에서는 `REPORT_STORAGE_BACKEND=local` 사용 여부를 정하면 됩니다.
 2. 정규화 경로
-   - Report도 `source_documents`, `signal_events`, `signal_metrics`를 만들지, Aggregator 통합 전까지 RAG-only 분석으로 둘지 결정합니다.
+   - Report는 `normalize_report`에서 `source_documents`, `signal_events`, `signal_metrics`를 만듭니다. 후속 작업은 기존 데이터 backfill과 운영 runbook 정리입니다.
 3. LLM 연결
    - `REPORT_USE_LLM`, provider, model, timeout, API key 설정을 `ReportAnalyzeTaskHandler`에 연결할지 결정합니다.
 4. Aggregator 통합
-   - Report `agent_results`가 DART, PRICE, ALTERNATIVE 결과와 어떻게 합류할지 결정합니다.
+   - Report `agent_results`는 `source='REPORT'`와 `source_signal_event_ids`를 갖고 ML/aggregation 체인으로 넘겨집니다. DART, PRICE, ALTERNATIVE와 함께 운영 스케줄에서 어떻게 묶을지 정해야 합니다.
 5. 레거시 정리
    - `/agents/report`, `ReportAnalyzer`, `ReportCollector`, `vector_store.py`, `report_raw`, `report_signal` 참조를 이전하거나 제거합니다.
 6. collector 실행 로그
@@ -322,13 +359,13 @@ Invoke-RestMethod `
 - Report schedule route
 - Report RAG retriever
 - Report analysis agent fallback과 LLM 응답 파싱
-- data-access의 Report chunk와 collection repository 메서드
+- data-access의 Report chunk, raw detail, collection repository 메서드
 
 유용한 테스트 명령:
 
 ```powershell
 uv run pytest services\agent-worker\tests\test_report_task_handlers.py services\agent-worker\tests\test_report_scheduler.py services\agent-worker\tests\test_report_schedule_route.py services\agent-worker\tests\test_report_agent.py services\agent-worker\tests\test_report_rag_retriever.py -q
 
-uv run pytest packages\data-access\tests\test_collection_repository.py packages\data-access\tests\test_report_chunk_repository.py -q
+uv run pytest packages\data-access\tests\test_collection_repository.py packages\data-access\tests\test_report_chunk_repository.py packages\data-access\tests\test_raw_detail_repository.py -q
 ```
 
