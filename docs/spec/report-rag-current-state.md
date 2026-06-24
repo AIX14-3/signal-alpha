@@ -1,0 +1,332 @@
+# 증권사 리포트 RAG 현재 구현 상태
+
+최종 갱신일: 2026-06-24
+
+## 목적
+
+이 문서는 증권사 리포트 수집과 분석 흐름의 현재 구현 상태를 정리한 인수인계용 문서입니다. 새 담당자는 이 문서를 기준으로 현재 코드가 어디까지 연결되어 있고, 어떤 부분이 아직 비어 있는지 확인할 수 있습니다.
+
+Signal Alpha는 투자 추천 서비스가 아닙니다. 증권사 리포트 데이터는 데이터 방향성, 근거, 소스 간 일치도, 데이터 정합성, 추가 확인 필요 여부를 보여주는 사용자 판단 보조 정보로만 다뤄야 합니다. 사용자-facing 문구에서 매수, 매도, 보유 추천이나 투자 타이밍 알림처럼 보이는 표현을 사용하지 않습니다.
+
+## 기준 자료
+
+오래된 기획 문서보다 현재 코드, 테스트, migration을 우선합니다.
+
+- 스키마: `database/migrations/001_baseline.sql`, `database/migrations/010_report_s3_key.sql`
+- canonical DB 경로: `raw_documents -> report_raw_details -> report_chunks`
+- 큐 핸들러: `services/agent-worker/app/orchestrator/report/tasks.py`
+- RAG 검색과 Report Agent: `services/agent-worker/app/analyzers/report/rag_retriever.py`, `services/agent-worker/app/agents/report/agent.py`
+- 과거 담당자 인수인계 문서: `docs/spec/eunjinspec.md`
+
+`docs/spec/eunjinspec.md`는 과거 작업 맥락을 이해하는 데 유용하지만, `report_raw` / `report_signal` 중심의 레거시 경로를 많이 설명합니다. 신규 개발은 명시적인 legacy 이전 작업이 아니라면 canonical 경로를 기준으로 진행합니다.
+
+## 현재 canonical 흐름
+
+### 1. 수집 스케줄 등록
+
+Endpoint:
+
+```text
+POST /internal/schedules/report/collect
+```
+
+구현 파일:
+
+- `services/agent-worker/app/api/routes/schedules.py`
+- `services/agent-worker/app/orchestrator/report/scheduler.py`
+
+동작:
+
+- active 종목을 조회합니다.
+- 종목별로 `collect_report` 작업을 `processing_queue`에 등록합니다.
+- `date_start` / `date_end`가 있으면 절대 날짜 범위를 사용합니다.
+- 날짜 범위가 없으면 `days_back` 기준으로 수집 범위를 계산합니다.
+
+### 2. `collect_report`
+
+Handler:
+
+```text
+ReportCollectTaskHandler
+```
+
+구현 파일:
+
+- `services/agent-worker/app/orchestrator/report/tasks.py`
+- `services/agent-worker/app/collectors/report/crawler.py`
+
+현재 동작:
+
+- 네이버 금융 리서치 페이지를 크롤링합니다.
+- 코드에 정의된 일부 증권사만 필터링합니다.
+  - 신한투자증권
+  - 미래에셋증권
+  - 유진투자증권
+- 리포트 제목, 증권사명, 발행일, PDF URL 등 메타데이터를 추출합니다.
+- `raw_documents`와 `report_raw_details`에 저장합니다.
+- 저장된 raw 문서마다 `process_report` 작업을 등록합니다.
+
+현재 빈틈:
+
+- DB 문서상 모든 collector는 `collector_runs`에 실행 로그를 남겨야 하지만, 현재 `collect_report`는 직접 SQL을 사용하며 `collector_runs`를 생성하지 않습니다.
+- `CollectionRepository`의 Report 관련 메서드가 있지만 현재 queue handler는 이 repository를 일관되게 사용하지 않습니다.
+
+### 3. `process_report`
+
+Handler:
+
+```text
+ReportProcessTaskHandler
+```
+
+현재 동작:
+
+- `report_raw_details`에서 `pdf_url`, `s3_key`, `parsing_status`를 조회합니다.
+- 기본 storage로 `ReportS3Client`를 사용합니다.
+- S3에 파일이 없으면 원천 PDF URL에서 다운로드한 뒤 S3에 업로드합니다.
+- S3에 저장된 PDF의 첫 3페이지를 파싱합니다.
+- 파싱 결과를 `report_raw_details`에 갱신합니다.
+  - `s3_key`
+  - `has_pdf = TRUE`
+  - `parsing_status = 'success'`
+  - `parsed_at`
+  - `investment_opinion`
+  - `target_price`
+  - `key_rationale`
+  - `extracted_text`
+- 파싱이 끝나면 `embed_report` 작업을 등록합니다.
+
+로컬 저장 관련 주의:
+
+- 현재 canonical queue 경로는 로컬 개발 환경에서도 기본적으로 S3를 사용합니다.
+- `pdf_downloader.py`, `run_parser.py` 같은 과거 CLI 경로는 `data/reports/` 아래에 PDF를 저장할 수 있습니다.
+- 하지만 queue handler는 아직 로컬 파일 저장 backend로 전환하는 설정을 제공하지 않습니다.
+- 로컬 테스트를 안정화하려면 `REPORT_STORAGE_BACKEND=local` 같은 설정과 storage adapter를 추가하는 편이 좋습니다.
+
+### 4. `embed_report`
+
+Handler:
+
+```text
+ReportEmbedTaskHandler
+```
+
+현재 동작:
+
+- `report_raw_details.s3_key`를 확인합니다.
+- S3에서 PDF를 다시 다운로드합니다.
+- PyMuPDF로 PDF 전체 텍스트를 추출합니다.
+- `chunk_text`로 텍스트를 청크로 나눕니다.
+- BGE-M3 embedding provider로 1024차원 벡터를 생성합니다.
+- `report_chunks`에 청크와 embedding을 저장합니다.
+
+저장 필드:
+
+- `raw_document_id`
+- `stock_id`
+- `chunk_index`
+- `chunk_text`
+- `token_count`
+- `embedding`
+
+스키마 제약:
+
+- `report_chunks.embedding`은 `VECTOR(1024)`입니다.
+- embedding 모델을 교체할 경우 차원이 맞는지 확인해야 하며, 차원이 달라지면 migration이 필요합니다.
+
+### 5. 분석 스케줄 등록
+
+Endpoint:
+
+```text
+POST /internal/schedules/report/analyze
+```
+
+현재 동작:
+
+- 단일 종목 또는 active 종목 전체에 대해 `analyze_report` 작업을 등록합니다.
+- `embed_report` 성공 후 `analyze_report`가 자동으로 이어지지는 않습니다.
+- 분석은 별도 스케줄 또는 수동 enqueue로 실행해야 합니다.
+
+### 6. `analyze_report`
+
+Handler:
+
+```text
+ReportAnalyzeTaskHandler
+```
+
+현재 동작:
+
+- `parsing_status = 'success'`인 `report_raw_details`를 조회합니다.
+- 정량 메타데이터인 `report_quant`를 구성합니다.
+  - 리포트 수
+  - 원천 데이터에 존재하는 목표가 평균
+  - 파싱된 의견 원천 필드의 분포
+  - 의견 값이 여러 종류일 때 단순 충돌 여부
+- `ReportAnalysisAgent`를 호출합니다.
+- RAG 검색은 `stock_id`로 격리하며, embedding이 있는 `report_chunks`만 조회합니다.
+- 분석 결과를 `analysis_results`, `agent_results`에 저장합니다.
+
+현재 빈틈:
+
+- Report는 아직 canonical `source_documents`, `signal_events`, `signal_metrics` 정규화 경로가 없습니다.
+- 이 때문에 `source_signal_event_ids`는 빈 배열로 저장됩니다.
+- Report 분석은 `final_signals`를 직접 쓰지 않습니다.
+- 사용자-facing 최종 데이터 방향성까지 연결하려면 Aggregator 통합이 필요합니다.
+- 현재 queue handler는 `llm_client=None`, `llm_model=None`을 넘기므로, 근거 청크가 있어도 Report Agent는 보수적 fallback을 사용합니다.
+  - 방향성: `unknown`
+  - 점수: `50`
+  - `needs_review=true`
+  - `data_status='partial'`
+
+## 레거시 경로
+
+아래 경로는 아직 남아 있지만, 명시적인 이전 또는 삭제 작업이 아니라면 신규 개발 기준으로 삼지 않습니다.
+
+### `/agents/report`
+
+관련 파일:
+
+- `services/agent-worker/app/api/routes/report.py`
+- `services/agent-worker/app/collectors/report/collector.py`
+- `services/agent-worker/app/analyzers/report/analyzer.py`
+
+특징:
+
+- 허용 종목 코드가 하드코딩되어 있습니다.
+- 오래된 `ReportAnalyzer`가 `report_signal`에 결과를 저장합니다.
+- 일부 로직은 `price_raw`, `report_chunks.stock_code`처럼 현재 canonical schema와 맞지 않는 테이블 또는 컬럼을 가정합니다.
+- 현재 queue 기반 canonical 흐름과 정렬되어 있지 않습니다.
+
+### `vector_store.py`
+
+관련 파일:
+
+- `services/agent-worker/app/collectors/report/parsers/vector_store.py`
+
+특징:
+
+- 과거 `parsed_reports.json` 기반 로컬 배치 흐름을 위해 만들어졌습니다.
+- `report_raw`에 데이터를 저장합니다.
+- 현재 `report_chunks` canonical schema에는 없는 구식 메타데이터 컬럼을 insert하려는 경로가 있습니다.
+
+## DB 테이블
+
+### Canonical 테이블
+
+- `raw_documents`: source 공통 메타데이터
+- `report_raw_details`: 증권사 리포트 상세, PDF 상태, 파싱 필드
+- `report_chunks`: PDF 청크와 embedding
+- `processing_queue`: queue 작업 상태
+- `analysis_results`: 분석 실행 결과
+- `agent_results`: Report agent 방식별 결과
+
+### Legacy 테이블
+
+- `report_raw`
+- `report_signal`
+
+두 테이블은 호환성을 위해 baseline에 남아 있지만, 신규 코드에서는 참조하지 않는 것을 원칙으로 합니다.
+
+## 운영 실행 예시
+
+worker가 실행 중이라고 가정한 local API 호출 순서입니다.
+
+```powershell
+# 1. 리포트 수집 작업 등록
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://localhost:8011/internal/schedules/report/collect" `
+  -ContentType "application/json" `
+  -Body '{"date_start":"2026-06-01","date_end":"2026-06-24","limit":10,"priority":"batch"}'
+
+# 2. 수집 작업 실행
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://localhost:8011/internal/queue/collect_report/run-batch" `
+  -ContentType "application/json" `
+  -Body '{"max_runs":10}'
+
+# 3. PDF 다운로드와 파싱 작업 실행
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://localhost:8011/internal/queue/process_report/run-batch" `
+  -ContentType "application/json" `
+  -Body '{"max_runs":10}'
+
+# 4. PDF 청크 embedding 작업 실행
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://localhost:8011/internal/queue/embed_report/run-batch" `
+  -ContentType "application/json" `
+  -Body '{"max_runs":10}'
+
+# 5. 리포트 분석 작업 등록
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://localhost:8011/internal/schedules/report/analyze" `
+  -ContentType "application/json" `
+  -Body '{"stock_code":"005930","run_key":"REPORT","priority":"batch"}'
+
+# 6. 리포트 분석 작업 실행
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://localhost:8011/internal/queue/analyze_report/run-batch" `
+  -ContentType "application/json" `
+  -Body '{"max_runs":10}'
+```
+
+주의:
+
+- `/internal/schedules/report/collect`는 현재 단일 `stock_code` 필드를 받지 않습니다.
+- 단일 종목만 수집하려면 `/internal/tasks/collect_report/enqueue`로 직접 등록합니다.
+
+단일 종목 enqueue 예시:
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://localhost:8011/internal/tasks/collect_report/enqueue" `
+  -ContentType "application/json" `
+  -Body '{"stock_id":1,"priority":"batch","task_context":{"stock_code":"005930","date_start":"2026-06-01","date_end":"2026-06-24","max_pages":20}}'
+```
+
+## 인수인계 체크리스트
+
+후속 개발 전에 아래 결정을 먼저 내리는 것이 좋습니다.
+
+1. 저장 backend
+   - 모든 환경에서 S3를 유지할지, 개발과 테스트용 local storage adapter를 추가할지 결정합니다.
+2. 정규화 경로
+   - Report도 `source_documents`, `signal_events`, `signal_metrics`를 만들지, Aggregator 통합 전까지 RAG-only 분석으로 둘지 결정합니다.
+3. LLM 연결
+   - `REPORT_USE_LLM`, provider, model, timeout, API key 설정을 `ReportAnalyzeTaskHandler`에 연결할지 결정합니다.
+4. Aggregator 통합
+   - Report `agent_results`가 DART, PRICE, ALTERNATIVE 결과와 어떻게 합류할지 결정합니다.
+5. 레거시 정리
+   - `/agents/report`, `ReportAnalyzer`, `ReportCollector`, `vector_store.py`, `report_raw`, `report_signal` 참조를 이전하거나 제거합니다.
+6. collector 실행 로그
+   - `collect_report`에 `collector_runs` 생성과 완료 집계를 추가합니다.
+7. 테스트 범위
+   - 현재 unit test를 유지하면서 storage backend, queue chaining, Report 분석 저장에 대한 통합 테스트를 추가합니다.
+
+## 현재 테스트 범위
+
+현재 집중 테스트가 다루는 영역입니다.
+
+- Report task handler
+- Report collection scheduler
+- Report schedule route
+- Report RAG retriever
+- Report analysis agent fallback과 LLM 응답 파싱
+- data-access의 Report chunk와 collection repository 메서드
+
+유용한 테스트 명령:
+
+```powershell
+uv run pytest services\agent-worker\tests\test_report_task_handlers.py services\agent-worker\tests\test_report_scheduler.py services\agent-worker\tests\test_report_schedule_route.py services\agent-worker\tests\test_report_agent.py services\agent-worker\tests\test_report_rag_retriever.py -q
+
+uv run pytest packages\data-access\tests\test_collection_repository.py packages\data-access\tests\test_report_chunk_repository.py -q
+```
+
