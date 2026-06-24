@@ -95,8 +95,9 @@ web
 | agent-worker | `GET /internal/dart/document-results` | DART 문서/분석 평탄화 조회 |
 | agent-worker | `POST /internal/dart/e2e/run` | 개발용 DART 수집-정규화-분석 E2E 실행 |
 | agent-worker | `POST /internal/price/analyze/{stock_code}` | DB 기반 PRICE 분석 실행 |
-| agent-worker | `POST /agents/report` | 리포트 수집/분석 실행 |
-| agent-worker | `POST /agents/analyze` | 워커 분석 엔드포인트 |
+| agent-worker | `POST /internal/schedules/report/collect` | Report 수집 작업 등록 |
+| agent-worker | `POST /internal/schedules/report/analyze` | Report 분석 작업 등록 |
+| agent-worker | `POST /internal/schedules/report/normalize-backfill` | Report 정규화 backfill 작업 등록 |
 
 ### 현재 DB 흐름
 
@@ -773,13 +774,17 @@ DART 원문/정규화/분석 결과를 개발 확인용으로 평탄화해 조�
 
 DB에 적재된 가격 데이터를 기반으로 PRICE 분석을 실행한다.
 
-#### `POST /agents/report`
+#### `POST /internal/schedules/report/collect`
 
-리포트 수집/분석 흐름을 실행한다.
+Report 수집 작업을 큐에 등록한다.
 
-#### `POST /agents/analyze`
+#### `POST /internal/schedules/report/analyze`
 
-워커 분석 엔드포인트. 향후 main-server의 분석 실행 요청과 연결할 수 있다.
+Report 분석 작업을 큐에 등록한다.
+
+#### `POST /internal/schedules/report/normalize-backfill`
+
+파싱 완료 후 canonical `source_documents`로 승격되지 않은 Report raw 문서를 `normalize_report` 작업으로 backfill한다.
 
 ---
 
@@ -1113,9 +1118,9 @@ Signal α 프로젝트를 구현하려고 한다.
    - /internal/queue/*
    - /internal/dart/*
    - /internal/price/analyze/{stock_code}
-   - /agents/report
+   - /internal/schedules/report/*
    - DART collect/normalize/analyze 작업 분리
-   - Report RAG 분석
+   - Report collect/process/normalize/embed/analyze 작업 분리
    - Kiwoom REST 기반 PRICE 수집 데몬 내장
    - PRICE DB 기반 분석
    - 각 analyzer는 실제 수집/저장 데이터를 기반으로 동작하게 구현

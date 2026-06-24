@@ -16,7 +16,7 @@
 | ALTER류 (014/017/018/019/021) | 대상 `CREATE TABLE`에 컬럼·인덱스로 **흡수** (ALTER 제거). 014→`hiring_raw_details.observed_date`, 017→`final_signals`(consensus_score/positive_evidence/caution_evidence), 018→`datalab_category_keywords.polarity`, 019→`patent_raw_details`(llm_features/llm_status+부분인덱스), 021→`hiring_signals.calculation_phase` |
 | 신규 테이블 (015/016/020) | `hiring_signals`, `hiring_sources`, `hiring_job_functions`, `hiring_job_function_stocks`를 베이스라인에 합침. `IF NOT EXISTS`는 컨벤션(§3)대로 제거 |
 | 016 종목별 크롤러 INSERT 15건 | `seeds/005_seed_hiring_sources.sql`로 **분리** (시드는 마이그레이션에 넣지 않음) |
-| 013 레거시 `report_raw` / `report_signal` | report 파이프라인 코드가 아직 사용 중이라 **보존**. 베이스라인 맨 아래 Legacy 섹션 (폐기 예정, 신규 참조 금지) |
+| 013 레거시 `report_raw` / `report_signal` | 현재 report 런타임 코드는 더 이상 참조하지 않지만 기존 환경 호환성을 위해 **보존**. 베이스라인 맨 아래 Legacy 섹션 (폐기 예정, 신규 참조 금지) |
 | `schema_migrations` 원장 | 러너가 자동 관리. 베이스라인에 포함하지 않음 |
 
 결과: 마이그레이션 파일 **1개**(`001_baseline.sql`) + 시드 5개. 총 **52개 테이블**.

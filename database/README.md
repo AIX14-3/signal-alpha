@@ -175,10 +175,10 @@ Report RAG 검색은 `report_chunks`에서 `stock_id`로 먼저 필터링 후 `e
 
 ## 7. Legacy 테이블 (폐기 예정)
 
-`013_legacy_report_mvp.sql`의 `report_raw` / `report_signal`은 report RAG MVP가 마이그레이션 체계 밖(`setup_db.py`)에서 만들어 쓰던 테이블입니다. 현재 report 파이프라인 코드가 사용 중이라 임시로 베이스라인에 편입했습니다.
+`013_legacy_report_mvp.sql`의 `report_raw` / `report_signal`은 report RAG MVP가 마이그레이션 체계 밖(`setup_db.py`)에서 만들어 쓰던 테이블입니다. 현재 report 런타임 코드는 canonical 경로로 이전되어 더 이상 이 테이블을 참조하지 않습니다. 테이블은 기존 환경 호환성과 추후 DROP migration 준비를 위해 베이스라인에 남아 있습니다.
 
 - **신규 코드에서 참조 금지.** 리포트 데이터는 `raw_documents` -> `report_raw_details` -> `report_chunks` 경로를 사용하세요.
-- 이전 계획: report 파이프라인을 공용 스키마로 이전한 뒤 별도 마이그레이션으로 DROP.
+- 이전 계획: 운영 데이터 호환성 확인 뒤 별도 마이그레이션으로 DROP.
 
 ## 8. 주의사항
 
