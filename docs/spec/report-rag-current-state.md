@@ -269,6 +269,8 @@ ReportAnalyzeTaskHandler
 
 worker가 실행 중이라고 가정한 local API 호출 순서입니다.
 
+Gemini LLM 보강까지 켜서 PDF 파싱을 확인하려면 `docs/spec/report-gemini-pdf-parsing-dev-guide.md`를 먼저 참고합니다.
+
 ```powershell
 # 1. 리포트 수집 작업 등록
 Invoke-RestMethod `
@@ -356,7 +358,7 @@ Invoke-RestMethod `
 2. 정규화 경로
    - Report는 `normalize_report`에서 `source_documents`, `signal_events`, `signal_metrics`를 만듭니다. 후속 작업은 기존 데이터 backfill과 운영 runbook 정리입니다.
 3. LLM 연결
-   - `REPORT_USE_LLM`, provider, model, timeout, API key 설정은 `ReportAnalyzeTaskHandler`에 연결되어 있습니다. 운영 환경에서 provider/model/key 값을 확정하고 fallback 품질을 점검합니다.
+   - `REPORT_USE_LLM`, provider, model, timeout, API key 설정은 PDF 파싱 보강과 `ReportAnalyzeTaskHandler`에 연결되어 있습니다. 운영 환경에서 provider/model/key 값을 확정하고 fallback 품질을 점검합니다.
 4. Aggregator 통합
    - Report `agent_results`는 `source='REPORT'`와 `source_signal_event_ids`를 갖고 ML/aggregation 체인으로 넘어갑니다.
    - Report 단일 source도 `AGGREGATE_SIGNAL`에서 `final_signals` 생성 입력으로 처리됩니다.
