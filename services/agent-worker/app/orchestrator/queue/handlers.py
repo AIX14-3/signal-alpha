@@ -59,11 +59,9 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
         ReportNormalizeTaskHandler,
         ReportProcessTaskHandler,
     )
+    from app.orchestrator.report.llm_wiring import build_report_llm_config
 
-    # Report 분석기도 동일 — RAG 검색(임베딩)은 근거 회수로 유지하되, 소스단 생성 요약은
-    # 끝단 SYNTHESIZE로 일원화한다(생성 LLM 미와이어링). 회수된 청크는 근거/피처로 적재된다.
-    report_llm_client = None
-    report_llm_model = None
+    report_llm_config = build_report_llm_config(settings)
 
     return {
         COLLECT_DART: DartCollectionTaskHandler(
@@ -89,8 +87,11 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
         ANALYZE_REPORT: ReportAnalyzeTaskHandler(
             connection=connection,
             settings=settings,
-            llm_client=report_llm_client,
-            llm_model=report_llm_model,
+            llm_client=report_llm_config.client if report_llm_config else None,
+            llm_model=report_llm_config.model if report_llm_config else None,
+            llm_timeout_seconds=(
+                report_llm_config.timeout_seconds if report_llm_config else settings.report_llm_timeout_seconds
+            ),
         ),
         # Alternative sources (hiring/patent/datalab) — converged onto the queue.
         NORMALIZE_HIRING: HiringNormalizeTaskHandler(connection),

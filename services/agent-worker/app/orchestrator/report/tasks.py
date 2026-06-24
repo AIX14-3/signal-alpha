@@ -435,6 +435,7 @@ class ReportAnalyzeTaskHandler:
         settings: Any,
         llm_client: Any = None,
         llm_model: str | None = None,
+        llm_timeout_seconds: float = 20.0,
         analysis_agent: Any = None,
     ) -> None:
         self._connection = connection
@@ -445,6 +446,7 @@ class ReportAnalyzeTaskHandler:
             retriever=ReportRagRetriever(connection),
             llm_client=llm_client,
             llm_model=llm_model,
+            timeout_seconds=llm_timeout_seconds,
         )
 
     async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:

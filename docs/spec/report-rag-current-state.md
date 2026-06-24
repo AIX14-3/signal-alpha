@@ -194,12 +194,16 @@ ReportAnalyzeTaskHandler
 - 분석 결과를 `analysis_results`, `agent_results`에 저장하며, 두 테이블 모두 `source_signal_event_ids`를 보존합니다.
 - Report 분석 결과는 DB 제약에 맞춰 `analysis_mode='quick'`으로 저장합니다.
 - canonical 이벤트 기반 분석이면 후속 `ML_INFER` 작업을 등록해 Aggregator 체인에 합류할 수 있게 합니다.
+- `REPORT_USE_LLM=true`이고 provider/model/API key가 모두 설정되어 있으면 기존 DART LLM client를 재사용해 Report Agent에 연결합니다.
+  - `REPORT_LLM_PROVIDER=gemini`이면 `GEMINI_API_KEY`를 사용합니다.
+  - `REPORT_LLM_PROVIDER=openai`이면 `OPENAI_API_KEY`를 사용합니다.
+  - `REPORT_LLM_TIMEOUT_SECONDS`가 Report Agent의 LLM timeout으로 전달됩니다.
 
 현재 빈틈:
 
 - Report 분석은 `final_signals`를 직접 쓰지 않습니다.
 - 사용자-facing 최종 데이터 방향성 발행 여부는 Aggregator와 후속 gate가 결정합니다.
-- 현재 queue handler는 `llm_client=None`, `llm_model=None`을 넘기므로, 근거 청크가 있어도 Report Agent는 보수적 fallback을 사용합니다.
+- LLM 설정이 비활성화되었거나 model/key/provider가 불완전하면 Report Agent는 보수적 fallback을 사용합니다.
   - 방향성: `unknown`
   - 점수: `50`
   - `needs_review=true`
@@ -340,7 +344,7 @@ Invoke-RestMethod `
 2. 정규화 경로
    - Report는 `normalize_report`에서 `source_documents`, `signal_events`, `signal_metrics`를 만듭니다. 후속 작업은 기존 데이터 backfill과 운영 runbook 정리입니다.
 3. LLM 연결
-   - `REPORT_USE_LLM`, provider, model, timeout, API key 설정을 `ReportAnalyzeTaskHandler`에 연결할지 결정합니다.
+   - `REPORT_USE_LLM`, provider, model, timeout, API key 설정은 `ReportAnalyzeTaskHandler`에 연결되어 있습니다. 운영 환경에서 provider/model/key 값을 확정하고 fallback 품질을 점검합니다.
 4. Aggregator 통합
    - Report `agent_results`는 `source='REPORT'`와 `source_signal_event_ids`를 갖고 ML/aggregation 체인으로 넘겨집니다. DART, PRICE, ALTERNATIVE와 함께 운영 스케줄에서 어떻게 묶을지 정해야 합니다.
 5. 레거시 정리
@@ -358,13 +362,14 @@ Invoke-RestMethod `
 - Report collection scheduler
 - Report schedule route
 - Report RAG retriever
+- Report LLM wiring
 - Report analysis agent fallback과 LLM 응답 파싱
 - data-access의 Report chunk, raw detail, collection repository 메서드
 
 유용한 테스트 명령:
 
 ```powershell
-uv run pytest services\agent-worker\tests\test_report_task_handlers.py services\agent-worker\tests\test_report_scheduler.py services\agent-worker\tests\test_report_schedule_route.py services\agent-worker\tests\test_report_agent.py services\agent-worker\tests\test_report_rag_retriever.py -q
+uv run pytest services\agent-worker\tests\test_report_task_handlers.py services\agent-worker\tests\test_report_llm_wiring.py services\agent-worker\tests\test_report_scheduler.py services\agent-worker\tests\test_report_schedule_route.py services\agent-worker\tests\test_report_agent.py services\agent-worker\tests\test_report_rag_retriever.py -q
 
 uv run pytest packages\data-access\tests\test_collection_repository.py packages\data-access\tests\test_report_chunk_repository.py packages\data-access\tests\test_raw_detail_repository.py -q
 ```
