@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
 import time
 from pathlib import Path
@@ -26,99 +25,14 @@ from pathlib import Path
 _AW_ROOT = Path(__file__).resolve().parents[2]
 _EVAL = _AW_ROOT / "data" / "eval_set"
 
-# ── 기술 키워드 사전 (canonical, regex, case-sensitive?) ──────────────────────
-# 짧고 모호한 토큰(C/Go/R)은 경계·대소문자로 오탐을 줄인다. 전 엔진 공통 사전(공정).
-_TECH: list[tuple[str, str, bool]] = [
-    ("C++", r"c\s*\+\+", False),
-    ("C#", r"c\s*#", False),
-    ("C", r"(?<![\w+#])C(?![\w+#])", True),          # 대문자 C 단독 (C++/C# 제외)
-    ("Python", r"\bpython\b", False),
-    ("Java", r"\bjava\b(?!script)", False),
-    ("JavaScript", r"\bjavascript\b", False),
-    ("TypeScript", r"\btypescript\b", False),
-    ("Go", r"\bgo(?:lang)?\b", False),
-    ("Scala", r"\bscala\b", False),
-    ("Kotlin", r"\bkotlin\b", False),
-    ("Rust", r"\brust\b", False),
-    ("Spring Boot", r"\bspring(?:\s*boot)?\b", False),  # GT 라벨 정합(canonical=Spring Boot)
-    ("React", r"\breact(?:\.js)?\b", False),
-    ("Vue", r"\bvue(?:\.js)?\b", False),
-    ("Django", r"\bdjango\b", False),
-    ("FastAPI", r"\bfastapi\b", False),
-    (".NET", r"\.net\b", False),
-    ("Node.js", r"\bnode(?:\.js)?\b", False),
-    ("PyTorch", r"\bpytorch\b", False),
-    ("TensorFlow", r"\btensorflow\b", False),
-    ("MySQL", r"\bmysql\b", False),
-    ("PostgreSQL", r"\b(?:postgres(?:ql)?)\b", False),
-    ("Oracle", r"\boracle\b", False),
-    ("Redis", r"\bredis\b", False),
-    ("MongoDB", r"\bmongodb\b", False),
-    ("Hadoop", r"\bhadoop\b", False),
-    ("Spark", r"\bspark\b", False),
-    ("Kafka", r"\bkafka\b", False),
-    ("ELK", r"\b(?:elk|elasticsearch)\b", False),
-    ("Docker", r"\bdocker\b", False),
-    ("Kubernetes", r"\b(?:kubernetes|k8s)\b", False),
-    ("Helm", r"\bhelm\b", False),
-    ("ArgoCD", r"\bargo\s?cd\b", False),
-    ("Jenkins", r"\bjenkins\b", False),
-    ("GitOps", r"\bgitops\b", False),
-    ("Git", r"\bgit\b(?!ops|hub|lab)", False),
-    ("Terraform", r"\bterraform\b", False),
-    ("CI/CD", r"\bci/?cd\b", False),
-    ("Linux", r"\blinux\b", False),
-    ("AWS", r"\baws\b", False),
-    ("GCP", r"\bgcp\b", False),
-    ("Azure", r"\bazure\b", False),
-    ("Grafana", r"\bgrafana\b", False),
-    ("Prometheus", r"\bprometheus\b", False),
-    ("Loki", r"\bloki\b", False),
-    ("Jaeger", r"\bjaeger\b", False),
-    ("Bash", r"\bbash\b", False),
-    ("CMake", r"\bcmake\b", False),
-    ("DPDK", r"\bdpdk\b", False),
-    ("IDA", r"\bida\b", False),
-    ("MLOps", r"\bmlops\b", False),
-    ("DevSecOps", r"\bdevsecops\b", False),
-    ("DevOps", r"\bdevops\b", False),
-    ("eBPF", r"\bebpf\b", False),
-    # ── AI/ML 약어 (짧고 모호 → 대소문자·경계로 오탐 차단) ──
-    ("ML", r"(?<![A-Za-z])ML(?![A-Za-z])", True),       # MLOps/HTML/XML 오탐 방지
-    ("LLM", r"(?<![A-Za-z])LLM(?![A-Za-z])", True),
-    ("sLM", r"\bs(?:mall\s*)?lm\b", False),             # sLM/SLM
-    ("AI Agent", r"\bai\s*agent\b", False),
-    ("Service Mesh", r"\bservice\s*mesh\b", False),
-    # ── 한글 직무/기술 용어 (GT 라벨 정합) ──
-    ("데이터분석", r"데이터\s*분석", False),
-    ("클라우드 보안", r"클라우드\s*보안", False),
-    ("영상처리", r"영상\s*처리", False),
-    ("영상 알고리즘", r"영상\s*알고리즘", False),
-    ("Windows App", r"\bwindows\s*app\b", False),
-    ("HW개발", r"(?:\bhw\b|하드웨어)\s*개발", False),
-]
-_COMPILED = [(name, re.compile(pat, 0 if cs else re.IGNORECASE)) for name, pat, cs in _TECH]
+# 사전·전처리(canonicalize/extract_skills)는 서비스 코드와 공용 — 단일 소스(드리프트 방지).
+# 하니스를 어느 cwd 에서 실행해도 ``app`` 패키지를 찾도록 agent-worker 루트를 경로에 추가한다.
+if str(_AW_ROOT) not in sys.path:
+    sys.path.insert(0, str(_AW_ROOT))
+from app.enrichment.hiring_skills import canonicalize_token, extract_skills  # noqa: E402
 
 
 # ── 순수 함수 (단위테스트 대상) ───────────────────────────────────────────────
-def canonicalize_token(tok: str) -> str:
-    """비교용 정규화 키. 추출/GT 표기차를 흡수해 '같은 저울'로 맞춘다.
-
-    소문자화 + ``.js`` 접미 제거 + 전체 공백 제거. 특수문자(``+``/``#``/``.``)는 보존해
-    ``C++``/``C#``/``.NET`` 토큰 유실을 막는다.
-        React.js → react,  "Spring Boot" → springboot,  "클라우드 보안" → 클라우드보안
-    """
-    t = tok.strip().lower()
-    t = re.sub(r"\.js\b", "", t)   # react.js→react, node.js→node
-    t = re.sub(r"\s+", "", t)      # 공백 제거 → 한글/복합어 표기차 흡수
-    return t
-
-
-def extract_skills(text: str) -> set[str]:
-    """OCR 텍스트 → 사전 매칭된 canonical 기술 집합(전 엔진 공통)."""
-    return {name for name, rx in _COMPILED if rx.search(text or "")}
-
-
 def prf(extracted: set[str], ground_truth: set[str]) -> dict[str, float]:
     """precision/recall/F1. 비교는 canonical 키로(표기차 정합). gt 공집합은 측정 제외(None)."""
     if not ground_truth:

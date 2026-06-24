@@ -12,6 +12,7 @@ from app.orchestrator.queue.task_types import (
     COLLECT_REPORT,
     EMBED_DART,
     EMBED_REPORT,
+    ENRICH_HIRING,
     ENRICH_PATENT,
     META_COMBINE,
     ML_INFER,
@@ -32,6 +33,7 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
         AlternativeAnalyzeTaskHandler,
         DataLabNormalizeTaskHandler,
         HiringNormalizeTaskHandler,
+        HiringSkillEnrichTaskHandler,
         PatentEnrichTaskHandler,
         PatentNormalizeTaskHandler,
     )
@@ -98,5 +100,6 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
         NORMALIZE_PATENT: PatentNormalizeTaskHandler(connection),
         NORMALIZE_DATALAB: DataLabNormalizeTaskHandler(connection),
         ENRICH_PATENT: PatentEnrichTaskHandler(connection),
+        ENRICH_HIRING: HiringSkillEnrichTaskHandler(connection),
         ANALYZE_ALTERNATIVE: AlternativeAnalyzeTaskHandler(connection),
     }

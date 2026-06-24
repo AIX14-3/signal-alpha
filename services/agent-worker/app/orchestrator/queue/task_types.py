@@ -44,6 +44,13 @@ NORMALIZE_DATALAB = "NORMALIZE_DATALAB"
 # carrying the just-normalized raw_document_ids; enriches only those, then
 # enqueues the per-stock ANALYZE_ALTERNATIVE. 14 chars (task_type is VARCHAR(50)).
 ENRICH_PATENT = "ENRICH_PATENT"
+# OCR skill enrichment, slotted between NORMALIZE_HIRING and ANALYZE_ALTERNATIVE:
+# a hiring poster image (extra_payload.image_urls) -> Tesseract OCR -> tech-skill
+# set -> cached hiring_raw_details.ocr_skills the hiring analyzer reads to weight
+# postings by concrete tech demand. Enqueued per stock carrying the just-normalized
+# raw_document_ids; enriches only those, then enqueues the per-stock
+# ANALYZE_ALTERNATIVE. 13 chars (task_type is VARCHAR(50)).
+ENRICH_HIRING = "ENRICH_HIRING"
 # Cross-source, per-stock analysis (not per-event): one task analyzes all
 # registered Alternative sources for a stock on a given as_of date.
 ANALYZE_ALTERNATIVE = "ANALYZE_ALTERNATIVE"
