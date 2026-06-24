@@ -123,6 +123,34 @@ class CallGeminiGroundedTest(unittest.TestCase):
         self.assertEqual(captured["body"]["tools"], [{"google_search": {}}])
         self.assertNotIn("responseMimeType", captured["body"]["generationConfig"])
 
+    def test_empty_model_env_falls_back_to_default(self):
+        # An unset GEMINI_MODEL secret reaches the process as "" (not absent); the
+        # getenv default would NOT apply, leaving the URL model-less -> 404. Guard it.
+        captured = {}
+
+        class FakeResp:
+            def read(self):
+                return json.dumps(
+                    {"candidates": [{"content": {"parts": [{"text": "ok"}]}}]}
+                ).encode("utf-8")
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        def fake_urlopen(req, timeout=0):
+            captured["url"] = req.full_url
+            return FakeResp()
+
+        os.environ["GEMINI_API_KEY"] = "test-key"
+        os.environ["GEMINI_MODEL"] = ""  # simulate empty secret from CI
+        os.environ.pop("GEMINI_GROUNDING_MODEL", None)
+        keyword_gen_common.urlopen = fake_urlopen  # type: ignore[assignment]
+        keyword_gen_common.call_gemini_grounded("hi")
+        self.assertIn("models/gemini-2.5-flash-lite:generateContent", captured["url"])
+
 
 if __name__ == "__main__":
     unittest.main()

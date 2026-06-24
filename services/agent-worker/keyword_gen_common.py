@@ -115,7 +115,9 @@ def call_gemini(prompt: str) -> dict[str, Any]:
     api_key = os.getenv("GEMINI_API_KEY", "")
     if not api_key:
         raise RuntimeError("GEMINI_API_KEY is required for keyword generation.")
-    model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
+    # `or` (not getenv default): an empty env var — e.g. an unset GEMINI_MODEL secret
+    # passed as "" by CI — must still fall back, or the URL has no model and 404s.
+    model = os.getenv("GEMINI_MODEL") or "gemini-2.5-flash-lite"
     url = (
         "https://generativelanguage.googleapis.com/v1beta/models/"
         f"{model}:generateContent?key={api_key}"
@@ -150,7 +152,7 @@ def call_gemini_grounded(prompt: str) -> str:
     api_key = os.getenv("GEMINI_API_KEY", "")
     if not api_key:
         raise RuntimeError("GEMINI_API_KEY is required for grounded keyword enrichment.")
-    model = os.getenv("GEMINI_GROUNDING_MODEL") or os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
+    model = os.getenv("GEMINI_GROUNDING_MODEL") or os.getenv("GEMINI_MODEL") or "gemini-2.5-flash-lite"
     url = (
         "https://generativelanguage.googleapis.com/v1beta/models/"
         f"{model}:generateContent?key={api_key}"

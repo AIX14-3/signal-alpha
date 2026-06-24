@@ -235,7 +235,7 @@ async def apply_draft(draft: dict[str, Any], *, manual: bool = True) -> None:
       come from its validation tier. On conflict the EXISTING review_status/is_active are
       preserved so a daily run never silently flips an admin's prior approve/reject.
     """
-    model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
+    model = os.getenv("GEMINI_MODEL") or "gemini-2.5-flash-lite"
     conn = await asyncpg.connect(**parse_dsn(os.environ["DATABASE_URL"]))
     try:
         async with conn.transaction():
