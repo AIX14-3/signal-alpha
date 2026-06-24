@@ -126,6 +126,12 @@ def run_backfill(
             continue
         rec = crawler._to_record(name, name, detail, posting_date=J._detail_date(detail))
         if rec:
+            # backfill 핵심: observed_date 를 '오늘'이 아니라 실제 게시일(KST)로 주입한다.
+            # 이게 없으면 과거(2020~) 공고가 전부 '오늘 관측'으로 쌓여 과거 시계열이 소실되고
+            # 오늘 신호가 오염된다. base_collector 가 KST 날짜로 정규화(_to_kst_date),
+            # 게시일 누락 시에만 _kst_today() 로 폴백. (라이브 수집은 override 없음 → 무영향)
+            if rec.get("posting_date"):
+                rec["observed_date"] = rec["posting_date"]
             batch.append(rec)
             kept += 1
             if len(batch) >= batch_size:
