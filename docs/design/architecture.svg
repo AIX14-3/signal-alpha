@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="1200" viewBox="0 0 1100 1200" font-family="'Segoe UI','Malgun Gothic','Noto Sans KR',sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="1240" viewBox="0 0 1100 1240" font-family="'Segoe UI','Malgun Gothic','Noto Sans KR',sans-serif">
   <defs>
     <marker id="arrow" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
       <path d="M0,0 L7,3 L0,6 Z" fill="#475569"/>
@@ -9,11 +9,14 @@
     <marker id="arrowMl" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
       <path d="M0,0 L7,3 L0,6 Z" fill="#22c55e"/>
     </marker>
+    <marker id="arrowRefine" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L7,3 L0,6 Z" fill="#b45309"/>
+    </marker>
   </defs>
 
-  <rect x="0" y="0" width="1100" height="1200" fill="#ffffff"/>
+  <rect x="0" y="0" width="1100" height="1240" fill="#ffffff"/>
   <text x="40" y="40" font-size="22" font-weight="700" fill="#0f172a">Signal Alpha — 게이트형 워커 파이프라인</text>
-  <text x="40" y="62" font-size="13" fill="#64748b">수집 → 게이트1 → 전처리 → 적재 → ML/DL → 메타러너 → 게이트2(소스 합의) → LLM 종합 → 리스크 veto(정제 루프) → 리포트</text>
+  <text x="40" y="62" font-size="11" fill="#64748b">수집 → 게이트1 → 전처리 → 적재 → ML/DL → 메타러너 → 게이트2(소스 합의) → 리스크 veto①(LLM 전, 치명→정제→LLM) → LLM 종합 → 리스크 veto②(LLM 후, 치명→1회 재진입→재생성 시 미발행) → 리포트</text>
 
   <!-- ============ EDGES (drawn first, nodes paint on top) ============ -->
   <g stroke="#475569" stroke-width="1.6" fill="none">
@@ -25,30 +28,35 @@
     <line x1="470" y1="469" x2="470" y2="500" marker-end="url(#arrow)"/>
     <line x1="470" y1="564" x2="470" y2="595" marker-end="url(#arrow)"/>
     <line x1="470" y1="659" x2="470" y2="665" marker-end="url(#arrow)"/>
+    <!-- G2 -> VETO1 (합의 통과 → LLM 전 처리) -->
+    <line x1="470" y1="785" x2="470" y2="804" marker-end="url(#arrow)"/>
     <!-- G2 -> NR (약함) -->
-    <path d="M305,725 C235,760 185,800 185,908" marker-end="url(#arrow)"/>
-    <!-- G2 -> L (발행) -->
-    <line x1="470" y1="785" x2="470" y2="815" marker-end="url(#arrow)"/>
-    <!-- L -> V -->
-    <line x1="470" y1="879" x2="470" y2="885" marker-end="url(#arrow)"/>
-    <!-- V -> O (통과) -->
-    <line x1="470" y1="985" x2="470" y2="1025" marker-end="url(#arrow)"/>
-    <!-- V -> NR (정제 후에도 치명) -->
-    <line x1="320" y1="935" x2="282" y2="932" marker-end="url(#arrow)"/>
+    <path d="M305,725 C200,765 150,835 155,901" marker-end="url(#arrow)"/>
+    <!-- VETO1 -> LLM (분기 없음: 치명이면 정제 후, 아니면 그대로 → LLM) -->
+    <line x1="470" y1="868" x2="470" y2="908" marker-end="url(#arrow)"/>
+    <!-- LLM -> VETO2 (LLM 출력 재검사) -->
+    <line x1="470" y1="966" x2="470" y2="985" marker-end="url(#arrow)"/>
+    <!-- VETO2 -> O (통과 → 발행) -->
+    <line x1="470" y1="1075" x2="470" y2="1098" marker-end="url(#arrow)"/>
+    <!-- VETO2 -> NR (LLM 출력 치명 → 미발행) -->
+    <path d="M335,1030 C300,1006 284,978 284,954" marker-end="url(#arrow)"/>
   </g>
 
-  <!-- dashed edges (정제 루프 / 관측) -->
+  <!-- dashed edges (관측) -->
   <g stroke="#94a3b8" stroke-width="1.5" fill="none" stroke-dasharray="5 4">
-    <!-- V -.-> L (치명 키워드 → 정제 1회) -->
-    <path d="M620,935 C690,910 690,860 589,845" marker-end="url(#arrowDash)"/>
-    <!-- LS -.-> L (관측) -->
-    <line x1="260" y1="843" x2="353" y2="849" marker-end="url(#arrowDash)"/>
+    <!-- LLM -.-> LS (관측) -->
+    <line x1="583" y1="940" x2="811" y2="932" marker-end="url(#arrowDash)"/>
   </g>
 
-  <!-- ml 데이터 참조: meta_signal(결합 변동성·신뢰도)을 게이트2가 아니라 끝단 SYNTHESIZE가 ml_risk로 읽는다 -->
+  <!-- ml 데이터 참조: meta_signal(결합 변동성·신뢰도)을 끝단 SYNTHESIZE가 ml_risk로 읽는다 -->
   <g stroke="#22c55e" stroke-width="1.5" fill="none" stroke-dasharray="5 4">
-    <!-- E (메타러너) -.-> L (LLM 종합), 우측 우회로 게이트2를 가로지르지 않음 -->
-    <path d="M585,627 C688,660 688,800 589,840" marker-end="url(#arrowMl)"/>
+    <!-- E (메타러너) -.-> L (LLM 종합), 우측 우회로 게이트2·veto①을 가로지르지 않음 -->
+    <path d="M585,627 C700,700 700,890 583,935" marker-end="url(#arrowMl)"/>
+  </g>
+
+  <!-- 정제 루프(1회): VETO2 -> LLM 재진입 -->
+  <g stroke="#b45309" stroke-width="1.6" fill="none">
+    <path d="M605,1030 C705,1000 705,975 580,952" marker-end="url(#arrowRefine)"/>
   </g>
 
   <!-- ============ EDGE LABELS ============ -->
@@ -57,13 +65,14 @@
     <g fill="#b45309"><text x="690" y="205">일시적 실패 (retry 초과)</text></g>
     <g fill="#b91c1c"><text x="643" y="300">구조적 실패 (손상)</text></g>
     <g fill="#15803d"><text x="568" y="490">ML_INFER (OHLCV)</text></g>
-    <g fill="#b45309"><text x="232" y="770">약함 (warning_level=WARNING)</text></g>
-    <g fill="#16a34a"><text x="500" y="805">발행</text></g>
-    <g fill="#16a34a"><text x="556" y="1010">통과 (키워드 없음)</text></g>
-    <g fill="#b91c1c"><text x="300" y="908">정제 후에도 치명 → 미발행</text></g>
-    <g fill="#a855f7"><text x="745" y="892">치명 키워드 → 정제 (1회)</text></g>
-    <g fill="#a855f7"><text x="300" y="868">관측만</text></g>
-    <g fill="#166534"><text x="722" y="702">결합 변동성·신뢰도 → ml_risk</text></g>
+    <g fill="#16a34a"><text x="528" y="792">합의 통과</text></g>
+    <g fill="#b45309"><text x="205" y="758">약함 (WARNING)</text></g>
+    <g fill="#854d0e"><text x="566" y="978">LLM 출력 재검사</text></g>
+    <g fill="#16a34a"><text x="540" y="1092">통과 → 발행</text></g>
+    <g fill="#b45309"><text x="710" y="990">치명 → 정제·재선별 (1회)</text></g>
+    <g fill="#b91c1c"><text x="245" y="1004">재생성 시 → 미발행</text></g>
+    <g fill="#a855f7"><text x="700" y="924">관측만</text></g>
+    <g fill="#166534"><text x="748" y="800">결합 변동성·신뢰도 → ml_risk</text></g>
   </g>
 
   <!-- ============ NODES ============ -->
@@ -135,64 +144,74 @@
     <text x="470" y="747" text-anchor="middle" font-size="10" fill="#166534">발행 여부 판정 (WARNING이면 미발행)</text>
   </g>
 
-  <!-- L LLM 종합 (llm) -->
+  <!-- V1 리스크 veto ① (det, rect) — LLM 전 처리: 분기 없이 항상 LLM 진입 -->
   <g>
-    <rect x="355" y="815" width="232" height="64" rx="9" fill="#fef9c3" stroke="#eab308" stroke-width="1.5"/>
-    <text x="471" y="841" text-anchor="middle" font-size="14" font-weight="700" fill="#713f12">LLM 종합 · 설명</text>
-    <text x="471" y="861" text-anchor="middle" font-size="10.5" fill="#854d0e">SYNTHESIZE (내러티브)</text>
+    <rect x="355" y="804" width="230" height="64" rx="9" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.5"/>
+    <text x="470" y="826" text-anchor="middle" font-size="13" font-weight="700" fill="#1e3a8a">리스크 veto ① (LLM 전)</text>
+    <text x="470" y="844" text-anchor="middle" font-size="9.5" fill="#1e40af">치명 키워드·이벤트 검사</text>
+    <text x="470" y="859" text-anchor="middle" font-size="9.5" fill="#1e40af">치명 시 정제 후 LLM (미발행 없음)</text>
   </g>
 
-  <!-- V 리스크 veto (det, diamond) -->
+  <!-- L LLM 종합 (llm) -->
   <g>
-    <polygon points="470,885 620,935 470,985 320,935" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.5"/>
-    <text x="470" y="930" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1e3a8a">리스크 veto</text>
-    <text x="470" y="947" text-anchor="middle" font-size="9" fill="#1e40af">치명 키워드 검사</text>
-    <text x="470" y="959" text-anchor="middle" font-size="9" fill="#1e40af">(데이터 + LLM 텍스트)</text>
+    <rect x="360" y="908" width="220" height="58" rx="9" fill="#fef9c3" stroke="#eab308" stroke-width="1.5"/>
+    <text x="470" y="934" text-anchor="middle" font-size="14" font-weight="700" fill="#713f12">LLM 종합 · 설명</text>
+    <text x="470" y="953" text-anchor="middle" font-size="10.5" fill="#854d0e">SYNTHESIZE (내러티브)</text>
+  </g>
+
+  <!-- V2 리스크 veto ② (det, diamond) — LLM 후 재검사 -->
+  <g>
+    <polygon points="470,985 605,1030 470,1075 335,1030" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.5"/>
+    <text x="470" y="1024" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1e3a8a">리스크 veto ② (LLM 후)</text>
+    <text x="470" y="1040" text-anchor="middle" font-size="9" fill="#1e40af">LLM 출력 치명 키워드 재검사</text>
+    <text x="470" y="1053" text-anchor="middle" font-size="9" fill="#1e40af">치명 시 1회 재진입(정제)</text>
   </g>
 
   <!-- NR needs_review (ml) -->
   <g>
-    <rect x="60" y="908" width="222" height="54" rx="9" fill="#dcfce7" stroke="#22c55e" stroke-width="1.5"/>
-    <text x="171" y="932" text-anchor="middle" font-size="13" font-weight="700" fill="#14532d">needs_review</text>
-    <text x="171" y="951" text-anchor="middle" font-size="10.5" fill="#166534">is_published=false (미발행)</text>
+    <rect x="60" y="902" width="224" height="54" rx="9" fill="#dcfce7" stroke="#22c55e" stroke-width="1.5"/>
+    <text x="172" y="926" text-anchor="middle" font-size="13" font-weight="700" fill="#14532d">needs_review</text>
+    <text x="172" y="945" text-anchor="middle" font-size="10.5" fill="#166534">is_published=false (미발행)</text>
   </g>
 
   <!-- LS LangSmith (obs, cylinder) -->
   <g>
-    <path d="M95,820 a76,9 0 0,1 152,0 v30 a76,9 0 0,1 -152,0 z" fill="#fae8ff" stroke="#a855f7" stroke-width="1.5"/>
-    <ellipse cx="171" cy="820" rx="76" ry="9" fill="#fae8ff" stroke="#a855f7" stroke-width="1.5"/>
-    <text x="171" y="841" text-anchor="middle" font-size="12.5" font-weight="700" fill="#581c87">LangSmith 관측·디버깅</text>
+    <path d="M814,925 a76,9 0 0,1 152,0 v30 a76,9 0 0,1 -152,0 z" fill="#fae8ff" stroke="#a855f7" stroke-width="1.5"/>
+    <ellipse cx="890" cy="925" rx="76" ry="9" fill="#fae8ff" stroke="#a855f7" stroke-width="1.5"/>
+    <text x="890" y="946" text-anchor="middle" font-size="12.5" font-weight="700" fill="#581c87">LangSmith 관측·디버깅</text>
   </g>
 
   <!-- O 결과물 (out) -->
   <g>
-    <rect x="355" y="1025" width="230" height="64" rx="9" fill="#f1f5f9" stroke="#64748b" stroke-width="1.5"/>
-    <text x="470" y="1051" text-anchor="middle" font-size="14" font-weight="700" fill="#0f172a">결과물 · 리스크 리포트 (JSON)</text>
-    <text x="470" y="1071" text-anchor="middle" font-size="10.5" fill="#334155">final_signals</text>
+    <rect x="355" y="1098" width="230" height="64" rx="9" fill="#f1f5f9" stroke="#64748b" stroke-width="1.5"/>
+    <text x="470" y="1124" text-anchor="middle" font-size="14" font-weight="700" fill="#0f172a">결과물 · 리스크 리포트 (JSON)</text>
+    <text x="470" y="1144" text-anchor="middle" font-size="10.5" fill="#334155">final_signals</text>
   </g>
 
   <!-- ============ LEGEND ============ -->
   <g>
-    <rect x="690" y="980" width="370" height="170" rx="10" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.2"/>
-    <text x="710" y="1008" font-size="13" font-weight="700" fill="#0f172a">범례</text>
+    <rect x="690" y="1015" width="370" height="170" rx="10" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.2"/>
+    <text x="710" y="1043" font-size="13" font-weight="700" fill="#0f172a">범례</text>
 
-    <rect x="710" y="1022" width="22" height="16" rx="4" fill="#dbeafe" stroke="#3b82f6"/>
-    <text x="742" y="1035" font-size="12" fill="#1e3a8a">결정론 (순수 코드)</text>
+    <rect x="710" y="1057" width="22" height="16" rx="4" fill="#dbeafe" stroke="#3b82f6"/>
+    <text x="742" y="1070" font-size="12" fill="#1e3a8a">결정론 (순수 코드 · veto 포함)</text>
 
-    <rect x="710" y="1048" width="22" height="16" rx="4" fill="#dcfce7" stroke="#22c55e"/>
-    <text x="742" y="1061" font-size="12" fill="#14532d">ML/DL (백테스트 검증)</text>
+    <rect x="710" y="1083" width="22" height="16" rx="4" fill="#dcfce7" stroke="#22c55e"/>
+    <text x="742" y="1096" font-size="12" fill="#14532d">ML/DL (백테스트 검증)</text>
 
-    <rect x="710" y="1074" width="22" height="16" rx="4" fill="#fef9c3" stroke="#eab308"/>
-    <text x="742" y="1087" font-size="12" fill="#713f12">LLM (비결정, 끝단만)</text>
+    <rect x="710" y="1109" width="22" height="16" rx="4" fill="#fef9c3" stroke="#eab308"/>
+    <text x="742" y="1122" font-size="12" fill="#713f12">LLM (비결정 · 정제 1회 재호출)</text>
 
-    <rect x="710" y="1100" width="22" height="16" rx="4" fill="#fae8ff" stroke="#a855f7"/>
-    <text x="742" y="1113" font-size="12" fill="#581c87">관측 (LangSmith)</text>
+    <rect x="710" y="1135" width="22" height="16" rx="4" fill="#fae8ff" stroke="#a855f7"/>
+    <text x="742" y="1148" font-size="12" fill="#581c87">관측 (LangSmith)</text>
 
-    <line x1="900" y1="1032" x2="940" y2="1032" stroke="#475569" stroke-width="1.6" marker-end="url(#arrow)"/>
-    <text x="948" y="1036" font-size="11.5" fill="#475569">흐름</text>
-    <line x1="900" y1="1084" x2="940" y2="1084" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#arrowDash)"/>
-    <text x="948" y="1088" font-size="11.5" fill="#94a3b8">정제·관측</text>
-    <line x1="900" y1="1110" x2="940" y2="1110" stroke="#22c55e" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#arrowMl)"/>
-    <text x="948" y="1114" font-size="11.5" fill="#166534">ml 데이터(meta→종합)</text>
+    <line x1="900" y1="1067" x2="940" y2="1067" stroke="#475569" stroke-width="1.6" marker-end="url(#arrow)"/>
+    <text x="948" y="1071" font-size="11.5" fill="#475569">흐름</text>
+    <line x1="900" y1="1119" x2="940" y2="1119" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#arrowDash)"/>
+    <text x="948" y="1123" font-size="11.5" fill="#94a3b8">관측</text>
+    <line x1="900" y1="1145" x2="940" y2="1145" stroke="#22c55e" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#arrowMl)"/>
+    <text x="948" y="1149" font-size="11.5" fill="#166534">ml 데이터(meta→종합)</text>
+    <line x1="900" y1="1171" x2="940" y2="1171" stroke="#b45309" stroke-width="1.6" marker-end="url(#arrowRefine)"/>
+    <text x="948" y="1175" font-size="11.5" fill="#b45309">정제 루프(1회)</text>
   </g>
 </svg>
