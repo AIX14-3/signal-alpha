@@ -128,6 +128,41 @@ class RawDetailRepository:
             raw_document_ids,
         )
 
+    async def list_report_details_by_raw_ids(self, raw_document_ids: list[int]) -> list[Any]:
+        """Report detail rows joined to raw_documents, for canonical normalization."""
+        if not raw_document_ids:
+            return []
+
+        return await self._connection.fetch(
+            """
+            SELECT
+                raw_documents.id AS raw_document_id,
+                raw_documents.stock_id,
+                raw_documents.source_type,
+                raw_documents.source_name,
+                raw_documents.title,
+                raw_documents.source_url,
+                raw_documents.published_at,
+                raw_documents.collected_at,
+                report_raw_details.securities_firm,
+                report_raw_details.publish_date,
+                report_raw_details.investment_opinion,
+                report_raw_details.target_price,
+                report_raw_details.previous_target_price,
+                report_raw_details.current_price_at_publish,
+                report_raw_details.upside_pct,
+                report_raw_details.key_rationale,
+                report_raw_details.extracted_text
+            FROM report_raw_details
+            INNER JOIN raw_documents
+                ON raw_documents.id = report_raw_details.raw_document_id
+            WHERE report_raw_details.raw_document_id = ANY($1::BIGINT[])
+              AND report_raw_details.parsing_status = 'success'
+            ORDER BY report_raw_details.publish_date DESC, raw_documents.id DESC
+            """,
+            raw_document_ids,
+        )
+
     async def list_stocks_for_datalab_category(self, category_id: int) -> list[Any]:
         """Active stock_ids mapped to a DataLab category (datalab_category_stocks).
 

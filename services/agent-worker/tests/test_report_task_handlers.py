@@ -12,6 +12,7 @@ from app.orchestrator.report.tasks import (
     ReportAnalyzeTaskHandler,
     ReportCollectTaskHandler,
     ReportEmbedTaskHandler,
+    ReportNormalizeTaskHandler,
     ReportProcessTaskHandler,
 )
 
@@ -46,13 +47,25 @@ class EmbedHandlerConn:
         self._status = parsing_status
         self._s3_key = s3_key
         self.inserts = []
+        self.fetchvals = []
 
     async def fetchrow(self, sql, *args):
-        return {"stock_id": 1, "s3_key": self._s3_key, "parsing_status": self._status}
+        return {
+            "stock_id": 1,
+            "stock_code": "005930",
+            "s3_key": self._s3_key,
+            "parsing_status": self._status,
+        }
 
     async def execute(self, sql, *args):
         if "INSERT INTO report_chunks" in sql:
             self.inserts.append(args)
+
+    async def fetchval(self, sql, *args):
+        self.fetchvals.append((sql, args))
+        if "SELECT id" in sql:
+            return None
+        return 701
 
 
 class ReportEmbedTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
@@ -104,6 +117,31 @@ class ReportEmbedTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result["status"], "success")
         self.assertEqual(storage.downloaded_keys, ["reports/005930/x.pdf"])
+
+    async def test_enqueues_report_analysis_with_signal_event_ids_after_embedding(self):
+        conn = EmbedHandlerConn()
+        handler = ReportEmbedTaskHandler(
+            connection=conn,
+            settings=None,
+            storage=FakeStorage(pdf_bytes=b"%PDF-fake"),
+        )
+
+        result = await handler(
+            {
+                "source_signal_event_ids": [801],
+                "task_context": {
+                    "raw_document_id": 42,
+                    "stock_code": "005930",
+                    "run_key": "REPORT_EVENT_801",
+                },
+            }
+        )
+
+        self.assertEqual(result["analyze_task_id"], 701)
+        enqueue = conn.fetchvals[-1][1]
+        self.assertEqual(enqueue[1], "analyze_report")
+        self.assertEqual(enqueue[4], [801])
+        self.assertIn('"run_key": "REPORT_EVENT_801"', enqueue[6])
 
 
 # ── process_report ───────────────────────────────────────────────
@@ -191,7 +229,92 @@ class ReportProcessTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertIs(observed["process"][1], storage)
         self.assertIn("reports/005930/", observed["process"][0])
         self.assertTrue(any("UPDATE report_raw_details" in sql for sql, _ in conn.executed))
-        self.assertTrue(any(args[1] == "embed_report" for _, args in conn.fetchvals))
+        self.assertTrue(any(args[1] == "normalize_report" for _, args in conn.fetchvals))
+
+
+# ── normalize_report ─────────────────────────────────────────────
+class NormalizeHandlerConn:
+    def __init__(self):
+        self.calls = []
+
+    async def fetch(self, sql, *args):
+        self.calls.append(("fetch", sql, args))
+        if "FROM report_raw_details" in sql:
+            return [
+                {
+                    "raw_document_id": 42,
+                    "stock_id": 1,
+                    "source_type": "REPORT",
+                    "source_name": "신한투자증권",
+                    "title": "삼성전자 실적 점검",
+                    "source_url": "https://example.com/report.pdf",
+                    "published_at": datetime(2026, 6, 24),
+                    "collected_at": datetime(2026, 6, 24, 1),
+                    "securities_firm": "신한투자증권",
+                    "publish_date": datetime(2026, 6, 24).date(),
+                    "investment_opinion": "Buy",
+                    "target_price": 90000,
+                    "previous_target_price": 85000,
+                    "current_price_at_publish": 75000,
+                    "upside_pct": 20.0,
+                    "key_rationale": "HBM 수요와 실적 개선 근거",
+                    "extracted_text": "리포트 본문",
+                }
+            ]
+        return []
+
+    async def fetchrow(self, sql, *args):
+        self.calls.append(("fetchrow", sql, args))
+        if "INSERT INTO source_documents" in sql:
+            return {"id": 300}
+        if "INSERT INTO signal_events" in sql:
+            return {"id": 801}
+        if "INSERT INTO signal_metrics" in sql:
+            return {"id": 900}
+        return None
+
+    async def fetchval(self, sql, *args):
+        self.calls.append(("fetchval", sql, args))
+        if "SELECT id" in sql:
+            return None
+        if "INSERT INTO validation_logs" in sql:
+            return 901
+        return 701
+
+    def _inserts(self, table):
+        return [call for call in self.calls if call[0] == "fetchrow" and f"INSERT INTO {table}" in call[1]]
+
+    def _enqueue_inserts(self):
+        return [call for call in self.calls if call[0] == "fetchval" and "INSERT INTO processing_queue" in call[1]]
+
+
+class ReportNormalizeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
+    async def test_normalizes_report_and_enqueues_embedding_with_event_id(self):
+        conn = NormalizeHandlerConn()
+        handler = ReportNormalizeTaskHandler(connection=conn)
+
+        result = await handler(
+            {
+                "stock_id": 1,
+                "source_raw_ids": [42],
+                "task_context": {"stock_code": "005930"},
+            }
+        )
+
+        self.assertEqual(result["normalized_count"], 1)
+        self.assertEqual(result["signal_event_ids"], [801])
+        self.assertTrue(conn._inserts("source_documents"))
+        event_call = conn._inserts("signal_events")[0]
+        self.assertEqual(event_call[2][3], "REPORT")
+        self.assertEqual(event_call[2][4], "report_published")
+        self.assertEqual(event_call[2][6], "positive")
+        metric_names = [call[2][1] for call in conn._inserts("signal_metrics")]
+        self.assertIn("report_target_price", metric_names)
+        self.assertIn("report_upside_pct", metric_names)
+        enqueue = conn._enqueue_inserts()[0][2]
+        self.assertEqual(enqueue[1], "embed_report")
+        self.assertEqual(enqueue[4], [801])
+        self.assertIn('"raw_document_id": 42', enqueue[6])
 
 
 # ── analyze_report ──────────────────────────────────────────────
@@ -199,6 +322,9 @@ class AnalyzeHandlerConn:
     def __init__(self):
         self.upserts = []
         self.method_signal = None
+        self.analysis_args = None
+        self.agent_args = None
+        self.fetchvals = []
 
     async def fetch(self, sql, *args):
         if "report_raw_details" in sql:
@@ -207,19 +333,37 @@ class AnalyzeHandlerConn:
                 {"investment_opinion": "Buy", "target_price": 100000},
                 {"investment_opinion": "Hold", "target_price": None},
             ]
+        if "FROM signal_events" in sql:
+            return [
+                {
+                    "id": 801,
+                    "stock_id": 1,
+                    "event_date": datetime(2026, 6, 24).date(),
+                    "title": "삼성전자 실적 점검",
+                    "summary": "데이터 방향성 확인",
+                }
+            ]
         return []
 
     async def fetchrow(self, sql, *args):
         if "INSERT INTO analysis_results" in sql:
             self.upserts.append("analysis_results")
+            self.analysis_args = args
             return {"id": 100}
         if "INSERT INTO agent_results" in sql:
             self.upserts.append("agent_results")
             # upsert_agent_result: $1 result_id, $2 stock_id, $3 debate_method,
             # $4 source_signal_event_ids, $5 method_score, $6 method_signal
             self.method_signal = args[5]
+            self.agent_args = args
             return {"id": 200}
         return None
+
+    async def fetchval(self, sql, *args):
+        self.fetchvals.append((sql, args))
+        if "SELECT id" in sql:
+            return None
+        return 601
 
 
 class FakeAgent:
@@ -251,7 +395,11 @@ class ReportAnalyzeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         handler = ReportAnalyzeTaskHandler(connection=conn, settings=None, analysis_agent=agent)
 
         result = await handler(
-            {"stock_id": 1, "task_context": {"stock_code": "005930", "run_key": "REPORT"}}
+            {
+                "stock_id": 1,
+                "source_signal_event_ids": [801],
+                "task_context": {"stock_code": "005930", "run_key": "REPORT_EVENT_801"},
+            }
         )
 
         self.assertEqual(result["analysis_result_id"], 100)
@@ -259,6 +407,9 @@ class ReportAnalyzeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["direction"], "positive")
         # 저장 순서: analysis_results → agent_results
         self.assertEqual(conn.upserts, ["analysis_results", "agent_results"])
+        self.assertEqual(conn.analysis_args[4], [801])
+        self.assertEqual(conn.analysis_args[8], "quick")
+        self.assertEqual(conn.agent_args[3], [801])
         # 정량 집계: 평균 목표주가, 의견 충돌 감지
         quant = result["report_quant"]
         self.assertEqual(quant["report_count"], 3)
@@ -267,6 +418,8 @@ class ReportAnalyzeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         # method_signal은 허용값(positive). agent에 정량이 context로 주입됐는지
         self.assertEqual(conn.method_signal, "positive")
         self.assertEqual(agent.received.context["report_quant"]["avg_target"], 95000)
+        self.assertEqual(agent.received.events[0]["id"], 801)
+        self.assertEqual(result["ml_infer_task_id"], 601)
 
     async def test_unknown_direction_is_mapped_to_neutral_for_method_signal(self):
         # agent_results.method_signal CHECK는 unknown 불가 → neutral로 매핑돼야 함

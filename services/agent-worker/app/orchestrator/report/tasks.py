@@ -16,8 +16,19 @@ from app.collectors.report.parsers.run_parser import process_from_s3
 from app.collectors.report.pdf_downloader import download_and_upload, make_filename, make_s3_key
 from app.collectors.report.storage import ReportStorageClient, get_report_storage_client
 from app.embeddings.provider import get_embedding_provider, to_pgvector
-from app.orchestrator.queue.task_types import EMBED_REPORT, PROCESS_REPORT
-from signal_alpha_data_access.repositories import AnalysisRepository, ProcessingQueueRepository
+from app.orchestrator.queue.task_types import (
+    ANALYZE_REPORT,
+    EMBED_REPORT,
+    ML_INFER,
+    NORMALIZE_REPORT,
+    PROCESS_REPORT,
+)
+from signal_alpha_data_access.repositories import (
+    AnalysisRepository,
+    NormalizationRepository,
+    ProcessingQueueRepository,
+    RawDetailRepository,
+)
 
 
 class ReportCollectTaskHandler:
@@ -165,16 +176,25 @@ class ReportProcessTaskHandler:
         # 파싱 완료 → 임베딩 태스크 자동 등록. 모델(~2GB) 싱글톤 1회 로딩을 위해
         # 임베딩은 별도 embed_report 태스크로 분리한다(파싱 실패와 격리, 독립 재시도).
         queue = ProcessingQueueRepository(self._connection)
-        await queue.enqueue(
+        normalize_task_id = await queue.enqueue(
             stock_id=int(row["stock_id"]),
-            task_type=EMBED_REPORT,
+            task_type=NORMALIZE_REPORT,
             priority="batch",
             source_raw_ids=[raw_document_id],
-            task_context={"raw_document_id": raw_document_id},
+            task_context={
+                "raw_document_id": raw_document_id,
+                "stock_code": str(row["stock_code"]),
+                "source_type": "REPORT",
+            },
             dedupe=True,
         )
 
-        return {"status": "success", "raw_document_id": raw_document_id, "s3_key": s3_key}
+        return {
+            "status": "success",
+            "raw_document_id": raw_document_id,
+            "s3_key": s3_key,
+            "normalize_task_id": normalize_task_id,
+        }
 
     def _get_storage(self) -> ReportStorageClient:
         if self._storage is None:
@@ -193,6 +213,96 @@ class ReportProcessTaskHandler:
             raw_document_id,
             error,
         )
+
+
+class ReportNormalizeTaskHandler:
+    """Promote parsed Report raw rows to the canonical source/event/metric path."""
+
+    SOURCE_TYPE = "REPORT"
+    RELIABILITY_LEVEL = "medium"
+    IS_OFFICIAL = False
+
+    def __init__(self, *, connection: Any) -> None:
+        self._raw_detail_repository = RawDetailRepository(connection)
+        self._normalization_repository = NormalizationRepository(connection)
+        self._queue_repository = ProcessingQueueRepository(connection)
+
+    async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
+        task_context = _task_context(task.get("task_context"))
+        raw_document_ids = _source_raw_ids(task.get("source_raw_ids"))
+        if not raw_document_ids and task_context.get("raw_document_id") is not None:
+            raw_document_ids = [int(task_context["raw_document_id"])]
+
+        rows = await self._raw_detail_repository.list_report_details_by_raw_ids(raw_document_ids)
+
+        signal_event_ids: list[int] = []
+        embed_task_ids: list[int] = []
+        for row in rows:
+            raw_document_id = int(row["raw_document_id"])
+            stock_id = int(row["stock_id"])
+            source_document = await self._normalization_repository.upsert_source_document(
+                raw_document_id=raw_document_id,
+                stock_id=stock_id,
+                source_type=self.SOURCE_TYPE,
+                source_name=str(row.get("securities_firm") or row.get("source_name") or "REPORT"),
+                title=str(row.get("title") or "증권사 리포트"),
+                source_url=row.get("source_url"),
+                published_at=row["published_at"],
+                collected_at=row["collected_at"],
+                reliability_level=self.RELIABILITY_LEVEL,
+                is_official=self.IS_OFFICIAL,
+            )
+            signal_event = await self._normalization_repository.upsert_signal_event(
+                stock_id=stock_id,
+                source_document_id=int(source_document["id"]),
+                event_hash=_report_event_hash(raw_document_id),
+                source_type=self.SOURCE_TYPE,
+                event_type="report_published",
+                event_date=_to_date(row.get("publish_date") or row["published_at"]),
+                signal_direction=_report_signal_direction(row.get("investment_opinion")),
+                impact_level=_report_impact_level(row),
+                title=str(row.get("title") or "증권사 리포트"),
+                summary=_report_summary(row),
+                evidence_text=_report_evidence_text(row),
+                evidence_url=row.get("source_url"),
+                needs_review=_report_needs_review(row),
+            )
+            signal_event_id = int(signal_event["id"])
+            signal_event_ids.append(signal_event_id)
+
+            for metric in _report_metrics(row):
+                await self._normalization_repository.upsert_signal_metric(
+                    signal_event_id=signal_event_id,
+                    **metric,
+                )
+            await self._normalization_repository.record_validation_log(
+                target_type="signal_event",
+                target_id_int=signal_event_id,
+                validation_type="source_trace",
+                passed=True,
+                message=f"Normalized from raw_document_id={raw_document_id}",
+            )
+            embed_task_id = await self._queue_repository.enqueue(
+                stock_id=stock_id,
+                task_type=EMBED_REPORT,
+                priority="batch",
+                source_raw_ids=[raw_document_id],
+                source_signal_event_ids=[signal_event_id],
+                task_context={
+                    "raw_document_id": raw_document_id,
+                    "stock_code": task_context.get("stock_code"),
+                    "source_type": self.SOURCE_TYPE,
+                    "run_key": f"REPORT_EVENT_{signal_event_id}",
+                },
+                dedupe=True,
+            )
+            embed_task_ids.append(embed_task_id)
+
+        return {
+            "normalized_count": len(rows),
+            "signal_event_ids": signal_event_ids,
+            "embed_task_ids": embed_task_ids,
+        }
 
 
 class ReportEmbedTaskHandler:
@@ -222,10 +332,12 @@ class ReportEmbedTaskHandler:
         row = await self._connection.fetchrow(
             """
             SELECT rd.stock_id,
+                   s.ticker AS stock_code,
                    rrd.s3_key,
                    rrd.parsing_status
             FROM raw_documents rd
             JOIN report_raw_details rrd ON rrd.raw_document_id = rd.id
+            JOIN stocks s               ON s.id = rd.stock_id
             WHERE rd.id = $1
             """,
             raw_document_id,
@@ -269,6 +381,7 @@ class ReportEmbedTaskHandler:
             "status": "success",
             "raw_document_id": raw_document_id,
             "chunks": len(chunks),
+            "analyze_task_id": await self._enqueue_analysis(task, row, raw_document_id),
         }
 
     def _get_storage(self) -> ReportStorageClient:
@@ -276,6 +389,34 @@ class ReportEmbedTaskHandler:
             self._storage = get_report_storage_client(self._settings)
             self._s3 = self._storage
         return self._storage
+
+    async def _enqueue_analysis(
+        self,
+        task: Mapping[str, Any],
+        row: Mapping[str, Any],
+        raw_document_id: int,
+    ) -> int | None:
+        signal_event_ids = _source_signal_event_ids(task.get("source_signal_event_ids"))
+        if not signal_event_ids:
+            return None
+        task_context = _task_context(task.get("task_context"))
+        stock_code = task_context.get("stock_code") or row.get("stock_code")
+        run_key = str(task_context.get("run_key") or f"REPORT_EVENT_{signal_event_ids[0]}")
+        queue = ProcessingQueueRepository(self._connection)
+        return await queue.enqueue(
+            stock_id=int(row["stock_id"]),
+            task_type=ANALYZE_REPORT,
+            priority="batch",
+            source_raw_ids=[raw_document_id],
+            source_signal_event_ids=signal_event_ids,
+            task_context={
+                "raw_document_id": raw_document_id,
+                "stock_code": stock_code,
+                "source_type": "REPORT",
+                "run_key": run_key,
+            },
+            dedupe=True,
+        )
 
 
 class ReportAnalyzeTaskHandler:
@@ -297,7 +438,9 @@ class ReportAnalyzeTaskHandler:
         analysis_agent: Any = None,
     ) -> None:
         self._connection = connection
+        self._normalization_repository = NormalizationRepository(connection)
         self._analysis_repository = AnalysisRepository(connection)
+        self._queue_repository = ProcessingQueueRepository(connection)
         self._agent = analysis_agent or ReportAnalysisAgent(
             retriever=ReportRagRetriever(connection),
             llm_client=llm_client,
@@ -309,7 +452,17 @@ class ReportAnalyzeTaskHandler:
         task_context = _task_context(task.get("task_context"))
         stock_code = str(task_context.get("stock_code") or "")
         run_key = str(task_context.get("run_key") or "REPORT").strip() or "REPORT"
-        analysis_date = _report_analysis_date(task_context)
+        signal_event_ids = _source_signal_event_ids(task.get("source_signal_event_ids"))
+        if not signal_event_ids:
+            signal_event_ids = _source_signal_event_ids(task_context.get("source_signal_event_ids"))
+        events = [
+            dict(row)
+            for row in await self._normalization_repository.list_signal_events_by_ids(
+                signal_event_ids
+            )
+        ] if signal_event_ids else []
+        signal_event_ids = [int(event["id"]) for event in events]
+        analysis_date = _report_analysis_date(task_context, events)
 
         quant = await self._build_quant(stock_id)
 
@@ -320,6 +473,7 @@ class ReportAnalyzeTaskHandler:
                 stock_id=stock_id,
                 analysis_date=analysis_date,
                 run_key=run_key,
+                events=events,
                 context={"report_quant": quant},
             )
         )
@@ -328,9 +482,9 @@ class ReportAnalyzeTaskHandler:
             stock_id=stock_id,
             analysis_date=analysis_date,
             run_key=run_key,
-            source_signal_event_ids=[],  # report는 signal_events 경로가 없음
-            base_score=result.score,
-            analysis_mode="report_rag",
+            source_signal_event_ids=signal_event_ids,
+            base_score=_report_score_100(result.score),
+            analysis_mode="quick",
             warning="; ".join(result.risk_flags) or None,
             version=result.prompt_ver,
         )
@@ -338,14 +492,19 @@ class ReportAnalyzeTaskHandler:
             result_id=analysis_result["id"],
             stock_id=stock_id,
             debate_method="D-1",
-            source_signal_event_ids=[],
-            method_score=result.score,
+            source_signal_event_ids=signal_event_ids,
+            method_score=_report_score_100(result.score),
             method_signal=_method_signal(result.direction),
             method_detail={
                 **result.method_detail,
+                "source": "REPORT",
+                "source_type": "REPORT",
+                "direction": result.direction,
+                "source_score": _report_source_score(result.score),
                 "summary": result.summary,
                 "risk_flags": result.risk_flags,
                 "needs_review": result.needs_review,
+                "data_status": result.data_status,
                 "stock_code": stock_code,
                 "analysis_source": result.analysis_source,
                 **({"llm_error": result.llm_error} if result.llm_error else {}),
@@ -356,15 +515,49 @@ class ReportAnalyzeTaskHandler:
             llm_model=result.llm_model,
             prompt_ver=result.prompt_ver,
         )
+        ml_infer_task_id = await self._enqueue_ml_infer(
+            stock_id=stock_id,
+            stock_code=stock_code,
+            analysis_date=analysis_date,
+            analysis_result_id=int(analysis_result["id"]),
+        ) if signal_event_ids else None
         return {
             "analysis_result_id": analysis_result["id"],
             "agent_result_id": agent_result["id"],
+            "ml_infer_task_id": ml_infer_task_id,
             "direction": result.direction,
             "score": result.score,
             "needs_review": result.needs_review,
             "analysis_source": result.analysis_source,
             "report_quant": quant,
         }
+
+    async def _enqueue_ml_infer(
+        self,
+        *,
+        stock_id: int,
+        stock_code: str,
+        analysis_date: date,
+        analysis_result_id: int,
+    ) -> int:
+        aggregate_ctx = {
+            "stock_code": stock_code,
+            "signal_date": analysis_date.isoformat(),
+            "run_key": "AGGREGATED",
+            "aggregation_key": f"AGGREGATED:{stock_id}:{analysis_date.isoformat()}:final-agg-v1",
+            "source_analysis_result_ids": [analysis_result_id],
+        }
+        return await self._queue_repository.enqueue(
+            stock_id=stock_id,
+            task_type=ML_INFER,
+            priority="batch",
+            task_context={
+                "stock_code": stock_code,
+                "run_key": "ML",
+                "aggregate_ctx": aggregate_ctx,
+            },
+            dedupe=True,
+        )
 
     async def _build_quant(self, stock_id: int) -> dict[str, Any]:
         """파싱 완료된 리포트에서 목표주가 평균·투자의견 분포·의견 충돌 여부를 집계."""
@@ -400,10 +593,91 @@ def _method_signal(direction: str) -> str:
     return direction if direction in {"positive", "negative", "neutral", "mixed"} else "neutral"
 
 
-def _report_analysis_date(task_context: dict[str, Any]) -> date:
+def _report_analysis_date(task_context: dict[str, Any], events: list[dict[str, Any]] | None = None) -> date:
     value = task_context.get("analysis_date")
-    if not value:
-        return date.today()
+    if value:
+        return _to_date(value)
+    event_dates = [_to_date(event["event_date"]) for event in events or [] if event.get("event_date")]
+    return max(event_dates) if event_dates else date.today()
+
+
+def _report_event_hash(raw_document_id: int) -> str:
+    return hashlib.sha256(f"REPORT|{raw_document_id}".encode()).hexdigest()
+
+
+def _report_signal_direction(opinion: Any) -> str:
+    text = str(opinion or "").strip().lower()
+    if not text:
+        return "unknown"
+    if any(token in text for token in ("buy", "매수", "outperform", "strong")):
+        return "positive"
+    if any(token in text for token in ("sell", "매도", "reduce", "underperform")):
+        return "negative"
+    if any(token in text for token in ("hold", "neutral", "marketperform", "중립")):
+        return "neutral"
+    return "unknown"
+
+
+def _report_impact_level(row: Mapping[str, Any]) -> str:
+    if row.get("target_price") is not None or row.get("upside_pct") is not None:
+        return "medium"
+    return "low"
+
+
+def _report_needs_review(row: Mapping[str, Any]) -> bool:
+    return _report_signal_direction(row.get("investment_opinion")) == "unknown"
+
+
+def _report_summary(row: Mapping[str, Any]) -> str:
+    firm = str(row.get("securities_firm") or row.get("source_name") or "증권사")
+    return f"{firm} 리포트에서 확인된 데이터 방향성입니다. 원문 근거와 소스 간 일치도 확인이 필요합니다."
+
+
+def _report_evidence_text(row: Mapping[str, Any]) -> str:
+    parts = [
+        f"증권사: {row.get('securities_firm')}" if row.get("securities_firm") else "",
+        f"원천 리포트 의견: {row.get('investment_opinion')}" if row.get("investment_opinion") else "",
+        f"목표가: {row.get('target_price')}" if row.get("target_price") is not None else "",
+        str(row.get("key_rationale") or "").strip(),
+        str(row.get("extracted_text") or "").strip()[:500],
+    ]
+    return "\n".join(part for part in parts if part)
+
+
+def _report_metrics(row: Mapping[str, Any]) -> list[dict[str, Any]]:
+    metrics: list[dict[str, Any]] = []
+    for column, metric_name, metric_unit in (
+        ("target_price", "report_target_price", "KRW"),
+        ("previous_target_price", "report_previous_target_price", "KRW"),
+        ("current_price_at_publish", "report_current_price_at_publish", "KRW"),
+        ("upside_pct", "report_upside_pct", "percent"),
+    ):
+        value = row.get(column)
+        if value is None:
+            continue
+        metrics.append({
+            "metric_name": metric_name,
+            "metric_value": value,
+            "metric_unit": metric_unit,
+        })
+    return metrics
+
+
+def _report_score_100(value: Any) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return 50.0
+    return max(0.0, min(100.0, number))
+
+
+def _report_source_score(value: Any) -> float:
+    return max(-1.0, min(1.0, (_report_score_100(value) / 50.0) - 1.0))
+
+
+def _to_date(value: Any) -> date:
+    if isinstance(value, datetime):
+        return value.date()
     if isinstance(value, date):
         return value
     return datetime.fromisoformat(str(value)[:10]).date()
@@ -511,6 +785,33 @@ def _task_context(value: Any) -> dict[str, Any]:
     if isinstance(value, str):
         return json.loads(value)
     return dict(value)
+
+
+def _source_raw_ids(value: Any) -> list[int]:
+    return _int_list(value)
+
+
+def _source_signal_event_ids(value: Any) -> list[int]:
+    return _int_list(value)
+
+
+def _int_list(value: Any) -> list[int]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [int(item) for item in value]
+    if isinstance(value, tuple):
+        return [int(item) for item in value]
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return []
+        if text.startswith("{") and text.endswith("}"):
+            inner = text[1:-1].strip()
+            return [int(item.strip()) for item in inner.split(",") if item.strip()]
+        parsed = json.loads(text)
+        return [int(item) for item in parsed]
+    return [int(value)]
 
 
 def _extra_payload(value: Any) -> dict[str, Any]:

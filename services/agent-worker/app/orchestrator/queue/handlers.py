@@ -19,6 +19,7 @@ from app.orchestrator.queue.task_types import (
     NORMALIZE_DATALAB,
     NORMALIZE_HIRING,
     NORMALIZE_PATENT,
+    NORMALIZE_REPORT,
     PROCESS_REPORT,
     RISK_VETO,
     SYNTHESIZE,
@@ -55,6 +56,7 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
         ReportAnalyzeTaskHandler,
         ReportCollectTaskHandler,
         ReportEmbedTaskHandler,
+        ReportNormalizeTaskHandler,
         ReportProcessTaskHandler,
     )
 
@@ -82,6 +84,7 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
         SYNTHESIZE: SynthesizeTaskHandler(connection, settings=settings),
         COLLECT_REPORT: ReportCollectTaskHandler(connection=connection, settings=settings),
         PROCESS_REPORT: ReportProcessTaskHandler(connection=connection, settings=settings),
+        NORMALIZE_REPORT: ReportNormalizeTaskHandler(connection=connection),
         EMBED_REPORT: ReportEmbedTaskHandler(connection=connection, settings=settings),
         ANALYZE_REPORT: ReportAnalyzeTaskHandler(
             connection=connection,

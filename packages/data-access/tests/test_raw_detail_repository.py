@@ -110,6 +110,17 @@ class RawDetailRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("INNER JOIN raw_documents", connection.calls[0][1])
         self.assertEqual(connection.calls[0][2], ([3],))
 
+    async def test_list_report_details_by_raw_ids_joins_raw_documents(self):
+        connection = FakeConnection()
+        repository = RawDetailRepository(connection)
+
+        await repository.list_report_details_by_raw_ids([1, 2])
+
+        self.assertIn("FROM report_raw_details", connection.calls[0][1])
+        self.assertIn("INNER JOIN raw_documents", connection.calls[0][1])
+        self.assertIn("report_raw_details.key_rationale", connection.calls[0][1])
+        self.assertEqual(connection.calls[0][2], ([1, 2],))
+
     async def test_list_stocks_for_datalab_category_filters_active(self):
         connection = FakeConnection()
         repository = RawDetailRepository(connection)
