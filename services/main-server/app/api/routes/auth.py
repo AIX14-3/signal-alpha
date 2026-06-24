@@ -60,6 +60,7 @@ class UpdateMeRequest(BaseModel):
 class SocialAuthRequest(BaseModel):
     code: str
     redirect_uri: str | None = None
+    state: str | None = None
 
 
 async def get_current_user(
@@ -371,7 +372,7 @@ def _validate_provider(provider: str) -> str:
 async def _resolve_social(settings: Settings, provider: str, payload: SocialAuthRequest) -> Any:
     try:
         return await resolve_social_identity(
-            settings, provider, payload.code, payload.redirect_uri
+            settings, provider, payload.code, payload.redirect_uri, payload.state
         )
     except SocialError as exc:
         raise _api_error(400, "SOCIAL_AUTH_FAILED", str(exc)) from None

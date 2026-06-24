@@ -273,14 +273,14 @@ export async function listSocial(): Promise<{ items: SocialLink[] }> {
 
 export async function linkSocial(
   provider: Provider,
-  body: { code: string; redirect_uri?: string },
+  body: { code: string; redirect_uri?: string; state?: string },
 ): Promise<SocialLink> {
   return apiFetch(`/api/auth/social/link/${provider}`, { method: "POST", body: JSON.stringify(body) });
 }
 
 export async function socialLogin(
   provider: Provider,
-  body: { code: string; redirect_uri?: string },
+  body: { code: string; redirect_uri?: string; state?: string },
 ): Promise<AuthResult> {
   return apiFetch(`/api/auth/social/login/${provider}`, {
     method: "POST",

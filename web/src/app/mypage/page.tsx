@@ -17,7 +17,7 @@ import {
 } from "@/lib/apiClient";
 import { won } from "@/lib/format";
 import { pay } from "@/lib/portone";
-import { SOCIAL_PROVIDERS, socialAuthCode } from "@/lib/social";
+import { isSocialDevMode, SOCIAL_PROVIDERS, socialAuthCode, startSocialOAuth } from "@/lib/social";
 import { useAuthStore } from "@/stores/authStore";
 import { useSocialStore } from "@/stores/socialStore";
 import { useWatchlistStore } from "@/stores/watchlistStore";
@@ -229,9 +229,17 @@ function SocialTab() {
 
   async function toggle(provider: (typeof SOCIAL_PROVIDERS)[number]["key"], linked: boolean) {
     try {
-      if (linked) await unlink(provider);
-      else await link(provider, socialAuthCode(provider));
-      showToast(linked ? "연동을 해제했습니다." : "연동했습니다.", "success");
+      if (linked) {
+        await unlink(provider);
+        showToast("연동을 해제했습니다.", "success");
+        return;
+      }
+      if (isSocialDevMode(provider)) {
+        await link(provider, socialAuthCode(provider));
+        showToast("연동했습니다.", "success");
+      } else {
+        startSocialOAuth(provider, "link"); // provider 로 리다이렉트
+      }
     } catch (err) {
       showToast((err as Error).message, "error");
     }

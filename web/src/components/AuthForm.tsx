@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { useAuthStore } from "@/stores/authStore";
 import { isPortoneDevMode } from "@/lib/portone";
-import { SOCIAL_PROVIDERS, socialAuthCode } from "@/lib/social";
+import { isSocialDevMode, SOCIAL_PROVIDERS, socialAuthCode, startSocialOAuth } from "@/lib/social";
 
 export function AuthForm({ mode }: { mode: "login" | "signup" }) {
   const router = useRouter();
@@ -44,6 +44,10 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
 
   async function onSocial(provider: (typeof SOCIAL_PROVIDERS)[number]["key"]) {
     setError(null);
+    if (!isSocialDevMode(provider)) {
+      startSocialOAuth(provider, "login"); // provider 로 리다이렉트
+      return;
+    }
     setBusy(true);
     try {
       await socialLoginWith(provider, socialAuthCode(provider));
