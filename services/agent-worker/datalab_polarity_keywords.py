@@ -206,7 +206,35 @@ def write_review(draft: dict[str, Any], ticker: str) -> Path:
     return path
 
 
-async def apply_draft(draft: dict[str, Any]) -> None:
+def _status_for(kw: dict[str, Any], manual: bool) -> tuple[str, bool]:
+    """Return (review_status, is_active) for a keyword.
+
+    manual apply (human reviewed) -> approved + active for everything.
+    auto apply -> derived from the keyword's validation tier (auto->approved/active,
+    review->pending/inactive). Missing validation defaults to approved (safe no-op).
+    """
+    if manual:
+        return "approved", True
+    from datalab_keyword_validator import TIER_TO_STATUS
+
+    tier = (kw.get("validation") or {}).get("tier", TIER_AUTO_DEFAULT)
+    status = TIER_TO_STATUS.get(tier, "approved")
+    return status, status == "approved"
+
+
+# Local fallback so this module need not import the validator just to name a default.
+TIER_AUTO_DEFAULT = "auto"
+
+
+async def apply_draft(draft: dict[str, Any], *, manual: bool = True) -> None:
+    """Apply a drafted keyword set to the DB.
+
+    manual=True (default): a human is applying a reviewed draft — every keyword is
+      written approved+active, and re-apply re-activates (legacy ``--apply`` behavior).
+    manual=False: the automated gate is applying — each keyword's review_status/is_active
+      come from its validation tier. On conflict the EXISTING review_status/is_active are
+      preserved so a daily run never silently flips an admin's prior approve/reject.
+    """
     model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
     conn = await asyncpg.connect(**parse_dsn(os.environ["DATABASE_URL"]))
     try:
@@ -238,18 +266,34 @@ async def apply_draft(draft: dict[str, Any]) -> None:
                     float(category.get("linked_stocks", [{"weight": 1.0}])[0].get("weight", 1.0)),
                 )
                 for kw in category["keywords"]:
+                    status, is_active = _status_for(kw, manual)
+                    val = kw.get("validation") or {}
                     await conn.execute(
                         """
                         INSERT INTO datalab_category_keywords (
-                            category_id, keyword, keyword_group, source, polarity, is_active,
+                            category_id, keyword, keyword_group, source, polarity,
+                            is_active, review_status,
+                            validation_active_days, validation_window_days, validation_coverage,
+                            validated_at,
                             polarity_source, polarity_confidence, polarity_model,
                             polarity_rationale, polarity_classified_at
                         )
-                        VALUES ($1, $2, $3, 'gemini_reviewed', $4, TRUE,
-                                'llm', $5, $6, $7, NOW())
+                        VALUES ($1, $2, $3, 'gemini_reviewed', $4,
+                                $5, $6,
+                                $7, $8, $9,
+                                CASE WHEN $7::integer IS NULL THEN NULL ELSE NOW() END,
+                                'llm', $10, $11, $12, NOW())
                         ON CONFLICT (category_id, keyword) DO UPDATE
                         SET keyword_group = EXCLUDED.keyword_group, source = EXCLUDED.source,
-                            polarity = EXCLUDED.polarity, is_active = TRUE, updated_at = NOW(),
+                            polarity = EXCLUDED.polarity, updated_at = NOW(),
+                            is_active = CASE WHEN $13 THEN EXCLUDED.is_active
+                                             ELSE datalab_category_keywords.is_active END,
+                            review_status = CASE WHEN $13 THEN EXCLUDED.review_status
+                                                 ELSE datalab_category_keywords.review_status END,
+                            validation_active_days = EXCLUDED.validation_active_days,
+                            validation_window_days = EXCLUDED.validation_window_days,
+                            validation_coverage = EXCLUDED.validation_coverage,
+                            validated_at = EXCLUDED.validated_at,
                             polarity_source = EXCLUDED.polarity_source,
                             polarity_confidence = EXCLUDED.polarity_confidence,
                             polarity_model = EXCLUDED.polarity_model,
@@ -257,7 +301,10 @@ async def apply_draft(draft: dict[str, Any]) -> None:
                             polarity_classified_at = EXCLUDED.polarity_classified_at
                         """,
                         category_id, kw["text"], category["keyword_group"], kw["polarity"],
+                        is_active, status,
+                        val.get("active_days"), val.get("window_days"), val.get("coverage"),
                         kw.get("confidence"), model, kw.get("rationale") or None,
+                        manual,
                     )
                 category["category_id"] = category_id
     finally:
@@ -269,6 +316,12 @@ async def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--ticker", required=True)
     parser.add_argument("--apply", action="store_true", help="Apply the reviewed draft to the DB.")
+    parser.add_argument(
+        "--auto-apply",
+        action="store_true",
+        help="Validate via Naver search volume and apply by tier (approved/pending) "
+        "WITHOUT human review. Rejected (no-search) keywords are dropped.",
+    )
     parser.add_argument("--review-file", help="Apply an existing reviewed JSON instead of calling Gemini.")
     args = parser.parse_args()
 
@@ -279,13 +332,27 @@ async def main() -> None:
         stock = await fetch_stock(args.ticker)
         today = datetime.now().strftime("%Y-%m-%d")
         draft = validate_draft(call_gemini(build_prompt(stock, today)), args.ticker)
+        if args.auto_apply:
+            from datalab_keyword_validator import build_client, validate_draft_volume
+
+            draft, summary = await validate_draft_volume(draft, build_client())
+            print(
+                f"validation auto={summary['auto']} review={summary['review']} "
+                f"reject={summary['reject']} capped={summary['capped']} calls={summary['calls']}"
+            )
         review_path = write_review(draft, args.ticker)
 
     n_demand = sum(1 for c in draft["categories"] for k in c["keywords"] if k["polarity"] == "demand")
     n_risk = sum(1 for c in draft["categories"] for k in c["keywords"] if k["polarity"] == "risk")
     print(f"review_file={review_path}")
     print(f"categories={len(draft['categories'])} demand_kw={n_demand} risk_kw={n_risk}")
-    if args.apply:
+    if args.auto_apply:
+        if not draft["categories"]:
+            print("applied=false (all keywords rejected by the search-volume gate)")
+            return
+        await apply_draft(draft, manual=False)
+        print("applied=auto (approved->active; pending->held for admin review)")
+    elif args.apply:
         await apply_draft(draft)
         print("applied=true")
     else:

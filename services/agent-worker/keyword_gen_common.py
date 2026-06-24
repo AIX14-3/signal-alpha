@@ -15,14 +15,41 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError, URLError
 from urllib.parse import unquote
 from urllib.request import Request, urlopen
 
 import asyncpg  # type: ignore[import]
 
 ROOT = Path(__file__).resolve().parents[2]
+
+_TRANSIENT_STATUS = {500, 502, 503, 504}
+
+
+def read_url(req: Request, *, timeout: int, attempts: int = 4) -> str:
+    """urlopen with retries on transient failures (5xx / connection errors).
+
+    External APIs (Gemini, Naver) return sporadic 503s; without a retry a single
+    blip aborts a whole ticker. Backoff is exponential and capped.
+    """
+    for i in range(attempts):
+        try:
+            with urlopen(req, timeout=timeout) as resp:
+                return resp.read().decode("utf-8")
+        except HTTPError as exc:
+            if exc.code in _TRANSIENT_STATUS and i < attempts - 1:
+                time.sleep(min(2 ** i, 8))
+                continue
+            raise
+        except URLError:
+            if i < attempts - 1:
+                time.sleep(min(2 ** i, 8))
+                continue
+            raise
+    raise RuntimeError("unreachable")  # pragma: no cover
 
 
 def load_env() -> None:
@@ -106,7 +133,39 @@ def call_gemini(prompt: str) -> dict[str, Any]:
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with urlopen(req, timeout=60) as resp:
-        payload = json.loads(resp.read().decode("utf-8"))
+    payload = json.loads(read_url(req, timeout=60))
     text = payload["candidates"][0]["content"]["parts"][0]["text"]
     return json.loads(text)
+
+
+def call_gemini_grounded(prompt: str) -> str:
+    """Call Gemini with the Google Search grounding tool and return plain text.
+
+    Used to deepen news headlines with concrete facts the headline+snippet omit
+    (named entities, product names, figures). Grounding (``tools``) and forced JSON
+    output (``responseMimeType``) cannot be combined on this API, so this helper
+    deliberately leaves the response as free text — the caller feeds the text into
+    the existing JSON-producing ``call_gemini`` step as extra event context.
+    """
+    api_key = os.getenv("GEMINI_API_KEY", "")
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY is required for grounded keyword enrichment.")
+    model = os.getenv("GEMINI_GROUNDING_MODEL") or os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
+    url = (
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{model}:generateContent?key={api_key}"
+    )
+    body = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "tools": [{"google_search": {}}],
+        "generationConfig": {"temperature": 0.2},
+    }
+    req = Request(
+        url,
+        data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    payload = json.loads(read_url(req, timeout=90))
+    parts = payload["candidates"][0]["content"].get("parts", [])
+    return "".join(p.get("text", "") for p in parts).strip()

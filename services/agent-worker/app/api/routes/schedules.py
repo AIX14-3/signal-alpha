@@ -62,6 +62,13 @@ class ScheduleReportAnalysisRequest(BaseModel):
         return value
 
 
+class ScheduleReportNormalizeBackfillRequest(BaseModel):
+    stock_code: str | None = None
+    limit: int = Field(default=100, ge=1, le=1000)
+    priority: Literal["batch", "immediate"] = "batch"
+    dry_run: bool = True
+
+
 @router.post("/report/collect")
 async def schedule_report_collection(
     request: ScheduleReportCollectionRequest,
@@ -122,6 +129,70 @@ async def schedule_report_analysis(
             task_ids.append(task_id)
 
         return {"scheduled_count": len(task_ids), "task_ids": task_ids}
+
+
+@router.post("/report/normalize-backfill")
+async def schedule_report_normalize_backfill(
+    request: ScheduleReportNormalizeBackfillRequest,
+    pool: Any = Depends(get_database_pool),
+) -> dict[str, Any]:
+    from signal_alpha_data_access.repositories import (
+        ProcessingQueueRepository,
+        RawDetailRepository,
+        StockRepository,
+    )
+
+    from app.orchestrator.queue.task_types import NORMALIZE_REPORT
+
+    async with pool.acquire() as connection:
+        stock_id: int | None = None
+        if request.stock_code:
+            stock = await StockRepository(connection).get_by_ticker(request.stock_code)
+            if stock is None:
+                return {
+                    "dry_run": request.dry_run,
+                    "candidate_count": 0,
+                    "scheduled_count": 0,
+                    "task_ids": [],
+                    "candidates": [],
+                }
+            stock_id = int(stock["id"])
+
+        candidates = [
+            dict(row)
+            for row in await RawDetailRepository(connection).list_report_normalize_backfill_candidates(
+                stock_id=stock_id,
+                limit=request.limit,
+            )
+        ]
+
+        task_ids: list[int] = []
+        if not request.dry_run:
+            queue_repository = ProcessingQueueRepository(connection)
+            for candidate in candidates:
+                raw_document_id = int(candidate["raw_document_id"])
+                stock_code = str(candidate.get("stock_code") or request.stock_code or "").strip()
+                task_id = await queue_repository.enqueue(
+                    stock_id=int(candidate["stock_id"]),
+                    task_type=NORMALIZE_REPORT,
+                    priority=request.priority,
+                    source_raw_ids=[raw_document_id],
+                    task_context={
+                        "raw_document_id": raw_document_id,
+                        "stock_code": stock_code,
+                        "source_type": "REPORT",
+                    },
+                    dedupe=True,
+                )
+                task_ids.append(task_id)
+
+        return {
+            "dry_run": request.dry_run,
+            "candidate_count": len(candidates),
+            "scheduled_count": len(task_ids),
+            "task_ids": task_ids,
+            "candidates": candidates,
+        }
 
 
 @router.post("/dart/collect")

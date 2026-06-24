@@ -8,6 +8,9 @@ from urllib.error import URLError
 from app.collectors.dart.disclosure import DartApiError, DartCollector, DartDisclosureClient
 
 
+AGENT_WORKER_ROOT = Path(__file__).resolve().parents[1]
+
+
 class FakeClient:
     def __init__(self, response):
         self.response = response
@@ -171,7 +174,9 @@ class DartCollectorTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(evidence[0].metadata["priority"], "immediate")
 
     def test_disclosure_collector_source_does_not_keep_mojibake_markers(self):
-        source = Path("app/collectors/dart/disclosure.py").read_text(encoding="utf-8")
+        source = (
+            AGENT_WORKER_ROOT / "app" / "collectors" / "dart" / "disclosure.py"
+        ).read_text(encoding="utf-8")
 
         self.assertNotIn("\u6e72\uacd7\uc631?\ubea4\uc819", source)
         self.assertNotIn("?\ubea4\uc819", source)

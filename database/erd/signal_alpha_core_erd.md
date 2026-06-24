@@ -173,6 +173,7 @@ erDiagram
         VARCHAR keyword PK
         VARCHAR keyword_group
         BOOLEAN is_active
+        VARCHAR review_status "approved/pending/rejected (024)"
     }
 
     datalab_raw_documents {
@@ -562,7 +563,7 @@ erDiagram
 기존 테이블에 추가된 컬럼(신규 테이블 아님):
 
 - `final_signals` ← `consensus_score`, `positive_evidence`, `caution_evidence` (017). `alignment_rate`는 기존 `source_agreement`와 동일하여 컬럼 미저장(읽기 계층 alias).
-- `datalab_category_keywords` ← `polarity` (demand/risk/neutral) (018).
+- `datalab_category_keywords` ← `polarity` (demand/risk/neutral) (018); `review_status`(approved/pending/rejected)·`validation_active_days`·`validation_window_days`·`validation_coverage`·`validated_at` (024, 검색량 검증 관문 결과·키워드 라이프사이클).
 - `patent_raw_details` ← `llm_features` JSONB, `llm_status` (019).
 - `hiring_raw_details` ← `observed_date` (014).
 

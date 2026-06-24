@@ -148,6 +148,41 @@ class AggregateSignalTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result["needs_review"])
         self.assertTrue(result["is_published"])
 
+    async def test_handler_accepts_report_single_source_final_signal(self):
+        connection = FakeConnection(
+            rows=[
+                dart_agent_row(
+                    analysis_result_id=100,
+                    agent_result_id=200,
+                    direction="positive",
+                    source_score=0.36,
+                    method_score=68.0,
+                    source="REPORT",
+                )
+            ]
+        )
+        handler = AggregateSignalTaskHandler(connection)
+
+        result = await handler(
+            {
+                "id": 30,
+                "stock_id": 1,
+                "source_analysis_result_ids": [100],
+                "task_context": {"stock_code": "005930", "signal_date": "2026-06-24"},
+            }
+        )
+
+        self.assertEqual(result["signal"], "positive")
+        self.assertEqual(result["final_score"], 68.0)
+        self.assertEqual(result["source_agreement"], "LOW")
+        self.assertEqual(result["warning_level"], "CAUTION")
+        self.assertTrue(result["is_published"])
+        final_call = next(call for call in connection.calls if "INSERT INTO final_signals" in call[1])
+        breakdown = json.loads(final_call[2][10])
+        self.assertEqual(breakdown["REPORT"]["analysis_result_id"], 100)
+        self.assertEqual(breakdown["REPORT"]["score"], 0.36)
+        self.assertEqual(breakdown["DART"]["data_status"], "missing")
+
     async def test_unknown_source_is_excluded_and_records_validation_log(self):
         row = dart_agent_row(source="")
         row["analysis_run_key"] = "BATCH"

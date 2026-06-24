@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from app.collectors.report.s3_client import ReportS3Client
+    from app.collectors.report.storage import ReportStorageClient
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
@@ -70,8 +70,8 @@ def make_s3_key(stock_code: str, filename: str) -> str:
     return f"reports/{stock_code}/{filename}"
 
 
-def download_and_upload(url: str, s3_key: str, s3_client: ReportS3Client) -> bool:
-    """PDF URL → S3 업로드. 성공 시 True 반환."""
+def download_and_upload(url: str, storage_key: str, storage_client: ReportStorageClient) -> bool:
+    """PDF URL → report storage 업로드. 성공 시 True 반환."""
     try:
         resp = requests.get(url, headers=HEADERS, timeout=30, stream=True)
         if resp.status_code != 200:
@@ -79,7 +79,7 @@ def download_and_upload(url: str, s3_key: str, s3_client: ReportS3Client) -> boo
         pdf_bytes = b"".join(resp.iter_content(chunk_size=8192))
         if len(pdf_bytes) < 1024:
             return False
-        s3_client.upload_pdf(pdf_bytes, s3_key)
+        storage_client.upload_pdf(pdf_bytes, storage_key)
         return True
     except Exception as e:
         print(f"    오류: {e}")

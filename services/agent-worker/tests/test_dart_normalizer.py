@@ -4,6 +4,9 @@ from pathlib import Path
 from app.analyzers.dart.rules import classify_dart_report, make_dart_event_hash
 
 
+AGENT_WORKER_ROOT = Path(__file__).resolve().parents[1]
+
+
 class DartNormalizerTest(unittest.TestCase):
     def test_classifies_periodic_report_as_neutral_medium(self):
         classification = classify_dart_report("분기보고서")
@@ -46,7 +49,9 @@ class DartNormalizerTest(unittest.TestCase):
         self.assertTrue(classification.needs_review)
 
     def test_normalizer_source_does_not_keep_mojibake_markers(self):
-        source = Path("app/analyzers/dart/rules.py").read_text(encoding="utf-8")
+        source = (AGENT_WORKER_ROOT / "app" / "analyzers" / "dart" / "rules.py").read_text(
+            encoding="utf-8"
+        )
 
         mojibake_markers = (
             "\u4e8c\uc1e0\uc2b5?\uc774\ube46\u8e42\ub2ff\ud000",

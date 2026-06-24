@@ -65,6 +65,24 @@ def _kst_today() -> datetime.date:
     오분류되는 문제 방지."""
     return datetime.datetime.now(_KST).date()
 
+
+def _to_kst_date(value: datetime.date | datetime.datetime | str) -> datetime.date:
+    """observed_date override(날짜/일시/ISO 문자열) → KST 달력 날짜.
+
+    backfill 등이 per-row ``observed_date``(실제 게시일)를 주입할 때 KST 자정 경계로
+    정규화한다. tz-aware 일시는 KST 로 환산 후 ``.date()``, naive 일시/날짜는 그대로 쓴다.
+    (datetime 은 date 의 하위형이라 datetime 검사를 먼저 한다.)"""
+    if isinstance(value, datetime.datetime):
+        return (value.astimezone(_KST) if value.tzinfo else value).date()
+    if isinstance(value, datetime.date):
+        return value
+    text_value = str(value).strip()
+    try:
+        parsed = datetime.datetime.fromisoformat(text_value)
+        return (parsed.astimezone(_KST) if parsed.tzinfo else parsed).date()
+    except ValueError:
+        return datetime.date.fromisoformat(text_value[:10])
+
 # 라이브러리 모듈은 logging.basicConfig 를 호출하지 않는다(호스트 앱 로깅 설정을
 # 덮어쓰는 부작용 방지). 로깅 핸들러/레벨 설정은 진입점(main.py, 파이프라인 스크립트)이 담당.
 logger = logging.getLogger(__name__)
@@ -392,7 +410,20 @@ class BaseCollector(ABC):
             "unique_key": data.get("unique_key"),
             "quarter": quarter,
             "seasonal_baseline": seasonal_baseline,
+            # 직군 수요 신호(자소설 duty-groups 등) — 소스에 없으면 None/[] 로 무해.
+            "duty_groups": data.get("duty_groups"),
+            "duty_group_ids": data.get("duty_group_ids"),
+            "employment_page_url": data.get("employment_page_url"),
+            # #375 Phase 0: 자격요건 포스터 이미지 URL(OCR enrichment 입력). 소스에 없으면 None.
+            "image_urls": data.get("image_urls"),
         }
+        # observed_date: 기본은 오늘(KST). backfill 등이 per-row override(`observed_date`,
+        # 실제 게시일)를 주입하면 그 날짜(KST)로 적재해 과거 시계열을 보존한다.
+        # 라이브 수집은 override 없음 → _kst_today() 로 기존 거동 유지(#253).
+        observed_override = data.get("observed_date")
+        observed_date = (
+            _to_kst_date(observed_override) if observed_override is not None else _kst_today()
+        )
         db.execute(
             text("""
                 INSERT INTO hiring_raw_details (
@@ -411,7 +442,7 @@ class BaseCollector(ABC):
                 "keyword": (data.get("job_title") or "UNKNOWN")[:100],
                 "job_category": sector,
                 "job_count": 1,
-                "observed_date": _kst_today(),  # KST 자정 기준(구 CURRENT_DATE=DB tz, #253)
+                "observed_date": observed_date,
                 "extra_payload": json.dumps(extra_payload, ensure_ascii=False),
             },
         )
