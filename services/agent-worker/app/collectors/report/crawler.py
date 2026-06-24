@@ -4,7 +4,7 @@ Signal α — Report RAG 데이터 수집용
 
 수집 대상:
   - 종목: 삼성전자(005930) / SK하이닉스(000660) / 네이버(035420)
-  - 증권사: 신한투자증권 / 미래에셋증권 / 유진투자증권
+  - 증권사: 네이버 금융 리서치 목록의 전체 증권사
   - 유형: Earnings Review / Event Note / Company Report / Earnings Preview
   - 기간: 2025.07.01 ~ 2025.09.30
 """
@@ -40,8 +40,6 @@ STOCKS = {
     "SK하이닉스": "000660",
     "네이버": "035420",
 }
-
-TARGET_FIRMS = ["신한투자증권", "미래에셋증권", "유진투자증권"]
 
 REPORT_KEYWORDS = {
     "earnings_review": [
@@ -194,8 +192,6 @@ def parse_reports(html: str, date_start: datetime, date_end: datetime) -> tuple[
 
             # 테이블 구조: 종목명(0) | 제목(1) | 증권사(2) | 첨부(3) | 작성일(4) | 조회수(5)
             firm = cols[2].get_text(strip=True)
-            if firm not in TARGET_FIRMS:
-                continue
 
             if not is_within_range(date_str, date_start, date_end):
                 continue
@@ -365,7 +361,7 @@ if __name__ == "__main__":
     print("=" * 60)
     print("Signal α — 증권사 리포트 크롤러")
     print(f"수집 기간: {_CLI_DATE_START.strftime('%Y.%m.%d')} ~ {_CLI_DATE_END.strftime('%Y.%m.%d')}")
-    print(f"수집 증권사: {', '.join(TARGET_FIRMS)}")
+    print("수집 증권사: 전체")
     print(f"수집 종목: {', '.join(STOCKS.keys())}")
     print("=" * 60)
 

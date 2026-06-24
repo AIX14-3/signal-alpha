@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any, Iterable
 
 
@@ -194,7 +195,7 @@ class CollectionRepository:
             extracted_text_path,
             parsing_status,
             parsing_error,
-            extra_payload,
+            _jsonb(extra_payload),
         )
 
     async def replace_report_chunks(
@@ -404,3 +405,11 @@ class CollectionRepository:
     async def _delete_dart_count(self, sql: str, stock_code: str, bgn_de: Any, end_de: Any) -> int:
         value = await self._connection.fetchval(sql, stock_code, bgn_de, end_de)
         return int(value or 0)
+
+
+def _jsonb(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False)

@@ -48,6 +48,7 @@ services:
     volumes:
       - ./services/agent-worker:/workspace/services/agent-worker
       - ./packages/data-access:/workspace/packages/data-access
+      - ./data:/workspace/data
     environment:
       SERVICE_NAME: agent-worker
       SERVICE_VERSION: ${SERVICE_VERSION:-0.1.0}
@@ -71,6 +72,15 @@ services:
       DART_LLM_PROVIDER: ${DART_LLM_PROVIDER:-gemini}
       DART_LLM_MODEL: ${DART_LLM_MODEL:-gemini-2.0-flash}
       DART_LLM_TIMEOUT_SECONDS: ${DART_LLM_TIMEOUT_SECONDS:-20}
+      REPORT_USE_LLM: ${REPORT_USE_LLM:-false}
+      REPORT_LLM_PROVIDER: ${REPORT_LLM_PROVIDER:-gemini}
+      REPORT_LLM_MODEL: ${REPORT_LLM_MODEL:-gemini-2.0-flash}
+      REPORT_LLM_TIMEOUT_SECONDS: ${REPORT_LLM_TIMEOUT_SECONDS:-20}
+      REPORT_STORAGE_BACKEND: ${REPORT_STORAGE_BACKEND:-local}
+      REPORT_LOCAL_STORAGE_DIR: /workspace/data/report-storage
+      GCP_PROJECT_ID: ${GCP_PROJECT_ID:-}
+      GCS_REPORT_BUCKET: ${GCS_REPORT_BUCKET:-signal-alpha-reports}
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
       # 실시간 가격 수집 데몬 (agent-worker 내장 백그라운드 태스크)
       PRICE_COLLECTOR_ENABLED: ${PRICE_COLLECTOR_ENABLED:-true}
       KIWOOM_APP_KEY: ${KIWOOM_APP_KEY:-}

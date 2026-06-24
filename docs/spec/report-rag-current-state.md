@@ -58,10 +58,7 @@ ReportCollectTaskHandler
 현재 동작:
 
 - 네이버 금융 리서치 페이지를 크롤링합니다.
-- 코드에 정의된 일부 증권사만 필터링합니다.
-  - 신한투자증권
-  - 미래에셋증권
-  - 유진투자증권
+- 증권사명으로 리포트를 필터링하지 않고 네이버 금융 리서치 목록의 전체 증권사를 수집 후보로 둡니다.
 - 리포트 제목, 증권사명, 발행일, PDF URL 등 메타데이터를 추출합니다.
 - `CollectionRepository`를 통해 `raw_documents`와 `report_raw_details`에 저장합니다.
 - 저장된 raw 문서마다 `process_report` 작업을 등록합니다.
