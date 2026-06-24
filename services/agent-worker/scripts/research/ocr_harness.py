@@ -3,12 +3,16 @@
 평가셋 이미지(`data/eval_set/images/`) → OCR 엔진 → 텍스트 → 기술 키워드 사전 매칭 →
 ground_truth(`labels_draft.json`) 대비 precision/recall/F1 집계.
 
-엔진은 동일 입력·동일 키워드 사전으로 비교(차이는 OCR 정보만). 키워드 매칭·점수는 **순수
-함수**로 분리해 OCR 없이 단위테스트(test_ocr_harness.py). Tesseract 는 native 바이너리라
-미설치 시 안내만 한다(설치 후 재실행).
+엔진(tesseract/paddle/surya)은 동일 입력·동일 키워드 사전·동일 정규화로 비교(차이는 OCR
+정보만). 키워드 매칭·점수·canonicalize 는 **순수 함수**로 분리해 OCR 없이 단위테스트
+(test_ocr_harness.py). 무거운 모델은 1회 적재 후 본루프 전 워밍업(첫 이미지 1회 폐기)으로
+모델 로드/그래프 컴파일 비용을 레이턴시(median ms) 측정에서 분리한다. 엔진/언어팩 미설치
+시 설치 안내만 한다.
 
 USAGE
     uv run --with pillow --with pytesseract python scripts/research/ocr_harness.py --engine tesseract
+    uv run --with pillow --with paddleocr   python scripts/research/ocr_harness.py --engine paddle
+    uv run --with pillow --with surya-ocr    python scripts/research/ocr_harness.py --engine surya
 """
 from __future__ import annotations
 
@@ -16,6 +20,7 @@ import argparse
 import json
 import re
 import sys
+import time
 from pathlib import Path
 
 _AW_ROOT = Path(__file__).resolve().parents[2]
@@ -141,37 +146,95 @@ def aggregate(rows: list[dict]) -> dict:
     return {"precision": round(p, 3), "recall": round(r, 3), "f1": round(f1, 3), "tp": tp, "fp": fp, "fn": fn}
 
 
-# ── OCR 엔진 (Tesseract; Paddle/Surya 후속) ───────────────────────────────────
-def run_tesseract(image_path: Path, lang: str = "kor+eng") -> str:
-    """이미지 → Tesseract 텍스트. webp 는 PIL 로 열어 PNG 변환 후 OCR(leptonica webp 의존 회피)."""
+# ── OCR 엔진 (loader → predict 클로저) ────────────────────────────────────────
+# 무거운 모델(Paddle/Surya)을 이미지마다 새로 띄우지 않도록, loader 가 모델을 1회 적재한
+# predict(image_path)->str 클로저를 돌려준다. import 는 loader 내부 지연 import(의존성 격리).
+def _load_tesseract(lang: str):
+    """Tesseract(native). webp 는 PIL 로 RGB 변환 후 OCR(leptonica webp 의존 회피)."""
     import pytesseract
     from PIL import Image
 
-    with Image.open(image_path) as im:
-        return pytesseract.image_to_string(im.convert("RGB"), lang=lang)
+    def predict(image_path: Path) -> str:
+        with Image.open(image_path) as im:
+            return pytesseract.image_to_string(im.convert("RGB"), lang=lang)
+    return predict
 
 
-_ENGINES = {"tesseract": run_tesseract}
+def _load_paddle(lang: str):
+    """PaddleOCR. 모델 1회 적재 후 재사용."""
+    import numpy as np
+    from paddleocr import PaddleOCR
+    from PIL import Image
+
+    plang = "korean" if lang.startswith("kor") else (lang.split("+")[0] or "en")
+    ocr = PaddleOCR(use_angle_cls=True, lang=plang, show_log=False)
+
+    def predict(image_path: Path) -> str:
+        with Image.open(image_path) as im:
+            arr = np.asarray(im.convert("RGB"))
+        result = ocr.ocr(arr, cls=True)
+        lines = [ln[1][0] for page in (result or []) for ln in (page or [])]
+        return "\n".join(lines)
+    return predict
+
+
+def _load_surya(lang: str):
+    """Surya(Torch). detection+recognition predictor 1회 적재 후 재사용."""
+    from PIL import Image
+    from surya.detection import DetectionPredictor
+    from surya.recognition import RecognitionPredictor
+
+    rec, det = RecognitionPredictor(), DetectionPredictor()
+    langs = [lang.split("+")[0] or "ko"]
+
+    def predict(image_path: Path) -> str:
+        with Image.open(image_path) as im:
+            preds = rec([im.convert("RGB")], [langs], det)
+        lines = [tl.text for p in preds for tl in p.text_lines]
+        return "\n".join(lines)
+    return predict
+
+
+_ENGINES = {"tesseract": _load_tesseract, "paddle": _load_paddle, "surya": _load_surya}
+
+
+def _median(xs: list[float]) -> float | None:
+    """꼬리값에 둔감한 중앙값(레이턴시 대표값). 빈 입력은 None."""
+    if not xs:
+        return None
+    s = sorted(xs)
+    n = len(s)
+    return s[n // 2] if n % 2 else (s[n // 2 - 1] + s[n // 2]) / 2
 
 
 def run(args: argparse.Namespace) -> dict:
-    engine = _ENGINES[args.engine]
+    predict = _ENGINES[args.engine](args.lang)   # 모델 1회 적재
     labels = json.loads((Path(args.labels)).read_text(encoding="utf-8"))
     images_dir = Path(args.images)
+    # GT 있는(측정 대상) 포스터만 추림
+    targets = [(f, m, images_dir / f) for f, m in labels.items()
+               if (m.get("ground_truth_skills") or []) and (images_dir / f).exists()]
+
+    # 워밍업: 첫 실제 이미지 1회 추론 후 결과 폐기(모델 로드·그래프 컴파일 비용을 측정에서 분리).
+    if targets:
+        try:
+            predict(targets[0][2])
+        except Exception:  # noqa: BLE001 — 워밍업 실패는 본측정에서 다시 드러난다
+            pass
+
     rows = []
-    for fname, meta in labels.items():
-        gt = set(meta.get("ground_truth_skills") or [])
-        if not gt:
-            continue  # 라벨 없는(비개발/제외) 포스터는 측정 제외
-        img = images_dir / fname
-        if not img.exists():
-            continue
-        text = engine(img, lang=args.lang)
+    for fname, meta, img in targets:
+        gt = set(meta["ground_truth_skills"])
+        t0 = time.perf_counter()
+        text = predict(img)
+        ms = round((time.perf_counter() - t0) * 1000, 1)
         extracted = extract_skills(text)
         score = prf(extracted, gt)
-        rows.append({"file": fname, "company": meta.get("company"),
+        rows.append({"file": fname, "company": meta.get("company"), "ms": ms,
                      "extracted": sorted(extracted), "gt": sorted(gt), **score})
-    return {"engine": args.engine, "n": len(rows), "rows": rows, "micro": aggregate(rows)}
+    micro = aggregate(rows)
+    micro["med_ms"] = _median([r["ms"] for r in rows])
+    return {"engine": args.engine, "n": len(rows), "rows": rows, "micro": micro}
 
 
 def print_report(rep: dict) -> None:
@@ -179,12 +242,13 @@ def print_report(rep: dict) -> None:
     print("=" * 78)
     for r in rep["rows"]:
         print(f"[{r['company']}]  P={r['precision']} R={r['recall']} F1={r['f1']}  "
-              f"(tp{r['tp']}/fp{r['fp']}/fn{r['fn']})")
+              f"(tp{r['tp']}/fp{r['fp']}/fn{r['fn']})  {r['ms']}ms")
         print(f"    추출: {r['extracted']}")
         print(f"    정답: {r['gt']}")
     m = rep["micro"]
     print("-" * 78)
-    print(f"micro  P={m['precision']}  R={m['recall']}  F1={m['f1']}  (tp{m['tp']}/fp{m['fp']}/fn{m['fn']})")
+    print(f"micro  P={m['precision']}  R={m['recall']}  F1={m['f1']}  "
+          f"(tp{m['tp']}/fp{m['fp']}/fn{m['fn']})  median={m['med_ms']}ms")
 
 
 def main() -> None:
@@ -202,10 +266,15 @@ def main() -> None:
         print_report(run(args))
     except Exception as exc:  # noqa: BLE001
         print(f"\n⚠️  엔진 실행 실패({args.engine}): {exc}", file=sys.stderr)
-        if args.engine == "tesseract":
-            print("   Tesseract 바이너리 + kor 데이터 필요: "
-                  "conda install -c conda-forge tesseract tesseract-data-kor  (또는 OS 패키지)",
-                  file=sys.stderr)
+        hint = {
+            "tesseract": "Tesseract 바이너리 + kor 데이터 필요: conda install -c conda-forge "
+                         "tesseract tesseract-data-kor (TESSDATA_PREFIX 로 tessdata 경로 지정).",
+            "paddle": "PaddleOCR 필요: uv run --with paddleocr --with paddlepaddle ... "
+                      "(최초 1회 모델 가중치 다운로드).",
+            "surya": "Surya 필요: uv run --with surya-ocr ... (Torch + 최초 1회 모델 가중치 다운로드).",
+        }.get(args.engine)
+        if hint:
+            print(f"   {hint}", file=sys.stderr)
         raise SystemExit(1)
 
 
