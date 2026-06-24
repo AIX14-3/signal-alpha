@@ -70,9 +70,10 @@ ReportCollectTaskHandler
   - `skipped_count`: 날짜 파싱 실패 등으로 저장되지 않은 리포트 수
   - `failed_count`: 수집/저장/queue 등록 중 예외가 난 경우 1
 
-현재 빈틈:
+현재 검증:
 
-- 수집, 파싱, 정규화, 임베딩, 분석 단위 테스트는 있으나 실제 DB와 queue runner를 함께 쓰는 Report E2E 검증은 아직 제한적입니다.
+- `test_report_e2e_pipeline.py`에서 fake DB connection과 `QueueTaskRunner` 기반으로 `collect_report → process_report → normalize_report → embed_report → analyze_report → ml_infer` 연쇄를 검증합니다.
+- 검증 범위는 raw 문서 저장, PDF 처리 결과 저장, canonical `source_documents`/`signal_events` 승격, chunk/embedding 저장, 분석 결과 저장, 후속 ML/aggregate enqueue까지 포함합니다.
 
 ### 3. `process_report`
 
@@ -87,7 +88,13 @@ ReportProcessTaskHandler
 - `report_raw_details`에서 `pdf_url`, `s3_key`, `parsing_status`를 조회합니다.
 - 기본 storage backend는 GCS이며, 로컬 테스트에서는 `REPORT_STORAGE_BACKEND=local`로 파일시스템 저장소를 사용할 수 있습니다.
 - report storage에 파일이 없으면 원천 PDF URL에서 다운로드한 뒤 선택된 backend에 업로드합니다.
-- report storage에 저장된 PDF의 첫 3페이지를 파싱합니다.
+- report storage에 저장된 PDF의 전체 텍스트를 추출합니다.
+- 기본값(`REPORT_USE_LLM=false`)에서는 LLM을 호출하지 않고 규칙 기반 fallback으로 목표주가, 원문 의견, 근거 후보를 추출합니다.
+  - 목표주가 표기: `목표주가`, `목표가`, `TP`, `Target Price`
+  - 가격 단위: `원`, `KRW`, `만원`
+  - 의견 표기: `Buy`, `Outperform`, `Marketperform`, `Underperform`, `Hold`, `Neutral`, `Sell` 및 한국어 매수/중립/매도 계열
+- `REPORT_USE_LLM=true`일 때만 규칙 기반 후보 텍스트를 LLM에 전달해 파싱 결과를 보강합니다.
+- LLM 보강은 `REPORT_LLM_PROVIDER`(`gemini` 또는 `openai`)와 `REPORT_LLM_MODEL` 설정을 사용합니다.
 - 파싱 결과를 `report_raw_details`에 갱신합니다.
   - `s3_key`
   - `has_pdf = TRUE`
@@ -104,6 +111,9 @@ ReportProcessTaskHandler
 - 현재 canonical queue 경로의 기본 backend는 GCS입니다.
 - 로컬 테스트 파일 저장은 `REPORT_STORAGE_BACKEND=local`과 `REPORT_LOCAL_STORAGE_DIR`로 활성화합니다. 기본 경로는 저장소 루트 기준 `data/report-storage`입니다.
 - local backend는 object key와 같은 상대 경로로 PDF를 저장하며, `..` 같은 경로 이탈 key는 거부합니다.
+- 신규 PDF object key는 `reports/{stock_code}/{publish_date}_{firm_slug}_{source_hash8}.pdf` 형식을 사용합니다.
+  - 예: `reports/005930/20260624_hana_abcdef12.pdf`
+  - 같은 종목, 발행일, 증권사, 리포트 유형이 겹쳐도 source hash prefix로 충돌을 줄입니다.
 - `pdf_downloader.py`, `run_parser.py` 같은 과거 CLI 경로는 `data/reports/` 아래에 PDF를 저장할 수 있습니다.
 - queue handler는 `REPORT_STORAGE_BACKEND` 값에 따라 GCS 또는 local storage client를 사용합니다.
 - DB 컬럼명은 아직 `s3_key`이지만, 현재 구현에서는 선택된 storage backend의 object key로 사용합니다.
@@ -262,6 +272,8 @@ ReportAnalyzeTaskHandler
 
 worker가 실행 중이라고 가정한 local API 호출 순서입니다.
 
+Gemini LLM 보강까지 켜서 PDF 파싱을 확인하려면 `docs/spec/report-gemini-pdf-parsing-dev-guide.md`를 먼저 참고합니다.
+
 ```powershell
 # 1. 리포트 수집 작업 등록
 Invoke-RestMethod `
@@ -349,7 +361,7 @@ Invoke-RestMethod `
 2. 정규화 경로
    - Report는 `normalize_report`에서 `source_documents`, `signal_events`, `signal_metrics`를 만듭니다. 후속 작업은 기존 데이터 backfill과 운영 runbook 정리입니다.
 3. LLM 연결
-   - `REPORT_USE_LLM`, provider, model, timeout, API key 설정은 `ReportAnalyzeTaskHandler`에 연결되어 있습니다. 운영 환경에서 provider/model/key 값을 확정하고 fallback 품질을 점검합니다.
+   - `REPORT_USE_LLM`, provider, model, timeout, API key 설정은 PDF 파싱 보강과 `ReportAnalyzeTaskHandler`에 연결되어 있습니다. 운영 환경에서 provider/model/key 값을 확정하고 fallback 품질을 점검합니다.
 4. Aggregator 통합
    - Report `agent_results`는 `source='REPORT'`와 `source_signal_event_ids`를 갖고 ML/aggregation 체인으로 넘어갑니다.
    - Report 단일 source도 `AGGREGATE_SIGNAL`에서 `final_signals` 생성 입력으로 처리됩니다.
@@ -360,8 +372,11 @@ Invoke-RestMethod `
 6. collector 실행 로그
    - `collect_report`는 `collector_runs` 생성과 완료/실패 집계를 기록합니다.
    - Report 저장은 `CollectionRepository` 기반으로 정리되어 `collector_runs`와 raw 문서 추적이 이어집니다.
+   - 성공/실패 시 agent-worker 로그에 `report_collection_summary` 이벤트를 남깁니다.
+   - 로그 payload에는 `collected_reports`, `saved_reports`, `inserted_reports`, `duplicate_reports`, `invalid_date_reports`, `missing_pdf_reports`, `enqueued_reports`, `skip_reasons`가 포함됩니다.
 7. 테스트 범위
-   - 현재 unit test를 유지하면서 storage backend, queue chaining, Report 분석 저장에 대한 통합 테스트를 추가합니다.
+   - storage backend, queue chaining, Report 분석 저장은 unit/integration 테스트로 유지합니다.
+   - fake DB connection 기반 Report E2E queue pipeline으로 canonical 링크와 후속 enqueue를 회귀 검증합니다.
 
 ## 현재 테스트 범위
 

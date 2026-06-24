@@ -1,6 +1,8 @@
 import json
 import os
 from pathlib import Path
+import asyncio
+from typing import Any
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -44,9 +46,17 @@ def get_client() -> OpenAI:
     return OpenAI(api_key=api_key)
 
 
-def parse_report(text: str, model: str = "gpt-4o-mini") -> dict:
+def parse_report(
+    text: str,
+    model: str = "gpt-4o-mini",
+    *,
+    llm_config: Any | None = None,
+) -> dict:
     """리포트 텍스트에서 목표주가·투자의견·핵심 근거 추출"""
     truncated = text[:3000]
+    if llm_config is not None:
+        return _parse_report_with_llm_config(truncated, llm_config)
+
     client = get_client()
 
     try:
@@ -67,3 +77,24 @@ def parse_report(text: str, model: str = "gpt-4o-mini") -> dict:
             "opinion": "unknown",
             "key_rationale": "",
         }
+
+
+def _parse_report_with_llm_config(text: str, llm_config: Any) -> dict:
+    prompt = f"{PARSE_PROMPT}\n\n리포트 텍스트:\n\n{text}"
+    response_text = _run_complete(
+        llm_config.client.complete(
+            prompt=prompt,
+            model=llm_config.model,
+            timeout_seconds=llm_config.timeout_seconds,
+        )
+    )
+    return json.loads(response_text)
+
+
+def _run_complete(awaitable: Any) -> str:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return str(asyncio.run(awaitable))
+
+    raise RuntimeError("Report PDF LLM parser cannot run inside an active event loop.")

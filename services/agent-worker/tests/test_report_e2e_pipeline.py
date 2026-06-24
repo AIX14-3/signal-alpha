@@ -420,6 +420,7 @@ class FakeReportPipelineConnection:
         return {
             "stock_id": raw["stock_id"],
             "pdf_url": raw["source_url"],
+            "source_hash": raw["source_hash"],
             "stock_code": "005930",
             "securities_firm": detail["securities_firm"],
             "publish_date": detail["publish_date"],
@@ -508,7 +509,7 @@ class ReportE2EPipelineTest(unittest.IsolatedAsyncioTestCase):
         report_tasks.download_and_upload = lambda url, key, passed_storage: bool(
             passed_storage.upload_pdf(b"%PDF-fake", key)
         )
-        report_tasks.process_from_s3 = lambda key, passed_storage: {
+        report_tasks.process_from_s3 = lambda key, passed_storage, *, settings=None: {
             "opinion": "neutral",
             "target_price": 90000,
             "key_rationale": "실적 데이터와 수요 지표를 근거로 추가 확인 필요",
@@ -558,6 +559,10 @@ class ReportE2EPipelineTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn(raw_document_id, conn.raw_documents)
         self.assertEqual(conn.report_raw_details[raw_document_id]["parsing_status"], "success")
+        self.assertRegex(
+            conn.report_raw_details[raw_document_id]["s3_key"],
+            r"^reports/005930/20260624_test_securities_[0-9a-f]{8}\.pdf$",
+        )
         self.assertTrue(conn.source_documents)
         self.assertTrue(conn.signal_events)
         self.assertTrue(conn.report_chunks)
@@ -601,7 +606,7 @@ class ReportE2EPipelineTest(unittest.IsolatedAsyncioTestCase):
         report_tasks.download_and_upload = lambda url, key, passed_storage: bool(
             passed_storage.upload_pdf(b"%PDF-fake", key)
         )
-        report_tasks.process_from_s3 = lambda key, passed_storage: {
+        report_tasks.process_from_s3 = lambda key, passed_storage, *, settings=None: {
             "opinion": "neutral",
             "target_price": 90000,
             "key_rationale": "실적 데이터와 수요 지표를 근거로 추가 확인 필요",

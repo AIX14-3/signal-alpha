@@ -84,6 +84,15 @@ def make_filename(report: dict) -> str:
     return f"{firm_code}_{date_str}_{type_code}.pdf"
 
 
+def make_report_storage_key(stock_code: str, report: dict) -> str:
+    """Canonical storage key: reports/{stock_code}/{date}_{firm}_{hash8}.pdf."""
+    firm_code = _firm_code(report.get("firm", ""))
+    date_str = str(report.get("date", "")).replace(".", "").replace("-", "")
+    hash_prefix = _hash_prefix(str(report.get("source_hash") or ""))
+    filename = f"{date_str}_{firm_code}_{hash_prefix}.pdf"
+    return make_s3_key(stock_code, filename)
+
+
 def _firm_code(firm: str) -> str:
     if firm in FIRM_CODE_MAP:
         return FIRM_CODE_MAP[firm]
@@ -94,6 +103,12 @@ def _firm_code(firm: str) -> str:
 
     digest = hashlib.sha1(firm.encode("utf-8")).hexdigest()[:8]
     return f"firm_{digest}"
+
+
+def _hash_prefix(source_hash: str) -> str:
+    if re.fullmatch(r"[0-9a-fA-F]{8,}", source_hash):
+        return source_hash[:8].lower()
+    return hashlib.sha1(source_hash.encode("utf-8")).hexdigest()[:8]
 
 
 def make_s3_key(stock_code: str, filename: str) -> str:
