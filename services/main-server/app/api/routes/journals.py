@@ -19,7 +19,7 @@ router = APIRouter(prefix="/api/journals", tags=["journals"])
 
 class JournalCreateRequest(BaseModel):
     stock_code: str
-    signal_id: int
+    final_signal_id: int
     user_view: str
     memo: str | None = None
     tags: list[str] = Field(default_factory=list)
@@ -65,7 +65,7 @@ async def create_journal(
         stock = await StockRepository(connection).get_by_ticker(stock_code)
         if stock is None:
             raise _api_error(404, "STOCK_NOT_FOUND", "종목을 찾을 수 없습니다.")
-        signal = await SignalRepository(connection).get_detail_by_id(payload.signal_id)
+        signal = await SignalRepository(connection).get_detail_by_id(payload.final_signal_id)
         if signal is None:
             raise _api_error(404, "SIGNAL_NOT_FOUND", "시그널을 찾을 수 없습니다.")
         if int(signal["stock_id"]) != int(stock["id"]):
@@ -150,7 +150,7 @@ def _journal_response(row: dict[str, Any]) -> dict[str, Any]:
         "journal_id": row["id"],
         "stock_code": row["ticker"],
         "stock_name": row.get("name"),
-        "signal_id": row.get("final_signal_id"),
+        "final_signal_id": row.get("final_signal_id"),
         "user_view": row["user_view"],
         "memo": row.get("user_memo"),
         "tags": _json_array(row.get("tags")),

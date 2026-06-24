@@ -189,7 +189,7 @@ class JournalRoutesTest(unittest.TestCase):
             "/api/journals",
             json={
                 "stock_code": "005930",
-                "signal_id": 200,
+                "final_signal_id": 200,
                 "user_view": "research_more",
                 "memo": "Report 데이터가 없어 추가 근거 확인이 필요합니다.",
                 "tags": ["DART", "추가확인"],
@@ -201,7 +201,7 @@ class JournalRoutesTest(unittest.TestCase):
         created = create_response.json()
         self.assertEqual(created["journal_id"], 20)
         self.assertEqual(created["stock_code"], "005930")
-        self.assertEqual(created["signal_id"], 200)
+        self.assertEqual(created["final_signal_id"], 200)
         self.assertEqual(created["user_view"], "research_more")
         self.assertEqual(created["tags"], ["DART", "추가확인"])
         self.assertIn("데이터 방향성", created["notice"])
@@ -237,7 +237,7 @@ class JournalRoutesTest(unittest.TestCase):
             "/api/journals",
             json={
                 "stock_code": "005930",
-                "signal_id": 200,
+                "final_signal_id": 200,
                 "user_view": "buy",
                 "memo": "금지 값",
             },

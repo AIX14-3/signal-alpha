@@ -10,7 +10,7 @@ from app.core.database import get_database_pool
 from signal_alpha_data_access.repositories import StockRepository, UserSignalRepository
 
 
-WATCHLIST_LIMIT = 10
+# 신규 기획: 관심종목은 회원/유료 무관 무제한. 한도 검사를 두지 않는다.
 
 stocks_router = APIRouter(prefix="/api/stocks", tags=["stocks"])
 watchlists_router = APIRouter(prefix="/api/watchlists", tags=["watchlists"])
@@ -18,6 +18,17 @@ watchlists_router = APIRouter(prefix="/api/watchlists", tags=["watchlists"])
 
 class WatchlistCreateRequest(BaseModel):
     stock_code: str
+
+
+@stocks_router.get("")
+async def list_stocks(
+    limit: int = 100,
+    pool: Any = Depends(get_database_pool),
+) -> dict[str, Any]:
+    """활성 종목 목록(공개). 검색창 placeholder 회전용 종목명 소스로 사용."""
+    async with pool.acquire() as connection:
+        rows = await StockRepository(connection).list_active(limit=min(limit, 200))
+    return {"items": [_stock_response(dict(row)) for row in rows]}
 
 
 @stocks_router.get("/search")
@@ -43,7 +54,6 @@ async def list_watchlists(
         rows = await UserSignalRepository(connection).list_watchlist(user_id=int(current_user["id"]))
     items = [_watchlist_response(dict(row)) for row in rows]
     return {
-        "limit": WATCHLIST_LIMIT,
         "count": len(items),
         "items": items,
         "notice": NOTICE,
@@ -68,13 +78,6 @@ async def add_watchlist(
         )
         if existing is not None:
             return _watchlist_response(dict(existing))
-        count = await user_signal_repository.count_watchlist(user_id=int(current_user["id"]))
-        if count >= WATCHLIST_LIMIT:
-            raise _api_error(
-                400,
-                "WATCHLIST_LIMIT_EXCEEDED",
-                "관심종목은 최대 10개까지 등록할 수 있습니다.",
-            )
         watchlist = await user_signal_repository.add_watchlist(
             user_id=int(current_user["id"]),
             stock_id=int(stock["id"]),

@@ -1,14 +1,30 @@
+/* Tailwind CSS v4 — 유틸리티/preflight 주입 + Signal α 디자인 토큰(v61 navy/sky/green). */
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #fbfcfe;
+  --color-surface: #ffffff;
+  --color-surface-2: #f3f6fb;
+  --color-line: #e7ecf3;
+  --color-navy: #0f1b33;
+  --color-navy-soft: #36425c;
+  --color-muted: #8a97ab;
+  --color-sky: #0ea5e9;
+  --color-sky-deep: #0284c7;
+  --color-green: #10b981;
+  --color-red: #ef4444;
+
+  --radius-card: 18px;
+  --radius-sm: 12px;
+
+  --font-sans: "Pretendard Variable", Pretendard, -apple-system, system-ui, sans-serif;
+  --ease-out: cubic-bezier(0.22, 0.61, 0.36, 1);
+
+  --shadow-card: 0 1px 2px rgba(15, 27, 51, 0.04), 0 8px 24px rgba(15, 27, 51, 0.06);
+}
+
 :root {
   color-scheme: light;
-  --background: #f6f8fb;
-  --surface: #ffffff;
-  --surface-muted: #eef3f8;
-  --line: #d9e1ec;
-  --ink: #1f2937;
-  --muted: #64748b;
-  --signal: #2563eb;
-  --evidence: #0f766e;
-  --caution: #b45309;
 }
 
 * {
@@ -17,13 +33,12 @@
 
 body {
   margin: 0;
-  background: var(--background);
-  color: var(--ink);
-  font-family:
-    Arial,
-    "Apple SD Gothic Neo",
-    "Malgun Gothic",
-    sans-serif;
+  background: var(--color-bg);
+  color: var(--color-navy);
+  font-family: var(--font-sans);
+  line-height: 1.55;
+  letter-spacing: -0.01em;
+  -webkit-font-smoothing: antialiased;
 }
 
 a {
@@ -31,224 +46,111 @@ a {
   text-decoration: none;
 }
 
-.app-shell {
-  min-height: 100vh;
-  display: grid;
-  grid-template-columns: 240px 1fr;
+/* 재사용 컴포넌트 클래스 (유틸 조합이 길어지는 패턴만 정의) */
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
 }
 
-.sidebar {
-  border-right: 1px solid var(--line);
-  background: var(--surface);
-  padding: 24px 20px;
+.brand-grad {
+  background: linear-gradient(135deg, var(--color-sky), var(--color-green));
 }
 
-.brand {
-  display: flex;
+.pill {
+  display: inline-flex;
   align-items: center;
-  gap: 12px;
+  gap: 6px;
+  border-radius: 999px;
+  font-weight: 600;
+}
+.pill.up {
+  background: rgba(16, 185, 129, 0.12);
+  color: var(--color-green);
+}
+.pill.down {
+  background: rgba(239, 68, 68, 0.12);
+  color: var(--color-red);
+}
+.pill.flat {
+  background: var(--color-surface-2);
+  color: var(--color-navy-soft);
 }
 
-.brand-mark {
-  display: grid;
-  width: 40px;
-  height: 40px;
-  place-items: center;
-  border-radius: 8px;
-  background: var(--signal);
-  color: white;
-  font-weight: 700;
+/* ---------- 정적 그라데이션 배경 (홈 외 전 페이지, 애니메이션 없음) ---------- */
+.bg-static {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(60% 60% at 18% 8%, rgba(14, 165, 233, 0.08), transparent 60%),
+    radial-gradient(55% 55% at 85% 14%, rgba(16, 185, 129, 0.08), transparent 60%),
+    var(--color-bg);
 }
 
-.brand-kicker {
-  margin: 0;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0;
-  text-transform: uppercase;
+/* ---------- Converging-signals 배경 (v2_converge 시안, 홈 전용) ---------- */
+.bg-fx {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
 }
-
-.brand-name {
-  margin: 2px 0 0;
-  font-size: 20px;
-  font-weight: 700;
+.bg-fx canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
 }
-
-.nav {
-  display: grid;
-  gap: 8px;
-  margin-top: 40px;
+.bg-fx .grid-lines {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(15, 27, 51, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(15, 27, 51, 0.04) 1px, transparent 1px);
+  background-size: 46px 46px;
+  -webkit-mask-image: radial-gradient(circle at 50% 34%, #000, transparent 60%);
+  mask-image: radial-gradient(circle at 50% 34%, #000, transparent 60%);
 }
-
-.nav-item {
-  border-radius: 8px;
-  padding: 10px 12px;
-  color: var(--muted);
-  font-size: 14px;
-  font-weight: 700;
+.bg-fx .core {
+  position: absolute;
+  top: 34%;
+  left: 50%;
+  width: 340px;
+  height: 340px;
+  transform: translate(-50%, -50%);
+  background: radial-gradient(circle, rgba(16, 185, 129, 0.18), rgba(14, 165, 233, 0.12) 40%, transparent 70%);
+  border-radius: 50%;
+  animation: corepulse 3.4s var(--ease-out) infinite;
 }
-
-.nav-item-active {
-  background: #eaf1ff;
-  color: var(--signal);
+@keyframes corepulse {
+  0%, 100% { transform: translate(-50%, -50%) scale(0.85); opacity: 0.7; }
+  50% { transform: translate(-50%, -50%) scale(1.05); opacity: 1; }
 }
-
-.main {
-  min-width: 0;
-  padding: 24px;
+@keyframes livepulse {
+  0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.45); }
+  70% { box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
 }
-
-.content {
-  max-width: 1180px;
-  margin: 0 auto;
+.live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-green);
+  animation: livepulse 2s infinite;
 }
-
-.notice {
-  margin-bottom: 24px;
-  border: 1px solid #bfdbfe;
-  border-radius: 8px;
-  background: #eff6ff;
-  padding: 14px 16px;
-  color: #1e3a8a;
-  font-size: 14px;
-  line-height: 1.6;
-}
-
-.dashboard-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 24px;
-  margin-bottom: 24px;
-}
-
-.eyebrow {
-  margin: 0 0 8px;
-  color: var(--muted);
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.title {
-  margin: 0;
-  font-size: 32px;
-  line-height: 1.2;
-}
-
-.description {
-  max-width: 680px;
-  margin: 12px 0 0;
-  color: var(--muted);
-  line-height: 1.7;
-}
-
-.status-card {
-  min-width: 220px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface);
-  padding: 16px;
-}
-
-.status-label {
-  margin: 0;
-  color: var(--muted);
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.status-value {
-  margin: 8px 0 0;
-  color: var(--evidence);
-  font-size: 22px;
-  font-weight: 700;
-}
-
-.card-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 16px;
-}
-
-.stock-card {
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface);
-  padding: 18px;
-}
-
-.stock-code {
-  margin: 0;
-  color: var(--muted);
-  font-size: 13px;
-}
-
-.stock-name {
-  margin: 6px 0 16px;
-  font-size: 20px;
-}
-
-.metric-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-}
-
-.metric {
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface-muted);
-  padding: 12px;
-}
-
-.metric-label {
-  margin: 0;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.metric-value {
-  margin: 6px 0 0;
-  font-size: 18px;
-  font-weight: 700;
-}
-
-.api-note {
-  margin-top: 24px;
-  border: 1px dashed var(--line);
-  border-radius: 8px;
-  background: var(--surface);
-  padding: 16px;
-  color: var(--muted);
-  font-size: 14px;
-}
-
-@media (max-width: 860px) {
-  .app-shell {
-    grid-template-columns: 1fr;
+@media (prefers-reduced-motion: reduce) {
+  .bg-fx .core,
+  .live-dot {
+    animation: none;
   }
+}
 
-  .sidebar {
-    border-right: 0;
-    border-bottom: 1px solid var(--line);
-  }
-
-  .nav {
-    grid-template-columns: repeat(2, max-content);
-    margin-top: 16px;
-  }
-
-  .dashboard-header {
-    flex-direction: column;
-  }
-
-  .status-card {
-    width: 100%;
-  }
-
-  .card-grid {
-    grid-template-columns: 1fr;
-  }
+input,
+button,
+textarea,
+select {
+  font-family: inherit;
 }
