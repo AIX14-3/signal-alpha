@@ -146,6 +146,17 @@ class AggregateDescriptiveFieldsTest(unittest.TestCase):
         self.assertIn("FastAPI", techs)
         self.assertEqual(techs.count("Python"), 1)  # 중복 제거
 
+    def test_ocr_skills_union_per_day(self):
+        """당일 공고들의 ocr_skills가 중복 제거 후 합집합으로 보존된다 (스킬 스코어 입력)."""
+        rows = [
+            {**_posting("2026-06-10"), "ocr_skills": ["Python", "Kubernetes"]},
+            {**_posting("2026-06-10"), "ocr_skills": ["Python", "AWS"]},
+        ]
+        result = _aggregate_to_daily(rows)
+        skills = result[0]["ocr_skills"]
+        self.assertEqual(set(skills), {"Python", "Kubernetes", "AWS"})
+        self.assertEqual(skills.count("Python"), 1)  # 중복 제거
+
     def test_seasonal_factor_preserved(self):
         rows = [_posting("2026-06-10", seasonal_factor=1.2)]
         result = _aggregate_to_daily(rows)

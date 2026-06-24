@@ -7,6 +7,7 @@ signal inputs.
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 from datetime import date, timedelta
 
@@ -26,6 +27,11 @@ class HiringIndicators:
     # None/0 when the stock has no function mapping → analyzer omits the component.
     sector_demand_momentum: float | None = None
     sector_demand_coverage: float = 0.0
+    # OCR skill enrichment (ENRICH_HIRING). 0/() when no posting in the window has
+    # been OCR-enriched, which makes the rules fall back to the count-based score.
+    distinct_skills: int = 0
+    skill_enriched_observations: int = 0  # rows carrying ≥1 OCR skill (apply-gate)
+    top_skills: tuple[str, ...] = ()
 
 
 def compute_indicators(
@@ -58,8 +64,14 @@ def compute_indicators(
     changes: list[float] = []
     total_job_count = 0
     latest: date | None = None
+    skill_counter: Counter[str] = Counter()
+    skill_enriched_observations = 0
 
     for row in rows:
+        skills = row.get("ocr_skills") or []
+        if skills:
+            skill_enriched_observations += 1
+            skill_counter.update(str(s) for s in skills if s)
         observed = _parse_date(row.get("observed_date"))
         job_count = row.get("job_count")
         if job_count is not None:
@@ -99,6 +111,9 @@ def compute_indicators(
         days_since_latest=(as_of - latest).days if latest else None,
         sector_demand_momentum=sector_momentum,
         sector_demand_coverage=sector_coverage,
+        distinct_skills=len(skill_counter),
+        skill_enriched_observations=skill_enriched_observations,
+        top_skills=tuple(s for s, _ in skill_counter.most_common(5)),
     )
 
 

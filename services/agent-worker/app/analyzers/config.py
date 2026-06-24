@@ -129,6 +129,15 @@ class HiringRuleConfig:
     # hiring_job_function_stocks mapping is unseeded or has no peer data.
     sector_demand_weight: float = 0.3
     sector_demand_scale: float = 0.30  # tanh knee: 30% sector momentum → 0.76*weight
+    # OCR skill-breadth component: distinct in-demand tech skills the company is
+    # hiring for (from hiring_raw_details.ocr_skills, ENRICH_HIRING). One-sided
+    # positive — concrete tech hiring breadth is a tech-investment signal; absence
+    # is silence, never negative. Contributes 0 (exact pre-enrichment fallback)
+    # when no posting in the window has been OCR-enriched. Mirrors the patent
+    # significance component.
+    skill_weight: float = 0.3
+    skill_scale: float = 6.0  # tanh knee: 6 distinct skills → 0.76*weight
+    skill_min_enriched: int = 1  # need this many enriched observations to apply
     positive_threshold: float = 0.2
     negative_threshold: float = -0.2
 
@@ -146,6 +155,9 @@ class HiringRuleConfig:
             change_weight=_float("HIRING_CHANGE_WEIGHT", cls.change_weight),
             sector_demand_weight=_float("HIRING_SECTOR_DEMAND_WEIGHT", cls.sector_demand_weight),
             sector_demand_scale=_float("HIRING_SECTOR_DEMAND_SCALE", cls.sector_demand_scale),
+            skill_weight=_float("HIRING_SKILL_WEIGHT", cls.skill_weight),
+            skill_scale=_float("HIRING_SKILL_SCALE", cls.skill_scale),
+            skill_min_enriched=_int("HIRING_SKILL_MIN_ENRICHED", cls.skill_min_enriched),
             positive_threshold=_float("HIRING_POSITIVE_THRESHOLD", cls.positive_threshold),
             negative_threshold=_float("HIRING_NEGATIVE_THRESHOLD", cls.negative_threshold),
         )
