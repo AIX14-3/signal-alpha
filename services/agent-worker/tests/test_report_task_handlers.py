@@ -1,3 +1,4 @@
+import json
 import sys
 import unittest
 from datetime import datetime
@@ -420,6 +421,16 @@ class ReportAnalyzeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(agent.received.context["report_quant"]["avg_target"], 95000)
         self.assertEqual(agent.received.events[0]["id"], 801)
         self.assertEqual(result["ml_infer_task_id"], 601)
+        ml_enqueue = next(call for call in conn.fetchvals if "INSERT INTO processing_queue" in call[0])
+        self.assertEqual(ml_enqueue[1][1], "ml_infer")
+        self.assertEqual(ml_enqueue[1][5], [100])
+        ml_context = json.loads(ml_enqueue[1][6])
+        self.assertEqual(ml_context["run_key"], "ML")
+        self.assertEqual(
+            ml_context["aggregate_ctx"]["aggregation_key"],
+            "AGGREGATED:1:2026-06-24:final-agg-v1",
+        )
+        self.assertEqual(ml_context["aggregate_ctx"]["source_analysis_result_ids"], [100])
 
     async def test_unknown_direction_is_mapped_to_neutral_for_method_signal(self):
         # agent_results.method_signal CHECK는 unknown 불가 → neutral로 매핑돼야 함
