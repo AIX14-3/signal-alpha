@@ -1,7 +1,7 @@
 """
 PDF 리포트 일괄 파싱
 - PDF 텍스트 추출 → LLM 파싱 → parsed_reports.json 저장 (로컬 CLI 모드)
-- S3에서 PDF bytes 수신 → bytes 직접 파싱 (자동화 파이프라인 모드)
+- report storage에서 PDF bytes 수신 → bytes 직접 파싱 (자동화 파이프라인 모드)
 """
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from app.collectors.report.s3_client import ReportS3Client
+    from app.collectors.report.storage import ReportStorageClient
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
@@ -95,9 +95,9 @@ def find_matched_report(report_list: list[dict], meta: dict) -> dict | None:
     return None
 
 
-def process_from_s3(s3_key: str, s3_client: ReportS3Client) -> dict:
-    """S3에서 PDF bytes를 받아 LLM 파싱 결과 반환. tempfile 없이 bytes 직접 처리."""
-    pdf_bytes = s3_client.download_pdf(s3_key)
+def process_from_s3(storage_key: str, storage_client: ReportStorageClient) -> dict:
+    """Report storage에서 PDF bytes를 받아 LLM 파싱 결과 반환. tempfile 없이 bytes 직접 처리."""
+    pdf_bytes = storage_client.download_pdf(storage_key)
     text = extract_first_pages(pdf_bytes, n=3)
     result = parse_report(text)
     result["raw_text"] = text

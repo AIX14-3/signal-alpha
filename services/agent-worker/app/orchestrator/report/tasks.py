@@ -14,7 +14,7 @@ from app.collectors.report.parsers.chunker import chunk_text
 from app.collectors.report.parsers.pdf_extractor import extract_text
 from app.collectors.report.parsers.run_parser import process_from_s3
 from app.collectors.report.pdf_downloader import download_and_upload, make_filename, make_s3_key
-from app.collectors.report.s3_client import ReportS3Client
+from app.collectors.report.storage import ReportStorageClient, get_report_storage_client
 from app.embeddings.provider import get_embedding_provider, to_pgvector
 from app.orchestrator.queue.task_types import EMBED_REPORT, PROCESS_REPORT
 from signal_alpha_data_access.repositories import AnalysisRepository, ProcessingQueueRepository
@@ -74,14 +74,22 @@ class ReportCollectTaskHandler:
 class ReportProcessTaskHandler:
     """
     1. report_raw_details에서 pdf_url, s3_key 확인
-    2. PDF 다운로드 → S3 업로드 (s3_key 미존재 시)
+    2. PDF 다운로드 → report storage 업로드 (s3_key 미존재 시)
     3. LLM 파싱 (bytes 직접 처리, tempfile 없음)
     4. report_raw_details 업데이트 (parsing_status='success', target_price 등)
     """
 
-    def __init__(self, *, connection: Any, settings: Any) -> None:
+    def __init__(
+        self,
+        *,
+        connection: Any,
+        settings: Any,
+        storage: ReportStorageClient | None = None,
+    ) -> None:
         self._connection = connection
-        self._s3 = ReportS3Client()
+        self._settings = settings
+        self._storage = storage
+        self._s3 = storage
 
     async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
         task_context = _task_context(task.get("task_context"))
@@ -123,13 +131,15 @@ class ReportProcessTaskHandler:
             await self._mark_failed(raw_document_id, "pdf_url이 없습니다")
             return {"status": "no_pdf_url"}
 
-        if not self._s3.exists(s3_key):
-            success = download_and_upload(row["pdf_url"], s3_key, self._s3)
+        storage = self._get_storage()
+
+        if not storage.exists(s3_key):
+            success = download_and_upload(row["pdf_url"], s3_key, storage)
             if not success:
                 await self._mark_failed(raw_document_id, "PDF 다운로드 실패")
                 return {"status": "download_failed"}
 
-        parsed = process_from_s3(s3_key, self._s3)
+        parsed = process_from_s3(s3_key, storage)
 
         await self._connection.execute(
             """
@@ -166,6 +176,12 @@ class ReportProcessTaskHandler:
 
         return {"status": "success", "raw_document_id": raw_document_id, "s3_key": s3_key}
 
+    def _get_storage(self) -> ReportStorageClient:
+        if self._storage is None:
+            self._storage = get_report_storage_client(self._settings)
+            self._s3 = self._storage
+        return self._storage
+
     async def _mark_failed(self, raw_document_id: int, error: str) -> None:
         await self._connection.execute(
             """
@@ -182,14 +198,22 @@ class ReportProcessTaskHandler:
 class ReportEmbedTaskHandler:
     """
     1. report_raw_details에서 s3_key 확인 (parsing_status='success' 인 문서만)
-    2. S3 PDF **전문** 추출 → 청킹 (앞 3p 아님 — 검색 품질을 위해 문서 전체)
+    2. report storage PDF **전문** 추출 → 청킹 (앞 3p 아님 — 검색 품질을 위해 문서 전체)
     3. BGE-M3(1024d) 임베딩 → report_chunks(canonical) 적재
        UNIQUE(raw_document_id, chunk_index) → 재실행 시 ON CONFLICT DO NOTHING으로 멱등.
     """
 
-    def __init__(self, *, connection: Any, settings: Any) -> None:
+    def __init__(
+        self,
+        *,
+        connection: Any,
+        settings: Any,
+        storage: ReportStorageClient | None = None,
+    ) -> None:
         self._connection = connection
-        self._s3 = ReportS3Client()
+        self._settings = settings
+        self._storage = storage
+        self._s3 = storage
 
     async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
         task_context = _task_context(task.get("task_context"))
@@ -210,10 +234,11 @@ class ReportEmbedTaskHandler:
         if row is None:
             return {"status": "not_found", "raw_document_id": raw_document_id}
         if row["parsing_status"] != "success" or not row["s3_key"]:
-            # 아직 파싱 전이거나 S3에 PDF가 없음 → 임베딩 불가
+            # 아직 파싱 전이거나 report storage에 PDF가 없음 → 임베딩 불가
             return {"status": "not_ready", "raw_document_id": raw_document_id}
 
-        pdf_bytes = self._s3.download_pdf(row["s3_key"])
+        storage = self._get_storage()
+        pdf_bytes = storage.download_pdf(row["s3_key"])
         full_text = extract_text(pdf_bytes)
         chunks = chunk_text(full_text)
         if not chunks:
@@ -245,6 +270,12 @@ class ReportEmbedTaskHandler:
             "raw_document_id": raw_document_id,
             "chunks": len(chunks),
         }
+
+    def _get_storage(self) -> ReportStorageClient:
+        if self._storage is None:
+            self._storage = get_report_storage_client(self._settings)
+            self._s3 = self._storage
+        return self._storage
 
 
 class ReportAnalyzeTaskHandler:
