@@ -584,6 +584,7 @@ class ReportAnalyzeTaskHandler:
             stock_id=stock_id,
             task_type=ML_INFER,
             priority="batch",
+            source_analysis_result_ids=[analysis_result_id],
             task_context={
                 "stock_code": stock_code,
                 "run_key": "ML",

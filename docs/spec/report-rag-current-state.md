@@ -200,6 +200,9 @@ ReportAnalyzeTaskHandler
 - 분석 결과를 `analysis_results`, `agent_results`에 저장하며, 두 테이블 모두 `source_signal_event_ids`를 보존합니다.
 - Report 분석 결과는 DB 제약에 맞춰 `analysis_mode='quick'`으로 저장합니다.
 - canonical 이벤트 기반 분석이면 후속 `ML_INFER` 작업을 등록해 Aggregator 체인에 합류할 수 있게 합니다.
+  - `processing_queue.source_analysis_result_ids`에 Report `analysis_result_id`를 기록합니다.
+  - `task_context.aggregate_ctx.source_analysis_result_ids`에도 같은 ID를 넣어 `ML_INFER -> META_COMBINE -> AGGREGATE_SIGNAL` 체인에서 통과시킵니다.
+  - `AGGREGATE_SIGNAL`은 이 ID로 Report `agent_results.method_detail.source='REPORT'` 결과를 읽고 `final_signals` 생성에 반영합니다.
 - `REPORT_USE_LLM=true`이고 provider/model/API key가 모두 설정되어 있으면 기존 DART LLM client를 재사용해 Report Agent에 연결합니다.
   - `REPORT_LLM_PROVIDER=gemini`이면 `GEMINI_API_KEY`를 사용합니다.
   - `REPORT_LLM_PROVIDER=openai`이면 `OPENAI_API_KEY`를 사용합니다.
@@ -351,7 +354,9 @@ Invoke-RestMethod `
 3. LLM 연결
    - `REPORT_USE_LLM`, provider, model, timeout, API key 설정은 `ReportAnalyzeTaskHandler`에 연결되어 있습니다. 운영 환경에서 provider/model/key 값을 확정하고 fallback 품질을 점검합니다.
 4. Aggregator 통합
-   - Report `agent_results`는 `source='REPORT'`와 `source_signal_event_ids`를 갖고 ML/aggregation 체인으로 넘겨집니다. DART, PRICE, ALTERNATIVE와 함께 운영 스케줄에서 어떻게 묶을지 정해야 합니다.
+   - Report `agent_results`는 `source='REPORT'`와 `source_signal_event_ids`를 갖고 ML/aggregation 체인으로 넘어갑니다.
+   - Report 단일 source도 `AGGREGATE_SIGNAL`에서 `final_signals` 생성 입력으로 처리됩니다.
+   - 후속 작업은 DART, PRICE, ALTERNATIVE와 같은 날짜/스케줄에서 어떻게 함께 묶을지 운영 정책을 정하는 것입니다.
 5. 레거시 정리
    - `/agents/report`, `ReportAnalyzer`, `ReportCollector`, `vector_store.py` 런타임 경로는 제거되었습니다.
    - `report_raw`, `report_signal` 테이블은 호환성을 위해 DB에 남아 있지만 신규 코드에서 참조하지 않습니다.
