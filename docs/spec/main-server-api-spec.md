@@ -1,910 +1,430 @@
-# Signal Alpha Main Server API 스펙
+# Signal Alpha Main Server API 스펙 (신규 기획)
 
-> 기준일: 2026-06-17 (개정: 2026-06-22 — `GET /api/signals` 목록 엔드포인트 구현 반영)
+> 기준일: 2026-06-24 (전면 재설계 — 포트원 본인인증/소셜연동/리포트 열람 쿼터/단일 구독/관리자)
 > 대상: `services/main-server`
-> 목적: Web 화면 디자인 확정 전, 사용자-facing API와 인증/세션/관심종목/시그널/저널 계약을 먼저 고정한다.
+> 목적: 신규 제품 기획에 맞춘 사용자-facing API 계약을 확정한다. 프론트(생산자=백엔드, 소비자=웹)가 이 문서를 정본으로 참조한다.
+> 연관 문서: [db-schema-spec.md](./db-schema-spec.md), [web-frontend-spec.md](./web-frontend-spec.md), [web-frontend-design.md](./web-frontend-design.md), [final-signal-aggregator-spec.md](./final-signal-aggregator-spec.md), [source-agent-contract.md](./source-agent-contract.md)
 
 ---
 
 ## 1. 범위와 원칙
 
-Main Server는 Web과 외부 클라이언트가 호출하는 사용자-facing API 경계다.
+Main Server는 웹/외부 클라이언트가 호출하는 사용자-facing API 경계다.
 
-Main Server가 담당한다.
+**담당한다**: 본인인증 기반 회원가입/로그인, 소셜 연동/해제, 회원정보·수정·탈퇴, 관심종목, 리포트 열람(쿼터)·소스 상세, 저널, 결제(구독)·취소, 관리자.
 
-- 회원가입, 로그인, 로그아웃, 현재 사용자 조회
-- 관심종목 등록, 조회, 삭제
-- 관심종목 기반 대시보드 조회
-- 시그널 실행 요청과 작업 상태 조회
-- 최신 시그널, 종목별 시그널, 시그널 상세 조회
-- Signal Journal 작성, 조회, 수정, 삭제
-- 읽음 상태, 사용자별 데이터 접근 제어
+**하지 않는다**: 외부 데이터 수집, 소스 분석, LLM/RAG 호출, agent-worker 내부 큐 처리, 최종 시그널 생성. 리포트 본문(`final_signals`)은 agent-worker가 사전 생성하며 Main Server는 **저장본을 읽어** 제공한다.
 
-Main Server가 하지 않는다.
-
-- 외부 데이터 수집
-- 공시/리포트/가격/대체데이터 분석
-- LLM/RAG 호출
-- agent-worker 내부 큐 처리
-- 최종 시그널 생성 로직 보유
-
-수집과 분석은 `agent-worker`가 담당한다. Main Server는 저장된 DB 결과를 읽거나, 내부 worker API에 분석 작업을 요청한다.
-
-모든 사용자-facing 문구와 API 필드는 투자 추천처럼 보이면 안 된다. API 응답은 "데이터 방향성", "소스 간 일치도", "근거", "추가 확인 필요"를 중심으로 구성한다.
+모든 사용자-facing 문구·필드는 투자 추천처럼 보이면 안 된다. "데이터 방향성", "소스 간 일치도", "근거", "추가 확인 필요" 중심으로 표현한다. 금지어: 매수/매도/보유/추천/목표주가/수익률 보장.
 
 ---
 
-## 2. 확정된 MVP 결정
+## 2. 공통 규약
 
-| 항목 | 결정 |
-|---|---|
-| 로그인 방식 | 이메일/비밀번호 |
-| 소셜 로그인 | 후속 확장. 내부 식별자는 항상 `users.id` |
-| 토큰 방식 | access token + refresh token |
-| 세션 저장 | refresh token은 `user_sessions`에 저장 |
-| 로그아웃 | 서버 세션 폐기 |
-| 회원가입 필수값 | `email`, `password`, `agreed_risk=true` |
-| 회원가입 선택값 | `nickname` |
-| 관심종목 제한 | 사용자당 최대 10개 |
-| 관심종목 중복 | `(user_id, stock_id)` 중복 불가 |
-| 대시보드 기준 | 내 관심종목 + 각 종목 최신 시그널 |
-| Source 요약 | `DART`, `PRICE`, `REPORT`, `ALTERNATIVE` 모두 반환 |
-| Source 미수집 상태 | `data_status="missing"` |
-| 시그널 실행 | 비동기 job 방식 |
-| 저널 `user_view` | `watch`, `research_more`, `not_relevant` |
+### 2.1 응답 엔벨로프
 
----
+- 단일 리소스: 객체 직접 반환.
+- 컬렉션: `{ "items": [...] }`. 페이지네이션 시 `{ "total", "page", "size", "items" }`.
+- 사용자-facing 리포트/대시보드/구독/저널 응답에는 **`notice` 필수**:
+  ```json
+  { "notice": "Signal Alpha는 매수·매도 추천이 아니라 데이터 방향성과 근거를 제공하는 서비스입니다." }
+  ```
 
-## 3. 인증/세션 정책
+### 2.2 공통 enum (표준)
 
-### 3.1 토큰
+| 필드 | 허용값 | 비고 |
+|---|---|---|
+| `direction` | `positive` `negative` `neutral` `mixed` `unknown` | **소문자 단일 표준**. 기존 목록 API 의 대문자는 정합화 대상(§14) |
+| `data_status` | `ok` `partial` `missing` `failed` | |
+| `source_agreement` | `HIGH` `MEDIUM` `LOW` | |
+| `warning_level` | `NORMAL` `CAUTION` `WARNING` | |
+| `user_view` | `watch` `research_more` `not_relevant` | buy/sell/hold 금지 |
+| `issued_via` | `free` `subscription` | 리포트 열람 출처 |
 
-| 토큰 | 용도 | 저장 위치 | 권장 만료 |
-|---|---|---|---|
-| access token | API 인증 | 클라이언트 메모리 또는 보안 저장소 | 15~30분 |
-| refresh token | access token 재발급 | 서버 `user_sessions` + 클라이언트 | 7~30일 |
+- `score`: 0–100(API 원본). 프론트가 /10 등 변환.
+- `alignment_rate`: 0–1.
 
-모든 사용자 API는 아래 헤더를 요구한다.
+### 2.3 인증 헤더
 
 ```http
 Authorization: Bearer {access_token}
 ```
 
-비로그인 허용 후보:
+비로그인 허용: `GET /health`, `GET /api/stocks/search`, `GET /api/reports/{stock_code}`(비회원 블라인드), `GET /api/subscriptions/plans`.
 
-- `GET /api/stocks/search`
-- `GET /health`
-
-### 3.2 사용자 세션 테이블
-
-현재 DB에는 일반 사용자용 세션 테이블이 없다. 다음 migration이 필요하다.
-
-```sql
-CREATE TABLE user_sessions (
-    id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    refresh_token_hash TEXT NOT NULL UNIQUE,
-    user_agent TEXT,
-    ip_address INET,
-    expires_at TIMESTAMPTZ NOT NULL,
-    revoked_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX idx_user_sessions_user
-    ON user_sessions (user_id, created_at DESC);
-
-CREATE INDEX idx_user_sessions_expires_at
-    ON user_sessions (expires_at);
-```
-
-refresh token 원문은 저장하지 않고 hash만 저장한다.
-
-### 3.3 비밀번호
-
-- DB에는 `password_hash`만 저장한다.
-- 비밀번호 최소 길이는 8자다.
-- 이메일은 소문자로 normalize한다.
-- `agreed_risk=false`인 회원가입은 거부한다.
-
----
-
-## 4. 공통 응답 규칙
-
-### 4.1 공통 notice
-
-사용자-facing 주요 응답에는 다음 성격의 고지를 포함한다.
+### 2.4 에러 응답 (중앙 레지스트리)
 
 ```json
-{
-  "notice": "Signal Alpha는 매수·매도 추천이 아니라 데이터 방향성과 근거를 제공하는 서비스입니다."
-}
+{ "detail": { "code": "WATCHLIST_ALREADY_EXISTS", "message": "이미 등록된 관심종목입니다." } }
 ```
-
-### 4.2 데이터 상태
-
-```text
-ok
-partial
-missing
-failed
-```
-
-| 값 | 의미 |
-|---|---|
-| `ok` | 표시 가능한 데이터가 정상적으로 존재 |
-| `partial` | 일부 source나 근거가 부족하지만 요약 가능 |
-| `missing` | 해당 source 데이터가 아직 없음 |
-| `failed` | 수집/분석 또는 조회 실패 |
-
-### 4.3 에러 응답
-
-```json
-{
-  "error": {
-    "code": "WATCHLIST_LIMIT_EXCEEDED",
-    "message": "관심종목은 최대 10개까지 등록할 수 있습니다.",
-    "details": {}
-  },
-  "notice": "Signal Alpha는 매수·매도 추천이 아니라 데이터 방향성과 근거를 제공하는 서비스입니다."
-}
-```
-
-대표 에러 코드:
 
 | 코드 | HTTP | 설명 |
 |---|---:|---|
 | `AUTH_REQUIRED` | 401 | 인증 필요 |
-| `INVALID_CREDENTIALS` | 401 | 이메일 또는 비밀번호 불일치 |
 | `TOKEN_EXPIRED` | 401 | access token 만료 |
-| `FORBIDDEN` | 403 | 다른 사용자의 리소스 접근 |
-| `RISK_AGREEMENT_REQUIRED` | 400 | 고지 동의 누락 |
+| `IDENTITY_VERIFICATION_FAILED` | 400 | 포트원 본인인증 검증 실패 |
+| `IDENTITY_ALREADY_REGISTERED` | 409 | 이미 가입된 본인인증(핸드폰) |
+| `USER_NOT_FOUND` | 404 | 가입되지 않은 사용자(로그인 시) |
+| `RISK_AGREEMENT_REQUIRED` | 400 | 위험 고지 동의 누락 |
+| `SOCIAL_ALREADY_LINKED` | 409 | 이미 연동된 소셜 계정 |
+| `SOCIAL_NOT_LINKED` | 404 | 연동되지 않은 소셜 계정(토큰 로그인 실패) |
 | `STOCK_NOT_FOUND` | 404 | 종목 없음 |
-| `WATCHLIST_LIMIT_EXCEEDED` | 400 | 관심종목 10개 초과 |
 | `WATCHLIST_ALREADY_EXISTS` | 409 | 관심종목 중복 |
-| `SIGNAL_NOT_FOUND` | 404 | 시그널 없음 |
-| `JOB_NOT_FOUND` | 404 | 작업 없음 |
-| `WORKER_UNAVAILABLE` | 503 | worker 호출 실패 |
+| `REPORT_NOT_FOUND` | 404 | 발행된 리포트 없음 |
+| `REPORT_QUOTA_EXCEEDED` | 402 | 무료 열람 3회 소진(구독 유도) |
+| `MEMBERSHIP_REQUIRED` | 401 | 비회원이 잠긴 소스 접근 |
+| `JOURNAL_NOT_FOUND` | 404 | 저널 없음 |
+| `PLAN_NOT_FOUND` | 404 | 구독 상품 없음 |
+| `PAYMENT_VERIFICATION_FAILED` | 400 | 포트원 결제 검증 실패(금액/상태 불일치) |
+| `ALREADY_SUBSCRIBED` | 409 | 이미 활성 구독 존재 |
+| `ADMIN_AUTH_REQUIRED` | 401 | 관리자 인증 필요 |
 
 ---
 
-## 5. Auth API
+## 3. 인증·세션 정책 (포트원 본인인증 단일)
 
-### `POST /api/auth/signup`
+회원 아이디/비밀번호는 **DB에 두지 않는다**. 모든 회원 로그인/가입은 포트원 KG이니시스 통합 본인인증으로만 수행한다. 회원가입과 로그인은 **버튼·엔드포인트가 분리**된다.
 
-회원가입과 동시에 로그인 토큰을 발급한다.
+### 3.1 식별 키
 
-Request:
+- `users.phone`: 본인인증으로 확보한 핸드폰. 활성 사용자 유니크.
+- `users.member_code`: **영문 대문자 4 + 숫자 4 = 8자**(예 `ABCD1234`). 핸드폰 의존성 분산용 내부 유니크 식별자. 가입 시 무작위 생성·충돌 재시도(혼동 문자 0/O/1/I 제외 권장).
+- 내부 FK 는 항상 `users.id`.
 
-```json
-{
-  "email": "user@example.com",
-  "password": "password123",
-  "nickname": "사용자",
-  "agreed_risk": true
-}
-```
+### 3.2 토큰
 
-Response:
+| 토큰 | 용도 | 저장 | 만료 |
+|---|---|---|---|
+| access (JWT HS256) | API 인증 | 클라이언트 | 기본 30분 |
+| refresh (랜덤) | access 재발급 | `user_sessions`(해시) + 클라이언트 | 기본 14일 |
 
-```json
-{
-  "user": {
-    "id": 1,
-    "email": "user@example.com",
-    "nickname": "사용자",
-    "agreed_risk": true
-  },
-  "access_token": "...",
-  "refresh_token": "...",
-  "token_type": "bearer",
-  "notice": "Signal Alpha는 매수·매도 추천이 아니라 데이터 방향성과 근거를 제공하는 서비스입니다."
-}
-```
+401 → refresh 1회 시도 → 실패 시 로그아웃.
 
-### `POST /api/auth/login`
+### 3.3 회원가입 `POST /api/auth/signup`
+
+포트원 본인인증 완료 후 받은 `imp_uid` 로 서버가 포트원에 검증 호출 → 핸드폰/CI 확보 → 신규 회원 생성.
 
 Request:
-
 ```json
 {
-  "email": "user@example.com",
-  "password": "password123"
-}
-```
-
-Response는 회원가입과 동일한 토큰 응답 구조를 사용한다.
-
-### `POST /api/auth/refresh`
-
-Request:
-
-```json
-{
-  "refresh_token": "..."
-}
-```
-
-Response:
-
-```json
-{
-  "access_token": "...",
-  "refresh_token": "...",
-  "token_type": "bearer"
-}
-```
-
-refresh 시 기존 refresh token은 폐기하고 새 세션 또는 새 refresh token hash로 교체한다.
-
-### `POST /api/auth/logout`
-
-현재 refresh token 또는 현재 세션을 폐기한다.
-
-Request:
-
-```json
-{
-  "refresh_token": "..."
-}
-```
-
-Response:
-
-```json
-{
-  "status": "ok"
-}
-```
-
-### `GET /api/users/me`
-
-Response:
-
-```json
-{
-  "id": 1,
-  "email": "user@example.com",
+  "imp_uid": "imp_1234567890",
   "nickname": "사용자",
   "agreed_risk": true,
-  "is_verified": false
+  "agreed_terms": ["service", "privacy"]
 }
 ```
+
+동작: ① `imp_uid` 포트원 검증(`verification_type='identity'`) → `portone_verifications` 기록 ② 동일 핸드폰 활성 사용자 있으면 `409 IDENTITY_ALREADY_REGISTERED` ③ `member_code` 발급, `users`(phone) 생성 ④ `terms_agreements` 기록 ⑤ 토큰 발급.
+
+Response:
+```json
+{
+  "user": { "id": 1, "member_code": "ABCD1234", "nickname": "사용자", "phone_masked": "010-****-1234", "agreed_risk": true },
+  "access_token": "...", "refresh_token": "...", "token_type": "bearer",
+  "notice": "..."
+}
+```
+
+### 3.4 로그인 `POST /api/auth/login`
+
+포트원 본인인증으로 기존 회원 식별.
+
+Request: `{ "imp_uid": "imp_..." }`
+동작: `imp_uid` 검증 → 핸드폰으로 활성 사용자 조회 → 없으면 `404 USER_NOT_FOUND`(가입 유도) → 토큰 발급(§3.3 응답과 동일 구조).
+
+### 3.5 `POST /api/auth/refresh` / `POST /api/auth/logout`
+
+- refresh: `{ "refresh_token" }` → 새 access/refresh. 기존 refresh 폐기.
+- logout: `{ "refresh_token" }` → 세션 `revoked_at`. 소셜 연동 사용자는 §4.4 사별 로그아웃 동반.
+
+---
+
+## 4. 소셜 로그인 연동 API
+
+소셜은 **편의 로그인 수단**이다. 최초 가입은 반드시 본인인증으로 한 뒤, **로그인된 상태에서만** 소셜 계정을 연동한다. 연동 후에는 본인인증 없이 소셜 토큰으로 로그인할 수 있다.
+
+`provider ∈ { naver, google, kakao }`.
+
+### 4.1 연동 시작/콜백 `POST /api/auth/social/link/{provider}` (인증 필요)
+
+로그인 상태에서 소셜 OAuth 완료 후 콜백.
+Request: `{ "code": "<oauth_code>", "redirect_uri": "..." }`
+동작: provider 토큰 교환 → `provider_user_id` 획득 → 이미 다른 회원에 연동돼 있으면 `409 SOCIAL_ALREADY_LINKED` → `social_accounts` upsert(access/refresh 토큰 저장).
+Response: `{ "provider": "naver", "linked": true, "linked_at": "..." }`
+
+### 4.2 소셜 토큰 로그인 `POST /api/auth/social/login/{provider}` (비인증)
+
+외부에서 소셜 로그인 진입. provider 토큰 교환 → `provider_user_id` 로 `social_accounts` 조회. **연동된 회원이 없으면** `404 SOCIAL_NOT_LINKED`(본인인증 가입 유도). 있으면 해당 회원으로 토큰 발급.
+
+### 4.3 연동 해제 `DELETE /api/auth/social/{provider}` (인증 필요)
+
+`social_accounts` 의 토큰 삭제·행 제거 → 이후 해당 provider 토큰 로그인 차단.
+Response: `{ "provider": "kakao", "linked": false }`
+
+### 4.4 로그아웃 사별 처리
+
+서비스 로그아웃 시 연동된 provider 의 정책에 맞춰 처리한다(네이버/구글/카카오 요구 조건 상이). 최소 우리 세션 폐기 + provider 토큰 만료/철회 호출. 상세 분기는 구현 노트로 관리한다.
+
+### 4.5 연동 목록 `GET /api/auth/social` (인증 필요)
+
+`{ "items": [ { "provider": "naver", "linked": true, "linked_at": "..." }, { "provider": "google", "linked": false }, { "provider": "kakao", "linked": false } ] }`
+
+---
+
+## 5. 회원(Users) API
+
+### `GET /api/users/me`
+```json
+{ "id": 1, "member_code": "ABCD1234", "nickname": "사용자", "phone_masked": "010-****-1234", "agreed_risk": true, "subscription_active": false }
+```
+
+### `PATCH /api/users/me`
+수정 가능: `nickname`. (핸드폰/본인인증 정보는 재인증 절차로만 변경 — 후속.)
+Request: `{ "nickname": "새닉네임" }`
+
+### `DELETE /api/users/me` (회원탈퇴)
+soft delete(`users.deleted_at`). 세션 전체 폐기, 소셜 토큰 삭제. 동일 핸드폰 재가입은 partial unique 로 허용.
+Response: `{ "status": "deleted" }`
 
 ---
 
 ## 6. Stock API
 
-### `GET /api/stocks/search?query={query}`
-
-종목명 또는 종목코드로 검색한다. MVP에서는 `stocks` 테이블에 존재하는 종목만 반환한다.
-
-Response:
-
+### `GET /api/stocks/search?query={query}&limit=20`
+종목명/코드 검색(메인 검색 → 종목 매칭). 비로그인 허용.
 ```json
-{
-  "items": [
-    {
-      "id": 1,
-      "stock_code": "005930",
-      "stock_name": "삼성전자",
-      "market": "KOSPI",
-      "sector": "반도체"
-    }
-  ]
-}
+{ "items": [ { "id": 1, "stock_code": "005930", "stock_name": "삼성전자", "market": "KOSPI", "sector": "반도체" } ] }
 ```
+
+### `GET /api/stocks?limit=100`
+검색 자동완성/시드용 목록.
 
 ---
 
 ## 7. Watchlist API
 
-### 정책
+관심종목은 **회원/유료 무관 무제한**(기존 10개 한도 폐기). `(user_id, stock_id)` 중복 불가.
 
-- 로그인 사용자만 사용 가능하다.
-- 최대 10개까지 등록할 수 있다.
-- 같은 사용자의 같은 종목은 중복 등록할 수 없다.
-- `stocks`에 존재하는 종목만 등록할 수 있다.
-- 기본 정렬은 최근 추가순이다.
-- 알림 설정은 MVP에서 기본 `false`다.
-
-한도 정책 (확정, 2026-06-23):
-
-- MVP는 **등급 무관 고정 10개**다. `app/api/routes/watchlists.py`의 `WATCHLIST_LIMIT = 10` 상수가 **단일 출처**이며, 응답 `limit`·차단·안내 메시지가 모두 이 값을 참조한다(메시지 동적화 — 하드코딩 숫자 제거).
-- 초과 시 `POST /api/watchlists`는 `400 WATCHLIST_LIMIT_EXCEEDED`와 `"관심종목은 최대 {WATCHLIST_LIMIT}개까지 등록할 수 있습니다."`를 반환한다. 프론트는 이 메시지를 토스트로 노출한다.
-- 등급별(plan `max_watchlist`: free 3 / pro 20 / premium 100) 적용은 **후속**이다. 적용 시 `WATCHLIST_LIMIT`를 사용자 활성 구독 기준 resolver로 대체한다.
-
-현재 DB/Repository 차이:
-
-- `watchlists.notification_enabled` DB 기본값은 현재 `TRUE`다.
-- `UserSignalRepository.add_watchlist()` 기본값도 현재 `True`다.
-- MVP 정책을 맞추려면 migration 또는 repository 기본값 조정이 필요하다.
-
-### `GET /api/watchlists`
-
-Response:
-
+### `GET /api/watchlists` (인증)
 ```json
-{
-  "limit": 10,
-  "count": 2,
-  "items": [
-    {
-      "stock": {
-        "id": 1,
-        "stock_code": "005930",
-        "stock_name": "삼성전자",
-        "market": "KOSPI",
-        "sector": "반도체"
-      },
-      "notification_enabled": false,
-      "created_at": "2026-06-17T10:00:00+09:00"
-    }
-  ]
-}
+{ "count": 2, "items": [ { "stock": { "id": 1, "stock_code": "005930", "stock_name": "삼성전자", "market": "KOSPI", "sector": "반도체" }, "created_at": "2026-06-24T10:00:00+09:00" } ] }
 ```
+> `limit` 필드는 더 이상 반환하지 않는다(무제한).
 
-### `POST /api/watchlists`
+### `POST /api/watchlists` (인증)
+Request: `{ "stock_code": "005930" }` → 중복 시 `409 WATCHLIST_ALREADY_EXISTS`.
 
-Request:
-
-```json
-{
-  "stock_code": "005930"
-}
-```
-
-Response:
-
-```json
-{
-  "stock": {
-    "id": 1,
-    "stock_code": "005930",
-    "stock_name": "삼성전자",
-    "market": "KOSPI"
-  },
-  "notification_enabled": false,
-  "created_at": "2026-06-17T10:00:00+09:00"
-}
-```
-
-### `DELETE /api/watchlists/{stock_code}`
-
-Response:
-
-```json
-{
-  "status": "deleted"
-}
-```
+### `DELETE /api/watchlists/{stock_code}` (인증)
+`{ "status": "deleted" }`
 
 ---
 
-## 8. Dashboard API
+## 8. 리포트(Report) API — 핵심
 
-### `GET /api/dashboard`
+리포트는 종목당 **현재 버전**(`final_signals.is_current`)을 백엔드가 사전 생성·저장한 것을 제공한다. 5개 연결점(주식정보/DART/채용공고/네이버키워드/증권사리포트) 각각의 LLM 요약 + 종합점수로 구성되며, 각 연결점은 소스 상세 페이지로 연결된다.
 
-내 관심종목과 각 종목의 최신 시그널 요약을 한 번에 반환한다.
+### 8.1 리포트 조회 `GET /api/reports/{stock_code}`
 
-Response:
+비로그인 허용(비회원=블라인드). 로그인 시 잠금 해제 상태에 따라 전체/요약을 반환.
 
+회원·언락(또는 구독) 응답:
 ```json
 {
-  "user": {
-    "id": 1,
-    "email": "user@example.com",
-    "nickname": "사용자"
-  },
-  "watchlist_limit": 10,
-  "watchlist_count": 3,
-  "items": [
-    {
-      "stock": {
-        "id": 1,
-        "stock_code": "005930",
-        "stock_name": "삼성전자",
-        "market": "KOSPI"
-      },
-      "latest_signal": {
-        "signal_id": 100,
-        "direction": "positive",
-        "score": 72,
-        "alignment_rate": 0.8,
-        "data_status": "ok",
-        "needs_review": false,
-        "summary": "공식 공시와 가격 데이터에서 같은 방향성이 확인되었습니다.",
-        "source_count": 2,
-        "updated_at": "2026-06-17T10:00:00+09:00"
-      },
-      "source_summary": [
-        {
-          "source": "DART",
-          "direction": "neutral",
-          "score": 50,
-          "data_status": "ok"
-        },
-        {
-          "source": "PRICE",
-          "direction": "positive",
-          "score": 72,
-          "data_status": "ok"
-        },
-        {
-          "source": "REPORT",
-          "direction": "unknown",
-          "score": null,
-          "data_status": "missing"
-        },
-        {
-          "source": "ALTERNATIVE",
-          "direction": "unknown",
-          "score": null,
-          "data_status": "missing"
-        }
-      ],
-      "journal": {
-        "has_journal": true,
-        "latest_journal_id": 20
-      }
-    }
-  ],
-  "notice": "Signal Alpha는 매수·매도 추천이 아니라 데이터 방향성과 근거를 제공하는 서비스입니다."
-}
-```
-
-`source_summary`는 항상 `DART`, `PRICE`, `REPORT`, `ALTERNATIVE` 네 항목을 반환한다. 데이터가 없으면 `direction="unknown"`, `score=null`, `data_status="missing"`으로 둔다.
-
-API 응답에는 `confidence`라는 필드를 노출하지 않는다. 내부 DB에 유사 필드가 있어도 사용자-facing 응답에서는 `score`, `alignment_rate`, `data_status`, `needs_review` 중심으로 표현한다.
-
----
-
-## 9. Signal API
-
-### `POST /api/signals/run/{stock_code}`
-
-비동기 분석 job을 생성한다. 즉시 최종 결과를 반환하지 않는다.
-
-동작:
-
-1. 사용자 인증을 확인한다.
-2. `stocks`에서 종목을 찾는다.
-3. `analysis_requests`에 job을 생성한다.
-4. agent-worker 내부 API에 수집/분석 작업을 요청한다.
-5. `job_id`를 반환한다.
-
-Response:
-
-```json
-{
-  "job_id": 123,
-  "stock_code": "005930",
-  "status": "queued",
-  "message": "분석 요청이 등록되었습니다.",
-  "notice": "이 결과는 투자 추천이 아니라 데이터 방향성과 근거 확인을 위한 정보입니다."
-}
-```
-
-현재 DB/Repository 차이:
-
-- `analysis_requests.status`는 현재 `pending`, `running`, `completed`, `failed`만 허용한다.
-- API 확정 상태값은 `queued`, `running`, `completed`, `partial`, `failed`, `cancelled`다.
-- 구현 시 DB CHECK 제약을 확장하거나 API에서 `pending -> queued`로 매핑해야 한다.
-
-### `GET /api/jobs/{job_id}`
-
-Response:
-
-```json
-{
-  "job_id": 123,
-  "stock_code": "005930",
-  "status": "running",
-  "progress": {
-    "DART": "completed",
-    "PRICE": "running",
-    "REPORT": "pending",
-    "ALTERNATIVE": "missing"
-  },
-  "latest_signal_id": null,
-  "error_message": null,
-  "notice": "Signal Alpha는 매수·매도 추천이 아니라 데이터 방향성과 근거를 제공하는 서비스입니다."
-}
-```
-
-### `GET /api/signals` (구현됨, 2026-06-22)
-
-현재 발행(`is_published`) 중인 최신 시그널 목록을 **종목당 1개**로 반환한다. 인증 필요.
-
-`final_signals`는 대체데이터 소스별(`run_key` = HIRING/PATENT/DATALAB)로 **종목당 여러 행**(모델 B)이
-적재되므로, 이 엔드포인트가 **API 레이어에서 `stock_id` 기준 런타임 그룹핑**해 종목당 1개로 응집한다
-(DB 스키마/리네임 변경 없음 — "모델 A shape"으로 노출).
-
-Query:
-
-```text
-stock_ids=1,2,3      # 옵션. 콤마 구분 정수(관심종목 필터). 파싱 후 빈 목록이면 [] 반환
-```
-
-> **필터 구현 주의:** 스펙 초안의 `watchlist_only=true`(서버가 내 관심종목으로 자동 필터)는 **아직 미구현**이다.
-> 현재는 클라이언트(프론트)가 자신의 관심종목 `stock_id` 들을 모아 `stock_ids` 로 **명시 전달**하는 구조다.
-> 서버측 watchlist 자동 필터가 필요해지면 별도 추가한다.
-
-집계 규칙(종목 내 소스 행들을 1개로 합성):
-
-| 필드 | 규칙 |
-|---|---|
-| `direction` | 소스 방향 다수결(동률 → `NEUTRAL`). **대문자 반환** |
-| `score` | 가용 소스 `final_score`(0~100) 평균 |
-| `alignment_rate` | 소스 `consensus_score`(폴백 `confidence`) 평균 ÷ 100 |
-| `source_agreement` | 소스 중 **가장 보수적**(낮은 합의: LOW>MEDIUM>HIGH) |
-| `warning_level` / `data_status` | 가장 보수적 채택(WARNING→`failed`, CAUTION/needs_review→`partial`) |
-| `summary` | 기준행(최신 published) 요약 |
-| `score_breakdown.alternative.{hiring,patent,datalab}` | 각 소스 `{direction(대문자), score}` 또는 `null` |
-
-Response (배열):
-
-```json
-[
-  {
-    "stock_id": 10,
-    "stock": {"id": 10, "stock_code": "005930", "stock_name": "삼성전자", "market": "KOSPI"},
-    "direction": "POSITIVE",
-    "score": 75.0,
-    "alignment_rate": 0.6,
-    "source_agreement": "LOW",
-    "warning_level": "WARNING",
-    "data_status": "failed",
-    "summary": "채용 신호 요약",
-    "score_breakdown": {
-      "alternative": {
-        "hiring":  {"direction": "POSITIVE", "score": 80},
-        "patent":  {"direction": "NEUTRAL",  "score": 50},
-        "datalab": {"direction": "POSITIVE", "score": 95}
-      },
-      "dart": null,
-      "report": null
-    }
-  }
-]
-```
-
-> **direction 대소문자 주의:** 본 list 엔드포인트는 프론트(#335)의 `Direction`(대문자) 정합을 위해
-> **대문자**(`POSITIVE`/`NEGATIVE`/`NEUTRAL`/`MIXED`)로 반환한다. 반면 아래 상세(`GET /api/signals/{signal_id}`)와
-> dashboard 예시는 현재 **소문자**(`final_signals.signal` 원형) — 향후 통일 대상.
-> 이 엔드포인트가 스펙상 "최신 시그널 목록(`/api/signals/latest`)" 역할을 대신한다.
-
-### `GET /api/signals/by-stock/{stock_code}` (구현됨, 2026-06-23)
-
-종목별 최신 published 시그널 요약을 반환한다. 인증 필요.
-기존 `GET /signals/{ticker}`는 호환 라우트로 유지한다.
-
-Response 주요 필드:
-
-```json
-{
-  "signal_id": 100,
-  "stock": {
-    "id": 10,
-    "stock_code": "005930",
-    "stock_name": "삼성전자",
-    "market": "KOSPI"
-  },
-  "direction": "neutral",
-  "score": 50,
-  "alignment_rate": 0.5,
-  "source_agreement": "LOW",
-  "warning_level": "CAUTION",
-  "data_status": "partial",
-  "needs_review": true,
-  "summary": "DART 데이터 방향성은 중립입니다.",
-  "updated_at": "2026-06-23T00:00:00+09:00",
-  "notice": "Signal Alpha는 매수·매도 추천이 아니라 데이터 방향성과 근거를 제공하는 서비스입니다."
-}
-```
-
-### `GET /api/signals/{signal_id}`
-
-시그널 상세를 반환한다.
-
-Response 주요 필드:
-
-```json
-{
-  "signal_id": 100,
-  "stock": {
-    "stock_code": "005930",
-    "stock_name": "삼성전자"
-  },
+  "stock": { "id": 10, "stock_code": "005930", "stock_name": "삼성전자", "market": "KOSPI", "sector": "반도체" },
+  "report_version": { "final_signal_id": 100, "run_key": "AGGREGATED", "signal_date": "2026-06-24", "updated_at": "2026-06-24T08:00:00+09:00" },
   "direction": "positive",
   "score": 72,
   "alignment_rate": 0.8,
-  "data_status": "partial",
-  "needs_review": true,
-  "summary": "여러 데이터 소스에서 유사한 방향성이 관찰되지만 일부 source는 추가 확인이 필요합니다.",
-  "positive_evidence": [],
-  "caution_evidence": [],
+  "source_agreement": "MEDIUM",
+  "warning_level": "NORMAL",
+  "data_status": "ok",
+  "summary": "여러 데이터 소스에서 유사한 방향성이 관찰됩니다.",
   "sources": [
-    {
-      "source": "DART",
-      "direction": "neutral",
-      "score": 50,
-      "data_status": "ok",
-      "summary": "공식 공시 이벤트가 확인되었습니다.",
-      "evidence": []
-    }
+    { "source": "price",   "direction": "positive", "score": 70, "data_status": "ok",      "summary": "...", "locked": false },
+    { "source": "dart",    "direction": "neutral",  "score": 50, "data_status": "ok",      "summary": "...", "locked": false },
+    { "source": "hiring",  "direction": "positive", "score": 80, "data_status": "ok",      "summary": "...", "locked": false },
+    { "source": "datalab", "direction": "positive", "score": 65, "data_status": "ok",      "summary": "...", "locked": false },
+    { "source": "report",  "direction": "neutral",  "score": null, "data_status": "missing","summary": null,  "locked": false }
   ],
-  "notice": "Signal Alpha는 매수·매도 추천이 아니라 데이터 방향성과 근거를 제공하는 서비스입니다."
+  "access": { "unlocked": true, "issued_via": "free", "is_member": true },
+  "notice": "..."
 }
 ```
 
----
-
-## 10. Journal API
-
-Signal Journal은 사용자 복기 도구다. 투자 행동 추천이나 성과 평가처럼 표현하지 않는다.
-
-### `user_view`
-
-| 값 | 화면 표시 | 의미 |
-|---|---|---|
-| `watch` | 계속 관찰 | 이 데이터 방향성을 계속 관찰 대상으로 둔다 |
-| `research_more` | 추가 확인 필요 | 더 확인할 근거가 필요하다 |
-| `not_relevant` | 낮은 관련도 | 현재 사용자 관심 기준에서는 중요도가 낮다 |
-
-사용하지 않는 값:
-
-```text
-buy
-sell
-hold
-entry
-exit
-target_price
-```
-
-DB 반영 상태:
-
-- `018_signal_journal_mvp_policy.sql`에서 `signal_journals.user_view` CHECK를
-  `watch`, `research_more`, `not_relevant`로 변경한다.
-- 기존 `bullish`, `bearish`, `neutral` 값은 migration에서 `watch`로 정리한다.
-- `signal_journals.tags JSONB NOT NULL DEFAULT '[]'`를 추가한다.
-
-### `GET /api/journals`
-
-Query 후보:
-
-```text
-stock_code=005930
-limit=20
-```
-
-### `POST /api/journals`
-
-Request:
-
+#### 비회원 블라인드 규칙
+비로그인 호출 시: `dart`·`datalab` 소스만 전체 공개. 그 외(`price`/`hiring`/`report`)와 **종합 `direction`/`score`/`alignment_rate`/`summary`** 는 마스킹.
 ```json
 {
-  "stock_code": "005930",
-  "signal_id": 100,
-  "user_view": "research_more",
-  "memo": "DART 공시는 확인했지만 Report 데이터가 아직 없어 추가 확인이 필요함.",
-  "tags": ["DART", "추가확인"]
+  "stock": { "...": "..." },
+  "direction": null, "score": null, "alignment_rate": null, "summary": null,
+  "sources": [
+    { "source": "dart",    "direction": "neutral",  "score": 50, "summary": "...", "locked": false },
+    { "source": "datalab", "direction": "positive", "score": 65, "summary": "...", "locked": false },
+    { "source": "price",   "locked": true },
+    { "source": "hiring",  "locked": true },
+    { "source": "report",  "locked": true }
+  ],
+  "access": { "unlocked": false, "is_member": false },
+  "notice": "전체 리포트는 로그인 후 무료 3회까지 열람할 수 있습니다."
 }
 ```
 
-Response:
+회원이지만 **현재 버전 미언락**일 때도 같은 블라인드 형태(단, `dart`/`datalab` + 안내) + `access.is_member=true` 로 반환하고, 프론트가 "발행(열람)" 버튼을 노출한다.
 
-```json
-{
-  "journal_id": 20,
-  "stock_code": "005930",
-  "signal_id": 100,
-  "user_view": "research_more",
-  "memo": "DART 공시는 확인했지만 Report 데이터가 아직 없어 추가 확인이 필요함.",
-  "created_at": "2026-06-17T10:00:00+09:00"
-}
-```
+### 8.2 열람(언락) `POST /api/reports/{stock_code}/issue` (인증)
 
-### `GET /api/journals/{journal_id}`
-
-사용자 본인의 저널만 조회할 수 있다.
-
-### `PATCH /api/journals/{journal_id}`
-
-수정 가능 필드:
-
-- `user_view`
-- `memo`
-- `tags`
-
-### `DELETE /api/journals/{journal_id}`
-
-MVP에서는 hard delete 또는 soft delete 중 하나를 선택해야 한다. 현재 `signal_journals`에는 `deleted_at`이 없으므로 hard delete가 단순하다. 감사/복기 이력을 보존하려면 후속 migration으로 `deleted_at`을 추가한다.
-
----
-
-## 11. Read State API
-
-읽음 상태는 대시보드/상세 화면의 사용성을 위한 사용자별 상태 기록이다.
-
-```text
-POST /api/signals/{signal_id}/read
-```
+현재 버전 리포트를 잠금 해제한다. **즉시 응답**(비동기 job 아님).
 
 동작:
+1. 종목의 현재 버전 `final_signal_id` 조회(없으면 `404 REPORT_NOT_FOUND`).
+2. `report_issuances` 에 `(user_id, final_signal_id)` 존재 → 이미 언락(무차감) → 200.
+3. 미존재 시: 구독 active 면 `issued_via='subscription'` 으로 기록(무료 불변). 비구독이면 무료 잔여 확인 → 0 이면 `402 REPORT_QUOTA_EXCEEDED`(구독 유도), >0 이면 `issued_via='free'` 기록.
+4. 전체 리포트(§8.1 언락 형태) 반환.
 
-- `user_signal_reads`에 upsert한다.
-- 상세 화면 진입 시 자동 호출하거나 명시 버튼으로 호출한다.
+Response: §8.1 회원 언락 응답 + `"access": { "unlocked": true, "issued_via": "free", "free_remaining": 2 }`.
 
-Response:
+> 동일 버전 재열람은 무차감. 실시간 변동으로 **새 버전**이 생기면 새 `final_signal_id` 이므로 다시 1회 차감.
 
+### 8.3 쿼터 조회 `GET /api/reports/quota` (인증)
+```json
+{ "free_quota": 3, "free_used": 1, "free_remaining": 2, "subscription_active": false, "notice": "..." }
+```
+
+### 8.4 소스 상세 `GET /api/reports/{stock_code}/sources/{source}`
+
+`source ∈ { price, dart, hiring, datalab, report }`. 해당 원천 데이터 상세 + LLM 상세 요약. 클릭 상세 페이지용.
+
+접근 규칙: 비회원은 `dart`·`datalab` 만 200, 나머지는 `401 MEMBERSHIP_REQUIRED`. 회원은 현재 버전 언락(또는 구독) 시 전체, 미언락이면 `dart`/`datalab` 외 `402/blinded`.
+
+예(`dart`):
 ```json
 {
-  "status": "read",
-  "signal_id": 100,
-  "read_at": "2026-06-23T00:00:00+09:00",
-  "read_date": "2026-06-23",
-  "notice": "Signal Alpha는 매수·매도 추천이 아니라 데이터 방향성과 근거를 제공하는 서비스입니다."
+  "stock": { "stock_code": "005930", "stock_name": "삼성전자" },
+  "source": "dart",
+  "direction": "neutral", "score": 50, "data_status": "ok",
+  "summary": "최근 공시에서 중립적 신호가 확인됩니다.",
+  "items": [
+    { "title": "주요사항보고서", "event_date": "2026-06-20", "disclosure_type": "정정공시", "evidence_url": "https://dart.fss.or.kr/...", "is_official": true }
+  ],
+  "notice": "..."
 }
 ```
+소스별 `items` 스키마는 원천 테이블을 따른다(price=시세/재무 지표, hiring=공고수/증감, datalab=검색지수/급등, report=증권사/목표가/의견). 매핑은 [db-schema-spec.md](./db-schema-spec.md) §6.
+
+### 8.5 레거시 호환
+
+`GET /signals/{ticker}` 는 호환 라우트로 유지(원형 `final_signals` 행). 신규 화면은 `GET /api/reports/...` 를 사용한다.
 
 ---
 
-## 12. Worker 연동 정책
+## 9. 저널(Journal) API
 
-Main Server는 agent-worker를 직접 대체하지 않는다.
+발행(열람)한 리포트를 저장해 투자 추이를 기록한다. 발행 시점 스냅샷(`final_signal_id`, score/방향/시점)을 함께 저장.
 
-`POST /api/signals/run/{stock_code}`에서 가능한 worker 호출 방식:
-
-1. agent-worker queue enqueue API 호출
-2. DART/PRICE/REPORT/ALTERNATIVE 작업 등록
-3. `analysis_requests`와 내부 queue task id를 연결할 수 있는 메타데이터 저장
-
-MVP에서는 source별 수집/분석 주기가 다르므로, `job.status=partial`을 허용한다.
-
-예:
-
-```text
-DART completed
-PRICE completed
-REPORT missing
-ALTERNATIVE missing
-=> job.status = partial
-=> dashboard에는 data_status="partial" 또는 source별 "missing" 노출
+### `GET /api/journals?stock_code=&limit=20` (인증)
+### `POST /api/journals` (인증)
+```json
+{ "stock_code": "005930", "final_signal_id": 100, "user_view": "research_more", "memo": "Report 데이터 없어 추가 확인", "tags": ["DART"] }
 ```
+- `user_view` 화이트리스트(watch/research_more/not_relevant). buy/sell/hold → `400 INVALID_USER_VIEW`.
+### `GET|PATCH|DELETE /api/journals/{journal_id}` (인증, 본인만)
+PATCH 수정: `user_view`, `memo`, `tags`. DELETE: hard delete(MVP).
 
-worker 실패 시:
+---
 
-- 기존 최신 시그널이 있으면 fallback으로 반환
-- 없으면 `data_status="failed"`와 명확한 오류 메시지 반환
-- 재시도 가능 여부는 내부 로그/상태에 남긴다
+## 10. 구독·결제(Subscription/Payment) API
+
+단일 상품 `monthly_9900`(월 9,900원, 무제한 열람). 포트원 KG이니시스 일반결제(결제창 + API).
+
+### `GET /api/subscriptions/plans` (비인증)
+활성 플랜만. `{ "plans": [ { "plan_type": "monthly_9900", "plan_display_name": "월 구독", "price_monthly": 9900, "has_alt_data": true, "has_detail_report": true } ] }`
+
+### `GET /api/subscriptions/me` (인증)
+`{ "subscription": { "plan_type": "monthly_9900", "status": "active", "started_at": "...", "expires_at": "..." } | null, "notice": "..." }`
+
+### `POST /api/payments/checkout` (인증)
+결제 시작. `merchant_uid` 생성·반환(포트원 결제창 파라미터).
+Response: `{ "merchant_uid": "sa_pay_20260624_...", "amount": 9900, "name": "Signal Alpha 월 구독", "pg": "html5_inicis" }`
+
+### `POST /api/payments/confirm` (인증)
+결제창 성공 후 `imp_uid` 서버 검증.
+Request: `{ "imp_uid": "imp_...", "merchant_uid": "sa_pay_..." }`
+동작: 포트원 결제건 조회 → **금액(9900)·상태(paid) 검증** 실패 시 `400 PAYMENT_VERIFICATION_FAILED` → `portone_verifications(verification_type='payment')` 기록 → 활성 구독 있으면 `409 ALREADY_SUBSCRIBED` → `signal_subscriptions` active·`expires_at = now()+30d` 생성.
+Response: `{ "subscription": { "plan_type": "monthly_9900", "status": "active", "expires_at": "..." }, "notice": "..." }`
+
+### `POST /api/payments/cancel` (인증)
+포트원 결제 취소 API 호출 + 구독 `status='cancelled'`, `cancelled_at`.
+> 구독 종료/취소 후에도 **무료 잔여분(3회 중 미사용분)은 그대로 사용 가능**(`report_issuances.issued_via='free'` 카운트만으로 잔여 도출).
+
+---
+
+## 11. 관리자(Admin) API
+
+관리자는 하드코딩 계정(`admin_accounts`)으로만 로그인한다. 회원가입 없음. 별도 세션 토큰(`admin_sessions`).
+
+| 메서드 | 경로 | 설명 |
+|---|---|---|
+| POST | `/api/admin/login` | `{email,password}` → `{session_token, expires_at, admin}` |
+| POST | `/api/admin/logout` | 세션 폐기 |
+| GET | `/api/admin/users?page=1&size=20&q=` | 회원 목록(페이지네이션·검색) |
+| GET | `/api/admin/users/{user_id}` | 회원 상세(구독 포함) |
+| POST | `/api/admin/users/{user_id}/subscription` | 구독 등록 |
+| PUT | `/api/admin/users/{user_id}/subscription` | 구독 수정 |
+| DELETE | `/api/admin/users/{user_id}/subscription` | 구독 취소 |
+| GET | `/api/admin/stats` | 총매출/MRR/구독자수 |
+
+관리자 API 는 `Authorization: Bearer {session_token}` 사용, 일반 사용자 JWT 와 구분.
+
+---
+
+## 12. 분석 상태(Analytics) API
+
+`GET /api/analytics/{ticker}/status` — 배치 파이프라인 신선도 표시용(선택). 리포트 열람 모델은 비동기 job 이 아니므로 폴링은 선택적이다.
+```json
+{ "ticker": "005930", "overall": "success", "stages": [ { "task_type": "AGGREGATE", "status": "success", "updated_at": "..." } ], "notice": "..." }
+```
 
 ---
 
 ## 13. DB 변경 요약
 
-필수 변경:
+상세는 [db-schema-spec.md](./db-schema-spec.md). 신규 마이그레이션:
 
-| 변경 | 이유 |
+| 파일 | 변경 |
 |---|---|
-| `user_sessions` 추가 | refresh token 서버 세션 관리 |
-| `signal_journals.user_view` CHECK 변경 | `watch`, `research_more`, `not_relevant` 사용. `018_signal_journal_mvp_policy.sql` 반영 |
-| 무료/MVP 플랜 `max_watchlist=10` 반영 | 관심종목 최대 10개 정책 |
-| watchlist 기본 알림 false 반영 | MVP 알림 비활성 정책 |
-| `signal_journals.tags JSONB` 추가 | 저널 태그 저장. `018_signal_journal_mvp_policy.sql` 반영 |
+| `019_users_phone.sql` | `users.phone` + 활성 사용자 partial unique |
+| `020_report_issuances.sql` | 리포트 열람 쿼터 테이블(`(user_id, final_signal_id)` 멱등, `issued_via`) |
+| `021_subscription_single_product.sql` | 단일 상품 `monthly_9900`, `free` 무제한, `pro`/`premium` 비활성 |
 
-검토 변경:
-
-| 변경 | 이유 |
-|---|---|
-| `analysis_requests.status` CHECK 확장 | `queued`, `partial`, `cancelled` 표현 |
-| `signal_journals.deleted_at` 추가 | 저널 soft delete가 필요하면 추가 |
-
-이미 있는 테이블:
-
-- `users`
-- `social_accounts`
-- `watchlists`
-- `signal_journals`
-- `user_signal_reads`
-- `analysis_requests`
-- `final_signals`
+재사용(변경 없음): `portone_verifications`, `social_accounts`, `terms_agreements`, `signal_subscriptions`, `subscription_plans`, `admin_*`, `user_sessions`, `watchlists`, `signal_journals`, `final_signals`, 원천 raw 테이블.
 
 ---
 
-## 14. 구현 우선순위
+## 14. 구현 정합화 과제 (현 코드 → 목표)
 
-### Phase 1 — Auth
-
-1. `user_sessions` migration
-2. password hashing/token utility
-3. `POST /api/auth/signup`
-4. `POST /api/auth/login`
-5. `POST /api/auth/refresh`
-6. `POST /api/auth/logout`
-7. `GET /api/users/me`
-
-### Phase 2 — Watchlist + Stock
-
-1. stock search
-2. watchlist add/list/delete
-3. watchlist limit 10 검증
-4. auth dependency 적용
-
-### Phase 3 — Dashboard + Signal Read
-
-1. dashboard response assembler
-2. latest signal by watchlist
-3. source summary missing 처리
-4. signal detail
-5. read state - 구현됨
-
-### Phase 4 — Analysis Job
-
-1. signal run request
-2. analysis job status
-3. agent-worker enqueue client
-4. fallback/partial 처리
-
-### Phase 5 — Journal
-
-1. journal create/list/detail
-2. journal patch/delete
-3. `user_view` 정책 적용
+- **교체**
+  - `auth.py`: 이메일/비밀번호 가입·로그인 제거 → 포트원 본인인증 가입/로그인(`imp_uid` 검증). 회원가입/로그인 엔드포인트 분리.
+  - `watchlists.py`: `WATCHLIST_LIMIT=10` 및 한도 검사 제거(무제한). 응답에서 `limit` 제거.
+- **신규**
+  - 소셜 연동/토큰 로그인/해제(`/api/auth/social/*`).
+  - 리포트 도메인(`/api/reports/*`): 조회·열람(쿼터)·소스 상세·비회원 블라인드 + `report_issuances` 리포지토리.
+  - 결제(`/api/payments/*`): 포트원 결제 검증/취소.
+  - `PATCH /api/users/me`, `DELETE /api/users/me`(탈퇴), `member_code`(영문4+숫자4) 생성기, `phone` 저장.
+  - 관리자 구독 등록/수정/취소, `POST /api/admin/logout`.
+- **표준화**
+  - `direction` 소문자 단일화(기존 `GET /api/signals` 목록 대문자 정리).
+  - 사용자-facing 응답 `notice` 필수.
 
 ---
 
-## 15. 테스트 기준
+## 15. 구현 우선순위 / 테스트 기준
 
-Auth:
+**우선순위**: ① 본인인증 가입/로그인 + 토큰 → ② 관심종목(무제한) → ③ 리포트 조회/열람/쿼터 + 비회원 블라인드 → ④ 소스 상세 5종 → ⑤ 결제 검증/취소 → ⑥ 소셜 연동/해제 → ⑦ 저널 → ⑧ 관리자.
 
-- 회원가입 성공
-- `agreed_risk=false` 거부
-- 중복 email 거부
-- 로그인 성공/실패
-- refresh token 재발급
-- logout 후 refresh 거부
-
-Watchlist:
-
-- 로그인 필요
-- 종목 추가
-- 중복 추가 거부 또는 idempotent 처리
-- 10개 초과 거부
-- 삭제 후 목록에서 제외
-
-Dashboard/Signal:
-
-- 관심종목 없는 사용자 응답
-- 최신 시그널 있는 종목 응답
-- source별 missing 상태 응답
-- `confidence`, 추천 문구 미노출
-
-Job:
-
-- run 요청 시 job 생성
-- worker 실패 시 fallback/failed 응답
-- job status 조회 권한 검증
-
-Journal:
-
-- 저널 작성
-- `buy/sell/hold` 같은 금지 user_view 거부
-- 본인 저널만 조회/수정/삭제 가능
-
----
-
-## 16. 현재 구현 상태
-
-현재 `services/main-server`에 구현된 API:
-
-- `GET /health`
-- `GET /signals/{ticker}` (호환 라우트 — `by-stock` 전신)
-- `GET /api/signals` (목록, 종목당 1개 그룹핑 — 2026-06-22)
-- `GET /api/signals/by-stock/{stock_code}` (종목별 최신 시그널 요약 — 2026-06-23)
-- `GET /api/signals/{signal_id}` (상세 — #333)
-- auth/users/stocks/watchlists/dashboard 라우터 등록됨(`app/main.py`)
-
-이번 스펙에서 확정한 canonical API는 `/api/...` prefix를 사용한다. 기존 `GET /signals/{ticker}`는 호환 라우트로 유지한다.
-
+**테스트 기준**
+- 인증: `imp_uid` 검증 성공 가입, 동일 핸드폰 재가입 차단(활성), 탈퇴 후 재가입 허용, 미가입 로그인 `404`.
+- 관심종목: 한도 없음(11개 이상 추가 가능), 중복 차단.
+- 리포트: 비회원 블라인드(dart/datalab만), 회원 무료 3회 차감, 동일 버전 재열람 무차감, 새 버전 재차감, 소진 시 `402`, 구독자 무제한+무료 불변.
+- 결제: 금액/상태 위변조 거부, 활성 구독 중복 차단, 취소 후 무료 잔여 유지.
+- 소셜: 로그인 상태에서만 연동, 미연동 토큰 로그인 `404`, 해제 후 차단.
+- 관리자: 하드코딩 로그인, 구독 CRUD, 매출 집계.

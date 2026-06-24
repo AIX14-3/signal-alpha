@@ -1,276 +1,210 @@
-# Signal Alpha Web Frontend 스펙
+# Signal Alpha Web Frontend 스펙 (신규 기획)
 
-> 기준일: 2026-06-23
-> 대상: `web/` (Next.js 15 App Router)
-> 목적: 데스크톱 시안(홈 `v2_converge` + 리포트 `v61`)을 디자인 베이스로, main-server(`:8000`) API와 1:1 연동되는 사용자-facing 웹 프론트엔드의 화면·상태·연동 계약을 고정한다.
-> 연관 문서: 백엔드 [`main-server-api-spec.md`](./main-server-api-spec.md), 설계도 [`web/docs/frontend-architecture.md`](../../web/docs/frontend-architecture.md)
+> 기준일: 2026-06-24 (전면 재설계 — 포트원 본인인증/소셜연동/리포트 열람 쿼터/단일 구독)
+> 대상: `web/` (Next.js 15 App Router + React 19 + Zustand 5 + Tailwind v4 + Recharts 3)
+> 목적: 신규 기획에 맞춘 사용자-facing 웹의 화면·상태·API 소비 계약을 고정한다. 엔드포인트/응답 shape 정본은 백엔드 스펙이며 이 문서는 이를 1:1 참조한다.
+> 연관 문서: [main-server-api-spec.md](./main-server-api-spec.md), [web-frontend-design.md](./web-frontend-design.md), [db-schema-spec.md](./db-schema-spec.md)
 
 ---
 
 ## 1. 범위와 원칙
 
-Web Frontend는 브라우저에서 동작하는 사용자-facing UI다.
+Frontend가 담당한다: 종목 검색→리포트 흐름, 포트원 본인인증 가입/로그인, 소셜 연동/해제, 관심종목(무제한), 리포트 열람·쿼터 표시·비회원 블라인드, 소스 상세 5종, 저널, 구독 결제/취소, 관리자.
 
-Frontend가 담당한다.
+Frontend가 하지 않는다: 데이터 수집/분석/스코어링, 비즈니스 규칙 최종 판정(쿼터/권한은 백엔드가 최종 검증, 프론트는 표시·유도만).
 
-- 종목 검색 → 리포트 조회 흐름
-- 회원가입/로그인/로그아웃, 토큰 보관과 자동 갱신
-- 관심종목 등록/조회/삭제
-- 구독 요금제 조회/변경/취소
-- 관리자 로그인 및 회원/매출 대시보드
-- 분석 진행 상태(스테퍼) 표시
+모든 문구는 투자 추천처럼 보이면 안 된다. 방향성 라벨: `positive`→"매수 우위", `negative`→"매도 우위", `neutral`→"중립", `mixed`→"혼조", `unknown`→"데이터 없음". 모든 리포트에 `notice` 노출. [[main-server-api-spec]] 원칙 준수.
 
-Frontend가 하지 않는다.
+### 페이지 인벤토리
 
-- 데이터 수집/분석/스코어링(전부 백엔드)
-- 비즈니스 규칙 판정(한도/권한은 백엔드가 최종 검증)
-- 시세·재무 등 원천 데이터 직접 호출
-
-모든 사용자-facing 문구는 투자 추천처럼 보이면 안 된다. 방향성은 "매수 우위 / 매도 우위 / 중립 / 혼조"로 표기하고, 모든 리포트에 `notice` 고지를 노출한다. [[main-server-api-spec]]의 원칙을 그대로 따른다.
-
----
-
-## 2. 기술 스택 (확정)
-
-| 항목 | 채택 | 비고 |
+| 라우트 | 화면 | 인증 |
 |---|---|---|
-| 프레임워크 | Next.js 15 (App Router) | 실제 15.5.x |
-| UI 라이브러리 | React 19 | |
-| 언어 | TypeScript 5.7 | `npm run lint` = `tsc --noEmit` |
-| 스타일 | Tailwind CSS v4 (`@theme`) + 일부 컴포넌트 클래스 | PostCSS 플러그인 `@tailwindcss/postcss` |
-| 상태관리 | Zustand 5 | `authStore`/`watchlistStore`/`analysisStore` |
-| 폰트 | Pretendard (CDN) | |
-| 차트 | (없음) | 게이지/블롭은 커스텀 SVG·CSS. Recharts 제거됨 |
-| 테스트 | `node --test` (스모크) | `web/tests/*.test.mjs` |
-
-`NEXT_PUBLIC_MAIN_API_BASE_URL`로 백엔드 베이스 URL 주입(기본 `http://localhost:8000`).
+| `/` | 메인/검색 | 공개 |
+| `/report/[ticker]` | 리포트(5소스 + 종합) | 공개(비회원 블라인드) |
+| `/report/[ticker]/[source]` | 소스 상세 5종 | 공개(dart/datalab만)·회원 전체 |
+| `/login` | 로그인(본인인증) | 공개 |
+| `/signup` | 회원가입(본인인증) | 공개 |
+| `/mypage` | 마이페이지(탭) | 회원 |
+| `/pricing` | 구독/결제 | 공개 |
+| `/admin` | 관리자 | 관리자 |
 
 ---
 
-## 3. 디자인 시스템 / 토큰
+## 2. API 클라이언트 계약 (`web/src/lib/apiClient.ts`)
 
-리포트 `v61`(navy/sky/green 미니멀)에서 확정. `web/src/app/globals.css`의 Tailwind v4 `@theme`에 1:1 매핑.
+백엔드 응답 shape와 1:1 TS 타입. 베이스 URL `NEXT_PUBLIC_MAIN_API_BASE_URL`(기본 `http://localhost:8000`).
 
-| 분류 | 토큰(`@theme`) | 값 |
-|---|---|---|
-| 배경 | `--color-bg` | `#FBFCFE` |
-| 면 / 보조면 | `--color-surface` / `--color-surface-2` | `#FFFFFF` / `#F3F6FB` |
-| 경계선 | `--color-line` | `#E7ECF3` |
-| 본문/제목 | `--color-navy` / `--color-navy-soft` | `#0F1B33` / `#36425C` |
-| 보조 텍스트 | `--color-muted` | `#8A97AB` |
-| 강조(sky) | `--color-sky` / `--color-sky-deep` | `#0EA5E9` / `#0284C7` |
-| 상승·긍정 / 하락·위험 | `--color-green` / `--color-red` | `#10B981` / `#EF4444` |
-| 라운드 | `--radius-card` / `--radius-sm` | `18px` / `12px` |
-| 그림자 | `--shadow-card` | `0 1px 2px rgba(15,27,51,.04),0 8px 24px rgba(15,27,51,.06)` |
+### 토큰/세션
+- 저장: `localStorage` — `sa_access`, `sa_refresh`, 관리자 `sa_admin_session`.
+- 401 → `POST /api/auth/refresh` 1회 재시도 → 실패 시 토큰 제거·로그아웃.
+- 에러 정규화: `ApiError { status, code, message }` — `code` 는 백엔드 §2.4 레지스트리 공유.
 
-규칙:
+### 엔드포인트 함수 (도메인별)
 
-- 카드 = `surface` + `1px solid line` + `shadow` + `radius`(유틸 클래스 `.card`).
-- 점수/BUY 강조 = sky→green 그라데이션(`.brand-grad`). 상승=green, 하락=red. **핑크/파스텔 금지**.
-- 배경: 홈만 애니메이션(`.bg-fx` 컨버전스 파티클), 그 외 전 페이지는 정적 그라데이션(`.bg-static`).
+| 함수 | 메서드·경로 |
+|---|---|
+| `signup({imp_uid, nickname, agreed_risk, agreed_terms})` | POST `/api/auth/signup` |
+| `login({imp_uid})` | POST `/api/auth/login` |
+| `refresh()` / `logout()` | POST `/api/auth/refresh` / `/api/auth/logout` |
+| `getMe()` / `updateMe({nickname})` / `deleteMe()` | GET/PATCH/DELETE `/api/users/me` |
+| `listSocial()` / `linkSocial(provider, {code,redirect_uri})` / `socialLogin(provider,...)` / `unlinkSocial(provider)` | `/api/auth/social/*` |
+| `searchStocks(query)` / `listStocks()` | GET `/api/stocks/search` / `/api/stocks` |
+| `getWatchlist()` / `addWatchlist(stock_code)` / `removeWatchlist(stock_code)` | `/api/watchlists*` |
+| `getReport(stock_code)` | GET `/api/reports/{stock_code}` |
+| `issueReport(stock_code)` | POST `/api/reports/{stock_code}/issue` |
+| `getQuota()` | GET `/api/reports/quota` |
+| `getSourceDetail(stock_code, source)` | GET `/api/reports/{stock_code}/sources/{source}` |
+| `listJournals(params)` / `createJournal(body)` / `get/patch/deleteJournal(id)` | `/api/journals*` |
+| `getPlans()` / `getMySubscription()` | `/api/subscriptions/*` |
+| `checkout()` / `confirmPayment({imp_uid, merchant_uid})` / `cancelPayment()` | `/api/payments/*` |
+| `adminLogin()` / `adminLogout()` / `adminListUsers(params)` / `adminGetUser(id)` / `adminSetSubscription(...)` / `adminStats()` | `/api/admin/*` |
 
----
-
-## 4. 라우트 / 정보구조(IA)
-
-`web/src/app` App Router 기준. 현재 구현된 라우트.
-
-| 라우트 | 화면 | 인증 | 배경 |
-|---|---|---|---|
-| `/` | 홈(검색 hero + 타이핑 placeholder) | 공개 | 애니메이션 |
-| `/report/[ticker]` | 리포트(v61 레이아웃) | 공개 조회 | 정적 |
-| `/login`, `/signup` | 인증 폼(이메일/비번 + 소셜 자리표시) | 공개 | 정적 |
-| `/mypage` | 관심종목 / 구독 / 회원정보 탭 | 인증 | 정적 |
-| `/pricing` | 요금제(free/pro/premium) | 공개 | 정적 |
-| `/admin` | 관리자 로그인 → 회원/매출 | 관리자 세션 | 정적 |
-
-전역 레이아웃 `app/layout.tsx` → `AppShell`(상단 nav + 푸터). `AppShell`은 `flex flex-col` + `main flex-1`로 푸터를 뷰포트 하단에 고정한다.
-
----
-
-## 5. 컴포넌트 아키텍처
-
-```
-AppShell                       상단 nav(홈/요금제/마이 + 로그인 토글) + 정적 배경 + 푸터
-BackgroundFX                   홈 전용 컨버전스 파티클 캔버스(파티클→코어 트레일)
-SearchHero                     홈 검색 hero + 타이핑 placeholder
-PipelineStepper                분석 진행 스테이지(폴링 표시)
-WatchlistButton                관심종목 추가/삭제 토글(결과를 토스트로 안내)
-Toaster                        전역 토스트(toastStore) — 액션 결과/오류 표시
-AuthForm                       로그인/회원가입 공용 폼(소셜 버튼 자리표시)
-report/ReportView              리포트 컨테이너(mast + 블롭 히어로 + 그리드 + prose)
-report/FactorGrid              6타일(5팩터 chip+점수+dots + 핵심지표 타일)
-report/RiskList                리스크 행(항목 · HIGH/MID/LOW)
+### 핵심 타입 (발췌)
+```ts
+type ReportSource = { source: 'price'|'dart'|'hiring'|'datalab'|'report'; direction: string|null; score: number|null; data_status?: string; summary: string|null; locked: boolean };
+type Report = {
+  stock: Stock;
+  report_version?: { final_signal_id: number; run_key: string; signal_date: string; updated_at: string };
+  direction: string|null; score: number|null; alignment_rate: number|null;
+  source_agreement?: string; warning_level?: string; data_status?: string; summary: string|null;
+  sources: ReportSource[];
+  access: { unlocked: boolean; is_member: boolean; issued_via?: 'free'|'subscription'; free_remaining?: number };
+  notice: string;
+};
+type Quota = { free_quota: number; free_used: number; free_remaining: number; subscription_active: boolean };
+type SocialLink = { provider: 'naver'|'google'|'kakao'; linked: boolean; linked_at?: string };
 ```
 
-파일 위치: `web/src/components/*`, 리포트 하위는 `web/src/components/report/*`.
+### 변환 유틸 (`web/src/lib/format.ts`)
+`directionLabel`(소문자 enum→한글), `scoreOutOf10`(0–100→/10), `alignmentPercent`(0–1→%), `agreementLabel`(HIGH/MEDIUM/LOW→높음/보통/낮음), `SOURCE_LABEL`(price→"주식정보", dart→"DART", hiring→"채용공고", datalab→"네이버 키워드", report→"증권사 리포트"), `won`(통화).
 
 ---
 
-## 6. 상태관리 (Zustand)
+## 3. 상태 관리 (Zustand stores, `web/src/stores/*`)
 
-`web/src/stores/*`. 토큰 원본은 `web/src/lib/session.ts`가 소유(localStorage), 스토어/apiClient가 공유한다.
-
-| 스토어 | 상태 | 주요 액션 |
-|---|---|---|
-| `authStore` | `user`, `status(idle/loading/authenticated/anonymous)`, `error` | `login`, `signup`, `logout`, `hydrate` |
-| `watchlistStore` | `items`, `limit`, `count`, `loading` | `load`, `add`, `remove` |
-| `analysisStore` | `ticker`, `status`, `polling` | `start`, `poll`, `reset` |
-| `toastStore` | `toasts` | `show(message, tone)`, `dismiss` |
-
-`hydrate()`는 앱 진입 시 저장된 access token으로 `GET /api/users/me`를 호출해 세션을 복원한다(`AppShell`에서 1회).
-
----
-
-## 7. API 클라이언트 / 토큰 갱신
-
-`web/src/lib/apiClient.ts`. 모든 호출은 fetch 래퍼를 거친다.
-
-- 인증 모드: `user`(access token) / `admin`(관리자 세션 토큰) / `none`(공개).
-- **토큰 갱신 인터셉터:** `user` 경로에서 401 수신 시 `POST /api/auth/refresh`로 1회 재발급 후 원요청 재시도. 실패하면 토큰 폐기.
-- 에러는 `ApiError{status, code, message}`로 정규화. 백엔드의 `detail.{code,message}`를 그대로 매핑(예: `WATCHLIST_LIMIT_EXCEEDED`, `ADMIN_AUTH_REQUIRED`).
-- 관리자 세션 토큰은 사용자 토큰과 **별도 키**(`sa_admin_session`)로 보관.
-
-타입드 함수(일부): `signup/login/logout/getMe`, `searchStocks/listStocks`, `listWatchlists/addWatchlist/removeWatchlist`, `getSignalByTicker/getSignalDetail`, `getAnalysisStatus`, `listPlans/getMySubscription/changeSubscription`, `adminLogin/adminListUsers/adminGetStats`.
-
----
-
-## 8. 데이터 변환 규칙 (백엔드 → 시안)
-
-`web/src/lib/format.ts`.
-
-| 백엔드 | 시안 표기 | 규칙 |
-|---|---|---|
-| `final_score` (0–100) | `7.5 / 10` | `round(score/10, 1)` |
-| `alignment_rate` (0–1) | `82%` | `round(rate*100)` |
-| `source_agreement` (HIGH/MEDIUM/LOW) | 높음/보통/낮음 | 라벨 매핑 |
-| `direction` (POSITIVE/…) | 매수 우위/매도 우위/중립/혼조 | 투자 권유 표현 금지 |
-
-**팩터 매핑(잠정, `FACTOR_MAP`):** 시안 5팩터 ↔ 백엔드 4소스. DART→재무·공시, PRICE→수급·시계열, REPORT→뉴스. 한 소스가 복수 팩터에 매핑되므로 같은 소스 팩터는 동일 값이 표시된다(설계 확정 전 한계).
-
-리포트 raw 응답(`GET /signals/{ticker}`)의 `score_breakdown`·`caution_evidence`·`positive_evidence`는 JSONB가 **문자열**로 올 수 있어, 리포트 페이지가 `parseJson`으로 파싱한다.
-
----
-
-## 9. 화면별 스펙
-
-### 9.1 홈 `/`
-
-- `SearchHero` + `BackgroundFX`(애니메이션).
-- 검색창 placeholder는 고정 문구가 아니라 **실제 종목명**(`GET /api/stocks`)을 받아 타이핑되듯 흘려 보여 검색 가능 종목을 안내한다. 사용자가 입력을 시작하면 안내는 사라진다(placeholder 네이티브 동작).
-- **검색 동작:** Enter(또는 분석 버튼) → `GET /api/stocks/search` → `pickBest`(코드 정확일치 > 종목명 정확일치 > 첫 결과)로 선택한 종목의 `/report/[code]`로 **즉시 라우팅**. 한글 IME 조합 중에도 첫 Enter로 검색되도록 `onKeyDown`으로 직접 처리.
-
-### 9.2 리포트 `/report/[ticker]`
-
-- `GET /signals/{ticker}`로 발행 시그널 조회.
-- 발행 시그널이 없으면(404) "분석 준비 중" + `PipelineStepper`(`GET /api/analytics/{ticker}/status` 폴링) 표시.
-- 발행 시그널이 있으면 `ReportView`(v61 레이아웃) 렌더:
-  - **mast**: 종목명 + `코드 · 시장 · 섹터` + 관심종목 버튼(`WatchlistButton`). 추가/삭제 결과와 한도 초과(`WATCHLIST_LIMIT_EXCEEDED`, 최대 10개) 안내는 **전역 토스트**로 표시.
-  - **히어로**: 블롭 `AI Score(/10)` + `BUY · 매수 우위` 필 + thesis(`bull_point`).
-  - **6타일**: 5팩터(chip ↗/→/↘ + 점수 + dots 5점) + 핵심 지표 타일(`score_breakdown.metrics`).
-  - **prose**: 01 핵심 요약(`summary` + 태그 `positive_evidence`) / 02 리스크(`caution_evidence` HIGH/MID/LOW).
-  - 하단 `notice` 고지 고정.
-
-### 9.3 인증 `/login`, `/signup`
-
-- `AuthForm` 공용. 이메일/비밀번호(8자 이상) + 회원가입 시 고지 동의 체크.
-- 성공 시 토큰 저장 후 `/mypage`로 이동.
-- **소셜 로그인(구글/네이버/카카오)은 자리표시 버튼만**(비활성). 별도 트랙(§12).
-
-### 9.4 마이페이지 `/mypage`
-
-- 인증 필요. 미인증이면 `/login`으로 리다이렉트.
-- 탭: **관심종목**(`/api/watchlists` 목록/삭제), **구독**(`/api/subscriptions/me` + 변경/취소), **회원정보**(이메일/닉네임).
-
-### 9.5 요금제 `/pricing`
-
-- `GET /api/subscriptions/plans` 카드 렌더(free/pro/premium, 기능·가격).
-- 구독 클릭 → 비로그인은 `/login`, 로그인은 `POST /api/subscriptions`(subscribe) 후 `/mypage`.
-
-### 9.6 관리자 `/admin`
-
-- 관리자 **세션 토큰** 방식(사용자 JWT와 분리).
-- `POST /api/admin/login` → 세션 토큰 보관 → `GET /api/admin/stats`(MRR/회원/구독) + `GET /api/admin/users`(회원 테이블).
-
----
-
-## 10. 인증 / 세션 처리
-
-| 항목 | 처리 |
+| store | 상태/액션 |
 |---|---|
-| 사용자 토큰 | access + refresh를 localStorage(`sa_access`/`sa_refresh`) |
-| 자동 갱신 | 401 → refresh 1회 재시도(§7) |
-| 세션 복원 | 진입 시 `hydrate()` → `GET /api/users/me` |
-| 관리자 세션 | 별도 키 `sa_admin_session`, `Authorization: Bearer {session_token}` |
-| 로그아웃 | `POST /api/auth/logout` 후 로컬 토큰 폐기(서버 실패와 무관하게 로컬 제거) |
+| `authStore` | `user`, `status`(idle/loading/authenticated/anonymous), `loginWithImpUid`, `signup`, `logout`, `hydrate` |
+| `socialStore` | `links[]`, `load`, `link(provider)`, `unlink(provider)` |
+| `watchlistStore` | `items`, `count`(무제한, limit 없음), `load`, `add`, `remove` |
+| `reportStore` | `report`, `loading`, `load(stock)`, `issue(stock)`(언락) |
+| `quotaStore` | `free_remaining`, `subscription_active`, `load` |
+| `paymentStore` | `checkout`, `confirm`, `cancel`, `status` |
+| `journalStore` | `items`, `load`, `create`, `update`, `remove` |
+| `adminStore` | `session`, `login`, `logout`, `users`, `stats`, `setSubscription` |
+| `toastStore` | `toasts`, `show(message, tone)`, `dismiss` |
 
 ---
 
-## 11. 법적 고지
+## 4. 인증 플로우 (포트원 본인인증)
 
-- 모든 리포트/시그널/구독 응답의 `notice`를 화면에 노출. 미존재 시 기본 문구로 폴백.
-- direction 라벨은 데이터 방향성 톤. "사세요/파세요" 등 투자 권유 표현 금지.
-
----
-
-## 12. 알려진 갭 / 별도 트랙
-
-- **회원 테이블 재설계 + 소셜 로그인(구글/네이버/카카오)**: 사용자가 별도 설계/개발. 현재는 이메일/비번 인증 + 소셜 버튼 자리표시만.
-- **관심종목 한도**: MVP는 **등급 무관 고정 10개**로 확정(2026-06-23). 한도/메시지는 백엔드 `WATCHLIST_LIMIT` 단일 출처([[main-server-api-spec]] §7)에서 오고, 초과 시 토스트로 안내한다. 등급별(plan `max_watchlist`) 적용은 후속.
-- **팩터 5 ↔ 소스 4 매핑**: `FACTOR_MAP` 잠정. 팀 확정 필요.
-- **후속**: 실 PG(PortOne) 결제 연동, 분석 진행 SSE 실시간화(현재 폴링).
+- `/signup` 과 `/login` 은 **버튼·화면 분리**. 아이디/비밀번호 입력란 **없음**.
+- 포트원 본인인증 위젯(`IMP.certification`) 호출 → `imp_uid` 획득 → 백엔드 `signup`/`login` 호출.
+- 가입 화면: 위험 고지/약관 동의 체크(`agreed_risk` 필수, 미동의 시 가입 버튼 비활성), 닉네임 선택.
+- 미가입 상태로 `/login` 본인인증 시 `404 USER_NOT_FOUND` → "가입이 필요합니다" 토스트 + `/signup` 유도.
+- 포트원 SDK: `NEXT_PUBLIC_PORTONE_IMP_CODE` 사용. 위젯 스크립트는 인증/결제 페이지에서 로드.
 
 ---
 
-## 13. 빌드 / 테스트 / 실행
+## 5. 소셜 로그인 연동 UI
 
-| 명령 | 용도 |
+- **연동**은 로그인 상태에서만(마이페이지 탭). 외부 진입 소셜 로그인은 `socialLogin` → 미연동이면 안내("연동된 계정만 간편 로그인 가능, 먼저 본인인증 가입").
+- 마이페이지 소셜 탭: provider별 토글(연동/해제). 해제 시 확인 모달 → `unlinkSocial`.
+- 로그아웃: 서비스 세션 폐기 + 연동 provider 사별 로그아웃 처리(백엔드 위임, 프론트는 결과 반영).
+- `web/src/components/AuthForm.tsx` 의 비활성 소셜 버튼 → 실연동 동작으로 교체.
+
+---
+
+## 6. 메인/검색 (`/`)
+
+검색 히어로(애니메이션 배경 `bg-fx`) → 입력 → `searchStocks` 자동완성 → 선택 시 `/report/{stock_code}` 이동. 비로그인도 가능(리포트에서 블라인드).
+
+---
+
+## 7. 리포트 (`/report/[ticker]`)
+
+- `getReport(ticker)` 로 현재 버전 로드. 5개 소스 카드(주식정보/DART/채용공고/네이버 키워드/증권사 리포트) 각 LLM 요약 + 종합 게이지(`score`/`direction`/`alignment_rate`).
+- 각 카드 클릭 → `/report/[ticker]/[source]`.
+- **열람/쿼터 UI**:
+  - 회원·미언락: "리포트 발행(열람)" 버튼 → `issueReport`. 성공 시 전체 표시 + `free_remaining` 배지.
+  - `402 REPORT_QUOTA_EXCEEDED` → 구독 유도 모달(`/pricing`).
+  - 구독자: 무제한, 쿼터 배지 숨김 또는 "구독 중".
+  - 새 버전 안내: `report_version.updated_at` 변동 시 "업데이트된 리포트가 있습니다" → 재발행(차감).
+- **비회원 블라인드**: `access.unlocked=false` → DART·네이버 카드만 노출, 나머지(주식정보/채용/증권사리포트)와 종합점수는 잠금 오버레이 + 로그인/가입 CTA.
+
+---
+
+## 8. 소스 상세 5종 (`/report/[ticker]/[source]`)
+
+`source ∈ price|dart|hiring|datalab|report`. `getSourceDetail` → 원천 데이터 테이블/차트(Recharts) + LLM 상세 요약.
+- price: 시세·재무 지표(PER/PBR/ROE) 차트.
+- dart: 공시 목록(제목/유형/날짜/원문 링크).
+- hiring: 공고수·증감 추이.
+- datalab: 검색지수·급등 표시.
+- report: 증권사/목표가/투자의견.
+- 접근: 비회원은 dart/datalab만(나머지 `401 MEMBERSHIP_REQUIRED` → 잠금 화면). 회원 미언락은 dart/datalab 외 블라인드.
+
+---
+
+## 9. 마이페이지 (`/mypage`)
+
+탭 구성:
+1. **회원정보/수정/탈퇴**: `getMe`/`updateMe`(닉네임)/`deleteMe`(탈퇴 확인 모달).
+2. **관심종목**: `getWatchlist`(무제한 목록) + `addWatchlist`/`removeWatchlist`.
+3. **구독**: `getMySubscription`(현황) + 결제(`/pricing` 또는 인라인) + `cancelPayment`(취소).
+4. **저널**: 저장한 리포트 추이.
+5. **소셜 연동/해제**: §5.
+
+---
+
+## 10. 저널 UI
+
+발행한 리포트 저장(`createJournal({final_signal_id, user_view, memo, tags})`) → 목록·투자 추이(스냅샷 점수/시점 표시). `user_view` = 계속 관찰/추가 확인 필요/낮은 관련도. 매수·매도 표현 금지.
+
+---
+
+## 11. 가격/구독·결제 (`/pricing`)
+
+- `getPlans` → 단일 상품 9,900원 카드(무제한 열람 강조). 비회원·무료 회원과 비교.
+- 결제: `checkout` → 포트원 결제창(`IMP.request_pay`, `pg: html5_inicis`) → 성공 콜백 `imp_uid`/`merchant_uid` → `confirmPayment` 서버 검증 → 구독 활성 반영.
+- 취소: 마이페이지 구독 탭에서 `cancelPayment` → 취소 후에도 무료 잔여분 사용 가능 안내.
+
+---
+
+## 12. 관리자 (`/admin`)
+
+- `adminLogin`(하드코딩 계정) → `sa_admin_session`. `adminLogout`.
+- 대시보드: `adminStats`(총매출/MRR/구독자수, Recharts) + `adminListUsers`(목록·검색·페이지네이션) + 회원 상세 → 구독 등록/수정/취소(`adminSetSubscription`).
+- 일반 사용자 인증과 분리된 세션 헤더.
+
+---
+
+## 13. 공통 컴포넌트
+
+- **잠금 오버레이**(`<LockedOverlay/>`): 비회원/미언락 소스·종합점수 위 블러 + CTA.
+- **쿼터 배지**(`<QuotaBadge/>`): "무료 N회 남음" / "구독 중".
+- **쿼터 소진 모달**: `402` 시 구독 유도.
+- **notice 토스트/푸터**: 모든 리포트 응답 `notice` 노출.
+- 디자인 토큰·패턴은 [web-frontend-design.md](./web-frontend-design.md).
+
+---
+
+## 14. 프론트 정합화 과제 (현 코드 → 목표)
+
+- **교체**: `authStore`/`AuthForm`/`/login`/`/signup` 의 이메일·비번 → 포트원 본인인증. `watchlistStore` 의 `limit` 제거(무제한). `apiClient.ts` 의 `/api/signals*` 소비 → `/api/reports/*`.
+- **신규**: `reportStore`/`quotaStore`/`socialStore`/`paymentStore`/`journalStore`/`adminStore`. 소스 상세 라우트 `[source]`, 마이페이지 탭(탈퇴/소셜/구독), 잠금 오버레이·쿼터 배지 컴포넌트, 포트원 SDK(인증/결제) 로딩.
+- **표준화**: `direction` 소문자 enum 기준 라벨 변환, `SOURCE_LABEL` 5종, 모든 리포트 `notice` 노출.
+
+---
+
+## 15. 페이지 ↔ 엔드포인트 매트릭스 (검증용)
+
+| 페이지 | 호출 엔드포인트 |
 |---|---|
-| `npm install` | 의존성 설치 |
-| `npm run dev` | 개발 서버(:3000) |
-| `npm run lint` | `tsc --noEmit` 타입체크 |
-| `npm test` | `node --test` 스모크(`tests/*.test.mjs`) |
-| `npm run build` | 프로덕션 빌드 |
-
-주의:
-
-- **dev 서버 가동 중 `npm run build` 금지** — 같은 `.next` 캐시를 덮어써 실행 중 dev 서버가 500(MODULE_NOT_FOUND)난다. 빌드 검증은 dev 중지 후 실행.
-- 브라우저 연동에는 백엔드 CORS가 필요(`CORS_ALLOW_ORIGINS`, 기본 `http://localhost:3000`).
-- 개발 인디케이터 배지는 `devIndicators:false`로 비활성(프로덕션 무관).
-
----
-
-## 14. 프론트가 소비하는 백엔드 엔드포인트
-
-| 화면/동작 | 엔드포인트 | 인증 |
-|---|---|---|
-| 회원가입/로그인/갱신/로그아웃 | `POST /api/auth/{signup,login,refresh,logout}` | 공개/refresh |
-| 내 정보 | `GET /api/users/me` | 인증 |
-| 종목 목록(placeholder) | `GET /api/stocks` | 공개 |
-| 종목 검색 | `GET /api/stocks/search?query=` | 공개 |
-| 관심종목 | `GET/POST /api/watchlists`, `DELETE /api/watchlists/{code}` | 인증 |
-| 리포트(공개) | `GET /signals/{ticker}` | 공개 |
-| 리포트 상세 | `GET /api/signals/{signal_id}` | 인증 |
-| 분석 진행 | `GET /api/analytics/{ticker}/status` | 공개 |
-| 구독 | `GET /api/subscriptions/{plans,me}`, `POST /api/subscriptions` | 공개/인증 |
-| 관리자 | `POST /api/admin/login`, `GET /api/admin/{users,stats}` | 관리자 세션 |
-
-신규 엔드포인트(`/api/stocks`, `/api/subscriptions/*`, `/api/admin/*`, `/api/analytics/*`)의 계약은 [[main-server-api-spec]] 및 설계도 §6과 일치한다.
-
----
-
-## 15. 현재 구현 상태 (2026-06-23)
-
-구현됨:
-
-- 디자인 토큰(@theme), `AppShell`/`BackgroundFX`(홈 애니메이션·그 외 정적), 푸터 하단 고정.
-- apiClient(토큰 갱신 인터셉터) + 4 Zustand 스토어(auth/watchlist/analysis/toast) + 변환 유틸(`format.ts`).
-- 전역 토스트(`Toaster`) — 관심종목 추가/삭제·한도 초과(최대 10개) 안내.
-- 페이지 7종(홈/리포트/로그인/회원가입/마이/요금제/관리자) — 전부 실 API 연동.
-- 홈 타이핑 placeholder(실 종목명), Enter 즉시 리포트 이동, 한글 IME 단일 Enter 처리.
-- 리포트 v61 레이아웃(mast·블롭 히어로·6타일·prose), 삼성전자(005930) 목업 시그널 1건 시드.
-- `tsc` 통과, 스모크 테스트 green, `npm run build` 9라우트 green.
-
-미구현/후속:
-
-- 소셜 로그인 배선, 실 결제, SSE 실시간화, 시그널 상세(`/api/signals/{id}`) 전용 화면, 저널 화면.
+| `/` | `GET /api/stocks/search` |
+| `/report/[ticker]` | `GET /api/reports/{code}`, `POST /api/reports/{code}/issue`, `GET /api/reports/quota` |
+| `/report/[ticker]/[source]` | `GET /api/reports/{code}/sources/{source}` |
+| `/login` `/signup` | `POST /api/auth/login` `signup`, 포트원 본인인증 |
+| `/mypage` | `GET/PATCH/DELETE /api/users/me`, `/api/watchlists*`, `/api/subscriptions/me`, `/api/payments/cancel`, `/api/journals*`, `/api/auth/social*` |
+| `/pricing` | `GET /api/subscriptions/plans`, `/api/payments/checkout`·`confirm` |
+| `/admin` | `/api/admin/*` |

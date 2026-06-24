@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Signal Alpha v21 — 리포트 5소스 / 쿼터 / 블라인드 / 본인인증 / 마이페이지</title>
+<link rel="preconnect" href="https://cdn.jsdelivr.net" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css" />
+<style>
+  /* v20 토큰 계승 (globals.css @theme 와 동일) */
+  :root{
+    --bg:#fbfcfe; --surface:#fff; --surface-2:#f3f6fb; --line:#e7ecf3;
+    --navy:#0f1b33; --navy-soft:#36425c; --muted:#8a97ab;
+    --sky:#0ea5e9; --sky-deep:#0284c7; --green:#10b981; --red:#ef4444;
+    --radius:18px; --radius-sm:12px; --maxw:1080px;
+    --shadow:0 1px 2px rgba(15,27,51,.04), 0 8px 24px rgba(15,27,51,.06);
+    --ease:cubic-bezier(.22,.61,.36,1);
+    --font:"Pretendard Variable",Pretendard,-apple-system,system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--navy);font-family:var(--font);line-height:1.55;letter-spacing:-.01em;-webkit-font-smoothing:antialiased}
+  .bg-static{position:fixed;inset:0;z-index:0;pointer-events:none;background:
+    radial-gradient(60% 60% at 18% 8%, rgba(14,165,233,.08), transparent 60%),
+    radial-gradient(55% 55% at 85% 14%, rgba(16,185,129,.08), transparent 60%), var(--bg);}
+  .wrap{position:relative;z-index:1;max-width:var(--maxw);margin:0 auto;padding:24px}
+  nav{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px}
+  nav button{border:1px solid var(--line);background:var(--surface);color:var(--navy-soft);
+    padding:8px 14px;border-radius:999px;font-weight:600;cursor:pointer;font-family:inherit;transition:.15s var(--ease)}
+  nav button.active{background:var(--navy);color:#fff;border-color:var(--navy)}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow)}
+  .brand-grad{background:linear-gradient(135deg,var(--sky),var(--green))}
+  .pill{display:inline-flex;align-items:center;gap:6px;border-radius:999px;font-weight:600;padding:5px 11px;font-size:13px}
+  .pill.up{background:rgba(16,185,129,.12);color:var(--green)}
+  .pill.down{background:rgba(239,68,68,.12);color:var(--red)}
+  .pill.flat{background:var(--surface-2);color:var(--navy-soft)}
+  .pill.sky{background:rgba(14,165,233,.12);color:var(--sky-deep)}
+  .pill.warn{background:rgba(239,68,68,.14);color:var(--red)}
+  .muted{color:var(--muted)}
+  h1{font-size:clamp(26px,4vw,36px);margin:.2em 0}
+  h2{font-size:20px;margin:0 0 4px}
+  .view{display:none} .view.active{display:block}
+  .btn{display:inline-flex;align-items:center;gap:8px;border:none;border-radius:999px;padding:11px 18px;
+    font-weight:700;cursor:pointer;font-family:inherit;color:#fff}
+  .btn.primary{background:var(--navy)}
+  .btn.grad{color:#fff}
+  .btn-grad{background:linear-gradient(135deg,var(--sky),var(--green));color:#fff;border:none;border-radius:999px;padding:14px 22px;font-weight:800;cursor:pointer;font-family:inherit;font-size:16px}
+  .row{display:flex;gap:16px;flex-wrap:wrap}
+  .between{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+  /* gauge */
+  .gauge{width:170px;height:170px;flex:0 0 auto}
+  .gauge text{font-family:var(--font)}
+  /* sources grid */
+  .src-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin-top:18px}
+  .src{padding:16px;position:relative;overflow:hidden}
+  .src .name{font-weight:700;margin-bottom:8px;display:flex;align-items:center;gap:8px}
+  .src .sum{font-size:13.5px;color:var(--navy-soft);min-height:38px}
+  .src .more{margin-top:10px;font-size:13px;color:var(--sky-deep);font-weight:600;cursor:pointer}
+  /* lock overlay */
+  .locked .lock-ov{position:absolute;inset:0;background:rgba(255,255,255,.55);backdrop-filter:blur(6px);
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;text-align:center;padding:12px}
+  .lock-ov .ico{font-size:22px}
+  .lock-ov .cta{font-size:12.5px;color:var(--navy-soft);font-weight:600}
+  .qbadge{font-size:13px}
+  .tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px}
+  .tabs button{border:1px solid var(--line);background:var(--surface);padding:8px 14px;border-radius:var(--radius-sm);
+    font-weight:600;cursor:pointer;font-family:inherit;color:var(--navy-soft)}
+  .tabs button.active{background:var(--surface-2);color:var(--navy);border-color:var(--sky)}
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  th,td{text-align:left;padding:9px 8px;border-bottom:1px solid var(--line)}
+  th{color:var(--muted);font-weight:600}
+  .notice{margin-top:18px;font-size:12.5px;color:var(--muted);background:var(--surface-2);
+    border-radius:var(--radius-sm);padding:12px 14px}
+  .wl-item{display:flex;align-items:center;justify-content:space-between;padding:12px;border:1px solid var(--line);border-radius:var(--radius-sm);margin-bottom:8px}
+  label.chk{display:flex;gap:8px;align-items:flex-start;font-size:13.5px;color:var(--navy-soft);margin:10px 0}
+</style>
+</head>
+<body>
+<div class="bg-static"></div>
+<div class="wrap">
+  <div class="between" style="margin-bottom:8px">
+    <strong style="font-size:18px"><span class="pill sky" style="padding:3px 8px">v21</span> Signal Alpha — 신규 기획 시안</strong>
+    <span class="muted" style="font-size:13px">리포트 열람 모델 · 포트원 본인인증 · 단일 구독</span>
+  </div>
+  <nav>
+    <button data-v="report" class="active">리포트(회원·언락)</button>
+    <button data-v="blind">리포트(비회원 블라인드)</button>
+    <button data-v="source">소스 상세(DART)</button>
+    <button data-v="auth">로그인/회원가입</button>
+    <button data-v="mypage">마이페이지</button>
+    <button data-v="pricing">구독/결제</button>
+  </nav>
+
+  <!-- ============ 리포트: 회원 언락 ============ -->
+  <section class="view active" id="report">
+    <div class="card" style="padding:22px">
+      <div class="between">
+        <div>
+          <div class="muted" style="font-size:13px">005930 · KOSPI · 반도체</div>
+          <h1 style="margin:2px 0">삼성전자 리포트</h1>
+          <span class="muted" style="font-size:12.5px">버전 2026-06-24 08:00 · run_key AGGREGATED</span>
+        </div>
+        <div style="text-align:right">
+          <span class="pill sky qbadge">무료 2회 남음</span>
+          <div style="margin-top:8px"><button class="btn primary">새 버전 발행</button></div>
+        </div>
+      </div>
+      <div class="row" style="margin-top:18px;align-items:center">
+        <svg class="gauge" viewBox="0 0 170 170">
+          <defs><linearGradient id="g1" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#0ea5e9"/><stop offset="1" stop-color="#10b981"/></linearGradient></defs>
+          <circle cx="85" cy="85" r="70" fill="none" stroke="#e7ecf3" stroke-width="14"/>
+          <circle cx="85" cy="85" r="70" fill="none" stroke="url(#g1)" stroke-width="14"
+            stroke-linecap="round" stroke-dasharray="440" stroke-dashoffset="123" transform="rotate(-90 85 85)"/>
+          <text x="85" y="80" text-anchor="middle" font-size="40" font-weight="800" fill="#0f1b33">72</text>
+          <text x="85" y="104" text-anchor="middle" font-size="13" fill="#8a97ab">종합 점수</text>
+        </svg>
+        <div style="flex:1;min-width:240px">
+          <span class="pill up">▲ 매수 우위</span>
+          <span class="pill flat" style="margin-left:6px">일치도 80%</span>
+          <span class="pill flat" style="margin-left:6px">소스 합의 보통</span>
+          <p style="margin:12px 0 0;color:var(--navy-soft)">여러 데이터 소스에서 유사한 방향성이 관찰됩니다. 증권사 리포트는 아직 데이터가 없어 추가 확인이 필요합니다.</p>
+        </div>
+      </div>
+
+      <div class="src-grid">
+        <!-- 5 sources -->
+        <div class="card src"><div class="name">📈 주식정보 <span class="pill up">▲</span></div>
+          <div class="sum">시세·수급이 우호적입니다. PER/PBR 안정.</div><div class="more">상세 보기 →</div></div>
+        <div class="card src"><div class="name">📑 DART <span class="pill flat">중립</span></div>
+          <div class="sum">최근 공시에서 중립적 신호가 확인됩니다.</div><div class="more">상세 보기 →</div></div>
+        <div class="card src"><div class="name">🧑‍💼 채용공고 <span class="pill up">▲</span></div>
+          <div class="sum">개발 직군 공고가 증가했습니다.</div><div class="more">상세 보기 →</div></div>
+        <div class="card src"><div class="name">🔎 네이버 키워드 <span class="pill up">▲</span></div>
+          <div class="sum">검색 관심도가 상승 추세입니다.</div><div class="more">상세 보기 →</div></div>
+        <div class="card src"><div class="name">🏦 증권사 리포트 <span class="pill flat">데이터 없음</span></div>
+          <div class="sum muted">아직 수집된 리포트가 없습니다.</div><div class="more">상세 보기 →</div></div>
+      </div>
+      <div class="notice">Signal Alpha는 매수·매도 추천이 아니라 데이터 방향성과 근거를 제공하는 서비스입니다.</div>
+    </div>
+  </section>
+
+  <!-- ============ 리포트: 비회원 블라인드 ============ -->
+  <section class="view" id="blind">
+    <div class="card" style="padding:22px">
+      <div class="between">
+        <div><div class="muted" style="font-size:13px">005930 · KOSPI</div><h1 style="margin:2px 0">삼성전자 리포트</h1></div>
+        <button class="btn-grad">로그인하고 무료 3회 열람</button>
+      </div>
+      <div class="row" style="margin-top:18px;align-items:center">
+        <div class="card src locked" style="width:180px;height:150px">
+          <div class="lock-ov"><div class="ico">🔒</div><div class="cta">종합 점수는<br/>로그인 후 공개</div></div>
+        </div>
+        <div style="flex:1;min-width:240px" class="muted">전체 리포트는 로그인 후 무료 3회까지 열람할 수 있습니다. 비회원은 DART·네이버 데이터만 확인할 수 있습니다.</div>
+      </div>
+      <div class="src-grid">
+        <div class="card src"><div class="name">📑 DART <span class="pill flat">중립</span></div>
+          <div class="sum">최근 공시에서 중립적 신호가 확인됩니다.</div><div class="more">상세 보기 →</div></div>
+        <div class="card src"><div class="name">🔎 네이버 키워드 <span class="pill up">▲</span></div>
+          <div class="sum">검색 관심도가 상승 추세입니다.</div><div class="more">상세 보기 →</div></div>
+        <div class="card src locked"><div class="name">📈 주식정보</div><div class="sum">&nbsp;</div>
+          <div class="lock-ov"><div class="ico">🔒</div><div class="cta">로그인 후 공개</div></div></div>
+        <div class="card src locked"><div class="name">🧑‍💼 채용공고</div><div class="sum">&nbsp;</div>
+          <div class="lock-ov"><div class="ico">🔒</div><div class="cta">로그인 후 공개</div></div></div>
+        <div class="card src locked"><div class="name">🏦 증권사 리포트</div><div class="sum">&nbsp;</div>
+          <div class="lock-ov"><div class="ico">🔒</div><div class="cta">로그인 후 공개</div></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 소스 상세 (DART) ============ -->
+  <section class="view" id="source">
+    <div class="card" style="padding:22px">
+      <div class="muted" style="font-size:13px">삼성전자 · 소스 상세</div>
+      <h1 style="margin:2px 0">📑 DART 공시 <span class="pill flat">중립 · 50</span></h1>
+      <p style="color:var(--navy-soft);max-width:640px">최근 공시 흐름은 중립적입니다. 정정공시 1건이 포함되어 추가 확인이 필요합니다.</p>
+      <table>
+        <thead><tr><th>공시명</th><th>유형</th><th>날짜</th><th>원문</th></tr></thead>
+        <tbody>
+          <tr><td>주요사항보고서</td><td>정정공시</td><td>2026-06-20</td><td><a style="color:var(--sky-deep)" href="#">DART ↗</a></td></tr>
+          <tr><td>분기보고서</td><td>정기공시</td><td>2026-05-15</td><td><a style="color:var(--sky-deep)" href="#">DART ↗</a></td></tr>
+        </tbody>
+      </table>
+      <div class="notice">증권사 리포트·주식정보·채용공고 상세는 회원 열람(무료 3회/구독) 후 확인할 수 있습니다.</div>
+    </div>
+  </section>
+
+  <!-- ============ 로그인/회원가입 ============ -->
+  <section class="view" id="auth">
+    <div class="row">
+      <div class="card" style="padding:26px;flex:1;min-width:300px;text-align:center">
+        <h2>로그인</h2>
+        <p class="muted" style="font-size:14px">아이디·비밀번호 없이 본인인증으로 로그인합니다.</p>
+        <button class="btn-grad" style="margin-top:8px">본인인증으로 로그인</button>
+        <p class="muted" style="font-size:12.5px;margin-top:14px">연동된 소셜 계정이 있으면 간편 로그인도 가능합니다.</p>
+        <div class="row" style="justify-content:center;margin-top:8px">
+          <span class="pill flat">네이버</span><span class="pill flat">구글</span><span class="pill flat">카카오</span>
+        </div>
+      </div>
+      <div class="card" style="padding:26px;flex:1;min-width:300px;text-align:center">
+        <h2>회원가입</h2>
+        <p class="muted" style="font-size:14px">포트원 본인인증으로 가입합니다. 핸드폰 번호로 1회만 가입할 수 있습니다.</p>
+        <label class="chk"><input type="checkbox" checked/> <span>[필수] 투자 위험 고지에 동의합니다.</span></label>
+        <label class="chk"><input type="checkbox" checked/> <span>[필수] 서비스·개인정보 처리방침에 동의합니다.</span></label>
+        <input placeholder="닉네임(선택)" style="width:100%;padding:11px;border:1px solid var(--line);border-radius:var(--radius-sm);margin:6px 0 12px;font-family:inherit"/>
+        <button class="btn-grad">본인인증으로 가입</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 마이페이지 ============ -->
+  <section class="view" id="mypage">
+    <div class="card" style="padding:22px">
+      <h1 style="margin-top:0">마이페이지 <span class="pill flat" style="font-size:12px">ABCD1234</span></h1>
+      <div class="tabs">
+        <button class="active">회원정보</button><button>관심종목</button><button>구독</button><button>저널</button><button>소셜 연동</button>
+      </div>
+      <h2>관심종목 <span class="muted" style="font-weight:400;font-size:13px">(무제한)</span></h2>
+      <div style="margin-top:10px">
+        <div class="wl-item"><span><strong>삼성전자</strong> <span class="muted">005930</span></span><button class="pill flat" style="border:none;cursor:pointer">삭제</button></div>
+        <div class="wl-item"><span><strong>SK하이닉스</strong> <span class="muted">000660</span></span><button class="pill flat" style="border:none;cursor:pointer">삭제</button></div>
+        <div class="wl-item"><span><strong>NAVER</strong> <span class="muted">035420</span></span><button class="pill flat" style="border:none;cursor:pointer">삭제</button></div>
+      </div>
+      <h2 style="margin-top:20px">소셜 연동</h2>
+      <div class="row" style="margin-top:8px">
+        <span class="pill up">네이버 · 연동됨 ✕</span><span class="pill flat">구글 · 연동하기</span><span class="pill flat">카카오 · 연동하기</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 구독/결제 ============ -->
+  <section class="view" id="pricing">
+    <div class="row">
+      <div class="card" style="padding:26px;flex:1;min-width:280px">
+        <h2>무료</h2><div class="muted">비구독 회원</div>
+        <p style="font-size:30px;font-weight:800;margin:10px 0">0원</p>
+        <ul style="color:var(--navy-soft);font-size:14px;padding-left:18px">
+          <li>리포트 무료 3회 열람</li><li>관심종목 무제한</li><li>비회원은 DART·네이버만</li>
+        </ul>
+      </div>
+      <div class="card" style="padding:26px;flex:1;min-width:280px;border:2px solid var(--sky)">
+        <h2>월 구독 <span class="pill sky">추천</span></h2><div class="muted">monthly_9900</div>
+        <p style="font-size:30px;font-weight:800;margin:10px 0">9,900원<span style="font-size:14px;font-weight:500" class="muted"> /월</span></p>
+        <ul style="color:var(--navy-soft);font-size:14px;padding-left:18px">
+          <li>리포트 <strong>무제한 열람</strong></li><li>5소스 상세 전체</li><li>언제든 취소(무료 잔여분 보존)</li>
+        </ul>
+        <button class="btn-grad" style="width:100%;margin-top:8px">결제하기</button>
+      </div>
+    </div>
+    <div class="notice">결제는 포트원 KG이니시스 일반결제로 진행됩니다. 구독은 1개월 단위이며 결제 취소 시 즉시 해지됩니다.</div>
+  </section>
+</div>
+
+<script>
+  const btns=document.querySelectorAll('nav button');
+  btns.forEach(b=>b.addEventListener('click',()=>{
+    btns.forEach(x=>x.classList.remove('active'));b.classList.add('active');
+    document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+    document.getElementById(b.dataset.v).classList.add('active');
+  }));
+</script>
+</body>
+</html>
