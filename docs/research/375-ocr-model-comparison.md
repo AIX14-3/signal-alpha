@@ -1,7 +1,8 @@
 # OCR 모델 비교 — Hiring skill enrichment (#375)
 
-> 상태: **조사(진행)**. 후보 확정 + 평가 방법론까지. 정량 측정값은 평가셋 구축 후 채움.
+> 상태: **선정 완료(2026-06-24) — Tesseract(kor+eng) 채택**. §4 비교표·§4.1 근거 참고.
 > 관련: [#375](https://github.com/AIX14-3/signal-alpha/issues/375) ·
+> [#390](https://github.com/AIX14-3/signal-alpha/issues/390)(Phase 1 벤치마크·선정) ·
 > 설계 [hiring-skill-enrichment-design.md](../spec/hiring-skill-enrichment-design.md)
 
 ## 1. 목적
@@ -66,17 +67,38 @@ extra_payload.image_url (Phase 0)  → 이미지 다운로드(로컬 캐시)
 - 모든 엔진 **동일 평가셋·동일 키워드 사전**으로 측정(차이는 OCR 정보만).
 - 엔진 의존성은 격리 설치(uv `--with` / 분리 venv)로 충돌 회피.
 
-## 4. 비교표 (측정 예정)
+## 4. 비교표 (측정 완료 — 2026-06-24)
 
-> 정량 칸은 평가셋 구축·실행 후 채운다(현재 TBD).
+> 평가셋 = 자소설 IT/개발 포스터 **라벨 5장**(GT 기술키워드 집합, 빈 라벨 포스터 제외).
+> 지표 = **micro precision/recall/F1**(사전 매칭된 기술키워드 기준, kor+eng 합산) +
+> **median per-image 레이턴시**. 환경 = **CPU**(Windows, GPU 미사용). 워밍업(첫 이미지 1회 폐기)으로
+> 모델 로드 비용 분리. 하니스: [`scripts/research/ocr_harness.py`](../../services/agent-worker/scripts/research/ocr_harness.py).
+> CER·표보존은 이번 라운드 미측정(1차 선정축 = 기술키워드 P/R/F1).
 
-| 모델 | 한국어 P/R | 영문 P/R | CER | 속도(s/img) | 메모리 | 라이선스 | 비고 |
-|---|---|---|---|---|---|---|---|
-| PaddleOCR (PP-OCRv6) | TBD | TBD | TBD | TBD | TBD | Apache-2.0 | 표 강점 |
-| Surya | TBD | TBD | TBD | TBD | TBD | GPL-3.0/상업조건 | 레이아웃 강점·느림 |
-| Tesseract | TBD | TBD | TBD | TBD | TBD | Apache-2.0 | 베이스라인 |
+| 모델 | micro P | micro R | **micro F1** | median 속도 | 라이선스 | 비고 |
+|---|---|---|---|---|---|---|
+| **Tesseract** (kor+eng) | 0.870 | 0.741 | **0.80** | **~3.0s/img** | Apache-2.0 | ✅ **선정** — 최고 F1·최속·CPU 경량 |
+| PaddleOCR (PP-OCRv5, server det) | 0.816 | 0.574 | 0.674 | ~112s/img | Apache-2.0 | recall↓(긴 포스터 누락) · CPU 매우 느림 |
+| Surya | — | — | — | — | GPL-3.0/상업조건 | ⛔ 환경 차단(미측정) · CPU 실익 낮음 · 후속 불필요 |
 
+> 주1: PaddleOCR 속도는 PP-OCRv5 **server** det + CPU(oneDNN 우회) 기준이라 과도하게 느림 —
+> 경량 mobile det로 개선 여지 있으나 recall 열위가 선정 결론을 바꾸지 않음.
+> 주2: Surya 는 uv ephemeral 설치가 `sympy` 빌드캐시 락(`os error 32`, 점유 프로세스 권한상승/재부팅
+> 필요)으로 측정 불가. GPU 권장 엔진이라 현 CPU 운영 환경에선 실익이 낮아 **후속 측정 생략**.
 > KLOCR(라이선스 NC)·DocTR(한국어 vocab 미지원)은 §2.1에서 탈락 → 측정 대상 제외.
+
+### 4.1 선정 결과 — **Tesseract(kor+eng) 확정**
+
+게이트 순서(§5: ① 라이선스 → ② 한국어 P/R → ③ self-host 비용) 적용:
+- **Tesseract — 채택.** Apache-2.0(게이트 통과). 5장 micro **F1 0.80**으로 최고, **~3s/img**로 최속,
+  CPU 단독·설치 경량. 운영 조건: `kor`+`eng` traineddata 배치 + `TESSDATA_PREFIX` 지정.
+- **PaddleOCR — 보류.** Apache-2.0이나 **F1 0.674로 베이스라인(Tesseract)을 유의하게 못 이김**
+  (recall 0.574, 긴 포스터 누락 多) + CPU 레이턴시 비현실적(server det ~112s/img). §5 "베이스라인
+  못 이기면 보류" 규칙 적용. (GPU + mobile det 재검토는 대량 backfill 처리량이 문제될 때만.)
+- **Surya — 후속 불필요.** **환경 차단으로 미측정**(uv sympy 빌드캐시 락). GPU 권장 엔진이라
+  **CPU 운영 환경에서 실익 낮음** → 재측정 생략, GPU 도입 시에만 재검토.
+
+**결론:** Phase 1 enrichment OCR 엔진 = **Tesseract(kor+eng) 단독 채택**. PaddleOCR·Surya 는 보류.
 
 ## 5. 선정 기준 / 다음 단계
 
@@ -84,8 +106,8 @@ extra_payload.image_url (Phase 0)  → 이미지 다운로드(로컬 캐시)
 정확도가 좋아도 라이선스 불가면 탈락. 베이스라인(Tesseract)을 유의하게 못 이기면 그 엔진은 보류.
 
 **다음 단계:**
-1. **Phase 0 (선행, 코드)** — 수집 시 `content` 의 `image_url` 을 `extra_payload` 에 보존
-   (jasoseol `_to_record` + base_collector). enrichment·평가셋 입력 확보.
-2. 평가셋 이미지 20~30장 수집·손라벨.
-3. **3종(PaddleOCR·Surya·Tesseract)** 하니스 실행 → §4 표 채움.
-4. 1~2종 채택 → Phase 1(`ENRICH_HIRING_SKILL` 잡) 구현.
+1. ~~**Phase 0** — `image_url` 을 `extra_payload` 에 보존~~ (완료).
+2. ~~평가셋 이미지 수집·손라벨~~ (자소설 포스터 5장 라벨 완료, [`labels_draft.json`](../../services/agent-worker/data/eval_set/) — 향후 20~30장 확대 여지).
+3. ~~하니스 실행 → §4 표 채움~~ (Tesseract·PaddleOCR 측정 완료, Surya 환경 차단·생략 — §4).
+4. **(완료) 채택 = Tesseract(kor+eng).** → **다음:** Phase 1 `ENRICH_HIRING_SKILL` 잡 구현
+   (하니스의 `extract_skills`/사전 재사용, 엔진 = Tesseract).
