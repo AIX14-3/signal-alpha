@@ -18,8 +18,8 @@
 ## 2. 마이그레이션 도구 규칙 (이 브랜치 기준)
 
 - `database/migrate.py` 명령은 `status`, `apply` 두 가지뿐이다. **`new`/타임스탬프 생성 서브커맨드는 없다.**
-- 적용 순서는 `migrations/*.sql` 파일명 정렬. 현재 최신은 `018_signal_journal_mvp_policy.sql`.
-- 따라서 신규 마이그레이션은 **정수 순번 `019_`, `020_`, `021_`** 로 작성한다. (프로젝트 메모리의 "타임스탬프 파일명" 규칙은 이 브랜치 `migrate.py` 에 미반영 — 도구가 바뀌면 그때 전환한다.)
+- 적용 순서는 `migrations/*.sql` 파일명 정렬. **main 최신은 `024_datalab_keyword_review_status.sql`**(분기 이후 main 이 019~024 추가).
+- 따라서 신규 마이그레이션은 main 충돌을 피해 **정수 순번 `025_`, `026_`, `027_`** 로 작성한다. (프로젝트 메모리의 "타임스탬프 파일명" 규칙은 이 브랜치 `migrate.py` 에 미반영 — 정수 순번 충돌이 반복되면 타임스탬프 전환 검토.)
 - 시드(`seeds/*.sql`)는 원장에 기록되지 않으므로 **`ON CONFLICT` 멱등**이어야 한다.
 - 적용 전 PG16 로컬에서 `python database/migrate.py apply --dry-run` → `apply` 순으로 검증한다. SQL 은 **LF 개행**으로 저장한다(CRLF 시 체크섬 깨짐, `.gitattributes` 확인).
 
@@ -29,9 +29,9 @@
 
 | 파일 | 변경 | 핵심 |
 |---|---|---|
-| `019_users_phone.sql` | `users.phone VARCHAR(20)` 추가 + partial unique | 본인인증 핸드폰 = 활성 사용자 유니크. 탈퇴 후 재가입 허용 |
-| `020_report_issuances.sql` | `report_issuances` 테이블 신규 | 리포트 열람(언락) 쿼터 기록. `(user_id, final_signal_id)` 멱등 |
-| `021_subscription_single_product.sql` | 플랜 정리 | 단일 상품 `monthly_9900` upsert, `free` 관심종목 무제한, `pro`/`premium` 비활성 |
+| `025_users_phone.sql` | `users.phone VARCHAR(20)` 추가 + partial unique | 본인인증 핸드폰 = 활성 사용자 유니크. 탈퇴 후 재가입 허용 |
+| `026_report_issuances.sql` | `report_issuances` 테이블 신규 | 리포트 열람(언락) 쿼터 기록. `(user_id, final_signal_id)` 멱등 |
+| `027_subscription_single_product.sql` | 플랜 정리 | 단일 상품 `monthly_9900` upsert, `free` 관심종목 무제한, `pro`/`premium` 비활성 |
 
 ### 3.1 `users.phone`
 
@@ -78,7 +78,7 @@ CREATE TABLE report_issuances (
 | `premium` | **inactive** | 19,900 | 100 | 구 모델 비활성(행 보존) |
 
 - `max_watchlist` 는 `INTEGER NOT NULL` 이라 "무제한"을 INT 최대값으로 표기. **백엔드는 관심종목 한도 검사를 하지 않는 것이 정본**이며 이 값은 표시/하위호환 상한일 뿐이다.
-- ⚠️ **시드/마이그레이션 순서**: `migrate.py` 는 마이그레이션 적용 후 시드를 실행한다. fresh DB 에서는 `021` 의 UPDATE 가 빈 테이블을 만나 no-op 이 되므로, **시드(`seeds/002_seed_subscription_plans.sql`)가 신규 모델(free 무제한 + monthly_9900, pro/premium 미시드)의 정본**이어야 한다. 기존 DB 는 시드 `ON CONFLICT DO NOTHING` 으로 보존되고 `021` 마이그레이션이 전환한다. (시드 파일을 신규 모델로 갱신 완료.)
+- ⚠️ **시드/마이그레이션 순서**: `migrate.py` 는 마이그레이션 적용 후 시드를 실행한다. fresh DB 에서는 `027` 의 UPDATE 가 빈 테이블을 만나 no-op 이 되므로, **시드(`seeds/002_seed_subscription_plans.sql`)가 신규 모델(free 무제한 + monthly_9900, pro/premium 미시드)의 정본**이어야 한다. 기존 DB 는 시드 `ON CONFLICT DO NOTHING` 으로 보존되고 `027` 마이그레이션이 전환한다. (시드 파일을 신규 모델로 갱신 완료.)
 
 ---
 
@@ -130,7 +130,7 @@ CREATE TABLE report_issuances (
 ## 7. 적용 순서·검증
 
 1. `python database/migrate.py status` — 018 까지 적용 확인.
-2. `python database/migrate.py apply --dry-run --seeds` — 019/020/021 대상 확인.
+2. `python database/migrate.py apply --dry-run --seeds` — 025/026/027 대상 확인.
 3. `python database/migrate.py apply --seeds` — 적용.
 4. 검증 쿼리: `users.phone` 인덱스 존재, `report_issuances` 멱등(같은 `(user,final_signal)` 2회 INSERT → 1행), `subscription_plans` 에서 `is_active=TRUE` 가 `free`/`monthly_9900` 2종.
 5. 드리프트 주의(메모리): 일부 환경은 마이그레이션 드리프트가 있으므로 운영 DB 적용 전 스키마 비교.

@@ -392,9 +392,9 @@ Response: `{ "subscription": { "plan_type": "monthly_9900", "status": "active", 
 
 | 파일 | 변경 |
 |---|---|
-| `019_users_phone.sql` | `users.phone` + 활성 사용자 partial unique |
-| `020_report_issuances.sql` | 리포트 열람 쿼터 테이블(`(user_id, final_signal_id)` 멱등, `issued_via`) |
-| `021_subscription_single_product.sql` | 단일 상품 `monthly_9900`, `free` 무제한, `pro`/`premium` 비활성 |
+| `025_users_phone.sql` | `users.phone` + 활성 사용자 partial unique |
+| `026_report_issuances.sql` | 리포트 열람 쿼터 테이블(`(user_id, final_signal_id)` 멱등, `issued_via`) |
+| `027_subscription_single_product.sql` | 단일 상품 `monthly_9900`, `free` 무제한, `pro`/`premium` 비활성 |
 
 재사용(변경 없음): `portone_verifications`, `social_accounts`, `terms_agreements`, `signal_subscriptions`, `subscription_plans`, `admin_*`, `user_sessions`, `watchlists`, `signal_journals`, `final_signals`, 원천 raw 테이블.
 
