@@ -420,6 +420,7 @@ class FakeReportPipelineConnection:
         return {
             "stock_id": raw["stock_id"],
             "pdf_url": raw["source_url"],
+            "source_hash": raw["source_hash"],
             "stock_code": "005930",
             "securities_firm": detail["securities_firm"],
             "publish_date": detail["publish_date"],
@@ -558,6 +559,10 @@ class ReportE2EPipelineTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn(raw_document_id, conn.raw_documents)
         self.assertEqual(conn.report_raw_details[raw_document_id]["parsing_status"], "success")
+        self.assertRegex(
+            conn.report_raw_details[raw_document_id]["s3_key"],
+            r"^reports/005930/20260624_test_securities_[0-9a-f]{8}\.pdf$",
+        )
         self.assertTrue(conn.source_documents)
         self.assertTrue(conn.signal_events)
         self.assertTrue(conn.report_chunks)

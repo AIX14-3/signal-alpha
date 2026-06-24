@@ -111,6 +111,9 @@ ReportProcessTaskHandler
 - 현재 canonical queue 경로의 기본 backend는 GCS입니다.
 - 로컬 테스트 파일 저장은 `REPORT_STORAGE_BACKEND=local`과 `REPORT_LOCAL_STORAGE_DIR`로 활성화합니다. 기본 경로는 저장소 루트 기준 `data/report-storage`입니다.
 - local backend는 object key와 같은 상대 경로로 PDF를 저장하며, `..` 같은 경로 이탈 key는 거부합니다.
+- 신규 PDF object key는 `reports/{stock_code}/{publish_date}_{firm_slug}_{source_hash8}.pdf` 형식을 사용합니다.
+  - 예: `reports/005930/20260624_hana_abcdef12.pdf`
+  - 같은 종목, 발행일, 증권사, 리포트 유형이 겹쳐도 source hash prefix로 충돌을 줄입니다.
 - `pdf_downloader.py`, `run_parser.py` 같은 과거 CLI 경로는 `data/reports/` 아래에 PDF를 저장할 수 있습니다.
 - queue handler는 `REPORT_STORAGE_BACKEND` 값에 따라 GCS 또는 local storage client를 사용합니다.
 - DB 컬럼명은 아직 `s3_key`이지만, 현재 구현에서는 선택된 storage backend의 object key로 사용합니다.

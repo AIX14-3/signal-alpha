@@ -156,6 +156,7 @@ class ProcessHandlerConn:
             return {
                 "stock_id": 1,
                 "pdf_url": "https://example.com/report.pdf",
+                "source_hash": "abcdef1234567890",
                 "stock_code": "005930",
                 "securities_firm": "Test Securities",
                 "publish_date": "2026-06-24",
@@ -231,7 +232,7 @@ class ReportProcessTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertIs(observed["download"][2], storage)
         self.assertIs(observed["process"][1], storage)
         self.assertIs(observed["process"][2], settings)
-        self.assertIn("reports/005930/", observed["process"][0])
+        self.assertEqual(observed["process"][0], "reports/005930/20260624_test_securities_abcdef12.pdf")
         self.assertTrue(any("UPDATE report_raw_details" in sql for sql, _ in conn.executed))
         self.assertTrue(any(args[1] == "normalize_report" for _, args in conn.fetchvals))
 

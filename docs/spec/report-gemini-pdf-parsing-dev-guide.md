@@ -121,7 +121,7 @@ docker compose exec -T postgres psql -U signal_alpha -d signal_alpha -c "select 
 
 - `has_pdf = t`
 - `parsing_status = success`
-- `s3_key`가 `reports/{stock_code}/...pdf` 형태
+- `s3_key`가 `reports/{stock_code}/{publish_date}_{firm_slug}_{source_hash8}.pdf` 형태
 - `target_price`, `investment_opinion`, `key_rationale` 중 일부가 채워짐
 
 Gemini 보강이 실패해도 규칙 기반 fallback 결과가 유지됩니다. 이 경우 로그에 `[LLM 보강 오류]`가 찍힐 수 있습니다.

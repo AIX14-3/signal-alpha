@@ -13,7 +13,7 @@ from app.collectors.report.crawler import collect_stock
 from app.collectors.report.parsers.chunker import chunk_text
 from app.collectors.report.parsers.pdf_extractor import extract_text
 from app.collectors.report.parsers.run_parser import process_from_s3
-from app.collectors.report.pdf_downloader import download_and_upload, make_filename, make_s3_key
+from app.collectors.report.pdf_downloader import download_and_upload, make_report_storage_key
 from app.collectors.report.storage import ReportStorageClient, get_report_storage_client
 from app.embeddings.provider import get_embedding_provider, to_pgvector
 from app.orchestrator.queue.task_types import (
@@ -141,6 +141,7 @@ class ReportProcessTaskHandler:
             """
             SELECT rd.stock_id,
                    rd.source_url     AS pdf_url,
+                   rd.source_hash,
                    s.ticker          AS stock_code,
                    rrd.securities_firm,
                    rrd.publish_date,
@@ -162,12 +163,12 @@ class ReportProcessTaskHandler:
             return {"status": "already_done", "raw_document_id": raw_document_id}
 
         extra = _extra_payload(row["extra_payload"])
-        filename = make_filename({
+        s3_key = row["s3_key"] or make_report_storage_key(str(row["stock_code"]), {
             "firm": row["securities_firm"],
-            "date": str(row["publish_date"]).replace("-", "."),
+            "date": str(row["publish_date"]),
             "report_type": extra.get("report_type") or "cr",
+            "source_hash": row["source_hash"],
         })
-        s3_key = row["s3_key"] or make_s3_key(str(row["stock_code"]), filename)
 
         if not row["pdf_url"]:
             await self._mark_failed(raw_document_id, "pdf_url이 없습니다")
