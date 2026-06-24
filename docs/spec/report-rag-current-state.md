@@ -70,9 +70,10 @@ ReportCollectTaskHandler
   - `skipped_count`: 날짜 파싱 실패 등으로 저장되지 않은 리포트 수
   - `failed_count`: 수집/저장/queue 등록 중 예외가 난 경우 1
 
-현재 빈틈:
+현재 검증:
 
-- 수집, 파싱, 정규화, 임베딩, 분석 단위 테스트는 있으나 실제 DB와 queue runner를 함께 쓰는 Report E2E 검증은 아직 제한적입니다.
+- `test_report_e2e_pipeline.py`에서 fake DB connection과 `QueueTaskRunner` 기반으로 `collect_report → process_report → normalize_report → embed_report → analyze_report → ml_infer` 연쇄를 검증합니다.
+- 검증 범위는 raw 문서 저장, PDF 처리 결과 저장, canonical `source_documents`/`signal_events` 승격, chunk/embedding 저장, 분석 결과 저장, 후속 ML/aggregate enqueue까지 포함합니다.
 
 ### 3. `process_report`
 
@@ -367,7 +368,8 @@ Invoke-RestMethod `
    - `collect_report`는 `collector_runs` 생성과 완료/실패 집계를 기록합니다.
    - Report 저장은 `CollectionRepository` 기반으로 정리되어 `collector_runs`와 raw 문서 추적이 이어집니다.
 7. 테스트 범위
-   - 현재 unit test를 유지하면서 storage backend, queue chaining, Report 분석 저장에 대한 통합 테스트를 추가합니다.
+   - storage backend, queue chaining, Report 분석 저장은 unit/integration 테스트로 유지합니다.
+   - fake DB connection 기반 Report E2E queue pipeline으로 canonical 링크와 후속 enqueue를 회귀 검증합니다.
 
 ## 현재 테스트 범위
 
