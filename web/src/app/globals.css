@@ -65,6 +65,18 @@ a {
   border-radius: 999px;
   font-weight: 600;
 }
+.pill.up {
+  background: rgba(16, 185, 129, 0.12);
+  color: var(--color-green);
+}
+.pill.down {
+  background: rgba(239, 68, 68, 0.12);
+  color: var(--color-red);
+}
+.pill.flat {
+  background: var(--color-surface-2);
+  color: var(--color-navy-soft);
+}
 
 /* ---------- 정적 그라데이션 배경 (홈 외 전 페이지, 애니메이션 없음) ---------- */
 .bg-static {

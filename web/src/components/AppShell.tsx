@@ -52,7 +52,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 onClick={() => void logout()}
                 className="rounded-full border border-line px-4 py-2 text-[13.5px] font-semibold text-navy-soft hover:border-navy hover:text-navy"
               >
-                {user.nickname ?? user.email} · 로그아웃
+                {user.nickname ?? user.member_code} · 로그아웃
               </button>
             ) : (
               <Link

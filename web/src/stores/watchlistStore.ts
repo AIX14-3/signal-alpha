@@ -1,16 +1,10 @@
 "use client";
 
 import { create } from "zustand";
-import {
-  addWatchlist,
-  listWatchlists,
-  removeWatchlist,
-  type WatchlistItem,
-} from "@/lib/apiClient";
+import { addWatchlist, listWatchlists, removeWatchlist, type WatchlistItem } from "@/lib/apiClient";
 
 type WatchlistState = {
   items: WatchlistItem[];
-  limit: number;
   count: number;
   loading: boolean;
   error: string | null;
@@ -19,9 +13,9 @@ type WatchlistState = {
   remove: (stockCode: string) => Promise<void>;
 };
 
+// 신규 기획: 관심종목 무제한(한도 없음).
 export const useWatchlistStore = create<WatchlistState>((set, get) => ({
   items: [],
-  limit: 10,
   count: 0,
   loading: false,
   error: null,
@@ -30,7 +24,7 @@ export const useWatchlistStore = create<WatchlistState>((set, get) => ({
     set({ loading: true, error: null });
     try {
       const data = await listWatchlists();
-      set({ items: data.items, limit: data.limit, count: data.count, loading: false });
+      set({ items: data.items, count: data.count, loading: false });
     } catch (error) {
       set({ loading: false, error: (error as Error).message });
     }

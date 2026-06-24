@@ -46,17 +46,29 @@ export function directionLabel(direction: string | null | undefined): {
   }
 }
 
-/**
- * 시안 6타일 팩터 ↔ 백엔드 4소스 매핑 (잠정, 팀 확정 필요).
- * DART→재무+공시, PRICE→수급+시계열, REPORT+ALTERNATIVE→뉴스.
- */
-export const FACTOR_MAP: { label: string; source: string; hint: string }[] = [
-  { label: "재무 건전성", source: "DART", hint: "수익성·성장성" },
-  { label: "뉴스 감성", source: "REPORT", hint: "리포트·대체데이터" },
-  { label: "수급 모멘텀", source: "PRICE", hint: "투자자별 매매" },
-  { label: "시계열 추세", source: "PRICE", hint: "일봉 추세 모델" },
-  { label: "공시 이벤트", source: "DART", hint: "실적·지분·리스크" },
+/** 리포트 5개 연결점 소스 키 → 한글 라벨/아이콘/힌트. */
+export const SOURCE_META: Record<
+  string,
+  { label: string; icon: string; hint: string }
+> = {
+  price: { label: "주식정보", icon: "📈", hint: "시세·재무 지표" },
+  dart: { label: "DART", icon: "📑", hint: "전자공시" },
+  hiring: { label: "채용공고", icon: "🧑‍💼", hint: "채용 동향" },
+  datalab: { label: "네이버 키워드", icon: "🔎", hint: "검색 관심도" },
+  report: { label: "증권사 리포트", icon: "🏦", hint: "애널리스트 의견" },
+};
+
+export const SOURCE_ORDER: ("price" | "dart" | "hiring" | "datalab" | "report")[] = [
+  "price",
+  "dart",
+  "hiring",
+  "datalab",
+  "report",
 ];
+
+export function sourceLabel(source: string): string {
+  return SOURCE_META[source]?.label ?? source;
+}
 
 export function won(amount: number): string {
   return `₩${amount.toLocaleString("ko-KR")}`;

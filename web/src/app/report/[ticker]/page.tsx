@@ -1,140 +1,168 @@
 "use client";
 
-import { useParams } from "next/navigation";
-import { useEffect, useState } from "react";
-import { ApiError, getSignalByTicker } from "@/lib/apiClient";
-import { PipelineStepper } from "@/components/PipelineStepper";
+import Link from "next/link";
+import { useParams, useRouter } from "next/navigation";
+import { useEffect } from "react";
+import { ApiError, type ReportSource } from "@/lib/apiClient";
 import { WatchlistButton } from "@/components/WatchlistButton";
-import { ReportView, type ReportData } from "@/components/report/ReportView";
-import type { RiskItem } from "@/components/report/RiskList";
-
-// /signals/{ticker}는 raw row를 반환해 JSONB가 문자열로 올 수 있다 → 파싱.
-function parseJson(value: unknown): unknown {
-  if (typeof value === "string") {
-    try {
-      return JSON.parse(value);
-    } catch {
-      return null;
-    }
-  }
-  return value;
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  const v = parseJson(value);
-  return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
-}
-
-function numberOrNull(value: unknown): number | null {
-  if (typeof value === "number") return value;
-  if (typeof value === "string" && value.trim() !== "" && !Number.isNaN(Number(value))) {
-    return Number(value);
-  }
-  return null;
-}
-
-function mapRisks(value: unknown): RiskItem[] {
-  const list = parseJson(value);
-  if (!Array.isArray(list)) return [];
-  return list.slice(0, 5).map((raw) => {
-    const item = asRecord(raw);
-    return {
-      level: String(item.impact_level ?? item.level ?? "LOW"),
-      title: String(item.title ?? item.summary ?? "리스크"),
-      detail: typeof item.summary === "string" ? item.summary : null,
-    };
-  });
-}
-
-function mapTags(value: unknown): string[] {
-  const list = parseJson(value);
-  if (!Array.isArray(list)) return [];
-  return list
-    .map((raw) => {
-      if (typeof raw === "string") return raw;
-      const item = asRecord(raw);
-      return typeof item.title === "string" ? item.title : null;
-    })
-    .filter((t): t is string => Boolean(t))
-    .slice(0, 4);
-}
-
-function mapMetrics(scoreBreakdown: Record<string, unknown>): { label: string; value: string }[] {
-  const metrics = asRecord(scoreBreakdown.metrics);
-  return Object.entries(metrics)
-    .map(([label, value]) => ({ label, value: String(value) }))
-    .slice(0, 4);
-}
-
-function toReportData(ticker: string, row: Record<string, unknown>): ReportData {
-  const scoreBreakdown = asRecord(row.score_breakdown);
-  return {
-    stockCode: String(row.ticker ?? ticker),
-    stockName: String(row.name ?? ticker),
-    market: typeof row.market === "string" ? row.market : null,
-    sector: typeof row.sector === "string" ? row.sector : null,
-    finalScore: numberOrNull(row.final_score),
-    direction: typeof row.signal === "string" ? row.signal : null,
-    summary: typeof row.summary === "string" ? row.summary : null,
-    thesis: typeof row.bull_point === "string" ? row.bull_point : null,
-    sourceAgreement: typeof row.source_agreement === "string" ? row.source_agreement : null,
-    scoreBreakdown: scoreBreakdown as ReportData["scoreBreakdown"],
-    metrics: mapMetrics(scoreBreakdown),
-    tags: mapTags(row.positive_evidence),
-    risks: mapRisks(row.caution_evidence),
-    notice: typeof row.notice === "string" ? row.notice : undefined,
-  };
-}
+import { directionLabel, SOURCE_META, SOURCE_ORDER, sourceLabel } from "@/lib/format";
+import { useAuthStore } from "@/stores/authStore";
+import { useReportStore } from "@/stores/reportStore";
+import { useToastStore } from "@/stores/toastStore";
 
 export default function ReportPage() {
   const params = useParams<{ ticker: string }>();
   const ticker = params.ticker;
-  const [data, setData] = useState<ReportData | null>(null);
-  const [state, setState] = useState<"loading" | "ready" | "pending" | "error">("loading");
-  const [error, setError] = useState<string | null>(null);
+  const router = useRouter();
+
+  const user = useAuthStore((s) => s.user);
+  const { report, quota, loading, issuing, error, load, issue, loadQuota } = useReportStore();
+  const showToast = useToastStore((s) => s.show);
 
   useEffect(() => {
-    let active = true;
-    setState("loading");
-    getSignalByTicker(ticker)
-      .then((row) => {
-        if (!active) return;
-        setData(toReportData(ticker, row));
-        setState("ready");
-      })
-      .catch((err: unknown) => {
-        if (!active) return;
-        if (err instanceof ApiError && err.status === 404) {
-          setState("pending");
-        } else {
-          setError(err instanceof Error ? err.message : "리포트를 불러오지 못했습니다.");
-          setState("error");
-        }
-      });
-    return () => {
-      active = false;
-    };
-  }, [ticker]);
+    void load(ticker);
+  }, [ticker, load]);
 
-  if (state === "loading") {
-    return <p className="py-16 text-center text-muted">리포트를 불러오는 중…</p>;
+  useEffect(() => {
+    if (user) void loadQuota();
+  }, [user, loadQuota]);
+
+  async function onIssue() {
+    try {
+      await issue(ticker);
+      await loadQuota();
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 402) {
+        showToast("무료 열람을 모두 사용했습니다. 구독하면 무제한으로 볼 수 있어요.", "info");
+        router.push("/pricing");
+        return;
+      }
+      showToast((err as Error).message, "error");
+    }
   }
 
-  if (state === "pending") {
+  if (loading) return <p className="py-16 text-center text-muted">리포트를 불러오는 중…</p>;
+  if (error && !report)
     return (
-      <div className="py-12">
-        <h1 className="mb-2 text-[28px] font-extrabold">{ticker} 분석 준비 중</h1>
-        <p className="mb-6 text-[14px] text-muted">
-          아직 발행된 시그널이 없습니다. 분석 파이프라인 진행 상태를 확인하세요.
-        </p>
-        <PipelineStepper ticker={ticker} />
+      <div className="py-16 text-center">
+        <p className="text-red">{error}</p>
+        <Link href="/" className="mt-3 inline-block text-sky-deep">← 다른 종목 검색</Link>
+      </div>
+    );
+  if (!report) return null;
+
+  const dir = directionLabel(report.direction);
+  const unlocked = report.access.unlocked;
+  const isMember = report.access.is_member;
+  const byKey = new Map(report.sources.map((s) => [s.source, s] as const));
+
+  return (
+    <div className="py-10">
+      {/* 헤더 */}
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="text-[13px] text-muted">
+            {report.stock.stock_code} · {report.stock.market ?? "—"} · {report.stock.sector ?? "—"}
+          </div>
+          <h1 className="my-1 text-[32px] font-extrabold">{report.stock.stock_name} 리포트</h1>
+          {report.report_version?.updated_at && (
+            <span className="text-[12px] text-muted">업데이트 {report.report_version.updated_at.slice(0, 16).replace("T", " ")}</span>
+          )}
+        </div>
+        <div className="text-right">
+          {user && quota && (
+            <span className="pill" style={{ background: "rgba(14,165,233,.12)", color: "#0284c7", padding: "5px 11px" }}>
+              {quota.subscription_active ? "구독 중 · 무제한" : `무료 ${quota.free_remaining}회 남음`}
+            </span>
+          )}
+          <div className="mt-2">
+            <WatchlistButton stockCode={report.stock.stock_code} />
+          </div>
+        </div>
+      </div>
+
+      {/* 종합 + 발행 CTA */}
+      <div className="card mt-5 flex flex-wrap items-center gap-6 p-6">
+        {unlocked ? (
+          <>
+            <div className="grid h-[120px] w-[120px] place-items-center rounded-full brand-grad text-white">
+              <div className="text-center">
+                <div className="text-[34px] font-extrabold leading-none">{report.score ?? "–"}</div>
+                <div className="text-[12px] opacity-90">종합 점수</div>
+              </div>
+            </div>
+            <div className="flex-1 min-w-[240px]">
+              <span className={`pill ${tone(dir.tone)}`} style={{ padding: "5px 11px" }}>{dir.label}</span>
+              <p className="mt-3 text-navy-soft">{report.summary ?? "요약이 없습니다."}</p>
+            </div>
+          </>
+        ) : (
+          <div className="flex-1">
+            <h2 className="text-[18px] font-bold">전체 리포트가 잠겨 있어요</h2>
+            <p className="mt-1 text-[14px] text-muted">{report.notice}</p>
+            <div className="mt-4">
+              {isMember ? (
+                <button onClick={() => void onIssue()} disabled={issuing} className="brand-grad rounded-full px-6 py-3 text-[15px] font-bold text-white disabled:opacity-60">
+                  {issuing ? "발행 중…" : "리포트 발행(열람)"}
+                </button>
+              ) : (
+                <Link href="/login" className="brand-grad inline-block rounded-full px-6 py-3 text-[15px] font-bold text-white">
+                  로그인하고 무료 3회 열람
+                </Link>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* 5소스 카드 */}
+      <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {SOURCE_ORDER.map((key) => {
+          const src = byKey.get(key);
+          return <SourceCard key={key} sourceKey={key} src={src} ticker={ticker} />;
+        })}
+      </div>
+
+      <p className="mt-6 rounded-[12px] bg-surface-2 p-4 text-[12.5px] text-muted">{report.notice}</p>
+    </div>
+  );
+}
+
+function SourceCard({
+  sourceKey,
+  src,
+  ticker,
+}: {
+  sourceKey: "price" | "dart" | "hiring" | "datalab" | "report";
+  src: ReportSource | undefined;
+  ticker: string;
+}) {
+  const meta = SOURCE_META[sourceKey];
+  if (!src || src.locked) {
+    return (
+      <div className="card relative grid min-h-[140px] place-items-center overflow-hidden p-5 text-center">
+        <div className="font-bold">{meta.icon} {meta.label}</div>
+        <div className="absolute inset-0 grid place-items-center bg-surface/60 backdrop-blur-[6px]">
+          <div className="text-[22px]">🔒</div>
+          <div className="text-[12.5px] font-semibold text-navy-soft">로그인·발행 후 공개</div>
+        </div>
       </div>
     );
   }
+  const dir = directionLabel(src.direction);
+  return (
+    <Link href={`/report/${encodeURIComponent(ticker)}/${sourceKey}`} className="card block p-5 transition hover:shadow-lg">
+      <div className="flex items-center gap-2 font-bold">
+        {meta.icon} {meta.label}
+        <span className={`pill ${tone(dir.tone)} ml-auto`} style={{ padding: "3px 9px", fontSize: 12 }}>{dir.label}</span>
+      </div>
+      <p className="mt-2 min-h-[38px] text-[13.5px] text-navy-soft">{src.summary ?? sourceLabel(sourceKey) + " 데이터 요약"}</p>
+      <div className="mt-2 text-[12px] text-muted">점수 {src.score ?? "–"} · {src.data_status ?? "—"}</div>
+      <div className="mt-2 text-[13px] font-semibold text-sky-deep">상세 보기 →</div>
+    </Link>
+  );
+}
 
-  if (state === "error" || !data) {
-    return <p className="py-16 text-center text-red">{error ?? "리포트를 불러오지 못했습니다."}</p>;
-  }
-
-  return <ReportView data={data} actions={<WatchlistButton stockCode={data.stockCode} />} />;
+function tone(t: "up" | "down" | "flat"): string {
+  return t === "up" ? "up" : t === "down" ? "down" : "flat";
 }
