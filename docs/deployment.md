@@ -9,3 +9,5 @@ Recommended deployment units:
 - `services/agent-worker`
 
 GitHub Actions should use path filters so frontend changes do not redeploy backend services.
+
+For an executable, demo-scale walkthrough (Vercel + Railway + Supabase + pipeline cron, with costs and verification), see [deployment-guide.md](./deployment-guide.md).
