@@ -11,6 +11,7 @@ hiring_raw_details.observed_date 를 DB 서버 tz(CURRENT_DATE)가 아니라 KST
 from __future__ import annotations
 
 import datetime
+import json
 import unittest
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
@@ -149,6 +150,17 @@ class InsertOneObservedDateTest(unittest.TestCase):
         # 라이브 수집(override 없음) → 기존 거동(_kst_today) 유지.
         params = self._params_for(_record())
         self.assertEqual(params["observed_date"], _kst_today())
+
+    def test_image_urls_preserved_in_extra_payload(self):
+        # #375 Phase 0: image_urls 가 extra_payload 에 보존된다.
+        params = self._params_for(_record(image_urls=["https://cdn/x.png"]))
+        extra = json.loads(params["extra_payload"])
+        self.assertEqual(extra["image_urls"], ["https://cdn/x.png"])
+
+    def test_extra_payload_image_urls_none_when_absent(self):
+        params = self._params_for(_record())
+        extra = json.loads(params["extra_payload"])
+        self.assertIsNone(extra["image_urls"])
 
 
 if __name__ == "__main__":

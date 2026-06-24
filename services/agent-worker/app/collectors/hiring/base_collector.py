@@ -414,6 +414,8 @@ class BaseCollector(ABC):
             "duty_groups": data.get("duty_groups"),
             "duty_group_ids": data.get("duty_group_ids"),
             "employment_page_url": data.get("employment_page_url"),
+            # #375 Phase 0: 자격요건 포스터 이미지 URL(OCR enrichment 입력). 소스에 없으면 None.
+            "image_urls": data.get("image_urls"),
         }
         # observed_date: 기본은 오늘(KST). backfill 등이 per-row override(`observed_date`,
         # 실제 게시일)를 주입하면 그 날짜(KST)로 적재해 과거 시계열을 보존한다.

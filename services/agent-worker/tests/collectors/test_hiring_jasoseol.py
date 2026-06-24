@@ -9,7 +9,7 @@ from __future__ import annotations
 import unittest
 
 import app.collectors.hiring.sites.jasoseol as jaso
-from app.collectors.hiring.sites.jasoseol import JasoseolCrawler, _norm
+from app.collectors.hiring.sites.jasoseol import JasoseolCrawler, _image_urls, _norm
 
 # 실 API employment_companies 응답을 본뜬 최소 샘플
 SAMPLE = [
@@ -176,6 +176,52 @@ class DutyGroupTest(unittest.TestCase):
         r = self.c._to_record("X", "X", posting)
         self.assertEqual(r["duty_groups"], [])
         self.assertEqual(r["duty_group_ids"], [])
+
+
+class ImageUrlTest(unittest.TestCase):
+    """#375 Phase 0: 상세 content(HTML)의 <img src> 보존(OCR enrichment 입력)."""
+
+    def setUp(self):
+        jaso.reset_cache()
+        self.c = JasoseolCrawler(driver=None)
+
+    def tearDown(self):
+        jaso.reset_cache()
+
+    def test_extracts_all_img_src_in_order_no_filter(self):
+        # 필터·중복제거 없이 등장 순서대로 전부 보존(노이즈 필터는 샘플 확인 후 별도).
+        content = (
+            "<p>자격요건</p>"
+            '<img src="https://cdn.jasoseol.com/a.png">'
+            "<img alt='poster' src='https://cdn.jasoseol.com/b.jpg'>"
+            '<img src="https://cdn.jasoseol.com/a.png">'  # 중복도 전부 보존
+        )
+        self.assertEqual(
+            _image_urls({"content": content}),
+            [
+                "https://cdn.jasoseol.com/a.png",
+                "https://cdn.jasoseol.com/b.jpg",
+                "https://cdn.jasoseol.com/a.png",
+            ],
+        )
+
+    def test_no_content_or_no_img_returns_empty(self):
+        for posting in ({}, {"content": ""}, {"content": None}, {"content": "<p>텍스트만</p>"}):
+            self.assertEqual(_image_urls(posting), [])
+
+    def test_to_record_preserves_image_urls(self):
+        posting = {
+            "id": 555, "name": "테스트사", "title": "백엔드 채용",
+            "employments": [{"field": "백엔드"}],
+            "content": '<img src="https://cdn.jasoseol.com/poster.png">',
+        }
+        r = self.c._to_record("테스트사", "테스트사", posting)
+        self.assertEqual(r["image_urls"], ["https://cdn.jasoseol.com/poster.png"])
+
+    def test_to_record_no_content_empty_list(self):
+        posting = {"id": 556, "name": "X", "title": "공고", "employments": []}
+        r = self.c._to_record("X", "X", posting)
+        self.assertEqual(r["image_urls"], [])
 
 
 class NormalizeTest(unittest.TestCase):

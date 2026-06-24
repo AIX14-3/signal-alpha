@@ -20,6 +20,7 @@ jasoseol.py
 from __future__ import annotations
 
 import logging
+import re
 import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -225,6 +226,23 @@ def _detail_date(detail: dict) -> str | None:
     return detail.get("start_time") or detail.get("created_at")
 
 
+_IMG_SRC = re.compile(r"""<img[^>]+src=["']([^"']+)["']""", re.IGNORECASE)
+
+
+def _image_urls(posting: dict) -> list[str]:
+    """상세 content(HTML) 내 **모든** ``<img src>`` 를 등장 순서대로 추출 — OCR
+    enrichment(#375 Phase 0) 입력원.
+
+    한국 공채 자격요건은 대개 포스터 이미지라 ``content`` 가 ``<img>`` 뿐인 경우가 많다.
+    **필터링·중복제거 없이 전부 보존**한다(노이즈 필터는 실제 샘플 확인 후 별도 추가 예정).
+    개인정보(자소서/지원자)는 수집하지 않는다 — 자격요건 포스터 URL 만. content 없으면 [].
+    """
+    content = posting.get("content")
+    if not isinstance(content, str) or not content:
+        return []
+    return [url for m in _IMG_SRC.finditer(content) if (url := m.group(1).strip())]
+
+
 def find_max_id() -> int:
     """현재 열린 공고 목록의 최대 id = 최신 경계(동적). 실패 시 0."""
     ids = [p.get("id") for p in _get_postings() if isinstance(p.get("id"), int)]
@@ -427,4 +445,6 @@ class JasoseolCrawler(BaseSiteCrawler):
         record["duty_groups"] = duty_names
         # 세부 기술 후속 보강용 원천 보존(이미지 OCR/회사사이트). 분석 단계에서 선택 사용.
         record["employment_page_url"] = posting.get("employment_page_url")
+        # #375 Phase 0: 자격요건 포스터 이미지 URL 보존(OCR enrichment 입력). content 없으면 [].
+        record["image_urls"] = _image_urls(posting)
         return record
