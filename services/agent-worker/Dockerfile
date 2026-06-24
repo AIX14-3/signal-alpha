@@ -7,6 +7,14 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PATH="/workspace/.venv/bin:$PATH"
 
+# ENRICH_HIRING(#390): 채용 포스터 OCR 엔진(Tesseract). eng 는 tesseract-ocr 에 기본 포함,
+# kor 만 추가한다. Debian 패키지가 /usr/share/tesseract-ocr/.../tessdata 에 설치하고 자동
+# 인식하므로 TESSDATA_PREFIX 설정은 불필요. 변경이 드문 시스템 의존성이라 app COPY 보다
+# 앞에 둬 레이어 캐시를 재사용한다. 미설치 시 enrich 는 graceful skip(app/enrichment/tesseract_ocr.py).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-kor \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY --from=uv /uv /uvx /bin/
 
 COPY pyproject.toml uv.lock .python-version ./
