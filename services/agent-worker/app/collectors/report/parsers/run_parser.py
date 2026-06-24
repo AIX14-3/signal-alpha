@@ -108,7 +108,16 @@ def process_from_s3(
     result = parse_report_deterministic(text)
     if bool(getattr(settings, "report_use_llm", False)):
         try:
-            result = _merge_parser_results(result, parse_report(_llm_candidate_text(text)))
+            llm_config = _build_llm_config(settings)
+            if llm_config is None:
+                return {**result, "raw_text": text}
+            result = _merge_parser_results(
+                result,
+                parse_report(
+                    _llm_candidate_text(text),
+                    llm_config=llm_config,
+                ),
+            )
         except Exception as exc:
             print(f"  [LLM 보강 오류] {exc}")
     result["raw_text"] = text
@@ -207,6 +216,15 @@ def _window_around_keywords(text: str, keywords: list[str], *, size: int) -> str
 
 def _clean_line(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
+
+
+def _build_llm_config(settings: object | None) -> object | None:
+    if settings is None:
+        return None
+
+    from app.orchestrator.report.llm_wiring import build_report_llm_config
+
+    return build_report_llm_config(settings)
 
 
 def run(extract_only: bool = False, incremental: bool = False) -> list[dict]:

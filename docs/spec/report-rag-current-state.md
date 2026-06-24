@@ -90,6 +90,7 @@ ReportProcessTaskHandler
 - report storage에 저장된 PDF의 전체 텍스트를 추출합니다.
 - 기본값(`REPORT_USE_LLM=false`)에서는 LLM을 호출하지 않고 규칙 기반 fallback으로 목표주가, 원문 의견, 근거 후보를 추출합니다.
 - `REPORT_USE_LLM=true`일 때만 규칙 기반 후보 텍스트를 LLM에 전달해 파싱 결과를 보강합니다.
+- LLM 보강은 `REPORT_LLM_PROVIDER`(`gemini` 또는 `openai`)와 `REPORT_LLM_MODEL` 설정을 사용합니다.
 - 파싱 결과를 `report_raw_details`에 갱신합니다.
   - `s3_key`
   - `has_pdf = TRUE`
