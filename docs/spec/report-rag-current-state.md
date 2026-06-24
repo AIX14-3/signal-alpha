@@ -65,10 +65,16 @@ ReportCollectTaskHandler
 - 리포트 제목, 증권사명, 발행일, PDF URL 등 메타데이터를 추출합니다.
 - `raw_documents`와 `report_raw_details`에 저장합니다.
 - 저장된 raw 문서마다 `process_report` 작업을 등록합니다.
+- 실행 시작과 완료/실패 상태를 `collector_runs`에 기록합니다.
+  - `collector_type='REPORT'`
+  - `run_mode='batch'`
+  - `collected_count`: 크롤러가 반환한 리포트 수
+  - `inserted_count`: 저장 후 후속 처리 대상이 된 raw 문서 수
+  - `skipped_count`: 날짜 파싱 실패 등으로 저장되지 않은 리포트 수
+  - `failed_count`: 수집/저장/queue 등록 중 예외가 난 경우 1
 
 현재 빈틈:
 
-- DB 문서상 모든 collector는 `collector_runs`에 실행 로그를 남겨야 하지만, 현재 `collect_report`는 직접 SQL을 사용하며 `collector_runs`를 생성하지 않습니다.
 - `CollectionRepository`의 Report 관련 메서드가 있지만 현재 queue handler는 이 repository를 일관되게 사용하지 않습니다.
 
 ### 3. `process_report`
@@ -271,6 +277,11 @@ Invoke-RestMethod `
   -ContentType "application/json" `
   -Body '{"max_runs":10}'
 
+# 2-1. Report collector_runs 확인
+Invoke-RestMethod `
+  -Method Get `
+  -Uri "http://localhost:8011/internal/stats/collectors/runs?collector_type=REPORT&limit=10"
+
 # 3. PDF 다운로드와 파싱 작업 실행
 Invoke-RestMethod `
   -Method Post `
@@ -345,7 +356,8 @@ Invoke-RestMethod `
    - `/agents/report`, `ReportAnalyzer`, `ReportCollector`, `vector_store.py` 런타임 경로는 제거되었습니다.
    - `report_raw`, `report_signal` 테이블은 호환성을 위해 DB에 남아 있지만 신규 코드에서 참조하지 않습니다.
 6. collector 실행 로그
-   - `collect_report`에 `collector_runs` 생성과 완료 집계를 추가합니다.
+   - `collect_report`는 `collector_runs` 생성과 완료/실패 집계를 기록합니다.
+   - 후속 작업은 Report 저장 SQL을 `CollectionRepository` 기반으로 정리해 collector별 저장 패턴을 더 맞추는 것입니다.
 7. 테스트 범위
    - 현재 unit test를 유지하면서 storage backend, queue chaining, Report 분석 저장에 대한 통합 테스트를 추가합니다.
 

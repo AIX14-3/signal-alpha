@@ -25,6 +25,7 @@ from app.orchestrator.queue.task_types import (
 )
 from signal_alpha_data_access.repositories import (
     AnalysisRepository,
+    CollectionRepository,
     NormalizationRepository,
     ProcessingQueueRepository,
     RawDetailRepository,
@@ -48,38 +49,68 @@ class ReportCollectTaskHandler:
         stock_code = task_context.get("stock_code", "")
         days_back = int(task_context.get("days_back", 7))
         max_pages = int(task_context.get("max_pages", 20))
+        collection_repository = CollectionRepository(self._connection)
+        collector_run_id = await collection_repository.create_collector_run("REPORT", "batch")
 
-        # 절대 날짜(date_start/date_end)가 있으면 우선, 없으면 days_back으로 fallback.
-        ds = task_context.get("date_start")
-        de = task_context.get("date_end")
-        date_end = datetime.fromisoformat(de) if de else datetime.now()
-        date_start = datetime.fromisoformat(ds) if ds else date_end - timedelta(days=days_back)
+        reports: list[dict] = []
+        saved_ids: list[int] = []
+        try:
+            # 절대 날짜(date_start/date_end)가 있으면 우선, 없으면 days_back으로 fallback.
+            ds = task_context.get("date_start")
+            de = task_context.get("date_end")
+            date_end = datetime.fromisoformat(de) if de else datetime.now()
+            date_start = datetime.fromisoformat(ds) if ds else date_end - timedelta(days=days_back)
 
-        reports = collect_stock(
-            stock_name="",
-            stock_code=stock_code,
-            max_pages=max_pages,
-            date_start=date_start,
-            date_end=date_end,
-        )
-
-        saved_ids = await _save_to_db(self._connection, reports, stock_id)
-
-        queue = ProcessingQueueRepository(self._connection)
-        for raw_document_id in saved_ids:
-            await queue.enqueue(
-                stock_id=stock_id,
-                task_type=PROCESS_REPORT,
-                priority="batch",
-                source_raw_ids=[raw_document_id],
-                task_context={
-                    "stock_code": stock_code,
-                    "raw_document_id": raw_document_id,
-                },
-                dedupe=True,
+            reports = collect_stock(
+                stock_name="",
+                stock_code=stock_code,
+                max_pages=max_pages,
+                date_start=date_start,
+                date_end=date_end,
             )
 
-        return {"collected": len(saved_ids)}
+            saved_ids = await _save_to_db(
+                self._connection,
+                reports,
+                stock_id,
+                collector_run_id=collector_run_id,
+            )
+
+            queue = ProcessingQueueRepository(self._connection)
+            for raw_document_id in saved_ids:
+                await queue.enqueue(
+                    stock_id=stock_id,
+                    task_type=PROCESS_REPORT,
+                    priority="batch",
+                    source_raw_ids=[raw_document_id],
+                    task_context={
+                        "stock_code": stock_code,
+                        "raw_document_id": raw_document_id,
+                    },
+                    dedupe=True,
+                )
+        except Exception as exc:
+            await collection_repository.finish_collector_run(
+                run_id=collector_run_id,
+                status="failed",
+                collected_count=len(reports),
+                inserted_count=len(saved_ids),
+                skipped_count=max(0, len(reports) - len(saved_ids)),
+                failed_count=1,
+                error_message=str(exc),
+            )
+            raise
+
+        await collection_repository.finish_collector_run(
+            run_id=collector_run_id,
+            status="success",
+            collected_count=len(reports),
+            inserted_count=len(saved_ids),
+            skipped_count=max(0, len(reports) - len(saved_ids)),
+            failed_count=0,
+        )
+
+        return {"collector_run_id": collector_run_id, "collected": len(saved_ids)}
 
 
 class ReportProcessTaskHandler:
@@ -689,6 +720,8 @@ async def _save_to_db(
     connection: Any,
     reports: list[dict],
     stock_id: int,
+    *,
+    collector_run_id: int | None = None,
 ) -> list[int]:
     """
     raw_documents + report_raw_details 동시 INSERT.
@@ -706,16 +739,17 @@ async def _save_to_db(
             row = await connection.fetchrow(
                 """
                 INSERT INTO raw_documents (
-                    stock_id, source_type, source_name,
+                    stock_id, collector_run_id, source_type, source_name,
                     external_id, source_hash,
                     title, source_url, published_at,
                     collector_ver, collected_at
                 )
-                VALUES ($1, 'REPORT', $2, $3, $4, $5, $6, $7, $8, NOW())
+                VALUES ($1, $2, 'REPORT', $3, $4, $5, $6, $7, $8, $9, NOW())
                 ON CONFLICT (source_hash) DO NOTHING
                 RETURNING id
                 """,
                 stock_id,
+                collector_run_id,
                 report.get("firm", ""),
                 source_hash,          # external_id: source_hash로 통일 (VARCHAR 200 이내)
                 source_hash,

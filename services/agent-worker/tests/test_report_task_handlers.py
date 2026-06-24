@@ -434,7 +434,54 @@ class ReportAnalyzeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["direction"], "unknown")  # method_detail/반환은 원본 유지
 
 
-# ── collect_report 날짜 해석 ─────────────────────────────────────
+# ── collect_report ───────────────────────────────────────────────
+class FakeTransaction:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        return False
+
+
+class CollectHandlerConn:
+    def __init__(self):
+        self.calls = []
+        self.next_raw_id = 42
+
+    def transaction(self):
+        return FakeTransaction()
+
+    async def fetchval(self, sql, *args):
+        self.calls.append(("fetchval", sql, args))
+        if "INSERT INTO collector_runs" in sql:
+            return 900
+        if "SELECT id" in sql:
+            return None
+        if "INSERT INTO processing_queue" in sql:
+            return 501
+        return 1
+
+    async def fetchrow(self, sql, *args):
+        self.calls.append(("fetchrow", sql, args))
+        if "INSERT INTO raw_documents" in sql:
+            raw_id = self.next_raw_id
+            self.next_raw_id += 1
+            return {"id": raw_id}
+        if "SELECT id FROM raw_documents" in sql:
+            return {"id": self.next_raw_id}
+        return None
+
+    async def execute(self, sql, *args):
+        self.calls.append(("execute", sql, args))
+        return "OK"
+
+    def _collector_finish_calls(self):
+        return [
+            call for call in self.calls
+            if call[0] == "execute" and "UPDATE collector_runs" in call[1]
+        ]
+
+
 class ReportCollectDateResolutionTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self._orig = report_tasks.collect_stock
@@ -450,7 +497,7 @@ class ReportCollectDateResolutionTest(unittest.IsolatedAsyncioTestCase):
         report_tasks.collect_stock = self._orig
 
     async def test_absolute_dates_take_priority(self):
-        handler = ReportCollectTaskHandler(connection=object(), settings=None)
+        handler = ReportCollectTaskHandler(connection=CollectHandlerConn(), settings=None)
         await handler(
             {
                 "stock_id": 1,
@@ -467,13 +514,70 @@ class ReportCollectDateResolutionTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.captured["max_pages"], 100)
 
     async def test_days_back_fallback(self):
-        handler = ReportCollectTaskHandler(connection=object(), settings=None)
+        handler = ReportCollectTaskHandler(connection=CollectHandlerConn(), settings=None)
         await handler(
             {"stock_id": 1, "task_context": {"stock_code": "005930", "days_back": 7}}
         )
         delta = self.captured["date_end"] - self.captured["date_start"]
         self.assertEqual(delta.days, 7)
         self.assertEqual(self.captured["max_pages"], 20)
+
+
+class ReportCollectRunLoggingTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self._orig = report_tasks.collect_stock
+
+    def tearDown(self):
+        report_tasks.collect_stock = self._orig
+
+    async def test_records_successful_collector_run(self):
+        def _fake_collect_stock(**kwargs):
+            return [
+                {
+                    "firm": "Test Securities",
+                    "title": "Report title",
+                    "date": "2026.06.24",
+                    "pdf_direct_url": "https://example.com/report.pdf",
+                    "report_type": "cr",
+                }
+            ]
+
+        report_tasks.collect_stock = _fake_collect_stock
+        conn = CollectHandlerConn()
+        handler = ReportCollectTaskHandler(connection=conn, settings=None)
+
+        result = await handler(
+            {"stock_id": 1, "task_context": {"stock_code": "005930"}}
+        )
+
+        self.assertEqual(result["collector_run_id"], 900)
+        self.assertEqual(result["collected"], 1)
+        finish = conn._collector_finish_calls()[0]
+        self.assertEqual(finish[2][0], 900)
+        self.assertEqual(finish[2][1], "success")
+        self.assertEqual(finish[2][2], 1)
+        self.assertEqual(finish[2][3], 1)
+        self.assertEqual(finish[2][5], 0)
+        raw_insert = next(call for call in conn.calls if "INSERT INTO raw_documents" in call[1])
+        self.assertIn("collector_run_id", raw_insert[1])
+        self.assertEqual(raw_insert[2][1], 900)
+
+    async def test_records_failed_collector_run_when_collection_raises(self):
+        def _raise_collect_stock(**kwargs):
+            raise RuntimeError("crawler failed")
+
+        report_tasks.collect_stock = _raise_collect_stock
+        conn = CollectHandlerConn()
+        handler = ReportCollectTaskHandler(connection=conn, settings=None)
+
+        with self.assertRaisesRegex(RuntimeError, "crawler failed"):
+            await handler({"stock_id": 1, "task_context": {"stock_code": "005930"}})
+
+        finish = conn._collector_finish_calls()[0]
+        self.assertEqual(finish[2][0], 900)
+        self.assertEqual(finish[2][1], "failed")
+        self.assertEqual(finish[2][5], 1)
+        self.assertIn("crawler failed", finish[2][6])
 
 
 if __name__ == "__main__":
