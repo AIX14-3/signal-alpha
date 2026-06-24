@@ -1,12 +1,13 @@
 """
 PDF 리포트 일괄 파싱
-- PDF 텍스트 추출 → LLM 파싱 → parsed_reports.json 저장 (로컬 CLI 모드)
-- report storage에서 PDF bytes 수신 → bytes 직접 파싱 (자동화 파이프라인 모드)
+- PDF 전체 텍스트 추출 → parsed_reports.json 저장 (로컬 CLI 모드)
+- report storage에서 PDF bytes 수신 → 전체 텍스트 규칙 기반 파싱, 선택적 LLM 보강 (자동화 파이프라인 모드)
 """
 from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -18,7 +19,7 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 sys.path.insert(0, str(Path(__file__).parent))
-from pdf_extractor import extract_first_pages
+from pdf_extractor import extract_text
 from llm_parser import parse_report
 
 ROOT_DIR = Path(__file__).resolve().parents[6]
@@ -95,13 +96,117 @@ def find_matched_report(report_list: list[dict], meta: dict) -> dict | None:
     return None
 
 
-def process_from_s3(storage_key: str, storage_client: ReportStorageClient) -> dict:
-    """Report storage에서 PDF bytes를 받아 LLM 파싱 결과 반환. tempfile 없이 bytes 직접 처리."""
+def process_from_s3(
+    storage_key: str,
+    storage_client: ReportStorageClient,
+    *,
+    settings: object | None = None,
+) -> dict:
+    """Report storage에서 PDF bytes를 받아 전체 텍스트 기반 파싱 결과 반환."""
     pdf_bytes = storage_client.download_pdf(storage_key)
-    text = extract_first_pages(pdf_bytes, n=3)
-    result = parse_report(text)
+    text = extract_text(pdf_bytes)
+    result = parse_report_deterministic(text)
+    if bool(getattr(settings, "report_use_llm", False)):
+        try:
+            result = _merge_parser_results(result, parse_report(_llm_candidate_text(text)))
+        except Exception as exc:
+            print(f"  [LLM 보강 오류] {exc}")
     result["raw_text"] = text
     return result
+
+
+def parse_report_deterministic(text: str) -> dict:
+    """LLM 없이 리포트 텍스트에서 정량 메타와 근거 후보를 추출한다."""
+    return {
+        "target_price": _extract_target_price(text),
+        "opinion": _extract_opinion(text),
+        "key_rationale": _extract_key_rationale(text),
+    }
+
+
+def _extract_target_price(text: str) -> int | None:
+    patterns = [
+        r"(?:목표\s*주가|목표주가|Target\s*Price|TP)(?:\s*\([^)]*\))?\D{0,80}([0-9][0-9,]{2,})\s*(?:원|KRW)?",
+        r"([0-9][0-9,]{2,})\s*원\D{0,30}(?:목표\s*주가|목표주가|Target\s*Price|TP)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE | re.DOTALL)
+        if match:
+            return int(match.group(1).replace(",", ""))
+    return None
+
+
+def _extract_opinion(text: str) -> str:
+    opinion_window = _window_around_keywords(text, ["투자의견", "Investment opinion", "Rating"], size=300)
+    target = opinion_window or text[:3000]
+    if re.search(r"\b(strong\s*buy|buy)\b|매수|강력매수", target, flags=re.IGNORECASE):
+        return "buy"
+    if re.search(r"\b(hold|neutral)\b|중립|보유", target, flags=re.IGNORECASE):
+        return "neutral"
+    if re.search(r"\b(sell)\b|매도", target, flags=re.IGNORECASE):
+        return "sell"
+    return "unknown"
+
+
+def _extract_key_rationale(text: str) -> str:
+    keywords = (
+        "근거",
+        "실적",
+        "전망",
+        "업황",
+        "수요",
+        "공급",
+        "리스크",
+        "밸류에이션",
+        "개선",
+        "성장",
+        "수익성",
+    )
+    lines = [_clean_line(line) for line in text.splitlines()]
+    candidates = [
+        line
+        for line in lines
+        if len(line) >= 12 and any(keyword in line for keyword in keywords)
+    ]
+    if not candidates:
+        candidates = [line for line in lines if len(line) >= 20]
+    return " ".join(candidates[:4])[:1000]
+
+
+def _merge_parser_results(base: dict, supplement: dict) -> dict:
+    return {
+        "target_price": supplement.get("target_price") or base.get("target_price"),
+        "opinion": (
+            supplement.get("opinion")
+            if supplement.get("opinion") and supplement.get("opinion") != "unknown"
+            else base.get("opinion", "unknown")
+        ),
+        "key_rationale": supplement.get("key_rationale") or base.get("key_rationale", ""),
+    }
+
+
+def _llm_candidate_text(text: str) -> str:
+    windows = [
+        _window_around_keywords(text, ["목표주가", "목표 주가", "투자의견", "Target Price", "Rating"], size=1500),
+        _window_around_keywords(text, ["투자포인트", "실적", "전망", "리스크", "밸류에이션"], size=2500),
+    ]
+    candidate = "\n\n".join(window for window in windows if window.strip())
+    return candidate or text[:5000]
+
+
+def _window_around_keywords(text: str, keywords: list[str], *, size: int) -> str:
+    lower_text = text.lower()
+    for keyword in keywords:
+        index = lower_text.find(keyword.lower())
+        if index >= 0:
+            start = max(0, index - size // 2)
+            end = min(len(text), index + size)
+            return text[start:end]
+    return ""
+
+
+def _clean_line(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip()
 
 
 def run(extract_only: bool = False, incremental: bool = False) -> list[dict]:
@@ -133,7 +238,7 @@ def run(extract_only: bool = False, incremental: bool = False) -> list[dict]:
         print(f"[파싱] {pdf_path.parent.name}/{pdf_path.name}")
 
         meta = parse_filename(pdf_path)
-        text = extract_first_pages(pdf_path, n=3)
+        text = extract_text(pdf_path)
 
         if not text.strip():
             print("  [경고] 텍스트 추출 실패 → 스킵")

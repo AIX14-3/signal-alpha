@@ -117,7 +117,7 @@ class ReportProcessTaskHandler:
     """
     1. report_raw_details에서 pdf_url, s3_key 확인
     2. PDF 다운로드 → report storage 업로드 (s3_key 미존재 시)
-    3. LLM 파싱 (bytes 직접 처리, tempfile 없음)
+    3. 전체 텍스트 기반 파싱 (규칙 기반 fallback, REPORT_USE_LLM=true일 때만 LLM 보강)
     4. report_raw_details 업데이트 (parsing_status='success', target_price 등)
     """
 
@@ -181,7 +181,7 @@ class ReportProcessTaskHandler:
                 await self._mark_failed(raw_document_id, "PDF 다운로드 실패")
                 return {"status": "download_failed"}
 
-        parsed = process_from_s3(s3_key, storage)
+        parsed = process_from_s3(s3_key, storage, settings=self._settings)
 
         await self._connection.execute(
             """

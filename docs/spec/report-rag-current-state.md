@@ -87,7 +87,9 @@ ReportProcessTaskHandler
 - `report_raw_details`에서 `pdf_url`, `s3_key`, `parsing_status`를 조회합니다.
 - 기본 storage backend는 GCS이며, 로컬 테스트에서는 `REPORT_STORAGE_BACKEND=local`로 파일시스템 저장소를 사용할 수 있습니다.
 - report storage에 파일이 없으면 원천 PDF URL에서 다운로드한 뒤 선택된 backend에 업로드합니다.
-- report storage에 저장된 PDF의 첫 3페이지를 파싱합니다.
+- report storage에 저장된 PDF의 전체 텍스트를 추출합니다.
+- 기본값(`REPORT_USE_LLM=false`)에서는 LLM을 호출하지 않고 규칙 기반 fallback으로 목표주가, 원문 의견, 근거 후보를 추출합니다.
+- `REPORT_USE_LLM=true`일 때만 규칙 기반 후보 텍스트를 LLM에 전달해 파싱 결과를 보강합니다.
 - 파싱 결과를 `report_raw_details`에 갱신합니다.
   - `s3_key`
   - `has_pdf = TRUE`

@@ -210,8 +210,10 @@ class ReportProcessTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
             observed["download"] = (url, s3_key, passed_storage)
             return True
 
-        def _fake_process(s3_key, passed_storage):
-            observed["process"] = (s3_key, passed_storage)
+        settings = object()
+
+        def _fake_process(s3_key, passed_storage, *, settings=None):
+            observed["process"] = (s3_key, passed_storage, settings)
             return {
                 "opinion": "neutral",
                 "target_price": 90000,
@@ -222,12 +224,13 @@ class ReportProcessTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         report_tasks.download_and_upload = _fake_download
         report_tasks.process_from_s3 = _fake_process
 
-        handler = ReportProcessTaskHandler(connection=conn, settings=None, storage=storage)
+        handler = ReportProcessTaskHandler(connection=conn, settings=settings, storage=storage)
         result = await handler({"task_context": {"raw_document_id": 42}})
 
         self.assertEqual(result["status"], "success")
         self.assertIs(observed["download"][2], storage)
         self.assertIs(observed["process"][1], storage)
+        self.assertIs(observed["process"][2], settings)
         self.assertIn("reports/005930/", observed["process"][0])
         self.assertTrue(any("UPDATE report_raw_details" in sql for sql, _ in conn.executed))
         self.assertTrue(any(args[1] == "normalize_report" for _, args in conn.fetchvals))

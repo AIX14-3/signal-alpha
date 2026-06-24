@@ -508,7 +508,7 @@ class ReportE2EPipelineTest(unittest.IsolatedAsyncioTestCase):
         report_tasks.download_and_upload = lambda url, key, passed_storage: bool(
             passed_storage.upload_pdf(b"%PDF-fake", key)
         )
-        report_tasks.process_from_s3 = lambda key, passed_storage: {
+        report_tasks.process_from_s3 = lambda key, passed_storage, *, settings=None: {
             "opinion": "neutral",
             "target_price": 90000,
             "key_rationale": "실적 데이터와 수요 지표를 근거로 추가 확인 필요",
@@ -601,7 +601,7 @@ class ReportE2EPipelineTest(unittest.IsolatedAsyncioTestCase):
         report_tasks.download_and_upload = lambda url, key, passed_storage: bool(
             passed_storage.upload_pdf(b"%PDF-fake", key)
         )
-        report_tasks.process_from_s3 = lambda key, passed_storage: {
+        report_tasks.process_from_s3 = lambda key, passed_storage, *, settings=None: {
             "opinion": "neutral",
             "target_price": 90000,
             "key_rationale": "실적 데이터와 수요 지표를 근거로 추가 확인 필요",
