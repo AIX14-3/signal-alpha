@@ -48,6 +48,7 @@ services:
     volumes:
       - ./services/agent-worker:/workspace/services/agent-worker
       - ./packages/data-access:/workspace/packages/data-access
+      - ./data:/workspace/data
     environment:
       SERVICE_NAME: agent-worker
       SERVICE_VERSION: ${SERVICE_VERSION:-0.1.0}
@@ -59,6 +60,15 @@ services:
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GEMINI_BASE_URL: ${GEMINI_BASE_URL:-https://generativelanguage.googleapis.com/v1beta}
+      REPORT_USE_LLM: ${REPORT_USE_LLM:-false}
+      REPORT_LLM_PROVIDER: ${REPORT_LLM_PROVIDER:-gemini}
+      REPORT_LLM_MODEL: ${REPORT_LLM_MODEL:-}
+      REPORT_LLM_TIMEOUT_SECONDS: ${REPORT_LLM_TIMEOUT_SECONDS:-20}
+      REPORT_STORAGE_BACKEND: ${REPORT_STORAGE_BACKEND:-local}
+      REPORT_LOCAL_STORAGE_DIR: /workspace/data/report-storage
+      GCP_PROJECT_ID: ${GCP_PROJECT_ID:-}
+      GCS_REPORT_BUCKET: ${GCS_REPORT_BUCKET:-signal-alpha-reports}
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
       DART_API_KEY: ${DART_API_KEY:-}
       DART_BASE_URL: ${DART_BASE_URL:-https://opendart.fss.or.kr/api}
       DART_TIMEOUT_SECONDS: ${DART_TIMEOUT_SECONDS:-10}
