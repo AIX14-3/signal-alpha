@@ -63,7 +63,7 @@ ReportCollectTaskHandler
   - 미래에셋증권
   - 유진투자증권
 - 리포트 제목, 증권사명, 발행일, PDF URL 등 메타데이터를 추출합니다.
-- `raw_documents`와 `report_raw_details`에 저장합니다.
+- `CollectionRepository`를 통해 `raw_documents`와 `report_raw_details`에 저장합니다.
 - 저장된 raw 문서마다 `process_report` 작업을 등록합니다.
 - 실행 시작과 완료/실패 상태를 `collector_runs`에 기록합니다.
   - `collector_type='REPORT'`
@@ -75,7 +75,7 @@ ReportCollectTaskHandler
 
 현재 빈틈:
 
-- `CollectionRepository`의 Report 관련 메서드가 있지만 현재 queue handler는 이 repository를 일관되게 사용하지 않습니다.
+- 수집, 파싱, 정규화, 임베딩, 분석 단위 테스트는 있으나 실제 DB와 queue runner를 함께 쓰는 Report E2E 검증은 아직 제한적입니다.
 
 ### 3. `process_report`
 
@@ -357,7 +357,7 @@ Invoke-RestMethod `
    - `report_raw`, `report_signal` 테이블은 호환성을 위해 DB에 남아 있지만 신규 코드에서 참조하지 않습니다.
 6. collector 실행 로그
    - `collect_report`는 `collector_runs` 생성과 완료/실패 집계를 기록합니다.
-   - 후속 작업은 Report 저장 SQL을 `CollectionRepository` 기반으로 정리해 collector별 저장 패턴을 더 맞추는 것입니다.
+   - Report 저장은 `CollectionRepository` 기반으로 정리되어 `collector_runs`와 raw 문서 추적이 이어집니다.
 7. 테스트 범위
    - 현재 unit test를 유지하면서 storage backend, queue chaining, Report 분석 저장에 대한 통합 테스트를 추가합니다.
 

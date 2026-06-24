@@ -482,6 +482,48 @@ class CollectHandlerConn:
         ]
 
 
+class StrictCollectConn:
+    async def fetchrow(self, sql, *args):
+        raise AssertionError(f"unexpected direct fetchrow: {sql}")
+
+    async def execute(self, sql, *args):
+        raise AssertionError(f"unexpected direct execute: {sql}")
+
+    async def fetchval(self, sql, *args):
+        if "SELECT id" in sql:
+            return None
+        if "INSERT INTO processing_queue" in sql:
+            return 501
+        raise AssertionError(f"unexpected direct fetchval: {sql}")
+
+    def transaction(self):
+        raise AssertionError("Report collection persistence should use CollectionRepository")
+
+
+class FakeCollectionRepository:
+    instances = []
+
+    def __init__(self, connection):
+        self.connection = connection
+        self.calls = []
+        FakeCollectionRepository.instances.append(self)
+
+    async def create_collector_run(self, collector_type, run_mode):
+        self.calls.append(("create_collector_run", collector_type, run_mode))
+        return 900
+
+    async def finish_collector_run(self, **kwargs):
+        self.calls.append(("finish_collector_run", kwargs))
+
+    async def upsert_raw_document(self, **kwargs):
+        self.calls.append(("upsert_raw_document", kwargs))
+        return {"id": 42, "inserted": True}
+
+    async def upsert_report_detail(self, **kwargs):
+        self.calls.append(("upsert_report_detail", kwargs))
+        return {"raw_document_id": kwargs["raw_document_id"]}
+
+
 class ReportCollectDateResolutionTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self._orig = report_tasks.collect_stock
@@ -578,6 +620,48 @@ class ReportCollectRunLoggingTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(finish[2][1], "failed")
         self.assertEqual(finish[2][5], 1)
         self.assertIn("crawler failed", finish[2][6])
+
+
+class ReportCollectRepositoryPersistenceTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self._orig_collect_stock = report_tasks.collect_stock
+        self._orig_collection_repository = report_tasks.CollectionRepository
+        FakeCollectionRepository.instances = []
+
+    def tearDown(self):
+        report_tasks.collect_stock = self._orig_collect_stock
+        report_tasks.CollectionRepository = self._orig_collection_repository
+
+    async def test_persists_reports_through_collection_repository(self):
+        def _fake_collect_stock(**kwargs):
+            return [
+                {
+                    "firm": "Test Securities",
+                    "title": "Report title",
+                    "date": "2026.06.24",
+                    "pdf_direct_url": "https://example.com/report.pdf",
+                    "report_type": "cr",
+                }
+            ]
+
+        report_tasks.collect_stock = _fake_collect_stock
+        report_tasks.CollectionRepository = FakeCollectionRepository
+
+        handler = ReportCollectTaskHandler(connection=StrictCollectConn(), settings=None)
+        result = await handler({"stock_id": 1, "task_context": {"stock_code": "005930"}})
+
+        self.assertEqual(result["collected"], 1)
+        repo = FakeCollectionRepository.instances[0]
+        raw_call = next(call for call in repo.calls if call[0] == "upsert_raw_document")
+        detail_call = next(call for call in repo.calls if call[0] == "upsert_report_detail")
+        self.assertEqual(raw_call[1]["collector_run_id"], 900)
+        self.assertEqual(raw_call[1]["source_type"], "REPORT")
+        self.assertEqual(raw_call[1]["source_name"], "Test Securities")
+        self.assertEqual(raw_call[1]["external_id"], raw_call[1]["source_hash"])
+        self.assertEqual(detail_call[1]["raw_document_id"], 42)
+        self.assertEqual(detail_call[1]["securities_firm"], "Test Securities")
+        self.assertEqual(detail_call[1]["parsing_status"], "pending")
+        self.assertEqual(detail_call[1]["extra_payload"], {"report_type": "cr"})
 
 
 if __name__ == "__main__":
