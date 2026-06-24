@@ -395,6 +395,94 @@ class RawDetailRepository:
                 raw_document_id,
             )
 
+    async def list_unenriched_hiring_details(
+        self,
+        *,
+        limit: int = 200,
+        raw_document_ids: list[int] | None = None,
+    ) -> list[Any]:
+        """Hiring rows still awaiting OCR enrichment (``ocr_status = 'pending'``).
+
+        Newest raw ids first so a partial batch enriches the most recent postings.
+        ``extra_payload`` carries the poster ``image_urls`` the OCR tool reads.
+        See migration 028.
+
+        ``raw_document_ids`` scopes the worklist to the rows a matching
+        NORMALIZE_HIRING just promoted (queue-driven ENRICH_HIRING path); pass None
+        for the global batch sweep. Already-enriched rows are skipped by the
+        ``pending`` filter, so re-running a task is a no-op.
+
+        On a stale prod schema missing ``ocr_status`` (SQLSTATE 42703) there is
+        nothing to enrich, so this returns an empty list and logs a warning.
+        """
+        try:
+            if raw_document_ids is not None:
+                if not raw_document_ids:
+                    return []
+                return await self._connection.fetch(
+                    """
+                    SELECT h.raw_document_id, h.extra_payload
+                    FROM hiring_raw_details h
+                    WHERE h.ocr_status = 'pending'
+                      AND h.raw_document_id = ANY($1::bigint[])
+                    ORDER BY h.raw_document_id DESC
+                    LIMIT $2
+                    """,
+                    raw_document_ids,
+                    limit,
+                )
+            return await self._connection.fetch(
+                """
+                SELECT h.raw_document_id, h.extra_payload
+                FROM hiring_raw_details h
+                WHERE h.ocr_status = 'pending'
+                ORDER BY h.raw_document_id DESC
+                LIMIT $1
+                """,
+                limit,
+            )
+        except Exception as error:  # noqa: BLE001 — narrowed below by SQLSTATE
+            if not _is_undefined_column(error):
+                raise
+            logger.warning(
+                "hiring_raw_details lacks ocr_status (stale prod schema); "
+                "no postings to enrich, returning empty batch"
+            )
+            return []
+
+    async def update_hiring_ocr_skills(
+        self,
+        *,
+        raw_document_id: int,
+        skills: Any | None,
+        status: str,
+    ) -> None:
+        """Cache OCR skill output for one posting (enriched once per posting).
+
+        On a stale prod schema missing ``ocr_skills`` / ``ocr_status`` (SQLSTATE
+        42703) this is a no-op with a logged warning — the cache simply cannot be
+        written until the schema catches up.
+        """
+        try:
+            await self._connection.execute(
+                """
+                UPDATE hiring_raw_details
+                SET ocr_skills = $2::jsonb, ocr_status = $3
+                WHERE raw_document_id = $1
+                """,
+                raw_document_id,
+                _jsonb(skills),
+                status,
+            )
+        except Exception as error:  # noqa: BLE001 — narrowed below by SQLSTATE
+            if not _is_undefined_column(error):
+                raise
+            logger.warning(
+                "hiring_raw_details lacks ocr_skills/ocr_status (stale prod "
+                "schema); skipping OCR cache write for raw_document_id=%s",
+                raw_document_id,
+            )
+
     async def list_hiring_details_by_stock(
         self,
         *,

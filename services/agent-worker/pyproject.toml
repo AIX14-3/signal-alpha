@@ -15,6 +15,10 @@ dependencies = [
   "openai>=1.40.0",         # parsers/llm_parser.py
   "psycopg2-binary>=2.9.0",
   "pymupdf>=1.24.0",        # parsers/pdf_extractor.py (fitz)
+  # ENRICH_HIRING: 채용 포스터 이미지 OCR(Tesseract). tesseract 바이너리 + kor/eng 데이터는
+  # 런타임 이미지에서 제공(app/enrichment/tesseract_ocr.py). 미설치 시 enrich는 graceful skip.
+  "pillow>=10.0.0",
+  "pytesseract>=0.3.10",
   "python-dotenv>=1.0.0",
   # report 임베딩(embed_report 태스크) — BGE-M3 in-process. torch 동반(~2-3GB).
   "sentence-transformers>=3.0.0",  # app/embeddings/provider.py

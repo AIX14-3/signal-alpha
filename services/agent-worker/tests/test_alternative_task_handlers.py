@@ -232,7 +232,7 @@ class EnqueueDedupeContextTest(unittest.IsolatedAsyncioTestCase):
 
 
 class HiringNormalizeHandlerTest(unittest.IsolatedAsyncioTestCase):
-    async def test_normalizes_and_enqueues_analysis(self):
+    async def test_normalizes_and_enqueues_enrich_hiring(self):
         conn = FakeConnection(rows=[HIRING_ROW])
         handler = HiringNormalizeTaskHandler(conn)
 
@@ -248,9 +248,11 @@ class HiringNormalizeHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(event_call[2][4], "hiring_posting")   # event_type
         self.assertEqual(event_call[2][6], "positive")         # signal_direction
 
+        # OCR enrichment is slotted before analysis: normalize → ENRICH_HIRING
+        # (which enqueues ANALYZE_ALTERNATIVE once skills are cached).
         enqueues = conn._enqueue_inserts()
         self.assertEqual(len(enqueues), 1)
-        self.assertEqual(enqueues[0][2][1], "ANALYZE_ALTERNATIVE")  # task_type
+        self.assertEqual(enqueues[0][2][1], "ENRICH_HIRING")       # task_type
         self.assertIn('"as_of": "2026-06-16"', enqueues[0][2][6])   # serialized context
 
     async def test_dedupes_enqueue_per_stock(self):

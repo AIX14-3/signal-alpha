@@ -34,13 +34,18 @@ from app.agents.rule_source_agent import RuleSourceAgent
 from app.aggregator.per_source import build_source_signal
 from app.analyzers.config import AggregatorConfig, AnalyzerRuntimeConfig
 from app.core.config import get_settings
+from app.enrichment.hiring_skills import HiringSkillEnricher
 from app.enrichment.patent_features import PatentEnricher
 from app.analyzers.datalab.normalize_rules import classify_datalab_observation
 from app.analyzers.hiring.normalize_rules import classify_hiring_posting
 from app.analyzers.patent.normalize_rules import classify_patent_filing
 from app.analyzers.registry import SourceRegistration, build_registry
 from app.orchestrator.alternative_persistence import AlternativeSignalPersistence
-from app.orchestrator.queue.task_types import ANALYZE_ALTERNATIVE, ENRICH_PATENT
+from app.orchestrator.queue.task_types import (
+    ANALYZE_ALTERNATIVE,
+    ENRICH_HIRING,
+    ENRICH_PATENT,
+)
 from app.schemas.source_result import EvidenceItem, ReportMeta, SourceResult
 from app.utils.hash_utils import make_source_hash
 from signal_alpha_data_access.repositories import (
@@ -209,6 +214,41 @@ class HiringNormalizeTaskHandler(_AltNormalizeBase):
                 "metric_unit": "count",
             }
         ]
+
+    async def _enqueue_followups(
+        self,
+        *,
+        stock_ids: list[int],
+        raw_document_ids: list[int],
+        as_of: str,
+    ) -> list[int]:
+        """Insert OCR enrichment before analysis: enqueue ENRICH_HIRING per stock.
+
+        Each ENRICH_HIRING carries the just-normalized ``raw_document_ids`` and
+        enqueues the per-stock ANALYZE_ALTERNATIVE once the poster skills are
+        cached, so the hiring score sees the freshly extracted tech demand. With
+        nothing normalized there is nothing to enrich, so fall back to the plain
+        analysis enqueue (keeps an empty run from stalling the pipeline). Mirrors
+        ``PatentNormalizeTaskHandler._enqueue_followups``.
+        """
+        if not raw_document_ids:
+            return await _enqueue_analysis_for_stocks(
+                queue_repository=self._queue_repository,
+                stock_ids=stock_ids,
+                as_of=as_of,
+            )
+        task_ids: list[int] = []
+        for stock_id in dict.fromkeys(stock_ids):  # distinct, order-preserving
+            task_id = await self._queue_repository.enqueue(
+                stock_id=stock_id,
+                task_type=ENRICH_HIRING,
+                priority="batch",
+                source_raw_ids=raw_document_ids,
+                task_context={"as_of": as_of, "source_type": "HIRING"},
+                dedupe=True,
+            )
+            task_ids.append(task_id)
+        return task_ids
 
 
 class PatentNormalizeTaskHandler(_AltNormalizeBase):
@@ -505,6 +545,82 @@ class PatentEnrichTaskHandler:
 
             return GeminiJsonClient(api_key=get_settings().gemini_api_key)
         except Exception:  # noqa: BLE001 — missing key/transport: degrade, don't stall
+            return None
+
+
+class HiringSkillEnrichTaskHandler:
+    """ENRICH_HIRING — OCR skill enrichment between normalize and analyze.
+
+    Enriches only the postings named in ``source_raw_ids`` (the rows the matching
+    NORMALIZE_HIRING task just promoted): reads each poster image, OCRs it with
+    Tesseract, caches the extracted skill set in ``hiring_raw_details.ocr_skills``,
+    then enqueues the per-stock ANALYZE_ALTERNATIVE so analysis runs on the fresh
+    skills. Mirrors ``PatentEnrichTaskHandler``.
+
+    Best-effort by design: when the OCR processor cannot be built (Pillow/
+    pytesseract or the tesseract binary absent) it skips OCR and still enqueues
+    analysis, so the pipeline degrades to the count-based hiring score instead of
+    stalling. This is the enrichment boundary — NOT a collector and NOT an analyzer.
+    """
+
+    def __init__(
+        self,
+        connection: Any,
+        *,
+        ocr: Any | None = None,
+        ocr_factory: Callable[[], Any] | None = None,
+        batch_limit: int = 200,
+    ) -> None:
+        self._connection = connection
+        self._raw_detail_repository = RawDetailRepository(connection)
+        self._queue_repository = ProcessingQueueRepository(connection)
+        self._ocr = ocr
+        self._ocr_factory = ocr_factory
+        self._batch_limit = batch_limit
+
+    async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
+        task_context = _task_context(task.get("task_context"))
+        as_of = _as_of_str(task_context.get("as_of"))
+        raw_document_ids = _source_raw_ids(task.get("source_raw_ids"))
+        stock_ids = [int(task["stock_id"])] if task.get("stock_id") is not None else []
+
+        ocr = self._resolve_ocr()
+        stats = {"total": 0, "success": 0, "failed": 0, "skipped": 0}
+        if ocr is not None and raw_document_ids:
+            enricher = HiringSkillEnricher(
+                self._raw_detail_repository,
+                ocr,
+                batch_limit=self._batch_limit,
+                raw_document_ids=raw_document_ids,
+            )
+            stats = await enricher.run()
+
+        analysis_task_ids = await _enqueue_analysis_for_stocks(
+            queue_repository=self._queue_repository,
+            stock_ids=stock_ids,
+            as_of=as_of,
+        )
+        return {
+            "enriched": stats,
+            "ocr_skipped": ocr is None,
+            "analysis_task_ids": analysis_task_ids,
+        }
+
+    def _resolve_ocr(self) -> Any | None:
+        """The injected OCR processor, else a lazily-built Tesseract one, else None.
+
+        Returns None (enrichment disabled, analysis still runs) when the processor
+        cannot be constructed, so missing OCR deps never sink the pipeline.
+        """
+        if self._ocr is not None:
+            return self._ocr
+        if self._ocr_factory is not None:
+            return self._ocr_factory()
+        try:
+            from app.enrichment.tesseract_ocr import TesseractOCRProcessor
+
+            return TesseractOCRProcessor()
+        except Exception:  # noqa: BLE001 — missing deps: degrade, don't stall
             return None
 
 
