@@ -145,6 +145,23 @@ class ReportProcessTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         report_tasks.download_and_upload = self._orig_download
         report_tasks.process_from_s3 = self._orig_process
 
+    async def test_default_storage_is_created_lazily(self):
+        orig_factory = report_tasks.get_report_storage_client
+        calls = []
+
+        def _fail_if_called(settings):
+            calls.append(settings)
+            raise AssertionError("storage factory should not run during handler construction")
+
+        report_tasks.get_report_storage_client = _fail_if_called
+        try:
+            ReportProcessTaskHandler(connection=ProcessHandlerConn(), settings=object())
+            ReportEmbedTaskHandler(connection=EmbedHandlerConn(), settings=object())
+        finally:
+            report_tasks.get_report_storage_client = orig_factory
+
+        self.assertEqual(calls, [])
+
     async def test_uses_injected_storage_client_for_download_parse_and_enqueue(self):
         conn = ProcessHandlerConn()
         storage = FakeStorage(exists=False)

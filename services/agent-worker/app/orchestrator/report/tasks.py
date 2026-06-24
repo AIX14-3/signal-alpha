@@ -87,8 +87,9 @@ class ReportProcessTaskHandler:
         storage: ReportStorageClient | None = None,
     ) -> None:
         self._connection = connection
-        self._storage = storage or get_report_storage_client(settings)
-        self._s3 = self._storage
+        self._settings = settings
+        self._storage = storage
+        self._s3 = storage
 
     async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
         task_context = _task_context(task.get("task_context"))
@@ -130,13 +131,15 @@ class ReportProcessTaskHandler:
             await self._mark_failed(raw_document_id, "pdf_url이 없습니다")
             return {"status": "no_pdf_url"}
 
-        if not self._storage.exists(s3_key):
-            success = download_and_upload(row["pdf_url"], s3_key, self._storage)
+        storage = self._get_storage()
+
+        if not storage.exists(s3_key):
+            success = download_and_upload(row["pdf_url"], s3_key, storage)
             if not success:
                 await self._mark_failed(raw_document_id, "PDF 다운로드 실패")
                 return {"status": "download_failed"}
 
-        parsed = process_from_s3(s3_key, self._storage)
+        parsed = process_from_s3(s3_key, storage)
 
         await self._connection.execute(
             """
@@ -173,6 +176,12 @@ class ReportProcessTaskHandler:
 
         return {"status": "success", "raw_document_id": raw_document_id, "s3_key": s3_key}
 
+    def _get_storage(self) -> ReportStorageClient:
+        if self._storage is None:
+            self._storage = get_report_storage_client(self._settings)
+            self._s3 = self._storage
+        return self._storage
+
     async def _mark_failed(self, raw_document_id: int, error: str) -> None:
         await self._connection.execute(
             """
@@ -202,8 +211,9 @@ class ReportEmbedTaskHandler:
         storage: ReportStorageClient | None = None,
     ) -> None:
         self._connection = connection
-        self._storage = storage or get_report_storage_client(settings)
-        self._s3 = self._storage
+        self._settings = settings
+        self._storage = storage
+        self._s3 = storage
 
     async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
         task_context = _task_context(task.get("task_context"))
@@ -227,7 +237,8 @@ class ReportEmbedTaskHandler:
             # 아직 파싱 전이거나 report storage에 PDF가 없음 → 임베딩 불가
             return {"status": "not_ready", "raw_document_id": raw_document_id}
 
-        pdf_bytes = self._storage.download_pdf(row["s3_key"])
+        storage = self._get_storage()
+        pdf_bytes = storage.download_pdf(row["s3_key"])
         full_text = extract_text(pdf_bytes)
         chunks = chunk_text(full_text)
         if not chunks:
@@ -259,6 +270,12 @@ class ReportEmbedTaskHandler:
             "raw_document_id": raw_document_id,
             "chunks": len(chunks),
         }
+
+    def _get_storage(self) -> ReportStorageClient:
+        if self._storage is None:
+            self._storage = get_report_storage_client(self._settings)
+            self._s3 = self._storage
+        return self._storage
 
 
 class ReportAnalyzeTaskHandler:
