@@ -202,6 +202,7 @@ def _aggregate_to_daily(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     daily: dict[str, dict[str, Any]] = {}
     titles_by_day: dict[str, list[str]] = {}
     techs_by_day: dict[str, list[str]] = {}
+    skills_by_day: dict[str, list[str]] = {}
 
     for row in rows:
         d = row.get("observed_date")
@@ -219,6 +220,7 @@ def _aggregate_to_daily(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             }
             titles_by_day[d] = []
             techs_by_day[d] = []
+            skills_by_day[d] = []
 
         daily[d]["job_count"] += int(row.get("job_count") or 1)
 
@@ -227,6 +229,9 @@ def _aggregate_to_daily(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         for tech in (row.get("tech_stack") or []):
             if tech:
                 techs_by_day[d].append(str(tech))
+        for skill in (row.get("ocr_skills") or []):
+            if skill:
+                skills_by_day[d].append(str(skill))
 
     # 2. 날짜 오름차순 정렬 후 전일 대비 change_pct 계산
     sorted_dates = sorted(daily)
@@ -244,6 +249,7 @@ def _aggregate_to_daily(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         row_out = dict(daily[d])
         row_out["job_title"] = titles_by_day[d][0] if titles_by_day[d] else None
         row_out["tech_stack"] = list(dict.fromkeys(techs_by_day[d]))  # 순서 보존 중복 제거
+        row_out["ocr_skills"] = list(dict.fromkeys(skills_by_day[d]))  # 순서 보존 중복 제거
         result.append(row_out)
 
     return result
@@ -269,6 +275,9 @@ def _row(record: Any, factors: dict[int, float]) -> dict[str, Any]:
         # impact). Pulled from the posting's extra_payload, falling back to title.
         "job_title": _job_title(payload, record),
         "tech_stack": _tech_list(payload.get("tech_stack")),
+        # OCR-extracted skills (ENRICH_HIRING, migration 028) — feeds the analyzer's
+        # skill-breadth score component. Empty when the posting is unenriched.
+        "ocr_skills": _skill_list(record.get("ocr_skills")),
     }
 
 
@@ -300,6 +309,21 @@ def _tech_list(value: Any) -> list[str]:
         return [t.strip() for t in value.split(",") if t.strip()]
     if isinstance(value, (list, tuple)):
         return [str(t).strip() for t in value if str(t).strip()]
+    return []
+
+
+def _skill_list(value: Any) -> list[str]:
+    """Parse hiring_raw_details.ocr_skills (JSONB array) — asyncpg hands JSONB back
+    as a decoded list or a JSON string depending on codec registration."""
+    if not value:
+        return []
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (TypeError, ValueError):
+            return [s.strip() for s in value.split(",") if s.strip()]
+    if isinstance(value, (list, tuple)):
+        return [str(s).strip() for s in value if str(s or "").strip()]
     return []
 
 

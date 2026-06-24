@@ -143,6 +143,31 @@ class HiringAnalyzerTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("insufficient_history", result.risk_flags)
         self.assertEqual(result.data_status, "partial")
 
+    async def test_ocr_skill_breadth_lifts_score(self):
+        """OCR-extracted skill breadth adds a one-sided positive component, so an
+        enriched posting set scores strictly higher than the same set unenriched."""
+        rows = [_row(5, 100), _row(10, 100), _row(15, 100),
+                _row(55, 100), _row(60, 100), _row(65, 100)]  # flat → ~0 own signal
+        skilled = [dict(r) for r in rows]
+        skilled[0]["ocr_skills"] = ["Python", "Java", "Spring Boot", "Kubernetes", "AWS"]
+        skilled[1]["ocr_skills"] = ["Docker", "CI/CD", "React"]  # distinct=8
+
+        baseline = await HiringAnalyzer(CONFIG).analyze("005930", _evidence(rows))
+        enriched = await HiringAnalyzer(CONFIG).analyze("005930", _evidence(skilled))
+
+        self.assertGreater(enriched.score, baseline.score)
+        self.assertEqual(enriched.direction, "positive")
+        self.assertTrue(any("기술스택" in e.title or "기술스택" in e.summary
+                            for e in enriched.evidence_items))
+
+    async def test_no_ocr_skills_is_exact_fallback(self):
+        """Without ocr_skills the component contributes 0 — score unchanged."""
+        rows = [_row(5, 100), _row(10, 100), _row(15, 100),
+                _row(55, 100), _row(60, 100), _row(65, 100)]
+        result = await HiringAnalyzer(CONFIG).analyze("005930", _evidence(rows))
+        self.assertEqual(result.score, 0.0)
+        self.assertEqual(result.direction, "neutral")
+
     async def test_keyword_fusion_surfaces_tech_and_titles(self):
         """Loader-attached tech_stack/job_title are surfaced in summary + a focus
         evidence item, without changing the score (descriptive only)."""

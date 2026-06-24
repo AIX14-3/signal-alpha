@@ -74,7 +74,11 @@ def evaluate_indicators(
     # size, so the low_base guard above does not suppress it.
     sector = _sector_demand_component(indicators, config, highlights)
 
-    score = max(-1.0, min(1.0, momentum + change + sector))
+    # OCR skill breadth is a content signal (what tech the company hires for),
+    # independent of sample size, so the low_base guard does not suppress it.
+    skill = _skill_component(indicators, config, highlights)
+
+    score = max(-1.0, min(1.0, momentum + change + sector + skill))
     direction = _direction(score, config)
     return HiringAssessment(
         direction=direction,
@@ -137,6 +141,37 @@ def _sector_demand_component(
     elif score < 0:
         highlights.append(
             f"동종업 직군 수요 {momentum * 100:+.0f}% — 섹터 채용 위축 전파 (점수 {score:+.2f})"
+        )
+    return score
+
+
+def _skill_component(
+    indicators: HiringIndicators,
+    config: HiringRuleConfig,
+    highlights: list[str],
+) -> float:
+    """Reward hiring across a breadth of concrete in-demand tech skills.
+
+    Returns 0 — exact pre-enrichment fallback — when too few (or no) postings in
+    the window have been OCR-enriched, so unenriched stocks score exactly as
+    before. One-sided positive: a wide tech stack lifts the score; it never pushes
+    negative. Mirrors the patent significance component.
+    """
+    if (
+        not indicators.distinct_skills
+        or indicators.skill_enriched_observations < config.skill_min_enriched
+    ):
+        return 0.0
+    score = graded(
+        float(indicators.distinct_skills),
+        scale=config.skill_scale,
+        weight=config.skill_weight,
+    )
+    if score > 0.01:
+        preview = ", ".join(indicators.top_skills)
+        highlights.append(
+            f"채용 기술스택 {indicators.distinct_skills}종 (OCR: {preview}) "
+            f"— 기술 투자 폭 (점수 {score:+.2f})"
         )
     return score
 

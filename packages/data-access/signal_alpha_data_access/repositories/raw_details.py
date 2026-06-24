@@ -492,31 +492,71 @@ class RawDetailRepository:
         """Hiring detail rows for one stock, newest first, within the window.
 
         ``hiring_raw_details`` has no own date column, so the observation date is
-        taken from the joined ``raw_documents.published_at``.
+        taken from the joined ``raw_documents.published_at``. ``ocr_skills`` carries
+        the OCR-extracted tech skills (ENRICH_HIRING, migration 028) the analyzer
+        folds into the score.
+
+        On a stale prod schema missing ``ocr_skills`` (SQLSTATE 42703) this falls
+        back to a query that omits it and supplies ``ocr_skills=NULL`` so the row
+        shape is unchanged for callers.
         """
-        return await self._connection.fetch(
-            """
-            SELECT
-                h.raw_document_id,
-                h.stock_id,
-                h.keyword,
-                h.job_category,
-                h.job_count,
-                h.previous_job_count,
-                h.change_pct,
-                h.extra_payload,
-                r.title,
-                r.source_url,
-                r.published_at
-            FROM hiring_raw_details h
-            INNER JOIN raw_documents r ON r.id = h.raw_document_id
-            WHERE h.stock_id = $1
-              AND ($2::timestamptz IS NULL OR r.published_at >= $2)
-            ORDER BY r.published_at DESC, h.raw_document_id DESC
-            """,
-            stock_id,
-            since_date,
-        )
+        try:
+            return await self._connection.fetch(
+                """
+                SELECT
+                    h.raw_document_id,
+                    h.stock_id,
+                    h.keyword,
+                    h.job_category,
+                    h.job_count,
+                    h.previous_job_count,
+                    h.change_pct,
+                    h.extra_payload,
+                    h.ocr_skills,
+                    r.title,
+                    r.source_url,
+                    r.published_at
+                FROM hiring_raw_details h
+                INNER JOIN raw_documents r ON r.id = h.raw_document_id
+                WHERE h.stock_id = $1
+                  AND ($2::timestamptz IS NULL OR r.published_at >= $2)
+                ORDER BY r.published_at DESC, h.raw_document_id DESC
+                """,
+                stock_id,
+                since_date,
+            )
+        except Exception as error:  # noqa: BLE001 — narrowed below by SQLSTATE
+            if not _is_undefined_column(error):
+                raise
+            logger.warning(
+                "hiring_raw_details lacks ocr_skills (stale prod schema); "
+                "falling back without it for stock_id=%s",
+                stock_id,
+            )
+            return await self._connection.fetch(
+                """
+                SELECT
+                    h.raw_document_id,
+                    h.stock_id,
+                    h.keyword,
+                    h.job_category,
+                    h.job_count,
+                    h.previous_job_count,
+                    h.change_pct,
+                    h.extra_payload,
+                    NULL AS ocr_skills,
+                    r.title,
+                    r.source_url,
+                    r.published_at
+                FROM hiring_raw_details h
+                INNER JOIN raw_documents r ON r.id = h.raw_document_id
+                WHERE h.stock_id = $1
+                  AND ($2::timestamptz IS NULL OR r.published_at >= $2)
+                ORDER BY r.published_at DESC, h.raw_document_id DESC
+                """,
+                stock_id,
+                since_date,
+            )
 
     async def list_hiring_function_weights(self, stock_id: int) -> list[Any]:
         """Function-key → weight exposure for one stock (C4, migration 020).
