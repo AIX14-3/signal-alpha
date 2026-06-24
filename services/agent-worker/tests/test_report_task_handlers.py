@@ -12,12 +12,32 @@ from app.orchestrator.report.tasks import (
     ReportAnalyzeTaskHandler,
     ReportCollectTaskHandler,
     ReportEmbedTaskHandler,
+    ReportProcessTaskHandler,
 )
 
 
 class FakeProvider:
     async def embed(self, texts):
         return [[0.5] * EMBEDDING_DIM for _ in texts]
+
+
+class FakeStorage:
+    def __init__(self, *, exists=True, pdf_bytes=b"%PDF-fake"):
+        self.exists_value = exists
+        self.pdf_bytes = pdf_bytes
+        self.downloaded_keys = []
+
+    def exists(self, key):
+        return self.exists_value
+
+    def upload_pdf(self, pdf_bytes, key):
+        self.pdf_bytes = pdf_bytes
+        self.exists_value = True
+        return key
+
+    def download_pdf(self, key):
+        self.downloaded_keys.append(key)
+        return self.pdf_bytes
 
 
 # ── embed_report ────────────────────────────────────────────────
@@ -47,8 +67,11 @@ class ReportEmbedTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_embeds_full_text_and_inserts_chunks(self):
         conn = EmbedHandlerConn()
-        handler = ReportEmbedTaskHandler(connection=conn, settings=None)
-        handler._s3.download_pdf = lambda key: b"%PDF-fake"
+        handler = ReportEmbedTaskHandler(
+            connection=conn,
+            settings=None,
+            storage=FakeStorage(pdf_bytes=b"%PDF-fake"),
+        )
 
         result = await handler({"task_context": {"raw_document_id": 42}})
 
@@ -63,10 +86,95 @@ class ReportEmbedTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_not_ready_when_parsing_incomplete(self):
         conn = EmbedHandlerConn(parsing_status="pending", s3_key=None)
-        handler = ReportEmbedTaskHandler(connection=conn, settings=None)
+        handler = ReportEmbedTaskHandler(
+            connection=conn,
+            settings=None,
+            storage=FakeStorage(),
+        )
         result = await handler({"task_context": {"raw_document_id": 7}})
         self.assertEqual(result["status"], "not_ready")
         self.assertEqual(conn.inserts, [])
+
+    async def test_uses_injected_storage_client(self):
+        conn = EmbedHandlerConn()
+        storage = FakeStorage(pdf_bytes=b"%PDF-from-storage")
+        handler = ReportEmbedTaskHandler(connection=conn, settings=None, storage=storage)
+
+        result = await handler({"task_context": {"raw_document_id": 42}})
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(storage.downloaded_keys, ["reports/005930/x.pdf"])
+
+
+# ── process_report ───────────────────────────────────────────────
+class ProcessHandlerConn:
+    def __init__(self):
+        self.executed = []
+        self.fetchvals = []
+
+    async def fetchrow(self, sql, *args):
+        if "JOIN report_raw_details" in sql:
+            return {
+                "stock_id": 1,
+                "pdf_url": "https://example.com/report.pdf",
+                "stock_code": "005930",
+                "securities_firm": "Test Securities",
+                "publish_date": "2026-06-24",
+                "extra_payload": {"report_type": "cr"},
+                "s3_key": None,
+                "parsing_status": "pending",
+            }
+        return None
+
+    async def execute(self, sql, *args):
+        self.executed.append((sql, args))
+
+    async def fetchval(self, sql, *args):
+        self.fetchvals.append((sql, args))
+        if "SELECT id" in sql:
+            return None
+        return 501
+
+
+class ReportProcessTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self._orig_download = report_tasks.download_and_upload
+        self._orig_process = report_tasks.process_from_s3
+
+    def tearDown(self):
+        report_tasks.download_and_upload = self._orig_download
+        report_tasks.process_from_s3 = self._orig_process
+
+    async def test_uses_injected_storage_client_for_download_parse_and_enqueue(self):
+        conn = ProcessHandlerConn()
+        storage = FakeStorage(exists=False)
+        observed = {}
+
+        def _fake_download(url, s3_key, passed_storage):
+            observed["download"] = (url, s3_key, passed_storage)
+            return True
+
+        def _fake_process(s3_key, passed_storage):
+            observed["process"] = (s3_key, passed_storage)
+            return {
+                "opinion": "neutral",
+                "target_price": 90000,
+                "key_rationale": "근거",
+                "raw_text": "본문",
+            }
+
+        report_tasks.download_and_upload = _fake_download
+        report_tasks.process_from_s3 = _fake_process
+
+        handler = ReportProcessTaskHandler(connection=conn, settings=None, storage=storage)
+        result = await handler({"task_context": {"raw_document_id": 42}})
+
+        self.assertEqual(result["status"], "success")
+        self.assertIs(observed["download"][2], storage)
+        self.assertIs(observed["process"][1], storage)
+        self.assertIn("reports/005930/", observed["process"][0])
+        self.assertTrue(any("UPDATE report_raw_details" in sql for sql, _ in conn.executed))
+        self.assertTrue(any(args[1] == "embed_report" for _, args in conn.fetchvals))
 
 
 # ── analyze_report ──────────────────────────────────────────────

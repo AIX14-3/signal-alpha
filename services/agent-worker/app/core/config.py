@@ -69,6 +69,9 @@ class Settings:
             "GEMINI_BASE_URL",
             "https://generativelanguage.googleapis.com/v1beta",
         )
+        self.report_storage_backend = getenv("REPORT_STORAGE_BACKEND", "gcs").strip().lower()
+        self.gcp_project_id = getenv("GCP_PROJECT_ID", "")
+        self.gcs_report_bucket = getenv("GCS_REPORT_BUCKET", "signal-alpha-reports")
         self.aws_access_key_id = getenv("AWS_ACCESS_KEY_ID", "")
         self.aws_secret_access_key = getenv("AWS_SECRET_ACCESS_KEY", "")
         self.aws_region = getenv("AWS_REGION", "ap-northeast-2")
