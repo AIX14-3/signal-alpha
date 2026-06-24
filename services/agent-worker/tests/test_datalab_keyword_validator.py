@@ -123,5 +123,57 @@ class ValidateDraftVolumeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(capped[0]["validation"]["tier"], gate.TIER_REVIEW)
 
 
+class RecordsClient:
+    """Returns an explicit (period, ratio) series so recency/spike can be tested."""
+
+    def __init__(self, series: list[tuple[str, float]]):
+        self._series = series
+
+    async def search(self, *, keyword_group, keywords, start_date, end_date, time_unit="date", **_):
+        return [
+            NaverDataLabRecord(
+                keyword_group=keyword_group, keyword=keywords[0],
+                period=p, ratio=r, raw_data={},
+            )
+            for p, r in self._series
+        ]
+
+
+class IsSpikeTest(unittest.TestCase):
+    def test_requires_recency_and_concentration(self):
+        self.assertTrue(gate.is_spike(3, 0.8))
+        self.assertFalse(gate.is_spike(1, 0.9))   # too few recent active days
+        self.assertFalse(gate.is_spike(3, 0.4))   # interest not concentrated recently
+
+
+class SpikeFastTrackTest(unittest.IsolatedAsyncioTestCase):
+    async def test_fresh_spike_fasttracks_to_auto(self):
+        # only 3 active days, all in the last week, all interest recent -> spike -> auto
+        client = RecordsClient([("2024-01-28", 80.0), ("2024-01-29", 90.0), ("2024-01-30", 100.0)])
+        v = await gate.validate_keyword(
+            client, "신공장 화재", start_date="2024-01-01", end_date="2024-01-30", window_days=30
+        )
+        self.assertEqual(v["active_days"], 3)
+        self.assertTrue(v["spike"])
+        self.assertEqual(v["tier"], gate.TIER_AUTO)
+
+    async def test_old_blip_is_not_spike(self):
+        client = RecordsClient([("2024-01-02", 100.0), ("2024-01-03", 90.0)])
+        v = await gate.validate_keyword(
+            client, "옛날 블립", start_date="2024-01-01", end_date="2024-01-30", window_days=30
+        )
+        self.assertFalse(v["spike"])
+        self.assertEqual(v["tier"], gate.TIER_REJECT)
+
+    async def test_established_keyword_not_flagged_as_spike(self):
+        series = [(f"2024-01-{d:02d}", 50.0) for d in range(1, 16)]  # 15 spread active days
+        client = RecordsClient(series)
+        v = await gate.validate_keyword(
+            client, "삼성전자 주가", start_date="2024-01-01", end_date="2024-01-30", window_days=30
+        )
+        self.assertEqual(v["tier"], gate.TIER_AUTO)  # already auto by active-days
+        self.assertFalse(v["spike"])                 # not a fast-track
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -281,7 +281,7 @@ async def apply_draft(draft: dict[str, Any], *, manual: bool = True) -> None:
                         VALUES ($1, $2, $3, 'gemini_reviewed', $4,
                                 $5, $6,
                                 $7, $8, $9,
-                                CASE WHEN $7 IS NULL THEN NULL ELSE NOW() END,
+                                CASE WHEN $7::integer IS NULL THEN NULL ELSE NOW() END,
                                 'llm', $10, $11, $12, NOW())
                         ON CONFLICT (category_id, keyword) DO UPDATE
                         SET keyword_group = EXCLUDED.keyword_group, source = EXCLUDED.source,

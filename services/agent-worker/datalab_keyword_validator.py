@@ -36,6 +36,15 @@ REVIEW_MIN_ACTIVE_DAYS = int(os.getenv("DATALAB_KW_REVIEW_MIN_ACTIVE_DAYS", "3")
 # Safety cap so a large batch cannot exhaust the Naver daily call quota in one run.
 MAX_VALIDATION_CALLS = int(os.getenv("DATALAB_KW_VALIDATION_MAX_CALLS", "500"))
 
+# Spike fast-track: a freshly-broken event keyword has few total active days but its
+# search interest is concentrated in the last few days. The active-days gate alone is
+# biased toward evergreen phrases and lags breaking events; this lets a rising keyword
+# auto-approve once its recency is strong, WITHOUT an extra API call (computed from the
+# same daily ratio series). All env-overridable.
+SPIKE_RECENT_DAYS = int(os.getenv("DATALAB_KW_SPIKE_RECENT_DAYS", "7"))
+SPIKE_MIN_RECENT_ACTIVE = int(os.getenv("DATALAB_KW_SPIKE_MIN_RECENT_ACTIVE", "2"))
+SPIKE_MIN_RECENT_SHARE = float(os.getenv("DATALAB_KW_SPIKE_MIN_RECENT_SHARE", "0.6"))
+
 TIER_AUTO = "auto"
 TIER_REVIEW = "review"
 TIER_REJECT = "reject"
@@ -73,6 +82,34 @@ def tier_for_active_days(
     return TIER_REJECT
 
 
+def is_spike(
+    recent_active_days: int,
+    recent_share: float,
+    *,
+    min_recent_active: int = SPIKE_MIN_RECENT_ACTIVE,
+    min_recent_share: float = SPIKE_MIN_RECENT_SHARE,
+) -> bool:
+    """True when search interest is recent AND concentrated (rising), not stale.
+
+    ``recent_share`` is the fraction of the window's total search ratio that fell in
+    the recent sub-window; a high share means a fresh/rising event rather than a long
+    flat history or an old one-off blip.
+    """
+    return recent_active_days >= min_recent_active and recent_share >= min_recent_share
+
+
+def _recent_metrics(records: list, *, end_date: str, recent_days: int) -> tuple[int, float]:
+    """(recent_active_days, recent_share) from a daily ratio series — no extra API call."""
+    if not records:
+        return 0, 0.0
+    cutoff = (date.fromisoformat(end_date) - timedelta(days=max(1, recent_days) - 1)).isoformat()
+    total = sum(r.ratio for r in records)
+    recent = [r for r in records if r.period >= cutoff and r.ratio > 0]
+    recent_ratio = sum(r.ratio for r in recent)
+    share = round(recent_ratio / total, 3) if total else 0.0
+    return len(recent), share
+
+
 async def validate_keyword(
     client: NaverDataLabClient,
     keyword: str,
@@ -82,12 +119,14 @@ async def validate_keyword(
     window_days: int,
     auto_min: int = AUTO_MIN_ACTIVE_DAYS,
     review_min: int = REVIEW_MIN_ACTIVE_DAYS,
+    recent_days: int = SPIKE_RECENT_DAYS,
 ) -> dict[str, Any]:
     """Query one keyword's search trend and return its validation verdict.
 
     A Naver API failure is treated as "unknown" and routed to 'review' (never silently
     auto-approved on missing data, never dropped) so a transient outage cannot poison
-    the active keyword set.
+    the active keyword set. A keyword below the active-days bar is still fast-tracked to
+    'auto' when its search interest is a recent spike (see ``is_spike``).
     """
     try:
         records = await client.search(
@@ -107,11 +146,17 @@ async def validate_keyword(
         }
     active_days = sum(1 for r in records if r.ratio > 0)
     coverage = round(active_days / window_days, 3) if window_days else None
+    recent_active, recent_share = _recent_metrics(records, end_date=end_date, recent_days=recent_days)
+    base_tier = tier_for_active_days(active_days, auto_min=auto_min, review_min=review_min)
+    spiked = base_tier != TIER_AUTO and is_spike(recent_active, recent_share)
     return {
         "active_days": active_days,
         "coverage": coverage,
         "window_days": window_days,
-        "tier": tier_for_active_days(active_days, auto_min=auto_min, review_min=review_min),
+        "recent_active_days": recent_active,
+        "recent_share": recent_share,
+        "spike": spiked,
+        "tier": TIER_AUTO if spiked else base_tier,
         "error": False,
     }
 
@@ -136,7 +181,7 @@ async def validate_draft_volume(
     'review' WITHOUT an API call (capped, never auto-approved unseen).
     """
     start_date, end_date = _date_window(window_days)
-    summary = {TIER_AUTO: 0, TIER_REVIEW: 0, TIER_REJECT: 0, "capped": 0, "calls": 0}
+    summary = {TIER_AUTO: 0, TIER_REVIEW: 0, TIER_REJECT: 0, "capped": 0, "calls": 0, "spike": 0}
     for category in draft.get("categories", []):
         kept: list[dict[str, Any]] = []
         for kw in category.get("keywords", []):
@@ -161,6 +206,8 @@ async def validate_draft_volume(
                 )
                 summary["calls"] += 1
                 summary[kw["validation"]["tier"]] += 1
+                if kw["validation"].get("spike"):
+                    summary["spike"] += 1
             if kw["validation"]["tier"] == TIER_REJECT and drop_rejected:
                 continue
             kept.append(kw)
