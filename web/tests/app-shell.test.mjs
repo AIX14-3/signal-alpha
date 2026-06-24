@@ -20,8 +20,10 @@ test("api client exposes the contracted endpoints", async () => {
   for (const fn of [
     "searchStocks",
     "listWatchlists",
+    "getReport",
+    "issueReport",
+    "getQuota",
     "getMySubscription",
-    "getAnalysisStatus",
     "adminLogin",
     "adminGetStats",
   ]) {

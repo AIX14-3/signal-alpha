@@ -21,13 +21,13 @@ def _plan(plan_id, plan_type, name, max_watchlist, price_monthly, is_active=True
         "plan_type": plan_type,
         "plan_display_name": name,
         "max_watchlist": max_watchlist,
-        "signal_delay_hours": 24,
+        "signal_delay_hours": 0 if plan_type != "free" else 24,
         "journal_max_entries": 50,
         "has_alt_data": plan_type != "free",
         "has_detail_report": plan_type != "free",
-        "has_backtesting": plan_type == "premium",
+        "has_backtesting": False,
         "price_monthly": price_monthly,
-        "price_yearly": price_monthly * 10,
+        "price_yearly": 0,
         "is_active": is_active,
     }
 
@@ -35,20 +35,16 @@ def _plan(plan_id, plan_type, name, max_watchlist, price_monthly, is_active=True
 class FakeConnection:
     def __init__(self):
         self.users_by_id = {
-            1: {
-                "id": 1,
-                "email": "user@example.com",
-                "nickname": "사용자",
-                "agreed_risk": True,
-                "is_verified": False,
-            }
+            1: {"id": 1, "member_code": "ABCD1234", "nickname": "사용자", "agreed_risk": True}
         }
+        # 신규 모델: free + monthly_9900 활성, 구 pro/premium 비활성
         self.plans = {
-            "free": _plan(1, "free", "Free", 3, 0),
-            "pro": _plan(2, "pro", "Pro", 20, 9900),
-            "premium": _plan(3, "premium", "Premium", 100, 19900),
+            "free": _plan(1, "free", "Free", 2147483647, 0),
+            "monthly_9900": _plan(2, "monthly_9900", "월 구독", 2147483647, 9900),
+            "pro": _plan(3, "pro", "Pro", 20, 9900, is_active=False),
+            "premium": _plan(4, "premium", "Premium", 100, 19900, is_active=False),
         }
-        self.active_subscription = None  # dict 또는 None
+        self.active_subscription = None
         self.created = []
 
     async def fetchrow(self, sql, *args):
@@ -60,6 +56,8 @@ class FakeConnection:
             cancelled = self.active_subscription
             self.active_subscription = None
             return cancelled
+        if "INSERT INTO portone_verifications" in sql:
+            return {"id": 1}
         if "INSERT INTO signal_subscriptions" in sql:
             user_id, plan_id, status, expires_at, payment_method, billing_cycle = args
             plan = next(p for p in self.plans.values() if p["id"] == plan_id)
@@ -68,7 +66,7 @@ class FakeConnection:
                 "user_id": user_id,
                 "plan_id": plan_id,
                 "status": status,
-                "started_at": datetime(2026, 6, 23, tzinfo=UTC),
+                "started_at": datetime(2026, 6, 24, tzinfo=UTC),
                 "expires_at": expires_at,
                 "billing_cycle": billing_cycle,
                 "plan_type": plan["plan_type"],
@@ -127,7 +125,7 @@ class SubscriptionRoutesTest(unittest.TestCase):
         response = self.client.get("/api/subscriptions/plans")
         self.assertEqual(response.status_code, 200)
         types = [plan["plan_type"] for plan in response.json()["plans"]]
-        self.assertEqual(types, ["free", "pro", "premium"])
+        self.assertEqual(types, ["free", "monthly_9900"])
         self.assertNotIn("is_active", response.json()["plans"][0])
 
     def test_me_requires_authentication(self):
@@ -140,19 +138,23 @@ class SubscriptionRoutesTest(unittest.TestCase):
         self.assertIsNone(response.json()["subscription"])
         self.assertEqual(response.json()["plan"]["plan_type"], "free")
 
-    def test_subscribe_to_pro_creates_active_subscription(self):
-        response = self.client.post(
-            "/api/subscriptions",
-            json={"plan_type": "pro", "billing_cycle": "monthly"},
+    def test_payment_confirm_creates_subscription(self):
+        checkout = self.client.post("/api/payments/checkout", headers=self.auth_headers())
+        self.assertEqual(checkout.status_code, 200)
+        self.assertEqual(checkout.json()["amount"], 9900)
+        merchant_uid = checkout.json()["merchant_uid"]
+
+        confirm = self.client.post(
+            "/api/payments/confirm",
+            json={"imp_uid": "imp_PAY", "merchant_uid": merchant_uid},
             headers=self.auth_headers(),
         )
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["plan"]["plan_type"], "pro")
-        self.assertEqual(response.json()["subscription"]["status"], "active")
-        self.assertEqual(response.json()["subscription"]["billing_cycle"], "monthly")
+        self.assertEqual(confirm.status_code, 200, confirm.text)
+        self.assertEqual(confirm.json()["subscription"]["plan_type"], "monthly_9900")
+        self.assertEqual(confirm.json()["subscription"]["status"], "active")
         self.assertEqual(len(self.connection.created), 1)
 
-    def test_cancel_clears_subscription(self):
+    def test_payment_cancel_clears_subscription(self):
         self.connection.active_subscription = {
             "id": 5,
             "user_id": 1,
@@ -161,16 +163,11 @@ class SubscriptionRoutesTest(unittest.TestCase):
             "started_at": datetime(2026, 6, 1, tzinfo=UTC),
             "expires_at": datetime(2026, 7, 1, tzinfo=UTC),
             "billing_cycle": "monthly",
-            **self.connection.plans["pro"],
+            **self.connection.plans["monthly_9900"],
         }
-        response = self.client.post(
-            "/api/subscriptions",
-            json={"plan_type": "pro", "action": "cancel"},
-            headers=self.auth_headers(),
-        )
+        response = self.client.post("/api/payments/cancel", headers=self.auth_headers())
         self.assertEqual(response.status_code, 200)
-        self.assertIsNone(response.json()["subscription"])
-        self.assertEqual(response.json()["plan"]["plan_type"], "free")
+        self.assertEqual(response.json()["status"], "cancelled")
         self.assertIsNone(self.connection.active_subscription)
 
 

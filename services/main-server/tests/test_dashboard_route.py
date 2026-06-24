@@ -133,7 +133,6 @@ class DashboardRouteTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         body = response.json()
         self.assertEqual(body["user"]["email"], "user@example.com")
-        self.assertEqual(body["watchlist_limit"], 10)
         self.assertEqual(body["watchlist_count"], 1)
         item = body["items"][0]
         self.assertEqual(item["stock"]["stock_code"], "005930")

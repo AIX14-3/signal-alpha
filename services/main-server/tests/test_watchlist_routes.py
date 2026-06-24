@@ -203,7 +203,7 @@ class WatchlistRoutesTest(unittest.TestCase):
 
         list_response = self.client.get("/api/watchlists", headers=self.auth_headers())
         self.assertEqual(list_response.status_code, 200)
-        self.assertEqual(list_response.json()["limit"], 10)
+        self.assertNotIn("limit", list_response.json())
         self.assertEqual(list_response.json()["count"], 1)
 
         delete_response = self.client.delete(
@@ -254,7 +254,8 @@ class WatchlistRoutesTest(unittest.TestCase):
         self.assertEqual(response.json()["stock"]["stock_code"], "005930")
         self.assertEqual(len(self.connection.watchlists), 10)
 
-    def test_add_watchlist_rejects_limit_exceeded(self):
+    def test_add_watchlist_is_unlimited(self):
+        # 신규 기획: 관심종목 무제한 — 10개를 넘겨도 추가된다.
         for index in range(10):
             self.connection.watchlists.append(
                 {
@@ -272,8 +273,9 @@ class WatchlistRoutesTest(unittest.TestCase):
             headers=self.auth_headers(),
         )
 
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json()["detail"]["code"], "WATCHLIST_LIMIT_EXCEEDED")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["stock"]["stock_code"], "005930")
+        self.assertEqual(len(self.connection.watchlists), 11)
 
 
 if __name__ == "__main__":

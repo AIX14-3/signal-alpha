@@ -1,6 +1,6 @@
 import unittest
 import warnings
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 warnings.filterwarnings(
     "ignore",
