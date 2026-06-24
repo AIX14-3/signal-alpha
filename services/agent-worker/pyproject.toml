@@ -21,8 +21,6 @@ dependencies = [
   "sentence-transformers>=3.0.0",  # app/embeddings/provider.py
   "selenium>=4.20.0",
   "signal-alpha-data-access",
-  # vol-benchmark 변동성 모델 + DataContract (ML/DL 추론 단계, app/ml/). base는 numpy/pandas만.
-  "signal-alpha-vol-models",
   "sqlalchemy>=2.0.0",
   "tzdata>=2024.1; sys_platform == 'win32'",
   "webdriver-manager>=4.0.0",
@@ -37,6 +35,26 @@ dev = [
   "psycopg2-binary>=2.9.0",
   "sqlalchemy>=2.0.0"
 ]
+# Model bake-off harness (app/ml). NOT installed in the runtime container — the
+# harness is a research/offline tool. Install with: uv sync --extra ml
+ml = [
+  "scikit-learn>=1.4",
+  "numpy>=1.26",
+  "scipy>=1.11"
+]
+# Optional gradient-boosting libraries; the registry auto-detects and skips any
+# that are absent, so these are additive on top of the `ml` extra.
+ml-boost = [
+  "xgboost>=2.0",
+  "lightgbm>=4.0",
+  "catboost>=1.2"
+]
+# Offline backfill tooling (scripts/). FinanceDataReader pulls historical Korean
+# daily OHLCV + indices with no API key; asyncpg is the DataLab backfill's driver.
+backfill = [
+  "finance-datareader>=0.9.50",
+  "asyncpg>=0.29"
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
@@ -44,4 +62,3 @@ testpaths = ["tests"]
 
 [tool.uv.sources]
 signal-alpha-data-access = { workspace = true }
-signal-alpha-vol-models = { workspace = true }
