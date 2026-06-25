@@ -16,18 +16,19 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
-import re
 import sys
 from datetime import date
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote
 
 import asyncpg  # type: ignore[import]
 
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "packages" / "data-access"))
 
+# Canonical DSN/SSL helpers (re-exported so existing `from run_analyzers import
+# parse_dsn, resolve_ssl` importers — e.g. parity_hiring.py — keep working).
+from app.core.dsn import parse_dsn, resolve_ssl
 from app.analyzers.config import AggregatorConfig, AnalyzerRuntimeConfig
 from app.analyzers.registry import build_registry
 from app.orchestrator.alternative.tasks import (
@@ -49,35 +50,6 @@ def load_env() -> None:
         if line and not line.startswith("#") and "=" in line:
             key, value = line.split("=", 1)
             os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
-
-
-def parse_dsn(dsn: str) -> dict[str, Any]:
-    match = re.match(
-        r"^postgres(?:ql)?://(?P<user>[^:]+):(?P<password>.*)@"
-        r"(?P<host>[^:/@]+):(?P<port>\d+)/(?P<db>[^?]+)",
-        dsn,
-    )
-    if not match:
-        raise ValueError("Could not parse DATABASE_URL")
-    return {
-        "user": unquote(match.group("user")),
-        "password": unquote(match.group("password")),
-        "host": match.group("host"),
-        "port": int(match.group("port")),
-        "database": match.group("db"),
-    }
-
-
-_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "postgres"}
-
-
-def resolve_ssl(host: str) -> Any:
-    """SSL mode for asyncpg: managed Postgres (Supabase) needs 'require'; a local
-    Docker Postgres rejects SSL. Default by host; ``DB_SSL`` env overrides."""
-    override = os.getenv("DB_SSL")
-    if override:
-        return False if override.lower() in {"disable", "off", "false", "0", "no"} else override
-    return False if host in _LOCAL_HOSTS else "require"
 
 
 def _since(value: str | None) -> date | None:

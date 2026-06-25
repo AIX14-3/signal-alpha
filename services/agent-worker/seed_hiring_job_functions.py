@@ -21,17 +21,15 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
-import re
 import sys
 from pathlib import Path
-from typing import Any
-from urllib.parse import unquote
 
 import asyncpg  # type: ignore[import]
 
 sys.path.insert(0, str(Path(__file__).parent))
 
 from app.analyzers.hiring.job_functions import LABELS, classify_job_function
+from app.core.dsn import parse_dsn, resolve_ssl
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -45,39 +43,6 @@ def load_env() -> None:
         if line and not line.startswith("#") and "=" in line:
             key, value = line.split("=", 1)
             os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
-
-
-_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "postgres"}
-
-
-def resolve_ssl(host: str) -> Any:
-    """SSL mode for asyncpg.connect.
-
-    Managed Postgres (Supabase) needs ``ssl='require'``; a local Docker Postgres
-    rejects SSL upgrades. Default by host so local testing works without flags;
-    ``DB_SSL`` overrides (e.g. ``DB_SSL=disable`` / ``DB_SSL=require``).
-    """
-    override = os.getenv("DB_SSL")
-    if override:
-        return False if override.lower() in {"disable", "off", "false", "0", "no"} else override
-    return False if host in _LOCAL_HOSTS else "require"
-
-
-def parse_dsn(dsn: str) -> dict[str, Any]:
-    match = re.match(
-        r"^postgres(?:ql)?://(?P<user>[^:]+):(?P<password>.*)@"
-        r"(?P<host>[^:/@]+):(?P<port>\d+)/(?P<db>[^?]+)",
-        dsn,
-    )
-    if not match:
-        raise ValueError("Could not parse DATABASE_URL")
-    return {
-        "user": unquote(match.group("user")),
-        "password": unquote(match.group("password")),
-        "host": match.group("host"),
-        "port": int(match.group("port")),
-        "database": match.group("db"),
-    }
 
 
 async def upsert_functions(conn: asyncpg.Connection) -> dict[str, int]:

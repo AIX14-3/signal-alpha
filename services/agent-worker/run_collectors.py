@@ -13,8 +13,6 @@ import os
 import sys
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote
-import re
 
 import asyncpg  # type: ignore[import]
 
@@ -24,6 +22,9 @@ from app.clients.kipris_client import KiprisClient
 from app.clients.naver_datalab_client import NaverDataLabClient
 from app.collectors.datalab import DataLabCollector
 from app.collectors.patent import PatentCollector
+# Canonical DSN/SSL helpers (re-exported so existing `from run_collectors import
+# parse_dsn` importers — e.g. run_baseline.py — keep working).
+from app.core.dsn import parse_dsn, resolve_ssl
 
 ROOT = Path(__file__).resolve().parents[2]
 REGISTRY_PATH = Path(__file__).parent / "category_registry.json"
@@ -38,23 +39,6 @@ def load_env() -> None:
         if line and not line.startswith("#") and "=" in line:
             key, value = line.split("=", 1)
             os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
-
-
-def parse_dsn(dsn: str) -> dict[str, Any]:
-    match = re.match(
-        r"^postgres(?:ql)?://(?P<user>[^:]+):(?P<password>.*)@"
-        r"(?P<host>[^:/@]+):(?P<port>\d+)/(?P<db>[^?]+)",
-        dsn,
-    )
-    if not match:
-        raise ValueError("Could not parse DATABASE_URL")
-    return {
-        "user": unquote(match.group("user")),
-        "password": unquote(match.group("password")),
-        "host": match.group("host"),
-        "port": int(match.group("port")),
-        "database": match.group("db"),
-    }
 
 
 def datalab_date(value: str | None) -> str | None:
@@ -158,11 +142,12 @@ async def run_once(args: argparse.Namespace) -> None:
     dsn = os.getenv("DATABASE_URL", "")
     if not dsn:
         raise RuntimeError("DATABASE_URL is required.")
+    params = parse_dsn(dsn)
     pool = await asyncpg.create_pool(
-        **parse_dsn(dsn),
+        **params,
         min_size=1,
         max_size=max(2, int(os.getenv("COLLECTOR_DB_POOL_MAX", "5"))),
-        ssl="require",
+        ssl=resolve_ssl(params["host"]),
         statement_cache_size=0,
     )
     try:

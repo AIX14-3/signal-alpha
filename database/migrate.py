@@ -63,6 +63,21 @@ def _load_env_file(path: Path) -> dict[str, str]:
     return values
 
 
+def _ssl_connect_kwargs(database_url: str) -> dict[str, str]:
+    """libpq ``sslmode`` for psycopg2, from DB_SSL/DB_SSLMODE.
+
+    Mirrors the asyncpg-side ``resolve_ssl`` knob so migrations connect the same
+    way the services do. Returns ``{}`` (no override) when the env is unset or the
+    DSN already pins ``sslmode``, preserving prior behaviour. ``DB_SSL=disable``
+    (or false-like) maps to ``sslmode=disable`` for a local non-SSL Postgres.
+    """
+    override = os.environ.get("DB_SSL") or os.environ.get("DB_SSLMODE")
+    if not override or "sslmode=" in database_url:
+        return {}
+    sslmode = "disable" if override.lower() in {"disable", "off", "false", "0", "no"} else override
+    return {"sslmode": sslmode}
+
+
 def resolve_database_url(cli_url: str | None) -> str:
     if cli_url:
         return cli_url
@@ -230,7 +245,7 @@ def main() -> None:
         return
 
     database_url = resolve_database_url(args.database_url)
-    conn = psycopg2.connect(database_url)
+    conn = psycopg2.connect(database_url, **_ssl_connect_kwargs(database_url))
     try:
         if args.command == "status":
             cmd_status(conn)
