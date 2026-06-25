@@ -48,6 +48,7 @@ Signal α 프로젝트 문서의 진입점입니다. 새로 합류했다면 **�
 ## 운영 런북 — [`runbooks/`](./runbooks/)
 
 - `hiring-daily-schedule.md` — 채용 데이터 일일 수집/분석 스케줄 운영 절차
+- `report-pipeline-smoke-test.md` — 리포트 수집→파싱→정규화→분석→Aggregator 반영 스모크 테스트 절차
 
 ## 다이어그램 — [`superpowers/plans/`](./superpowers/plans/)
 

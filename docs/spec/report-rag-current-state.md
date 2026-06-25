@@ -18,6 +18,7 @@ Signal Alpha는 투자 추천 서비스가 아닙니다. 증권사 리포트 데
 - 현재 Report 큐 작업: `collect_report`, `process_report`, `normalize_report`, `analyze_report`
 - 현재 제외/미구현 범위: `embed_report`, RAG retriever, Report Agent
 - 현재 남은 연결 작업: 실제 운영 DB row 기반 backfill/runbook 검증과 UI/API 노출 정책 점검
+- 전체 스모크 테스트 런북: `docs/runbooks/report-pipeline-smoke-test.md`
 - 밸류에이션 재해석 전략: `docs/spec/report-valuation-reinterpretation-strategy.md`
 - 과거 담당자 인수인계 문서: `docs/spec/eunjinspec.md`
 
@@ -268,7 +269,7 @@ Report RAG는 복구 계획이 없습니다. 신규 개발은 `report_valuation_
 
 ## 운영 실행 예시
 
-worker가 실행 중이라고 가정한 local API 호출 순서입니다.
+수집부터 최종 `final_signals.score_breakdown.REPORT` 확인까지 한 번에 검증하려면 `docs/runbooks/report-pipeline-smoke-test.md`를 우선 사용합니다. 아래 예시는 worker가 실행 중일 때 가능한 local API 호출 순서의 축약본입니다.
 
 Gemini LLM 보강까지 켜서 PDF 파싱을 확인하려면 `docs/spec/report-gemini-pdf-parsing-dev-guide.md`를 먼저 참고합니다.
 
