@@ -25,7 +25,6 @@ import os
 import sys
 from datetime import date
 from pathlib import Path
-from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
