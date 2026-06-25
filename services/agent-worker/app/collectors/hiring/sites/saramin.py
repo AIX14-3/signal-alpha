@@ -27,6 +27,14 @@ class SaraminCrawler(BaseSiteCrawler):
 
         self._safe_get(f"{_SEARCH}?searchword={company_name}&searchType=search")
 
+        # IP 차단 페이지를 '공고 없음'으로 무음 처리하지 않게 먼저 감지(#사람인차단).
+        if self.is_blocked(self.driver.page_source):
+            logger.warning(
+                "🚫 사람인 [%s]: 안티봇 IP 차단 페이지 감지 — '공고 없음' 아님. IP 교체 필요",
+                company_name,
+            )
+            return []
+
         try:
             self._wait_for(By.CLASS_NAME, "item_recruit", timeout=5)
         except TimeoutException:
