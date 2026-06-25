@@ -81,6 +81,13 @@ services:
       REPORT_LLM_PROVIDER: ${REPORT_LLM_PROVIDER:-gemini}
       REPORT_LLM_MODEL: ${REPORT_LLM_MODEL:-gemini-2.0-flash}
       REPORT_LLM_TIMEOUT_SECONDS: ${REPORT_LLM_TIMEOUT_SECONDS:-20}
+      # 끝단 RISK 종합(SYNTHESIZE) LLM. 켜면 발행분 summary/bull/bear 를 자연어로 정제,
+      # 끄거나 키 없으면 결정론 템플릿 폴백. config 가 os.getenv 로 읽으므로 여기서 전달 필수.
+      # (GEMINI_API_KEY 는 위에서 이미 전달됨)
+      SYNTHESIS_USE_LLM: ${SYNTHESIS_USE_LLM:-false}
+      SYNTHESIS_LLM_PROVIDER: ${SYNTHESIS_LLM_PROVIDER:-gemini}
+      SYNTHESIS_LLM_MODEL: ${SYNTHESIS_LLM_MODEL:-gemini-2.0-flash}
+      SYNTHESIS_LLM_TIMEOUT_SECONDS: ${SYNTHESIS_LLM_TIMEOUT_SECONDS:-30}
       REPORT_STORAGE_BACKEND: ${REPORT_STORAGE_BACKEND:-local}
       REPORT_LOCAL_STORAGE_DIR: /workspace/data/report-storage
       GCP_PROJECT_ID: ${GCP_PROJECT_ID:-}
