@@ -21,7 +21,7 @@ from app.core.security import (
     decode_access_token,
     hash_refresh_token,
 )
-from signal_alpha_data_access.repositories import UserBillingRepository, UserSessionRepository
+from signal_alpha_data_access.backend import UserBillingRepository, UserSessionRepository
 
 
 NOTICE = "Signal Alpha는 매수·매도 추천이 아니라 데이터 방향성과 근거를 제공하는 서비스입니다."

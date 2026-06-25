@@ -3,6 +3,10 @@ from __future__ import annotations
 import json
 from typing import Any
 
+# backend 전용 repository. watchlists/signal_journals/user_signal_reads 는 backend 소유
+# 테이블이라 base 에 직접 쓰지만, 종목 마스터 조인은 worker 소유 stocks 대신 api.stocks
+# 읽기 view 를 사용한다(backend 롤은 base stocks 권한 없음, api.stocks SELECT 만 보유).
+
 
 class UserSignalRepository:
     def __init__(self, connection: Any) -> None:
@@ -50,7 +54,7 @@ class UserSignalRepository:
                 stocks.market,
                 stocks.sector
             FROM watchlists
-            INNER JOIN stocks
+            INNER JOIN api.stocks
                 ON stocks.id = watchlists.stock_id
             WHERE watchlists.user_id = $1
               AND watchlists.stock_id = $2
@@ -80,7 +84,7 @@ class UserSignalRepository:
                 stocks.market,
                 stocks.sector
             FROM watchlists
-            INNER JOIN stocks
+            INNER JOIN api.stocks
                 ON stocks.id = watchlists.stock_id
             WHERE watchlists.user_id = $1
             ORDER BY watchlists.created_at DESC
@@ -170,7 +174,7 @@ class UserSignalRepository:
                 stocks.market,
                 stocks.sector
             FROM inserted
-            INNER JOIN stocks
+            INNER JOIN api.stocks
                 ON stocks.id = inserted.stock_id
             """,
             user_id,
@@ -201,7 +205,7 @@ class UserSignalRepository:
                     stocks.market,
                     stocks.sector
                 FROM signal_journals
-                INNER JOIN stocks
+                INNER JOIN api.stocks
                     ON stocks.id = signal_journals.stock_id
                 WHERE signal_journals.user_id = $1
                   AND stocks.ticker = $2
@@ -221,7 +225,7 @@ class UserSignalRepository:
                 stocks.market,
                 stocks.sector
             FROM signal_journals
-            INNER JOIN stocks
+            INNER JOIN api.stocks
                 ON stocks.id = signal_journals.stock_id
             WHERE signal_journals.user_id = $1
             ORDER BY signal_journals.created_at DESC
@@ -241,7 +245,7 @@ class UserSignalRepository:
                 stocks.market,
                 stocks.sector
             FROM signal_journals
-            INNER JOIN stocks
+            INNER JOIN api.stocks
                 ON stocks.id = signal_journals.stock_id
             WHERE signal_journals.id = $1
               AND signal_journals.user_id = $2
@@ -267,7 +271,7 @@ class UserSignalRepository:
                 user_memo = $4,
                 tags = $5::JSONB,
                 updated_at = NOW()
-            FROM stocks
+            FROM api.stocks
             WHERE signal_journals.id = $1
               AND signal_journals.user_id = $2
               AND stocks.id = signal_journals.stock_id

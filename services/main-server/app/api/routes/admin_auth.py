@@ -7,7 +7,7 @@ from fastapi import Depends, HTTPException, Request, Response
 
 from app.core.config import Settings, get_settings
 from app.core.database import get_database_pool
-from signal_alpha_data_access.repositories import AdminRepository
+from signal_alpha_data_access.backend import AdminRepository
 
 
 ADMIN_SESSION_HOURS = 12

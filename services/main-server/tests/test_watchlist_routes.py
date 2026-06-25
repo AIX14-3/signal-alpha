@@ -50,9 +50,9 @@ class FakeConnection:
     async def fetchrow(self, sql, *args):
         if "FROM users" in sql and "WHERE id = $1" in sql:
             return self.users_by_id.get(args[0])
-        if "FROM stocks" in sql and "WHERE ticker = $1" in sql:
+        if "FROM api.stocks" in sql and "WHERE ticker = $1" in sql:
             return self.stocks_by_ticker.get(args[0])
-        if "FROM watchlists" in sql and "INNER JOIN stocks" in sql:
+        if "FROM watchlists" in sql and "INNER JOIN api.stocks" in sql:
             watchlist = next(
                 (
                     row
@@ -101,7 +101,7 @@ class FakeConnection:
                 for stock in self.stocks_by_ticker.values()
                 if query in stock["ticker"] or query in stock["name"]
             ][: args[1]]
-        if "FROM stocks" in sql and "is_active = TRUE" in sql:
+        if "FROM api.stocks" in sql and "is_active = TRUE" in sql:
             return list(self.stocks_by_ticker.values())[: args[0]]
         if "FROM watchlists" in sql:
             rows = []

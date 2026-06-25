@@ -1,0 +1,99 @@
+"""backend 읽기 계약 repository.
+
+worker가 적재하는 데이터(stocks, processing_queue 등)를 backend가 직접 base 테이블로
+읽지 않고 `api` 스키마의 읽기전용 view 로만 조회한다(20260625_1343_api_schema_read_contract).
+backend 롤은 base 테이블 권한이 없고 api.* SELECT 권한만 가지므로, backend 코드는 반드시
+이 클래스들을 통해 view 를 조회해야 한다.
+
+worker 가 쓰는 base 테이블용 repository(stocks.StockRepository.ensure_stock,
+processing_queue.ProcessingQueueRepository 전체)와 클래스명은 같지만, 여기 정의는
+읽기 메서드만 두고 FROM 대상이 api.* view 다. backend 는 `signal_alpha_data_access.backend`
+에서 이 클래스들을 import 한다.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+
+class StockRepository:
+    """종목 마스터 읽기 (api.stocks). backend 전용. 쓰기(ensure_stock)는 worker repo."""
+
+    def __init__(self, connection: Any) -> None:
+        self._connection = connection
+
+    async def get_by_ticker(self, ticker: str) -> Any:
+        return await self._connection.fetchrow(
+            """
+            SELECT id, ticker, name, market, sector, is_active, created_at, updated_at
+            FROM api.stocks
+            WHERE ticker = $1
+            """,
+            ticker.strip(),
+        )
+
+    async def list_active(self, limit: int = 100) -> list[Any]:
+        return await self._connection.fetch(
+            """
+            SELECT id, ticker, name, market, sector, is_active, created_at, updated_at
+            FROM api.stocks
+            WHERE is_active = TRUE
+            ORDER BY market ASC, ticker ASC
+            LIMIT $1
+            """,
+            limit,
+        )
+
+    async def search_active(self, query: str, limit: int = 20) -> list[Any]:
+        pattern = f"%{query.strip()}%"
+        return await self._connection.fetch(
+            """
+            SELECT id, ticker, name, market, sector, is_active, created_at, updated_at
+            FROM api.stocks
+            WHERE is_active = TRUE
+              AND (
+                  ticker ILIKE $1
+                  OR name ILIKE $1
+              )
+            ORDER BY market ASC, ticker ASC
+            LIMIT $2
+            """,
+            pattern,
+            limit,
+        )
+
+
+class ProcessingQueueRepository:
+    """분석 파이프라인 상태 읽기 (api.analysis_pipeline_status). backend 전용.
+
+    worker 쪽 enqueue/claim/mark 등 쓰기 메서드는 base 테이블용
+    signal_alpha_data_access.worker 의 ProcessingQueueRepository 에 있다. backend 는
+    analytics 폴링에서 list_tasks 만 사용한다.
+    """
+
+    def __init__(self, connection: Any) -> None:
+        self._connection = connection
+
+    async def list_tasks(
+        self,
+        *,
+        stock_code: str | None = None,
+        task_type: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+    ) -> list[Any]:
+        return await self._connection.fetch(
+            """
+            SELECT *
+            FROM api.analysis_pipeline_status
+            WHERE ($1::VARCHAR IS NULL OR stock_code = $1)
+              AND ($2::VARCHAR IS NULL OR task_type = $2)
+              AND ($3::VARCHAR IS NULL OR status = $3)
+            ORDER BY created_at DESC, id DESC
+            LIMIT $4
+            """,
+            stock_code,
+            task_type,
+            status,
+            limit,
+        )

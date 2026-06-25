@@ -26,18 +26,19 @@ services:
       timeout: 5s
       retries: 10
 
-  # 일회성 마이그레이션 적용 컨테이너. 사용법: docker compose run --rm migrate
-  migrate:
+  # 일회성 DB 마이그레이션 컨테이너. 경량 전용 이미지(database/Dockerfile)로 빌드해
+  # worker 이미지와 분리한다(DB 를 독립 배포 유닛으로). 마이그레이션은 owner 롤로 실행.
+  # 사용법: docker compose run --rm db-migrate apply --seeds
+  db-migrate:
     build:
       context: .
-      dockerfile: ./services/agent-worker/Dockerfile
+      dockerfile: ./database/Dockerfile
     profiles: ["tools"]
-    working_dir: /workspace
     volumes:
       - ./database:/workspace/database
     environment:
-      DATABASE_URL: ${DATABASE_URL:-postgresql://signal_alpha:signal_alpha_password@postgres:5432/signal_alpha}
-    command: python database/migrate.py apply --seeds
+      DATABASE_URL: ${MIGRATE_DATABASE_URL:-postgresql://signal_alpha:signal_alpha_password@postgres:5432/signal_alpha}
+    command: ["apply", "--seeds"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -55,7 +56,8 @@ services:
     environment:
       SERVICE_NAME: agent-worker
       SERVICE_VERSION: ${SERVICE_VERSION:-0.1.0}
-      DATABASE_URL: ${DATABASE_URL:-postgresql://signal_alpha:signal_alpha_password@postgres:5432/signal_alpha}
+      # worker 롤. 컷오버(Phase 1d) 전까지 기본값은 owner 라 그대로 동작.
+      DATABASE_URL: ${WORKER_DATABASE_URL:-postgresql://signal_alpha:signal_alpha_password@postgres:5432/signal_alpha}
       PYTHONPATH: /workspace/services/agent-worker:/workspace/packages/data-access
       WATCHFILES_FORCE_POLLING: "true"
       LLM_API_KEY: ${LLM_API_KEY:-}
@@ -127,7 +129,7 @@ services:
       - ./packages/market-data:/workspace/packages/market-data
     environment:
       SERVICE_NAME: analyzer
-      DATABASE_URL: ${DATABASE_URL:-postgresql://signal_alpha:signal_alpha_password@postgres:5432/signal_alpha}
+      DATABASE_URL: ${WORKER_DATABASE_URL:-postgresql://signal_alpha:signal_alpha_password@postgres:5432/signal_alpha}
       PYTHONPATH: /workspace/services/agent-worker:/workspace/packages/data-access:/workspace/packages/market-data
     command: >
       python run_analyzers.py --loop --interval-seconds ${ANALYZER_INTERVAL_SECONDS:-3600}
@@ -148,10 +150,13 @@ services:
     environment:
       SERVICE_NAME: main-server
       SERVICE_VERSION: ${SERVICE_VERSION:-0.1.0}
-      DATABASE_URL: ${DATABASE_URL:-postgresql://signal_alpha:signal_alpha_password@postgres:5432/signal_alpha}
+      # backend 롤(읽기 계약: api.* view + 소유 테이블만). 컷오버 전 기본값은 owner.
+      DATABASE_URL: ${BACKEND_DATABASE_URL:-postgresql://signal_alpha:signal_alpha_password@postgres:5432/signal_alpha}
       PYTHONPATH: /workspace/services/main-server:/workspace/packages/data-access
       WATCHFILES_FORCE_POLLING: "true"
-      AGENT_WORKER_BASE_URL: ${AGENT_WORKER_BASE_URL:-http://agent-worker:8011}
+      # NOTE: backend 는 worker 에 런타임 의존하지 않는다(워커 산출물은 DB api.* view 로 읽음).
+      #       따라서 AGENT_WORKER_BASE_URL / depends_on: agent-worker 를 제거했다 →
+      #       worker 가 내려가도 backend 는 정상 서비스되고 독립 배포가 가능하다.
     ports:
       - "${MAIN_SERVER_PORT:-8000}:8000"
     command: >
@@ -159,8 +164,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      agent-worker:
-        condition: service_started
 
   web:
     build:

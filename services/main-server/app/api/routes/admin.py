@@ -17,7 +17,7 @@ from app.core.config import Settings, get_settings
 from app.core.database import get_database_pool
 from app.core.portone import PortOneClient, PortOneError, get_portone_client
 from app.core.security import create_refresh_token, verify_password
-from signal_alpha_data_access.repositories import AdminRepository, UserBillingRepository
+from signal_alpha_data_access.backend import AdminRepository, UserBillingRepository
 
 
 admin_router = APIRouter(prefix="/api/admin", tags=["admin"])
