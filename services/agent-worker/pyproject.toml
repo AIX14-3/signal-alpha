@@ -25,7 +25,6 @@ dependencies = [
   # vol-benchmark 변동성 모델 + DataContract (ML/DL 추론 단계, app/ml/). base는 numpy/pandas만.
   "signal-alpha-vol-models",
   "sqlalchemy>=2.0.0",
-  "tzdata>=2024.1; sys_platform == 'win32'",
   "webdriver-manager>=4.0.0",
   "tzdata>=2024.1",
   "uvicorn[standard]>=0.30.0"
@@ -33,10 +32,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-  "httpx>=0.27.0",
-  "pytest>=8.0.0",
-  "psycopg2-binary>=2.9.0",
-  "sqlalchemy>=2.0.0"
+  "pytest>=8.0.0"
 ]
 
 [tool.pytest.ini_options]
