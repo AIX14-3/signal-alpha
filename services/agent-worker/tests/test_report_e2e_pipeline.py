@@ -518,9 +518,10 @@ class ReportE2EPipelineTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(analyze_result["analyzed_count"], 1)
         self.assertIsNotNone(analyze_result["analysis_result_id"])
         self.assertIsNotNone(analyze_result["agent_result_id"])
+        self.assertIsNotNone(analyze_result["ml_infer_task_id"])
         self.assertEqual(
             conn.task_types(),
-            ["process_report", "normalize_report", "analyze_report"],
+            ["process_report", "normalize_report", "analyze_report", "ml_infer"],
         )
 
         raw_document_id = next(iter(conn.raw_documents))
@@ -546,6 +547,13 @@ class ReportE2EPipelineTest(unittest.IsolatedAsyncioTestCase):
             agent_result["method_detail"]["report_quant"]["valuation"]["target_price"],
             90000,
         )
+        ml_task = conn.task("ml_infer")
+        ml_context = json.loads(ml_task["task_context"])
+        self.assertEqual(
+            ml_context["aggregate_ctx"]["source_analysis_result_ids"],
+            [analyze_result["analysis_result_id"]],
+        )
+        self.assertEqual(ml_context["aggregate_ctx"]["signal_date"], "2026-06-24")
 
     async def test_report_pipeline_runs_through_queue_runner_to_normalize(self):
         conn = FakeReportPipelineConnection()

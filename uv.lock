@@ -2654,10 +2654,7 @@ dependencies = [
 
 [package.optional-dependencies]
 dev = [
-    { name = "httpx" },
-    { name = "psycopg2-binary" },
     { name = "pytest" },
-    { name = "sqlalchemy" },
 ]
 
 [package.metadata]
@@ -2667,13 +2664,11 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "google-cloud-storage", specifier = ">=2.18.0" },
     { name = "httpx", specifier = ">=0.27.0" },
-    { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27.0" },
     { name = "langchain-text-splitters", specifier = ">=0.2.0" },
     { name = "langgraph", specifier = ">=0.2.0" },
     { name = "openai", specifier = ">=1.40.0" },
     { name = "pillow", specifier = ">=10.0.0" },
     { name = "psycopg2-binary", specifier = ">=2.9.0" },
-    { name = "psycopg2-binary", marker = "extra == 'dev'", specifier = ">=2.9.0" },
     { name = "pymupdf", specifier = ">=1.24.0" },
     { name = "pytesseract", specifier = ">=0.3.10" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
@@ -2682,9 +2677,7 @@ requires-dist = [
     { name = "signal-alpha-data-access", editable = "packages/data-access" },
     { name = "signal-alpha-vol-models", editable = "packages/vol-models" },
     { name = "sqlalchemy", specifier = ">=2.0.0" },
-    { name = "sqlalchemy", marker = "extra == 'dev'", specifier = ">=2.0.0" },
     { name = "tzdata", specifier = ">=2024.1" },
-    { name = "tzdata", marker = "sys_platform == 'win32'", specifier = ">=2024.1" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30.0" },
     { name = "webdriver-manager", specifier = ">=4.0.0" },
 ]

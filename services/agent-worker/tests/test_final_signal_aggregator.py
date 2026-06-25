@@ -120,8 +120,7 @@ class AggregateSignalTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(breakdown["DART"]["score"], 0.0)
         self.assertEqual(breakdown["PRICE"]["data_status"], "missing")
         self.assertEqual(breakdown["ALTERNATIVE"]["data_status"], "missing")
-        # REPORT 는 채점 소스에서 제거됨 → breakdown 에 존재하지 않음.
-        self.assertNotIn("REPORT", breakdown)
+        self.assertEqual(breakdown["REPORT"]["data_status"], "missing")
 
     async def test_positive_and_negative_sources_publish_mixed_caution_before_score_threshold(self):
         rows = [
@@ -187,12 +186,62 @@ class AggregateSignalTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(breakdown["ALTERNATIVE"]["analysis_result_id"], 100)
         self.assertEqual(breakdown["ALTERNATIVE"]["score"], 0.36)
         self.assertEqual(breakdown["DART"]["data_status"], "missing")
-        self.assertNotIn("REPORT", breakdown)
+        self.assertEqual(breakdown["REPORT"]["data_status"], "missing")
 
-    # NOTE: 리포트 밸류에이션 요약의 집계 노출 테스트는 제거됨. valuation 요약은 기존
-    # ReportAnalyze(report_quant) 경로로 집계에 실렸는데, 임베딩/RAG 분석 제거로 REPORT가
-    # analysis_result 를 더 이상 만들지 않는다. valuation 추출/적재(report_valuation_facts)는
-    # 유지되므로, 팀에서 새 구조로 valuation 노출을 재배선한 뒤 이 테스트를 재추가할 것.
+    async def test_report_valuation_is_preserved_without_affecting_score(self):
+        valuation = {
+            "target_price": 90000,
+            "forward_eps_est": 6000,
+            "methodology": "PER",
+            "applied_multiple": 14.0,
+            "implied_multiple": 15.0,
+            "needs_review": False,
+        }
+        report_row = dart_agent_row(
+            analysis_result_id=101,
+            agent_result_id=201,
+            direction="positive",
+            source_score=1.0,
+            method_score=100.0,
+            source="REPORT",
+            report_quant={"valuation": valuation},
+        )
+        report_row["analysis_run_key"] = "REPORT_EVENT_801"
+        report_row["analysis_mode"] = "full"
+        rows = [
+            dart_agent_row(
+                analysis_result_id=100,
+                agent_result_id=200,
+                direction="positive",
+                source_score=0.36,
+                method_score=68.0,
+                source="DART",
+            ),
+            report_row,
+        ]
+        connection = FakeConnection(rows=rows)
+        handler = AggregateSignalTaskHandler(connection)
+
+        result = await handler(
+            {
+                "id": 30,
+                "stock_id": 1,
+                "source_analysis_result_ids": [100, 101],
+                "task_context": {"stock_code": "005930", "signal_date": "2026-06-24"},
+            }
+        )
+
+        self.assertEqual(result["signal"], "positive")
+        self.assertEqual(result["final_score"], 68.0)
+        self.assertEqual(result["source_agreement"], "HIGH")
+        final_call = next(call for call in connection.calls if "INSERT INTO final_signals" in call[1])
+        breakdown = json.loads(final_call[2][10])
+        self.assertEqual(breakdown["DART"]["score"], 0.36)
+        self.assertEqual(breakdown["REPORT"]["analysis_result_id"], 101)
+        self.assertEqual(breakdown["REPORT"]["score"], 1.0)
+        self.assertEqual(breakdown["REPORT"]["valuation"], valuation)
+        self.assertEqual(breakdown["PRICE"]["data_status"], "missing")
+        self.assertEqual(breakdown["ALTERNATIVE"]["data_status"], "missing")
 
     async def test_unknown_source_is_excluded_and_records_validation_log(self):
         row = dart_agent_row(source="")
