@@ -243,6 +243,7 @@ class ReportNormalizeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
 class AnalyzeHandlerConn:
     def __init__(self):
         self.calls = []
+        self.next_task_id = 701
 
     async def fetch(self, sql, *args):
         self.calls.append(("fetch", sql, args))
@@ -285,8 +286,26 @@ class AnalyzeHandlerConn:
             return {"id": 902}
         return None
 
+    async def fetchval(self, sql, *args):
+        self.calls.append(("fetchval", sql, args))
+        if "SELECT id" in sql:
+            return None
+        if "INSERT INTO processing_queue" in sql:
+            task_id = self.next_task_id
+            self.next_task_id += 1
+            return task_id
+        return None
+
     def _insert(self, table):
         return next(call for call in self.calls if call[0] == "fetchrow" and f"INSERT INTO {table}" in call[1])
+
+    def _enqueue(self, task_type):
+        return next(
+            call for call in self.calls
+            if call[0] == "fetchval"
+            and "INSERT INTO processing_queue" in call[1]
+            and call[2][1] == task_type
+        )
 
 
 class ReportAnalyzeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
@@ -305,6 +324,7 @@ class ReportAnalyzeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["analyzed_count"], 1)
         self.assertEqual(result["analysis_result_id"], 901)
         self.assertEqual(result["agent_result_id"], 902)
+        self.assertEqual(result["ml_infer_task_id"], 701)
         self.assertEqual(result["direction"], "positive")
         self.assertFalse(result["needs_review"])
 
@@ -325,6 +345,16 @@ class ReportAnalyzeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(method_detail["report_quant"]["valuation"]["target_price"], 90000)
         self.assertEqual(method_detail["report_quant"]["valuation"]["implied_multiple"], 15.0)
         self.assertEqual(method_detail["report_quant"]["valuation"]["needs_review"], False)
+
+        enqueue_call = conn._enqueue("ml_infer")
+        self.assertEqual(enqueue_call[2][0], 1)
+        task_context = json.loads(enqueue_call[2][6])
+        self.assertEqual(task_context["stock_code"], "005930")
+        self.assertEqual(task_context["run_key"], "ML")
+        aggregate_ctx = task_context["aggregate_ctx"]
+        self.assertEqual(aggregate_ctx["source_analysis_result_ids"], [901])
+        self.assertEqual(aggregate_ctx["signal_date"], "2026-06-24")
+        self.assertEqual(aggregate_ctx["run_key"], "AGGREGATED")
 
 
 # ── collect_report ───────────────────────────────────────────────

@@ -57,7 +57,7 @@ stocks
 - **구현됨**: 가격 수집은 `agent-worker` lifespan 백그라운드 데몬으로 동작, `price_snapshots`/`ohlcv_data` 적재.
   PRICE analyzer는 DB만 읽음(키움 API 직접 호출 금지).
 - **구현됨**: DataLab 카테고리 기반 수집 경로.
-- **구현됨**: Report 큐 경로 `collect_report → process_report → normalize_report → analyze_report` (결정론 밸류에이션 fact 추출). 단, Report 분석 결과를 Aggregator/ML 체인으로 자동 전달하는 연결은 아직 없음.
+- **구현됨**: Report 큐 경로 `collect_report → process_report → normalize_report → analyze_report → ml_infer` (결정론 밸류에이션 fact 추출). Report 분석 결과 ID는 `aggregate_ctx.source_analysis_result_ids`로 ML/Aggregator queue 입력까지 전달됩니다. 단, Aggregator가 `REPORT`를 최종 `score_breakdown` 소스로 수용하는 작업은 아직 남아 있습니다.
 - **폐지됨**: 리포트 PDF **임베딩/RAG 검색**과 **pgvector** 확장은 제거되었습니다(`report_chunks` 테이블 제거, `embed_report`/RAG retriever/Report Agent 부재). 리포트 분석은 RAG가 아니라 `report_valuation_facts` 기반 결정론 추출입니다. 자세한 현황은 `spec/report-rag-current-state.md`.
 - **계획/진행 중**: Aggregator/Debate 흐름은 스키마는 있으나 운영 핸들러 미완. legacy `report_raw`, `report_signal`은 과거 경로용으로만 유지.
 

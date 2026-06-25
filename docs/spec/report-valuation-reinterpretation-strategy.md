@@ -149,7 +149,8 @@ LangGraph는 아래 요구가 생길 때 검토합니다.
 6. valuation fact를 Aggregator가 보존 가능한 payload 형태로 정리 - 부분 구현
    - Aggregator는 Report valuation payload를 받으면 보존할 수 있습니다.
    - 현재 deterministic `analyze_report`는 valuation payload를 `agent_results.method_detail.report_quant.valuation`에 저장합니다.
-   - Report Agent/RAG 기반 근거 검색과 Aggregator 자동 연결은 후속 작업입니다.
+   - Report Agent/RAG 기반 근거 검색은 제외 범위입니다.
+   - Aggregator가 `REPORT`를 최종 `score_breakdown` 소스로 수용하는 연결은 후속 작업입니다.
 7. 데이터 시나리오 밴드 MVP 생성 - 구현 완료
    - `report_quant.valuation.scenario_band`에 `low_multiple`, `base_multiple`, `high_multiple`, `dispersion_level`, `confidence_note`, `needs_review`를 저장합니다.
    - 수치는 내재 배수 중앙값과 분산 기반 범위로 계산하며, 투자 행동 제안으로 노출하지 않습니다.

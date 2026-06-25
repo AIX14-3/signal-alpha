@@ -13,6 +13,7 @@ from app.collectors.report.pdf_downloader import download_and_upload, make_repor
 from app.collectors.report.storage import ReportStorageClient, get_report_storage_client
 from app.orchestrator.queue.task_types import (
     ANALYZE_REPORT,
+    ML_INFER,
     NORMALIZE_REPORT,
     PROCESS_REPORT,
 )
@@ -407,6 +408,7 @@ class ReportAnalyzeTaskHandler:
     def __init__(self, *, connection: Any) -> None:
         self._connection = connection
         self._analysis_repository = AnalysisRepository(connection)
+        self._queue_repository = ProcessingQueueRepository(connection)
 
     async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
         stock_id = int(task["stock_id"])
@@ -473,10 +475,29 @@ class ReportAnalyzeTaskHandler:
             llm_model=None,
             prompt_ver=self.PROMPT_VER,
         )
+        aggregate_ctx = {
+            "stock_code": task_context.get("stock_code") or _first_non_empty(events, "ticker"),
+            "signal_date": analysis_date.isoformat(),
+            "run_key": "AGGREGATED",
+            "aggregation_key": f"AGGREGATED:{stock_id}:{analysis_date.isoformat()}:final-agg-v1",
+            "source_analysis_result_ids": [int(analysis_result["id"])],
+        }
+        ml_infer_task_id = await self._queue_repository.enqueue(
+            stock_id=stock_id,
+            task_type=ML_INFER,
+            priority=str(task_context.get("priority") or "batch"),
+            task_context={
+                "stock_code": task_context.get("stock_code") or _first_non_empty(events, "ticker"),
+                "run_key": "ML",
+                "aggregate_ctx": aggregate_ctx,
+            },
+            dedupe=True,
+        )
 
         return {
             "analysis_result_id": analysis_result["id"],
             "agent_result_id": agent_result["id"],
+            "ml_infer_task_id": ml_infer_task_id,
             "analyzed_count": len(events),
             "direction": direction,
             "score": source_score,
