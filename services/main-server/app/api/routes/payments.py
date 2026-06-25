@@ -160,10 +160,11 @@ async def receipt(
     if record is None or int(record["user_id"]) != user_id:
         raise _api_error(404, "PAYMENT_NOT_FOUND", "결제 내역을 찾을 수 없습니다.")
     record = dict(record)
+    amount = _paid_amount(record, settings)
     return {
         "payment_id": record.get("imp_uid"),
-        "order_name": "Signal Alpha 월 구독",
-        "amount": settings.subscription_price_krw,
+        "order_name": _order_name(amount, settings),
+        "amount": amount,
         "status": record.get("status"),
         "paid_at": _timestamp(record.get("verified_at") or record.get("created_at")),
         "customer": {"email": current_user.get("email"), "name": current_user.get("nickname")},
@@ -191,7 +192,9 @@ async def refund(
         latest = dict(paid[0])
 
         now = datetime.now(UTC)
-        price = settings.subscription_price_krw
+        # 환불 기준 금액은 실제 결제 주기로 결정한다(연간이면 연 상품가). 월가 고정 시
+        # 연간 구독이 전액·일할 모두 9,900 기준으로 잘못 계산되던 문제를 바로잡는다.
+        price = _cycle_price(active.get("billing_cycle"), settings)
         paid_at = latest.get("verified_at") or latest.get("created_at")
         within_full = (
             paid_at is not None
@@ -204,16 +207,16 @@ async def refund(
         if refund_amount <= 0:
             raise _api_error(409, "NO_REFUNDABLE_AMOUNT", "환불 가능한 잔여 금액이 없습니다.")
 
-        if not portone.dev_mode:
-            try:
-                await portone.cancel_payment(
-                    str(latest["imp_uid"]),
-                    reason="user_refund",
-                    amount=None if kind == "full" else refund_amount,
-                )
-            except PortOneError as exc:
-                logger.warning("환불 PortOne 취소 실패: imp_uid=%s err=%s", latest["imp_uid"], exc)
-                raise _api_error(502, "REFUND_FAILED", "환불 처리에 실패했습니다. 고객센터로 문의해 주세요.") from None
+        try:
+            await portone.cancel_payment(
+                str(latest["imp_uid"]),
+                reason="user_refund",
+                amount=None if kind == "full" else refund_amount,
+            )
+        except PortOneError as exc:
+            logger.warning("환불 PortOne 취소 실패: imp_uid=%s err=%s", latest["imp_uid"], exc)
+            # 실제 PortOne 오류를 응답에 노출해 원인 파악이 가능하게 한다(취소 사유는 민감정보 아님).
+            raise _api_error(502, "REFUND_FAILED", f"환불 처리에 실패했습니다: {exc}") from None
 
         await repository.record_portone_verification(
             user_id=user_id,
@@ -245,14 +248,13 @@ async def history(
     pool: Any = Depends(get_database_pool),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
-    """결제 내역(성공 건) 조회. 단일 상품이라 금액은 상품가로 표기."""
+    """결제 내역(성공 건) 조회. 금액·상품명은 결제 레코드의 실제 결제액으로 표기."""
     user_id = int(current_user["id"])
     async with pool.acquire() as connection:
         rows = await UserBillingRepository(connection).list_payment_verifications(
             user_id=user_id, limit=50
         )
-    amount = settings.subscription_price_krw
-    return {"items": [_payment_item(dict(row), amount) for row in rows]}
+    return {"items": [_payment_item(dict(row), settings) for row in rows]}
 
 
 @router.post("/webhook")
@@ -385,6 +387,37 @@ def _cycle_for_amount(amount: int, settings: Settings) -> tuple[int, str]:
     return _SUBSCRIPTION_DAYS, "monthly"
 
 
+def _cycle_price(billing_cycle: Any, settings: Settings) -> int:
+    """구독 주기에 해당하는 상품가(원). 환불 기준액 계산에 사용."""
+    if billing_cycle == "yearly":
+        return settings.subscription_price_yearly_krw
+    return settings.subscription_price_krw
+
+
+def _order_name(amount: int, settings: Settings) -> str:
+    if amount == settings.subscription_price_yearly_krw:
+        return "Signal Alpha 연간 구독"
+    return "Signal Alpha 월 구독"
+
+
+def _paid_amount(row: dict[str, Any], settings: Settings) -> int:
+    """결제 검증 레코드의 raw_response(JSONB)에서 실제 결제액을 복원한다.
+
+    저장 시 PortOne V2 결제객체(json)를 그대로 넣으므로 amount.total 을 읽는다.
+    복원 불가하면 월 상품가로 폴백(과거 레코드 호환)."""
+    raw = row.get("raw_response")
+    if isinstance(raw, (str, bytes, bytearray)):
+        try:
+            raw = json.loads(raw)
+        except (ValueError, TypeError):
+            raw = None
+    if isinstance(raw, dict):
+        total = (raw.get("amount") or {}).get("total")
+        if isinstance(total, int) and total > 0:
+            return total
+    return settings.subscription_price_krw
+
+
 def _prorated_refund(active: Any, price: int, now: datetime) -> int:
     """잔여일 비례 환불액. (만료일-지금)/(만료일-시작일) × 결제액. 음수·초과는 클램프."""
     started = active["started_at"] or now
@@ -397,11 +430,13 @@ def _prorated_refund(active: Any, price: int, now: datetime) -> int:
     return int(price * remaining_days / total_days)
 
 
-def _payment_item(row: dict[str, Any], amount: int) -> dict[str, Any]:
+def _payment_item(row: dict[str, Any], settings: Settings) -> dict[str, Any]:
+    amount = _paid_amount(row, settings)
     return {
         "payment_id": row.get("imp_uid"),
         "status": row.get("status"),
         "amount": amount,
+        "order_name": _order_name(amount, settings),
         "paid_at": _timestamp(row.get("verified_at") or row.get("created_at")),
     }
 

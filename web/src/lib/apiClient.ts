@@ -403,6 +403,7 @@ export type PaymentHistoryItem = {
   payment_id: string;
   status: string;
   amount: number;
+  order_name?: string;
   paid_at: string | null;
 };
 
@@ -469,6 +470,21 @@ export async function adminListUsers(params: { page?: number; size?: number; q?:
   if (params.q) search.set("q", params.q);
   const qs = search.toString();
   return apiFetch(`/api/admin/users${qs ? `?${qs}` : ""}`, { auth: "admin" });
+}
+
+export async function adminUpdateUser(
+  userId: number,
+  body: { nickname?: string; email?: string },
+): Promise<AdminUser> {
+  return apiFetch(`/api/admin/users/${userId}`, {
+    method: "PATCH",
+    auth: "admin",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function adminDeleteUser(userId: number): Promise<{ status: string; user_id: number }> {
+  return apiFetch(`/api/admin/users/${userId}`, { method: "DELETE", auth: "admin" });
 }
 
 export async function adminSetSubscription(

@@ -4,17 +4,17 @@ V2 REST: 베이스 https://api.portone.io, 인증 헤더 `Authorization: PortOne
 - 본인인증 조회: GET /identity-verifications/{identityVerificationId}
     → status="VERIFIED", verifiedCustomer.{phoneNumber, ci, name}
 - 결제 조회:     GET /payments/{paymentId}  → status="PAID", amount.total
-- 결제 취소:     POST /payments/{paymentId}/cancel  { reason }
+- 결제 취소:     POST /payments/{paymentId}/cancel  { reason, amount? }
 
 식별자(identityVerificationId / paymentId)는 프론트(가맹점)가 생성해 SDK에 넘기고,
 백엔드는 같은 식별자로 V2 API 를 조회해 검증한다.
 
-dev 모드(api_secret 미설정): 외부 호출 없이 식별자로부터 결정적 모의값 생성.
-httpx 는 선택 의존성이라 메서드 내부에서 지연 import 한다.
+항상 real 모드로 동작한다. PORTONE_API_SECRET 미설정 시 결정적 모의값으로 조용히 넘어가지
+않고 명확한 오류로 실패한다(과거 dev 모드 폴백 제거 — real 경로만 유지).
+httpx 는 V2 호출에 필수다.
 """
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -56,14 +56,8 @@ class PortOneClient:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
 
-    @property
-    def dev_mode(self) -> bool:
-        return self._settings.portone_dev_mode
-
     # ----- 본인인증(identity) -----
     async def verify_identity(self, identity_verification_id: str) -> IdentityResult:
-        if self.dev_mode:
-            return self._dev_identity(identity_verification_id)
         data = await self._get(f"/identity-verifications/{identity_verification_id}")
         customer = data.get("verifiedCustomer") or {}
         return IdentityResult(
@@ -77,8 +71,6 @@ class PortOneClient:
 
     # ----- 결제(payment) -----
     async def verify_payment(self, payment_id: str) -> PaymentResult:
-        if self.dev_mode:
-            return self._dev_payment(payment_id)
         data = await self._get(f"/payments/{payment_id}")
         amount = (data.get("amount") or {}).get("total") or 0
         status = "paid" if data.get("status") == "PAID" else str(data.get("status") or "failed").lower()
@@ -88,44 +80,19 @@ class PortOneClient:
         self, payment_id: str, *, reason: str = "user_cancel", amount: int | None = None
     ) -> dict[str, Any]:
         """결제 취소. amount 지정 시 부분취소(일할 환불), 미지정 시 전액취소."""
-        if self.dev_mode:
-            return {
-                "paymentId": payment_id,
-                "status": "CANCELLED",
-                "reason": reason,
-                "amount": amount,
-                "dev": True,
-            }
         payload: dict[str, Any] = {"reason": reason}
         if amount is not None:
             payload["amount"] = amount
         return await self._post(f"/payments/{payment_id}/cancel", payload)
 
-    # ----- dev 모드 결정적 모의값 -----
-    def _dev_identity(self, identity_verification_id: str) -> IdentityResult:
-        digest = hashlib.sha256(identity_verification_id.encode("utf-8")).hexdigest()
-        digits = "".join(c for c in digest if c.isdigit())
-        suffix = (digits + "00000000")[:8]
-        return IdentityResult(
-            id=identity_verification_id,
-            phone=f"010{suffix}",
-            ci=f"dev-ci-{digest[:32]}",
-            name=None,
-            status="certified",
-            raw={"dev": True},
-        )
-
-    def _dev_payment(self, payment_id: str) -> PaymentResult:
-        return PaymentResult(
-            payment_id=payment_id,
-            amount=self._settings.subscription_price_krw,
-            status="paid",
-            raw={"dev": True},
-        )
-
-    # ----- real 모드 HTTP (V2) -----
+    # ----- HTTP (V2) -----
     def _headers(self) -> dict[str, str]:
-        return {"Authorization": f"PortOne {self._settings.portone_api_secret}"}
+        secret = self._settings.portone_api_secret
+        if not secret:
+            raise PortOneError(
+                "PORTONE_API_SECRET 가 설정되지 않았습니다. 포트원 V2 API 를 호출할 수 없습니다."
+            )
+        return {"Authorization": f"PortOne {secret}"}
 
     async def _get(self, path: str) -> dict[str, Any]:
         httpx = _import_httpx()
@@ -162,7 +129,7 @@ def _import_httpx() -> Any:
         import httpx
     except ImportError as exc:  # pragma: no cover
         raise PortOneError(
-            "real 모드에는 httpx 가 필요합니다. PORTONE_API_SECRET 미설정 시 dev 모드로 동작합니다."
+            "포트원 V2 호출에는 httpx 가 필요합니다. main-server 의존성에 httpx 를 설치하세요."
         ) from exc
     return httpx
 

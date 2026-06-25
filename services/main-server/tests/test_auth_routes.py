@@ -1,3 +1,4 @@
+import hashlib
 import unittest
 import warnings
 from datetime import UTC, datetime
@@ -10,11 +11,30 @@ warnings.filterwarnings(
 from starlette.testclient import TestClient
 
 from app.api.routes.auth import get_database_pool
+from app.core.portone import IdentityResult, get_portone_client
 from app.main import app
 
 
+class FakePortone:
+    """real PortOne 클라이언트 대체. identityVerificationId 로부터 결정적 본인인증 결과를
+    생성한다(같은 id→같은 phone, 다른 id→다른 phone). 외부 호출 없이 라우트 로직만 검증."""
+
+    async def verify_identity(self, identity_verification_id: str) -> IdentityResult:
+        digest = hashlib.sha256(identity_verification_id.encode("utf-8")).hexdigest()
+        digits = "".join(c for c in digest if c.isdigit())
+        suffix = (digits + "00000000")[:8]
+        return IdentityResult(
+            id=identity_verification_id,
+            phone=f"010{suffix}",
+            ci=f"ci-{digest[:32]}",
+            name=None,
+            status="certified",
+            raw={},
+        )
+
+
 class FakeConnection:
-    """포트원 본인인증 가입/로그인 흐름 SQL 모킹(dev 모드 portone 은 imp_uid→phone 결정적)."""
+    """포트원 본인인증 가입/로그인 흐름 SQL 모킹(FakePortone 이 imp_uid→phone 결정적)."""
 
     def __init__(self):
         self.users_by_phone = {}
@@ -116,6 +136,7 @@ class AuthRoutesTest(unittest.TestCase):
     def setUp(self):
         self.connection = FakeConnection()
         app.dependency_overrides[get_database_pool] = lambda: FakePool(self.connection)
+        app.dependency_overrides[get_portone_client] = lambda: FakePortone()
         self.client = TestClient(app)
 
     def tearDown(self):

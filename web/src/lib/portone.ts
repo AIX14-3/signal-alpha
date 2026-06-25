@@ -1,19 +1,12 @@
 // 포트원 V2 브라우저 SDK 래퍼.
-// - dev 모드(NEXT_PUBLIC_PORTONE_STORE_ID 미설정): 실제 위젯 없이 결정적 식별자 사용.
-//   본인인증 id 는 기기별로 고정(localStorage)해 signup→login 이 같은 phone 으로 매칭된다.
-// - real 모드: @portone/browser-sdk v2 의 requestIdentityVerification / requestPayment 호출.
-//   storeId + channelKey(본인인증=KG이니시스 통합인증, 결제=이니시스 일반결제)를 env 로 주입.
+// 항상 real 모드로 동작한다(@portone/browser-sdk v2). storeId + channelKey(본인인증=KG이니시스
+// 통합인증, 결제=이니시스 일반결제)를 env 로 주입한다. 미설정 시 SDK 호출이 실패한다.
 
 import * as PortOne from "@portone/browser-sdk/v2";
 
 const STORE_ID = process.env.NEXT_PUBLIC_PORTONE_STORE_ID;
 const CHANNEL_IDENTITY = process.env.NEXT_PUBLIC_PORTONE_CHANNEL_KEY_IDENTITY;
 const CHANNEL_PAYMENT = process.env.NEXT_PUBLIC_PORTONE_CHANNEL_KEY_PAYMENT;
-const DEV_IDENTITY_KEY = "sa_dev_identity_id";
-
-export function isPortoneDevMode(): boolean {
-  return !STORE_ID;
-}
 
 function randomId(prefix: string): string {
   const rand =
@@ -23,19 +16,8 @@ function randomId(prefix: string): string {
   return `${prefix}-${rand}`;
 }
 
-function devIdentityId(): string {
-  if (typeof window === "undefined") return "iv-dev-ssr";
-  let id = window.localStorage.getItem(DEV_IDENTITY_KEY);
-  if (!id) {
-    id = randomId("iv-dev");
-    window.localStorage.setItem(DEV_IDENTITY_KEY, id);
-  }
-  return id;
-}
-
-/** 본인인증 → identityVerificationId. dev 모드는 기기 고정 식별자. */
+/** 본인인증 → identityVerificationId. */
 export async function certify(): Promise<string> {
-  if (isPortoneDevMode()) return devIdentityId();
   const identityVerificationId = randomId("identity");
   const res = await PortOne.requestIdentityVerification({
     storeId: STORE_ID as string,
@@ -56,7 +38,6 @@ export async function pay(opts: {
   customerName?: string;
   customerPhone?: string;
 }): Promise<string> {
-  if (isPortoneDevMode()) return opts.paymentId;
   const res = await PortOne.requestPayment({
     storeId: STORE_ID as string,
     channelKey: CHANNEL_PAYMENT as string,

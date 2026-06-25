@@ -10,11 +10,23 @@ warnings.filterwarnings(
 from starlette.testclient import TestClient
 
 from app.api.routes.admin import get_database_pool
+from app.core.portone import get_portone_client
 from app.core.security import hash_password
 from app.main import app
 
 
 ADMIN_PASSWORD = "admin-pass-123"
+
+
+class FakePortone:
+    """real PortOne 대체: 관리자 환불의 결제 취소를 외부 호출 없이 모의한다."""
+
+    def __init__(self):
+        self.cancelled: list = []
+
+    async def cancel_payment(self, payment_id, *, reason="user_cancel", amount=None):
+        self.cancelled.append((payment_id, reason, amount))
+        return {"paymentId": payment_id, "status": "CANCELLED", "amount": amount}
 
 
 class FakeConnection:
@@ -73,6 +85,17 @@ class FakeConnection:
             if user is None:
                 return None
             return {**user, "agreed_risk": True, "is_verified": False, "watchlist_count": 2}
+        if "UPDATE users" in sql and "COALESCE" in sql:
+            # update_user_profile: (user_id, nickname, email) — None 은 기존값 유지
+            user_id, nickname, email = args[0], args[1], args[2]
+            user = next((u for u in self.users if u["id"] == user_id), None)
+            if user is None:
+                return None
+            if nickname is not None:
+                user["nickname"] = nickname
+            if email is not None:
+                user["email"] = email
+            return user
         if "AS total_users" in sql and "AS mrr" in sql:
             return {"total_users": len(self.users), "active_subscriptions": 1, "mrr": 9900}
         raise AssertionError(f"Unexpected fetchrow SQL: {sql}")
@@ -98,6 +121,10 @@ class FakeConnection:
     async def execute(self, sql, *args):
         if "UPDATE admin_accounts" in sql and "last_login_at" in sql:
             self.last_login_updated.append(args[0])
+            return "UPDATE 1"
+        if "UPDATE users" in sql and "deleted_at = NOW()" in sql:
+            # soft_delete_user
+            self.users = [u for u in self.users if u["id"] != args[0]]
             return "UPDATE 1"
         raise AssertionError(f"Unexpected execute SQL: {sql}")
 
@@ -125,6 +152,7 @@ class AdminRoutesTest(unittest.TestCase):
     def setUp(self):
         self.connection = FakeConnection()
         app.dependency_overrides[get_database_pool] = lambda: FakePool(self.connection)
+        app.dependency_overrides[get_portone_client] = lambda: FakePortone()
         self.client = TestClient(app)
 
     def tearDown(self):
@@ -195,6 +223,41 @@ class AdminRoutesTest(unittest.TestCase):
         response = self.client.post("/api/admin/users/1/refund", headers=self.login())
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.json()["detail"]["code"], "NO_REFUNDABLE_PAYMENT")
+
+    def test_update_user(self):
+        self.login()
+        response = self.client.patch(
+            "/api/admin/users/1", json={"nickname": "수정됨", "email": "edited@example.com"}
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["nickname"], "수정됨")
+        self.assertEqual(response.json()["email"], "edited@example.com")
+        self.assertEqual(self.connection.users[0]["nickname"], "수정됨")
+
+    def test_update_user_not_found_returns_404(self):
+        self.login()
+        response = self.client.patch("/api/admin/users/999", json={"nickname": "x"})
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["detail"]["code"], "USER_NOT_FOUND")
+
+    def test_update_user_nothing_returns_400(self):
+        self.login()
+        response = self.client.patch("/api/admin/users/1", json={})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"]["code"], "NOTHING_TO_UPDATE")
+
+    def test_delete_user(self):
+        self.login()
+        response = self.client.delete("/api/admin/users/1")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["status"], "deleted")
+        self.assertEqual(len(self.connection.users), 0)
+
+    def test_user_crud_requires_admin(self):
+        self.assertEqual(
+            self.client.patch("/api/admin/users/1", json={"nickname": "x"}).status_code, 401
+        )
+        self.assertEqual(self.client.delete("/api/admin/users/1").status_code, 401)
 
 
 if __name__ == "__main__":

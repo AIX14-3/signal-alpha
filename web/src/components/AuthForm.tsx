@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { useAuthStore } from "@/stores/authStore";
-import { isPortoneDevMode } from "@/lib/portone";
 import { isSocialDevMode, SOCIAL_PROVIDERS, socialAuthCode, startSocialOAuth } from "@/lib/social";
 
 export function AuthForm({ mode }: { mode: "login" | "signup" }) {
@@ -118,9 +117,6 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
       >
         {busy ? "처리 중…" : isSignup ? "본인인증으로 가입" : "본인인증으로 로그인"}
       </button>
-      {isPortoneDevMode() && (
-        <p className="mt-2 text-center text-[12px] text-muted">개발 모드: 실제 본인인증 위젯 없이 진행됩니다.</p>
-      )}
 
       {!isSignup && (
         <>
