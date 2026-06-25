@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends
 
 from app.api.routes.auth import NOTICE, get_current_user
+from app.core.config import Settings, get_settings
 from app.core.database import get_database_pool
 from signal_alpha_data_access.repositories import UserBillingRepository
 
@@ -37,6 +39,7 @@ async def list_plans(pool: Any = Depends(get_database_pool)) -> dict[str, Any]:
 async def get_my_subscription(
     current_user: dict[str, Any] = Depends(get_current_user),
     pool: Any = Depends(get_database_pool),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
     async with pool.acquire() as connection:
         repository = UserBillingRepository(connection)
@@ -47,7 +50,7 @@ async def get_my_subscription(
             return {"subscription": None, "plan": plan, "notice": NOTICE}
         active = dict(active)
     return {
-        "subscription": _subscription_response(active),
+        "subscription": _subscription_response(active, settings.subscription_expiring_soon_days),
         "plan": _plan_response(active),
         "notice": NOTICE,
     }
@@ -57,13 +60,23 @@ def _plan_response(row: dict[str, Any]) -> dict[str, Any]:
     return {field: row.get(field) for field in PLAN_FIELDS}
 
 
-def _subscription_response(row: dict[str, Any]) -> dict[str, Any]:
+def _subscription_response(row: dict[str, Any], expiring_soon_days: int = 7) -> dict[str, Any]:
+    expires_at = row.get("expires_at")
+    days_remaining: int | None = None
+    expiring_soon = False
+    if expires_at is not None:
+        seconds = (expires_at - datetime.now(UTC)).total_seconds()
+        days_remaining = max(0, -(-int(seconds) // 86400))  # 올림(ceil), 음수는 0
+        expiring_soon = 0 <= seconds <= expiring_soon_days * 86400
     return {
         "plan_type": row.get("plan_type"),
         "status": row.get("status"),
         "started_at": _timestamp(row.get("started_at")),
-        "expires_at": _timestamp(row.get("expires_at")),
+        "expires_at": _timestamp(expires_at),
+        "cancelled_at": _timestamp(row.get("cancelled_at")),
         "billing_cycle": row.get("billing_cycle"),
+        "days_remaining": days_remaining,
+        "expiring_soon": expiring_soon,
     }
 
 

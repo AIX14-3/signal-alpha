@@ -10,8 +10,12 @@ import {
   deleteMe,
   getMySubscription,
   listJournals,
+  paymentHistory,
+  refundPayment,
+  resumePayment,
   updateMe,
   type Journal,
+  type PaymentHistoryItem,
   type Plan,
   type Subscription,
 } from "@/lib/apiClient";
@@ -116,14 +120,16 @@ function WatchlistTab() {
 function SubscriptionTab() {
   const [subscription, setSubscription] = useState<Subscription | null>(null);
   const [plan, setPlan] = useState<Plan | null>(null);
+  const [payments, setPayments] = useState<PaymentHistoryItem[]>([]);
   const [busy, setBusy] = useState(false);
   const showToast = useToastStore((s) => s.show);
   const refreshMe = useAuthStore((s) => s.refreshMe);
 
   async function reload() {
-    const data = await getMySubscription();
-    setSubscription(data.subscription);
-    setPlan(data.plan);
+    const [sub, history] = await Promise.all([getMySubscription(), paymentHistory()]);
+    setSubscription(sub.subscription);
+    setPlan(sub.plan);
+    setPayments(history.items);
   }
   useEffect(() => {
     reload().catch((err) => showToast((err as Error).message, "error"));
@@ -153,12 +159,49 @@ function SubscriptionTab() {
   }
 
   async function cancel() {
+    const ok = window.confirm(
+      "구독을 해지하시겠어요?\n\n만료일까지는 그대로 이용할 수 있으며, 이후 자동으로 종료됩니다.\n환불은 제공되지 않습니다.",
+    );
+    if (!ok) return;
     setBusy(true);
     try {
-      await cancelPayment();
+      const res = await cancelPayment();
       await reload();
       await refreshMe();
-      showToast("구독을 취소했습니다. 남은 무료 열람은 그대로 사용할 수 있어요.", "success");
+      const until = res.expires_at ? ` ${res.expires_at.slice(0, 10)}까지 이용 가능합니다.` : "";
+      showToast(`구독 해지가 예약되었습니다.${until}`, "success");
+    } catch (err) {
+      showToast((err as Error).message, "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function resume() {
+    setBusy(true);
+    try {
+      await resumePayment();
+      await reload();
+      await refreshMe();
+      showToast("구독을 계속 이용합니다. 해지 예약이 취소되었습니다.", "success");
+    } catch (err) {
+      showToast((err as Error).message, "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function refund() {
+    const ok = window.confirm(
+      "환불을 요청하시겠어요?\n\n결제 후 7일 이내는 전액, 이후에는 남은 기간만큼 일할 계산되어 환불됩니다.\n환불 시 구독은 즉시 해지됩니다.",
+    );
+    if (!ok) return;
+    setBusy(true);
+    try {
+      const res = await refundPayment();
+      await reload();
+      await refreshMe();
+      showToast(`환불이 접수되었습니다. ${won(res.amount)} 환불 예정입니다.`, "success");
     } catch (err) {
       showToast((err as Error).message, "error");
     } finally {
@@ -167,22 +210,48 @@ function SubscriptionTab() {
   }
 
   const active = subscription?.status === "active";
+  const cancelScheduled = active && Boolean(subscription?.cancelled_at);
+  const expiringSoon = active && Boolean(subscription?.expiring_soon);
 
   return (
     <div className="card max-w-[480px] p-7">
+      {expiringSoon && (
+        <div className="mb-5 rounded-[12px] bg-surface-2 px-4 py-3 text-[13px] text-navy-soft">
+          {cancelScheduled
+            ? `구독이 ${subscription?.days_remaining ?? 0}일 후 종료됩니다. 계속 이용하려면 ‘구독 계속하기’를 눌러 주세요.`
+            : `구독이 ${subscription?.days_remaining ?? 0}일 후 만료됩니다. 이용 공백 없이 ‘지금 연장하기’로 갱신하세요.`}
+        </div>
+      )}
       <div className="text-[13px] font-bold uppercase tracking-[0.1em] text-sky-deep">현재 상태</div>
-      <div className="mt-2 text-[28px] font-extrabold">{active ? "월 구독 중" : "무료"}</div>
+      <div className="mt-2 text-[28px] font-extrabold">
+        {cancelScheduled ? "해지 예약됨" : active ? "월 구독 중" : "무료"}
+      </div>
       <div className="mt-1 text-[14px] text-muted">
         {active && subscription?.expires_at
-          ? `만료 ${subscription.expires_at.slice(0, 10)}`
+          ? cancelScheduled
+            ? `만료 ${subscription.expires_at.slice(0, 10)}까지 이용 가능 (이후 종료)`
+            : `만료 ${subscription.expires_at.slice(0, 10)}`
           : "무료 회원은 리포트를 3회까지 열람할 수 있습니다."}
       </div>
       <div className="mt-3 text-[15px]">{won(plan?.price_monthly && plan.price_monthly > 0 ? plan.price_monthly : 9900)} /월 · 무제한 열람</div>
-      <div className="mt-6 flex gap-2">
+      <div className="mt-6 flex flex-wrap gap-2">
         {active ? (
-          <button type="button" onClick={() => void cancel()} disabled={busy} className="rounded-full border border-line px-5 py-2.5 text-[14px] font-semibold text-navy-soft hover:border-red hover:text-red disabled:opacity-60">
-            구독 취소
-          </button>
+          cancelScheduled ? (
+            <button type="button" onClick={() => void resume()} disabled={busy} className="brand-grad rounded-full px-6 py-2.5 text-[14px] font-bold text-white disabled:opacity-60">
+              {busy ? "처리 중…" : "구독 계속하기"}
+            </button>
+          ) : (
+            <>
+              {expiringSoon && (
+                <button type="button" onClick={() => void subscribe()} disabled={busy} className="brand-grad rounded-full px-6 py-2.5 text-[14px] font-bold text-white disabled:opacity-60">
+                  {busy ? "처리 중…" : "지금 연장하기"}
+                </button>
+              )}
+              <button type="button" onClick={() => void cancel()} disabled={busy} className="rounded-full border border-line px-5 py-2.5 text-[14px] font-semibold text-navy-soft hover:border-red hover:text-red disabled:opacity-60">
+                구독 취소
+              </button>
+            </>
+          )
         ) : (
           <button type="button" onClick={() => void subscribe()} disabled={busy} className="brand-grad rounded-full px-6 py-2.5 text-[14px] font-bold text-white disabled:opacity-60">
             {busy ? "처리 중…" : "월 9,900원 구독하기"}
@@ -192,6 +261,25 @@ function SubscriptionTab() {
           요금 안내
         </Link>
       </div>
+      {active && (
+        <button type="button" onClick={() => void refund()} disabled={busy} className="mt-3 text-[13px] font-semibold text-muted hover:text-red disabled:opacity-60">
+          환불 요청 (즉시 해지)
+        </button>
+      )}
+
+      {payments.length > 0 && (
+        <div className="mt-7 border-t border-line pt-5">
+          <div className="text-[13px] font-bold text-navy-soft">결제 내역</div>
+          <ul className="mt-3 space-y-2">
+            {payments.map((p) => (
+              <li key={p.payment_id} className="flex items-center justify-between text-[13.5px]">
+                <span className="text-muted">{p.paid_at ? p.paid_at.slice(0, 10) : "—"}</span>
+                <span className="font-semibold">월 구독 · {won(p.amount)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }

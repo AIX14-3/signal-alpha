@@ -1,13 +1,7 @@
 // main-server(:8000) API 클라이언트 — 신규 기획 계약과 1:1.
 // 베이스 URL 은 NEXT_PUBLIC_MAIN_API_BASE_URL 로 주입.
 
-import {
-  clearUserTokens,
-  getAccessToken,
-  getAdminToken,
-  getRefreshToken,
-  setUserTokens,
-} from "@/lib/session";
+import { clearUserTokens, getAccessToken, setUserTokens } from "@/lib/session";
 
 export const MAIN_API_BASE_URL =
   process.env.NEXT_PUBLIC_MAIN_API_BASE_URL ?? "http://localhost:8000";
@@ -28,10 +22,7 @@ type AuthMode = "user" | "admin" | "none";
 type FetchInit = RequestInit & { auth?: AuthMode };
 
 function authHeader(mode: AuthMode): Record<string, string> {
-  if (mode === "admin") {
-    const token = getAdminToken();
-    return token ? { Authorization: `Bearer ${token}` } : {};
-  }
+  // admin 은 sa_admin HttpOnly 쿠키로 인증되므로 헤더를 붙이지 않는다(credentials:include 가 송신).
   if (mode === "user") {
     const token = getAccessToken();
     return token ? { Authorization: `Bearer ${token}` } : {};
@@ -43,6 +34,7 @@ async function rawFetch(path: string, init: FetchInit): Promise<Response> {
   const { auth = "user", headers, ...rest } = init;
   return fetch(`${MAIN_API_BASE_URL}${path}`, {
     ...rest,
+    credentials: "include", // refresh 토큰 HttpOnly 쿠키(sa_refresh) 송수신
     headers: {
       "Content-Type": "application/json",
       ...authHeader(auth),
@@ -68,27 +60,23 @@ async function parse<T>(res: Response): Promise<T> {
   return data as T;
 }
 
-async function tryRefresh(): Promise<boolean> {
-  const refreshToken = getRefreshToken();
-  if (!refreshToken) return false;
-  const res = await rawFetch("/api/auth/refresh", {
-    method: "POST",
-    auth: "none",
-    body: JSON.stringify({ refresh_token: refreshToken }),
-  });
+// refresh 토큰은 HttpOnly 쿠키로 자동 송신되므로 body 가 필요 없다.
+// 성공 시 새 access 토큰만 인메모리에 저장한다. 부팅 hydrate 와 401 자동복구가 함께 사용한다.
+export async function refreshSession(): Promise<boolean> {
+  const res = await rawFetch("/api/auth/refresh", { method: "POST", auth: "none" });
   if (!res.ok) {
     clearUserTokens();
     return false;
   }
-  const data = (await res.json()) as { access_token: string; refresh_token: string };
-  setUserTokens(data.access_token, data.refresh_token);
+  const data = (await res.json()) as { access_token: string };
+  setUserTokens(data.access_token);
   return true;
 }
 
 async function apiFetch<T>(path: string, init: FetchInit = {}): Promise<T> {
   let res = await rawFetch(path, init);
-  if (res.status === 401 && (init.auth ?? "user") === "user" && getRefreshToken()) {
-    const refreshed = await tryRefresh();
+  if (res.status === 401 && (init.auth ?? "user") === "user") {
+    const refreshed = await refreshSession();
     if (refreshed) res = await rawFetch(path, init);
   }
   return parse<T>(res);
@@ -108,7 +96,9 @@ export type User = {
 export type AuthResult = {
   user: User;
   access_token: string;
-  refresh_token: string;
+  // refresh 토큰은 HttpOnly 쿠키로만 전달된다(응답 body 에는 없음).
+  refresh_token?: string;
+  token_type?: string;
   notice?: string;
 };
 
@@ -210,7 +200,11 @@ export type Subscription = {
   status: string;
   started_at: string | null;
   expires_at: string | null;
+  // 갱신 중지형 해지 예약 시각. 설정돼 있으면 만료일까지만 이용(이후 종료).
+  cancelled_at?: string | null;
   billing_cycle: string | null;
+  days_remaining?: number | null;
+  expiring_soon?: boolean;
 };
 
 export type Journal = {
@@ -253,12 +247,9 @@ export async function login(body: { identity_verification_id: string }): Promise
   return apiFetch("/api/auth/login", { method: "POST", auth: "none", body: JSON.stringify(body) });
 }
 
-export async function logout(refreshToken: string): Promise<void> {
-  await apiFetch("/api/auth/logout", {
-    method: "POST",
-    auth: "none",
-    body: JSON.stringify({ refresh_token: refreshToken }),
-  });
+export async function logout(): Promise<void> {
+  // refresh 토큰은 HttpOnly 쿠키로 자동 송신 → 서버가 쿠키를 읽어 세션 폐기·삭제한다.
+  await apiFetch("/api/auth/logout", { method: "POST", auth: "none" });
 }
 
 export async function getMe(): Promise<User> {
@@ -373,8 +364,8 @@ export async function getMySubscription(): Promise<{ subscription: Subscription 
   return apiFetch("/api/subscriptions/me");
 }
 
-export async function checkout(): Promise<CheckoutInfo> {
-  return apiFetch("/api/payments/checkout", { method: "POST" });
+export async function checkout(cycle: "monthly" | "yearly" = "monthly"): Promise<CheckoutInfo> {
+  return apiFetch("/api/payments/checkout", { method: "POST", body: JSON.stringify({ cycle }) });
 }
 
 export async function confirmPayment(body: { payment_id: string }): Promise<{
@@ -383,8 +374,53 @@ export async function confirmPayment(body: { payment_id: string }): Promise<{
   return apiFetch("/api/payments/confirm", { method: "POST", body: JSON.stringify(body) });
 }
 
-export async function cancelPayment(): Promise<{ status: string }> {
+export async function cancelPayment(): Promise<{
+  status: string;
+  expires_at: string | null;
+  notice: string;
+}> {
   return apiFetch("/api/payments/cancel", { method: "POST" });
+}
+
+export async function resumePayment(): Promise<{
+  status: string;
+  expires_at: string | null;
+  notice: string;
+}> {
+  return apiFetch("/api/payments/resume", { method: "POST" });
+}
+
+export async function refundPayment(): Promise<{
+  status: string;
+  amount: number;
+  kind: string;
+  notice: string;
+}> {
+  return apiFetch("/api/payments/refund", { method: "POST" });
+}
+
+export type PaymentHistoryItem = {
+  payment_id: string;
+  status: string;
+  amount: number;
+  paid_at: string | null;
+};
+
+export async function paymentHistory(): Promise<{ items: PaymentHistoryItem[] }> {
+  return apiFetch("/api/payments/history");
+}
+
+export type Receipt = {
+  payment_id: string;
+  order_name: string;
+  amount: number;
+  status: string;
+  paid_at: string | null;
+  customer: { email: string | null; name: string | null };
+};
+
+export async function paymentReceipt(paymentId: string): Promise<Receipt> {
+  return apiFetch(`/api/payments/${encodeURIComponent(paymentId)}/receipt`);
 }
 
 /* ===== 관리자(별도 세션 토큰) ===== */
@@ -406,11 +442,15 @@ export type AdminStats = {
 };
 
 export async function adminLogin(body: { email: string; password: string }): Promise<{
-  session_token: string;
   expires_at: string;
   admin: { id: number; email: string };
 }> {
+  // 세션 토큰은 sa_admin HttpOnly 쿠키로 설정됨(body 에 토큰 없음).
   return apiFetch("/api/admin/login", { method: "POST", auth: "none", body: JSON.stringify(body) });
+}
+
+export async function adminMe(): Promise<{ admin: { id: number; email: string } }> {
+  return apiFetch("/api/admin/me", { auth: "admin" });
 }
 
 export async function adminLogout(): Promise<{ status: string }> {
@@ -444,6 +484,10 @@ export async function adminSetSubscription(
 
 export async function adminCancelSubscription(userId: number): Promise<{ status: string }> {
   return apiFetch(`/api/admin/users/${userId}/subscription`, { method: "DELETE", auth: "admin" });
+}
+
+export async function adminRefund(userId: number): Promise<{ status: string; user_id: number }> {
+  return apiFetch(`/api/admin/users/${userId}/refund`, { method: "POST", auth: "admin" });
 }
 
 export async function adminGetStats(): Promise<AdminStats> {

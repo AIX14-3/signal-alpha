@@ -8,7 +8,7 @@ from ipaddress import ip_address
 from typing import Any
 
 import asyncpg
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from pydantic import BaseModel
 
 from app.core.config import Settings, get_settings
@@ -108,6 +108,7 @@ async def get_current_user_optional(
 async def signup(
     payload: SignupRequest,
     request: Request,
+    response: Response,
     pool: Any = Depends(get_database_pool),
     settings: Settings = Depends(get_settings),
     portone: PortOneClient = Depends(get_portone_client),
@@ -152,9 +153,10 @@ async def signup(
             settings=settings,
         )
 
+    _set_refresh_cookie(response, tokens["refresh_token"], settings)
     return {
         "user": _user_response(user, subscription_active=False),
-        **tokens,
+        **_access_body(tokens),
         "notice": NOTICE,
     }
 
@@ -163,6 +165,7 @@ async def signup(
 async def login(
     payload: LoginRequest,
     request: Request,
+    response: Response,
     pool: Any = Depends(get_database_pool),
     settings: Settings = Depends(get_settings),
     portone: PortOneClient = Depends(get_portone_client),
@@ -182,46 +185,70 @@ async def login(
             request=request,
             settings=settings,
         )
+    _set_refresh_cookie(response, tokens["refresh_token"], settings)
     return {
         "user": _user_response(user, subscription_active=subscription_active),
-        **tokens,
+        **_access_body(tokens),
         "notice": NOTICE,
     }
 
 
 @auth_router.post("/refresh")
 async def refresh(
-    payload: RefreshRequest,
     request: Request,
+    response: Response,
+    payload: RefreshRequest | None = None,
     pool: Any = Depends(get_database_pool),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
-    refresh_hash = hash_refresh_token(payload.refresh_token, secret_key=settings.auth_secret_key)
+    refresh_token = _read_refresh_token(request, payload, settings)
+    if not refresh_token:
+        raise _api_error(401, "INVALID_REFRESH_TOKEN", "refresh token이 없습니다.")
+    old_hash = hash_refresh_token(refresh_token, secret_key=settings.auth_secret_key)
     async with pool.acquire() as connection:
         session_repository = UserSessionRepository(connection)
-        session = await session_repository.get_active_session_by_refresh_hash(refresh_hash)
+        session = await session_repository.get_active_session_by_refresh_hash(old_hash)
         if session is None:
             raise _api_error(401, "INVALID_REFRESH_TOKEN", "refresh token이 유효하지 않습니다.")
-        await session_repository.revoke_session_by_refresh_hash(refresh_hash)
-        tokens = await _issue_tokens(
-            connection=connection,
+        now = datetime.now(UTC)
+        # 슬라이딩 연장의 절대 상한: 로그인(created_at) 후 N일 지나면 재로그인 강제.
+        absolute_cap = session["created_at"] + timedelta(days=settings.refresh_absolute_max_days)
+        if now >= absolute_cap:
+            await session_repository.revoke_session_by_refresh_hash(old_hash)
+            _clear_refresh_cookie(response, settings)
+            raise _api_error(401, "SESSION_EXPIRED", "세션 유효기간이 만료되었습니다. 다시 로그인해 주세요.")
+        new_refresh_token = create_refresh_token()
+        new_hash = hash_refresh_token(new_refresh_token, secret_key=settings.auth_secret_key)
+        sliding_expires = now + timedelta(days=settings.refresh_token_expire_days)
+        await session_repository.rotate_session(
+            old_refresh_token_hash=old_hash,
+            new_refresh_token_hash=new_hash,
+            expires_at=min(sliding_expires, absolute_cap),
+        )
+        access_token = create_access_token(
             user_id=int(session["user_id"]),
             email=str(session["user_email"]),
-            request=request,
-            settings=settings,
+            secret_key=settings.auth_secret_key,
+            expires_delta=timedelta(minutes=settings.access_token_expire_minutes),
         )
-    return tokens
+    _set_refresh_cookie(response, new_refresh_token, settings)
+    return {"access_token": access_token, "token_type": "bearer"}
 
 
 @auth_router.post("/logout")
 async def logout(
-    payload: LogoutRequest,
+    request: Request,
+    response: Response,
+    payload: LogoutRequest | None = None,
     pool: Any = Depends(get_database_pool),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, str]:
-    refresh_hash = hash_refresh_token(payload.refresh_token, secret_key=settings.auth_secret_key)
-    async with pool.acquire() as connection:
-        await UserSessionRepository(connection).revoke_session_by_refresh_hash(refresh_hash)
+    refresh_token = _read_refresh_token(request, payload, settings)
+    if refresh_token:
+        refresh_hash = hash_refresh_token(refresh_token, secret_key=settings.auth_secret_key)
+        async with pool.acquire() as connection:
+            await UserSessionRepository(connection).revoke_session_by_refresh_hash(refresh_hash)
+    _clear_refresh_cookie(response, settings)
     return {"status": "ok"}
 
 
@@ -329,6 +356,7 @@ async def social_login(
     provider: str,
     payload: SocialAuthRequest,
     request: Request,
+    response: Response,
     pool: Any = Depends(get_database_pool),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
@@ -355,9 +383,10 @@ async def social_login(
             request=request,
             settings=settings,
         )
+    _set_refresh_cookie(response, tokens["refresh_token"], settings)
     return {
         "user": _user_response(user, subscription_active=subscription_active),
-        **tokens,
+        **_access_body(tokens),
         "notice": NOTICE,
     }
 
@@ -496,6 +525,44 @@ async def _issue_tokens(
         "refresh_token": refresh_token,
         "token_type": "bearer",
     }
+
+
+def _access_body(tokens: dict[str, str]) -> dict[str, str]:
+    """응답 body 에는 access_token 만 노출(refresh 는 HttpOnly 쿠키로만 전달)."""
+    return {"access_token": tokens["access_token"], "token_type": tokens["token_type"]}
+
+
+def _set_refresh_cookie(response: Response, refresh_token: str, settings: Settings) -> None:
+    response.set_cookie(
+        key=settings.refresh_cookie_name,
+        value=refresh_token,
+        httponly=True,
+        secure=settings.cookie_secure,
+        samesite=settings.cookie_samesite,
+        path=settings.refresh_cookie_path,
+        max_age=settings.refresh_token_expire_days * 86400,
+        domain=settings.cookie_domain,
+    )
+
+
+def _clear_refresh_cookie(response: Response, settings: Settings) -> None:
+    response.delete_cookie(
+        key=settings.refresh_cookie_name,
+        path=settings.refresh_cookie_path,
+        domain=settings.cookie_domain,
+    )
+
+
+def _read_refresh_token(
+    request: Request,
+    payload: RefreshRequest | LogoutRequest | None,
+    settings: Settings,
+) -> str | None:
+    """쿠키 우선, 없으면 body(구버전 클라이언트 호환)에서 refresh 토큰을 읽는다."""
+    cookie_token = request.cookies.get(settings.refresh_cookie_name)
+    if cookie_token:
+        return cookie_token
+    return payload.refresh_token if payload is not None else None
 
 
 def _new_member_code() -> str:

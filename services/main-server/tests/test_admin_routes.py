@@ -40,8 +40,13 @@ class FakeConnection:
             }
         ]
         self.last_login_updated = []
+        self.payments = []  # portone_verifications(payment)
 
     async def fetchrow(self, sql, *args):
+        if "INSERT INTO portone_verifications" in sql:
+            return {"id": 1, "imp_uid": args[1]}
+        if "UPDATE signal_subscriptions" in sql:
+            return {"id": 1, "status": "cancelled"}
         if "FROM admin_accounts" in sql and "WHERE email = $1" in sql:
             return self.admins_by_email.get(args[0])
         if "INSERT INTO admin_sessions" in sql:
@@ -73,6 +78,8 @@ class FakeConnection:
         raise AssertionError(f"Unexpected fetchrow SQL: {sql}")
 
     async def fetch(self, sql, *args):
+        if "FROM portone_verifications" in sql:
+            return list(self.payments)
         if "FROM users" in sql and "LIMIT $1 OFFSET $2" in sql:
             return list(self.users)
         if "FROM subscription_plans" in sql and "LEFT JOIN signal_subscriptions" in sql:
@@ -124,21 +131,30 @@ class AdminRoutesTest(unittest.TestCase):
         app.dependency_overrides.clear()
 
     def login(self):
+        # 세션은 sa_admin HttpOnly 쿠키로 설정 → TestClient 쿠키 자가 이후 요청에 자동 송신.
         response = self.client.post(
             "/api/admin/login",
             json={"email": "admin@example.com", "password": ADMIN_PASSWORD},
         )
         self.assertEqual(response.status_code, 200)
-        return {"Authorization": f"Bearer {response.json()['session_token']}"}
+        return {}
 
-    def test_login_success_returns_session_token(self):
+    def test_login_success_sets_admin_cookie(self):
         response = self.client.post(
             "/api/admin/login",
             json={"email": "admin@example.com", "password": ADMIN_PASSWORD},
         )
         self.assertEqual(response.status_code, 200)
-        self.assertIn("session_token", response.json())
+        # 세션 토큰은 body 가 아니라 sa_admin 쿠키로만 전달된다.
+        self.assertNotIn("session_token", response.json())
+        self.assertIsNotNone(response.cookies.get("sa_admin"))
+        self.assertEqual(response.json()["admin"]["email"], "admin@example.com")
         self.assertEqual(self.connection.last_login_updated, [1])
+
+    def test_admin_me_with_session(self):
+        response = self.client.get("/api/admin/me", headers=self.login())
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["admin"]["email"], "admin@example.com")
 
     def test_login_rejects_wrong_password(self):
         response = self.client.post(
@@ -165,6 +181,20 @@ class AdminRoutesTest(unittest.TestCase):
         self.assertEqual(response.json()["mrr"], 9900)
         self.assertEqual(response.json()["by_plan"]["pro"], 1)
         self.assertEqual(response.json()["active_subscriptions"], 1)
+
+    def test_refund_user(self):
+        headers = self.login()
+        self.connection.payments = [
+            {"imp_uid": "pay-x", "merchant_uid": "pay-x", "status": "paid", "user_id": 1}
+        ]
+        response = self.client.post("/api/admin/users/1/refund", headers=headers)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["status"], "refunded")
+
+    def test_refund_user_without_payment_returns_404(self):
+        response = self.client.post("/api/admin/users/1/refund", headers=self.login())
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["detail"]["code"], "NO_REFUNDABLE_PAYMENT")
 
 
 if __name__ == "__main__":

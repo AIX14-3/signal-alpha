@@ -7,20 +7,25 @@ import {
   adminListUsers,
   adminLogin,
   adminLogout,
+  adminMe,
+  adminRefund,
   adminSetSubscription,
   type AdminStats,
   type AdminUser,
 } from "@/lib/apiClient";
 import { won } from "@/lib/format";
-import { clearAdminToken, getAdminToken, setAdminToken } from "@/lib/session";
 
 export default function AdminPage() {
-  const [authed, setAuthed] = useState(false);
+  // null = 쿠키 세션 확인 중. admin 쿠키는 HttpOnly 라 /admin/me 로 상태를 판별한다.
+  const [authed, setAuthed] = useState<boolean | null>(null);
 
   useEffect(() => {
-    setAuthed(Boolean(getAdminToken()));
+    adminMe()
+      .then(() => setAuthed(true))
+      .catch(() => setAuthed(false));
   }, []);
 
+  if (authed === null) return <p className="py-16 text-center text-muted">관리자 인증 확인 중…</p>;
   if (!authed) return <AdminLogin onSuccess={() => setAuthed(true)} />;
   return (
     <AdminDashboard
@@ -28,9 +33,8 @@ export default function AdminPage() {
         try {
           await adminLogout();
         } catch {
-          /* 토큰은 어찌됐든 제거 */
+          /* 서버 실패와 무관하게 로그인 화면으로 */
         }
-        clearAdminToken();
         setAuthed(false);
       }}
     />
@@ -46,8 +50,7 @@ function AdminLogin({ onSuccess }: { onSuccess: () => void }) {
     event.preventDefault();
     setError(null);
     try {
-      const result = await adminLogin({ email, password });
-      setAdminToken(result.session_token);
+      await adminLogin({ email, password }); // 세션은 sa_admin 쿠키로 설정됨
       onSuccess();
     } catch (err) {
       setError((err as Error).message);
@@ -61,7 +64,7 @@ function AdminLogin({ onSuccess }: { onSuccess: () => void }) {
         <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="관리자 이메일" className="card w-full px-4 py-3 text-[15px] outline-none focus:border-sky" />
         <input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} placeholder="비밀번호" className="card w-full px-4 py-3 text-[15px] outline-none focus:border-sky" />
         {error && <p className="text-[13px] text-red">{error}</p>}
-        <button type="submit" className="w-full rounded-full bg-navy py-3 text-[15px] font-bold text-white">로그인</button>
+        <button type="submit" className="brand-grad w-full rounded-full py-3 text-[15px] font-bold text-white">로그인</button>
       </div>
     </form>
   );
@@ -99,6 +102,15 @@ function AdminDashboard({ onLogout }: { onLogout: () => Promise<void> }) {
   async function revoke(userId: number) {
     await adminCancelSubscription(userId);
     await reload(q);
+  }
+  async function refundUser(userId: number) {
+    if (!window.confirm("이 회원의 최근 결제를 전액 환불하고 구독을 즉시 해지합니다. 진행할까요?")) return;
+    try {
+      await adminRefund(userId);
+      await reload(q);
+    } catch (err) {
+      setError((err as Error).message);
+    }
   }
 
   return (
@@ -153,7 +165,10 @@ function AdminDashboard({ onLogout }: { onLogout: () => Promise<void> }) {
                   <td className="px-5 py-3 text-muted">{user.created_at ? user.created_at.slice(0, 10) : "-"}</td>
                   <td className="px-5 py-3">
                     {active ? (
-                      <button type="button" onClick={() => void revoke(user.id)} className="text-[13px] font-semibold text-muted hover:text-red">구독 취소</button>
+                      <div className="flex gap-3">
+                        <button type="button" onClick={() => void revoke(user.id)} className="text-[13px] font-semibold text-muted hover:text-red">구독 취소</button>
+                        <button type="button" onClick={() => void refundUser(user.id)} className="text-[13px] font-semibold text-muted hover:text-red">환불</button>
+                      </div>
                     ) : (
                       <button type="button" onClick={() => void grant(user.id)} className="text-[13px] font-semibold text-sky-deep">구독 부여</button>
                     )}
