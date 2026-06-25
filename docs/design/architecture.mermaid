@@ -1,7 +1,7 @@
 flowchart TD
     A["수집기<br/>DART·PRICE·REPORT·HIRING·PATENT·DATALAB"]:::det --> G1{"게이트1<br/>데이터 검증 (hiring 3c 등)"}:::det
 
-    G1 -->|"통과 ✓"| B["소스별 전처리 (분석기)<br/>규칙·임베딩·통계지표 → 피처<br/>DART규칙+공시임베딩·PRICE지표·DataLab지표·Report RAG검색"]:::det
+    G1 -->|"통과 ✓"| B["소스별 전처리 (분석기)<br/>규칙·임베딩·통계지표 → 피처<br/>DART규칙+공시임베딩·PRICE지표·DataLab지표·Report valuation fact<br/>Report RAG검색은 복구 후보"]:::det
     G1 -->|"일시적 실패<br/>(retry++ 한도 초과)"| DLQ["dead_letter (DLQ)<br/>아카이브 + replay"]:::det
     G1 -->|"구조적 실패<br/>(레코드 손상)"| Q["quarantine + 알림<br/>(hiring_quarantine)"]:::det
 

@@ -1,4 +1,4 @@
-# 증권사 리포트 RAG 현재 구현 상태
+# 증권사 리포트 수집/밸류에이션 현재 구현 상태
 
 최종 갱신일: 2026-06-25
 
@@ -13,13 +13,23 @@ Signal Alpha는 투자 추천 서비스가 아닙니다. 증권사 리포트 데
 오래된 기획 문서보다 현재 코드, 테스트, migration을 우선합니다.
 
 - 스키마: `database/migrations/001_baseline.sql`, `database/migrations/010_report_s3_key.sql`
-- canonical DB 경로: `raw_documents -> report_raw_details -> report_chunks`
+- 현재 런타임 DB 경로: `raw_documents -> report_raw_details -> report_valuation_facts -> source_documents/signal_events/signal_metrics`
 - 큐 핸들러: `services/agent-worker/app/orchestrator/report/tasks.py`
-- RAG 검색과 Report Agent: `services/agent-worker/app/analyzers/report/rag_retriever.py`, `services/agent-worker/app/agents/report/agent.py`
+- 현재 Report 큐 작업: `collect_report`, `process_report`, `normalize_report`
+- 현재 미구현/복구 후보: `embed_report`, `analyze_report`, RAG retriever, Report Agent
 - 밸류에이션 재해석 전략: `docs/spec/report-valuation-reinterpretation-strategy.md`
 - 과거 담당자 인수인계 문서: `docs/spec/eunjinspec.md`
 
-`docs/spec/eunjinspec.md`는 과거 작업 맥락을 이해하는 데 유용하지만, `report_raw` / `report_signal` 중심의 레거시 경로를 많이 설명합니다. 신규 개발은 명시적인 legacy 이전 작업이 아니라면 canonical 경로를 기준으로 진행합니다.
+`docs/spec/eunjinspec.md`는 과거 작업 맥락을 이해하는 데 유용하지만, `report_raw` / `report_signal` 중심의 레거시 경로와 RAG 계획을 많이 설명합니다. 신규 개발은 명시적인 legacy 이전 작업이 아니라면 현재 코드의 canonical 경로를 기준으로 진행합니다.
+
+## 현재 요약
+
+- 구현된 런타임 경로는 `collect_report -> process_report -> normalize_report`입니다.
+- `process_report`는 PDF 다운로드/저장, 텍스트 파싱, valuation fact 저장, `normalize_report` enqueue를 담당합니다.
+- `normalize_report`는 Report raw 문서를 `source_documents`, `signal_events`, `signal_metrics`로 승격합니다.
+- `report_valuation_facts`와 valuation summary/scenario band helper, 백테스트 fixture는 구현되어 있습니다.
+- `embed_report`, `analyze_report`, RAG retriever, Report Agent, Report 전용 `analysis_results/agent_results` 생성은 현재 코드에 없습니다.
+- Aggregator는 Report valuation payload를 읽을 수 있는 방어 로직을 갖고 있지만, 현재 Report 런타임이 해당 payload를 생성해 Aggregator에 자동 연결하지는 않습니다.
 
 ## 현재 canonical 흐름
 
@@ -73,8 +83,9 @@ ReportCollectTaskHandler
 
 현재 검증:
 
-- `test_report_e2e_pipeline.py`에서 fake DB connection과 `QueueTaskRunner` 기반으로 `collect_report → process_report → normalize_report → embed_report → analyze_report → ml_infer` 연쇄를 검증합니다.
-- 검증 범위는 raw 문서 저장, PDF 처리 결과 저장, canonical `source_documents`/`signal_events` 승격, chunk/embedding 저장, 분석 결과 저장, 후속 ML/aggregate enqueue까지 포함합니다.
+- `test_report_task_handlers.py`와 `test_report_e2e_pipeline.py`에서 fake DB connection 기반으로 `collect_report → process_report → normalize_report` 흐름을 검증합니다.
+- 검증 범위는 raw 문서 저장, PDF 처리 결과 저장, valuation fact 저장, canonical `source_documents`/`signal_events` 승격, 후속 enqueue 동작을 포함합니다.
+- 현재 테스트는 `embed_report`, `analyze_report`, RAG 검색, Report Agent 분석 저장을 검증하지 않습니다. 해당 런타임 경로가 코드에 없기 때문입니다.
 
 ### 3. `process_report`
 
@@ -122,7 +133,8 @@ ReportProcessTaskHandler
 저작권과 보존 관련 주의:
 
 - 사용자-facing 응답에는 PDF 원문이나 긴 verbatim 청크를 노출하지 않습니다.
-- 현재 `report_chunks`는 내부 RAG 검색과 근거 추적을 위한 canonical 저장소입니다.
+- 현재 런타임은 PDF 전체 원문이나 긴 청크를 사용자-facing 응답으로 내보내지 않습니다.
+- `report_chunks` 기반 내부 RAG 검색은 현재 런타임에 연결되어 있지 않습니다. RAG를 복구할 경우에도 사용자-facing 응답에는 원문 PDF 또는 긴 verbatim 청크를 노출하지 않는 원칙을 유지해야 합니다.
 - 밸류에이션 재해석 확장에서는 원문 문장을 그대로 저장하는 대신 구조화된 fact와 패러프레이즈된 thesis를 별도 저장하는 방향을 우선합니다.
 
 ### 4. `normalize_report`
@@ -144,104 +156,45 @@ ReportNormalizeTaskHandler
   - 알 수 없는 의견 값은 `signal_direction='unknown'`, `needs_review=true`로 둡니다.
 - 목표가, 이전 목표가, 발간 시점 현재가, 상승여력 원천 값이 있으면 `signal_metrics`에 저장합니다.
 - source trace 검증 로그를 `validation_logs`에 남깁니다.
-- 생성된 `signal_event_id`를 `embed_report` 작업의 `source_signal_event_ids`로 넘깁니다.
+### 5. 현재 미구현: RAG/Report 분석 런타임
 
-### 5. `embed_report`
+아래 경로는 현재 코드에 없습니다.
 
-Handler:
+- `embed_report` task type
+- `ReportEmbedTaskHandler`
+- `analyze_report` task type
+- `ReportAnalyzeTaskHandler`
+- `services/agent-worker/app/analyzers/report/rag_retriever.py`
+- `services/agent-worker/app/agents/report/agent.py`
+- `Report Agent`가 생성하는 Report 전용 `analysis_results`, `agent_results`
+- RAG `evidence_chunks`를 Aggregator까지 전달하는 런타임 체인
 
-```text
-ReportEmbedTaskHandler
-```
+RAG를 복구하려면 최소한 아래 작업이 필요합니다.
 
-현재 동작:
-
-- `report_raw_details.s3_key`를 확인합니다.
-- 선택된 storage backend에서 PDF를 다시 다운로드합니다.
-- PyMuPDF로 PDF 전체 텍스트를 추출합니다.
-- `chunk_text`로 텍스트를 청크로 나눕니다.
-- BGE-M3 embedding provider로 1024차원 벡터를 생성합니다.
-- `report_chunks`에 청크와 embedding을 저장합니다.
-- `source_signal_event_ids`가 있으면 `analyze_report` 작업을 자동 등록합니다.
-
-저장 필드:
-
-- `raw_document_id`
-- `stock_id`
-- `chunk_index`
-- `chunk_text`
-- `token_count`
-- `embedding`
-
-스키마 제약:
-
-- `report_chunks.embedding`은 `VECTOR(1024)`입니다.
-- embedding 모델을 교체할 경우 차원이 맞는지 확인해야 하며, 차원이 달라지면 migration이 필요합니다.
-
-### 6. 분석 스케줄 등록
-
-Endpoint:
-
-```text
-POST /internal/schedules/report/analyze
-```
-
-현재 동작:
-
-- 단일 종목 또는 active 종목 전체에 대해 `analyze_report` 작업을 등록합니다.
-- 신규 queue 체인에서는 `embed_report` 성공 후 `analyze_report`가 자동으로 이어집니다.
-- 기존 수동 분석은 별도 스케줄 또는 수동 enqueue로 계속 실행할 수 있습니다.
-
-### 7. `analyze_report`
-
-Handler:
-
-```text
-ReportAnalyzeTaskHandler
-```
-
-현재 동작:
-
-- `parsing_status = 'success'`인 `report_raw_details`를 조회합니다.
-- 정량 메타데이터인 `report_quant`를 구성합니다.
-  - 리포트 수
-  - 원천 데이터에 존재하는 목표가 평균
-  - 파싱된 의견 원천 필드의 분포
-  - 의견 값이 여러 종류일 때 단순 충돌 여부
-- `ReportAnalysisAgent`를 호출합니다.
-- RAG 검색은 `stock_id`로 격리하며, embedding이 있는 `report_chunks`만 조회합니다.
-- RAG 검색 결과는 `chunk_text`, `raw_document_id`, `chunk_index`, `similarity`와 함께 `title`, `source_url`, `securities_firm`, `publish_date`를 포함합니다.
-- Report Agent는 이 값을 `method_detail.evidence_chunks`와 LLM prompt payload에 보존해 분석 결과에서 원천 리포트 근거를 추적할 수 있게 합니다.
-- RAG 검색 결과가 0건이면 `risk_flags`에 `evidence_required`를 남기고 보수적 fallback을 사용합니다.
-- `source_signal_event_ids`가 있으면 이벤트를 `SourceAgentInput.events`로 넘깁니다.
-- 분석 결과를 `analysis_results`, `agent_results`에 저장하며, 두 테이블 모두 `source_signal_event_ids`를 보존합니다.
-- Report 분석 결과는 DB 제약에 맞춰 `analysis_mode='quick'`으로 저장합니다.
-- canonical 이벤트 기반 분석이면 후속 `ML_INFER` 작업을 등록해 Aggregator 체인에 합류할 수 있게 합니다.
-  - `processing_queue.source_analysis_result_ids`에 Report `analysis_result_id`를 기록합니다.
-  - `task_context.aggregate_ctx.source_analysis_result_ids`에도 같은 ID를 넣어 `ML_INFER -> META_COMBINE -> AGGREGATE_SIGNAL` 체인에서 통과시킵니다.
-  - `AGGREGATE_SIGNAL`은 이 ID로 Report `agent_results.method_detail.source='REPORT'` 결과를 읽고 `final_signals` 생성에 반영합니다.
-- `REPORT_USE_LLM=true`이고 provider/model/API key가 모두 설정되어 있으면 기존 DART LLM client를 재사용해 Report Agent에 연결합니다.
-  - `REPORT_LLM_PROVIDER=gemini`이면 `GEMINI_API_KEY`를 사용합니다.
-  - `REPORT_LLM_PROVIDER=openai`이면 `OPENAI_API_KEY`를 사용합니다.
-  - `REPORT_LLM_TIMEOUT_SECONDS`가 Report Agent의 LLM timeout으로 전달됩니다.
+1. `EMBED_REPORT`, `ANALYZE_REPORT` task type과 queue handler 등록
+2. PDF 텍스트 청크 생성 및 `report_chunks` 저장 경로
+3. embedding provider와 `report_chunks.embedding` 차원 검증
+4. stock_id 격리 기반 retriever
+5. Report 분석 결과를 `analysis_results`, `agent_results`에 저장하는 핸들러
+6. `source_analysis_result_ids`를 통해 ML/Aggregator 체인으로 넘기는 연결
+7. RAG 근거가 없을 때 `evidence_required`, `needs_review=true`로 떨어지는 결정적 fallback
 
 현재 빈틈:
 
 - Report 분석은 `final_signals`를 직접 쓰지 않습니다.
 - 사용자-facing 최종 데이터 방향성 발행 여부는 Aggregator와 후속 gate가 결정합니다.
 - `process_report`는 밸류에이션 재해석 전략의 `forward_eps_est`, `applied_multiple`, `implied_multiple`, `peer_group`를 규칙 기반으로 구조화하고, LLM 설정이 활성화된 경우 `category_tag`, `rerating_thesis`, `methodology`를 보강합니다.
-- valuation analyzer MVP는 `report_valuation_facts`를 읽어 내재 배수 평균·중앙값·분산, 적용 배수 대비 gap, 피어 그룹 빈도, `needs_review` 비율, `scenario_band`를 `report_quant.valuation`에 포함합니다.
-- Aggregator는 Report `method_detail.report_quant.valuation`을 `score_breakdown.REPORT.valuation`과 caution evidence로 전달하고, valuation review risk를 최종 `needs_review`와 warning 판단에 반영합니다.
+- valuation helper는 `report_valuation_facts`를 읽어 내재 배수 평균·중앙값·분산, 적용 배수 대비 gap, 피어 그룹 빈도, `needs_review` 비율, `scenario_band`를 계산할 수 있습니다.
+- 다만 현재 런타임에는 Report 전용 `analyze_report` 핸들러가 없어 valuation summary가 자동으로 `analysis_results`/`agent_results`에 저장되지는 않습니다.
+- Aggregator는 Report `method_detail.report_quant.valuation`이 들어오면 `score_breakdown.REPORT.valuation`과 caution evidence로 전달할 수 있지만, 현재 Report 런타임이 그 payload를 자동 생성하지 않습니다.
 - `scenario_band`는 내재 배수 중앙값을 base로 두고 분산의 제곱근 범위를 low/high로 계산하는 내부 구조화 값입니다. 투자 행동 제안으로 노출하지 않습니다.
-- LLM 설정이 비활성화되었거나 model/key/provider가 불완전하면 Report Agent는 보수적 fallback을 사용합니다.
-  - 방향성: `unknown`
-  - 점수: `50`
-  - `needs_review=true`
-  - `data_status='partial'`
+- LLM 설정이 비활성화되었거나 model/key/provider가 불완전하면 `process_report`의 PDF 파싱 보강은 규칙 기반 fallback을 사용합니다.
+  - 수치 값은 규칙 기반 추출 또는 DB row만 사용합니다.
+  - LLM JSON 오류, timeout, 금지 표현 감지 시 `rules_fallback`, `needs_review=true`로 저장합니다.
 
 ## 레거시 경로
 
-아래 런타임 경로는 canonical queue 기반 흐름으로 대체되어 제거되었습니다. 신규 개발은 `collect_report -> process_report -> normalize_report -> embed_report -> analyze_report` 경로를 기준으로 진행합니다.
+아래 런타임 경로는 canonical queue 기반 흐름으로 대체되어 제거되었습니다. 신규 개발은 현재 구현된 `collect_report -> process_report -> normalize_report` 경로를 기준으로 진행합니다. RAG를 복구할 때만 별도 설계 후 `embed_report -> analyze_report` 단계를 다시 추가합니다.
 
 ### `/agents/report`
 
@@ -270,11 +223,11 @@ ReportAnalyzeTaskHandler
 
 - `raw_documents`: source 공통 메타데이터
 - `report_raw_details`: 증권사 리포트 상세, PDF 상태, 파싱 필드
-- `report_chunks`: PDF 청크와 embedding
+- `report_chunks`: RAG 복구 후보 스키마입니다. 현재 Report 런타임에서는 청크/embedding을 저장하지 않습니다.
 - `report_valuation_facts`: 리포트별 목표가 산정 fact, EPS, 적용 배수, 내재 배수, 피어 그룹
 - `processing_queue`: queue 작업 상태
-- `analysis_results`: 분석 실행 결과
-- `agent_results`: Report agent 방식별 결과
+- `analysis_results`: 다른 소스 분석 결과 저장소입니다. 현재 Report 런타임은 Report 전용 row를 만들지 않습니다.
+- `agent_results`: 다른 소스 agent 결과 저장소입니다. 현재 Report 런타임은 Report 전용 row를 만들지 않습니다.
 
 ### 밸류에이션 fact
 
@@ -284,8 +237,9 @@ ReportAnalyzeTaskHandler
 - `REPORT_USE_LLM=true`이고 provider/model/API key가 모두 설정되면 LLM이 `methodology`, `category_tag`, `rerating_thesis`만 보강합니다. 목표가, EPS, 적용 배수, 내재 배수는 LLM 결과를 사용하지 않습니다.
 - LLM JSON 오류, timeout, 금지 표현 감지 시 `extraction_source='rules_fallback'`, `needs_review=TRUE`로 저장합니다.
 - 추출 실패나 핵심 값 결측 시 `needs_review = TRUE`로 저장해 추가 확인 필요 상태를 남깁니다.
-- `analyze_report`는 `report_valuation_facts`를 읽어 valuation summary를 만들고, `needs_review` 비율이 높으면 Report 결과의 `data_status='partial'`과 `valuation_review_required` risk flag로 반영합니다.
+- valuation helper는 `report_valuation_facts`를 읽어 valuation summary를 만들고, `needs_review` 비율이 높으면 `data_status='partial'`과 `valuation_review_required` risk flag를 계산합니다.
 - valuation summary에는 내부용 `scenario_band.low_multiple/base_multiple/high_multiple`, `dispersion_level`, `confidence_note`가 포함됩니다.
+- 현재 이 summary를 자동 생성/저장하는 Report 분석 queue handler는 없습니다.
 
 ### Legacy 테이블
 
@@ -334,33 +288,8 @@ Invoke-RestMethod `
   -ContentType "application/json" `
   -Body '{"max_runs":10}'
 
-# 5. PDF 청크 embedding 작업 실행
-Invoke-RestMethod `
-  -Method Post `
-  -Uri "http://localhost:8011/internal/queue/embed_report/run-batch" `
-  -ContentType "application/json" `
-  -Body '{"max_runs":10}'
-
-# 6. 리포트 분석 작업 실행
-Invoke-RestMethod `
-  -Method Post `
-  -Uri "http://localhost:8011/internal/queue/analyze_report/run-batch" `
-  -ContentType "application/json" `
-  -Body '{"max_runs":10}'
-
-# 7. 기존 수동 리포트 분석 작업 등록
-Invoke-RestMethod `
-  -Method Post `
-  -Uri "http://localhost:8011/internal/schedules/report/analyze" `
-  -ContentType "application/json" `
-  -Body '{"stock_code":"005930","run_key":"REPORT","priority":"batch"}'
-
-# 8. 수동 등록한 리포트 분석 작업 실행
-Invoke-RestMethod `
-  -Method Post `
-  -Uri "http://localhost:8011/internal/queue/analyze_report/run-batch" `
-  -ContentType "application/json" `
-  -Body '{"max_runs":10}'
+# 5. 현재는 여기까지가 Report 런타임 경로입니다.
+# embed_report/analyze_report/RAG 경로는 현재 코드에 없으므로 실행하지 않습니다.
 ```
 
 주의:
@@ -384,17 +313,19 @@ Invoke-RestMethod `
 
 0. 밸류에이션 재해석 확장
    - `report_valuation_facts` 스키마, extractor MVP, LLM 기반 methodology/category/thesis 보강, valuation analyzer MVP, scenario band MVP, Aggregator 전달, 백테스트 fixture 확인/미확인 사례, 수집 파이프라인 형태 샘플 변환은 구현되었습니다.
-   - 다음 작업은 실제 운영 DB row에서 fixture 후보를 추출하고, normalize backfill 결과와 비교하는 것입니다.
+   - 현재 런타임 자동 분석 경로는 없으므로 다음 작업은 Report RAG/분석 런타임 복구 여부를 먼저 결정하는 것입니다.
+   - RAG 복구와 별개로 실제 운영 DB row에서 fixture 후보를 추출하고, normalize backfill 결과와 비교하는 작업은 계속 유효합니다.
    - PDF 원문과 긴 청크를 사용자에게 노출하지 않고, valuation 전략용 결과는 구조화 fact 중심으로 저장합니다.
 1. 저장 backend
    - canonical queue 경로의 기본 backend는 GCS입니다. 개발과 테스트용 local storage adapter도 구현되어 있으므로, 운영 환경에서는 GCS bucket/권한을 확정하고 로컬 환경에서는 `REPORT_STORAGE_BACKEND=local` 사용 여부를 정하면 됩니다.
 2. 정규화 경로
    - Report는 `normalize_report`에서 `source_documents`, `signal_events`, `signal_metrics`를 만듭니다. 후속 작업은 기존 데이터 backfill과 운영 runbook 정리입니다.
 3. LLM 연결
-   - `REPORT_USE_LLM`, provider, model, timeout, API key 설정은 PDF 파싱 보강과 `ReportAnalyzeTaskHandler`에 연결되어 있습니다. 운영 환경에서 provider/model/key 값을 확정하고 fallback 품질을 점검합니다.
+   - `REPORT_USE_LLM`, provider, model, timeout, API key 설정은 PDF 파싱 보강에 연결되어 있습니다. 현재 `ReportAnalyzeTaskHandler`는 없습니다.
+   - 운영 환경에서 provider/model/key 값을 확정하고 parser fallback 품질을 점검합니다.
 4. Aggregator 통합
-   - Report `agent_results`는 `source='REPORT'`와 `source_signal_event_ids`를 갖고 ML/aggregation 체인으로 넘어갑니다.
-   - Report 단일 source도 `AGGREGATE_SIGNAL`에서 `final_signals` 생성 입력으로 처리됩니다.
+   - 현재 Report 런타임은 `agent_results` 또는 `analysis_results`를 만들지 않습니다.
+   - Aggregator에는 Report valuation payload를 방어적으로 보존하는 코드가 있지만, Report 소스가 자동으로 `AGGREGATE_SIGNAL` 입력에 합류하지는 않습니다.
    - 후속 작업은 DART, PRICE, ALTERNATIVE와 같은 날짜/스케줄에서 어떻게 함께 묶을지 운영 정책을 정하는 것입니다.
 5. 레거시 정리
    - `/agents/report`, `ReportAnalyzer`, `ReportCollector`, `vector_store.py` 런타임 경로는 제거되었습니다.
@@ -405,7 +336,7 @@ Invoke-RestMethod `
    - 성공/실패 시 agent-worker 로그에 `report_collection_summary` 이벤트를 남깁니다.
    - 로그 payload에는 `collected_reports`, `saved_reports`, `inserted_reports`, `duplicate_reports`, `invalid_date_reports`, `missing_pdf_reports`, `enqueued_reports`, `skip_reasons`가 포함됩니다.
 7. 테스트 범위
-   - storage backend, queue chaining, Report 분석 저장은 unit/integration 테스트로 유지합니다.
+   - storage backend, queue chaining, Report 파싱/정규화 저장은 unit/integration 테스트로 유지합니다.
    - fake DB connection 기반 Report E2E queue pipeline으로 canonical 링크와 후속 enqueue를 회귀 검증합니다.
 
 ## 현재 테스트 범위
@@ -415,9 +346,8 @@ Invoke-RestMethod `
 - Report task handler
 - Report collection scheduler
 - Report schedule route
-- Report RAG retriever
 - Report LLM wiring
-- Report analysis agent fallback과 LLM 응답 파싱
+- Report PDF parser fallback과 LLM 응답 파싱
 - Report valuation backtest fixture
   - 확인/미확인 사례 fixture 로드
   - 수집 파이프라인 형태 샘플을 백테스트 case로 변환
@@ -430,7 +360,7 @@ Invoke-RestMethod `
 유용한 테스트 명령:
 
 ```powershell
-uv run pytest services\agent-worker\tests\test_report_e2e_pipeline.py services\agent-worker\tests\test_report_task_handlers.py services\agent-worker\tests\test_report_llm_wiring.py services\agent-worker\tests\test_report_scheduler.py services\agent-worker\tests\test_report_schedule_route.py services\agent-worker\tests\test_report_agent.py services\agent-worker\tests\test_report_rag_retriever.py -q
+uv run pytest services\agent-worker\tests\test_report_e2e_pipeline.py services\agent-worker\tests\test_report_task_handlers.py services\agent-worker\tests\test_report_llm_wiring.py services\agent-worker\tests\test_report_scheduler.py services\agent-worker\tests\test_report_schedule_route.py services\agent-worker\tests\test_report_parser_fallback.py -q
 
 uv run pytest services\agent-worker\tests\test_report_valuation_backtest_fixtures.py services\agent-worker\tests\test_report_valuation_analyzer.py -q
 

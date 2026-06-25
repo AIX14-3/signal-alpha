@@ -128,7 +128,7 @@ Gemini 보강이 실패해도 규칙 기반 fallback 결과가 유지됩니다. 
 
 ## 6. 후속 큐 실행
 
-PDF 파싱 이후 canonical 경로까지 확인하려면 아래 작업을 순서대로 실행합니다.
+PDF 파싱 이후 현재 canonical 경로까지 확인하려면 아래 작업을 실행합니다. 현재 Report 런타임에는 `embed_report`/`analyze_report`/RAG 단계가 연결되어 있지 않습니다.
 
 ```powershell
 Invoke-RestMethod `
@@ -137,17 +137,7 @@ Invoke-RestMethod `
   -ContentType "application/json" `
   -Body '{"max_runs":5}'
 
-Invoke-RestMethod `
-  -Method Post `
-  -Uri "http://localhost:8011/internal/queue/embed_report/run-batch" `
-  -ContentType "application/json" `
-  -Body '{"max_runs":5}'
-
-Invoke-RestMethod `
-  -Method Post `
-  -Uri "http://localhost:8011/internal/queue/analyze_report/run-batch" `
-  -ContentType "application/json" `
-  -Body '{"max_runs":5}'
+# 현재는 normalize_report까지가 Report queue 런타임 경로입니다.
 ```
 
 ## 7. 문제 해결

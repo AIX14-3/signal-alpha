@@ -12,8 +12,8 @@ signal-alpha agent-worker를 `vol-benchmark`의 [`architecture.mermaid`](./archi
 |---|---|---|---|
 | 수집기 | det | `app/collectors/*` | `collect_dart`, `collect_report`, … |
 | 게이트1 (데이터 검증) | det | hiring 3c 검증 게이트, DLQ(`dead_letter`), quarantine(`hiring_quarantine`) | 수집/정규화 단계에 분산 |
-| 소스별 전처리 (분석기) | det | `app/analyzers/*` — 규칙·통계지표·임베딩으로 결정론 피처 산출 (DART 규칙+공시 임베딩, PRICE 지표, DataLab 지표, Report RAG 검색). **생성형 LLM은 쓰지 않음** | `normalize_*`, `analyze_*` |
-| 적재 (PG·pgvector) | det | `orchestrator/persistence.py`, report 임베딩 | — |
+| 소스별 전처리 (분석기) | det | `app/analyzers/*` — 규칙·통계지표·임베딩으로 결정론 피처 산출 (DART 규칙+공시 임베딩, PRICE 지표, DataLab 지표, Report valuation fact 정규화; Report RAG 검색은 복구 후보). **생성형 LLM은 쓰지 않음** | `normalize_*`, `analyze_*` |
+| 적재 (PG·pgvector) | det | `orchestrator/persistence.py`; report 임베딩은 현재 미연결 복구 후보 | — |
 | 게이트2 (결합·신호 품질) | ml | `AggregateSignalTaskHandler` (consensus·warning_level·needs_review·is_published) | `aggregate_signal` |
 | ML/DL 추론 (게이트 통과 모델만) | ml | `app/ml/inference.py` + `model_registry`(2중 게이트) + `packages/vol-models` | `ml_infer` |
 | 메타러너 결합 (stacking) | ml | `app/ml/meta_learner.py` + `meta_combine.py` → `meta_signals` | `meta_combine` |

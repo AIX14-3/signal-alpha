@@ -68,7 +68,8 @@ agent-worker 내장 price collector
 
 [REPORT]
 Report collector/analyzer
-  -> report_raw_details / report_chunks / pgvector 기반 RAG 흐름을 사용
+  -> 현재 런타임은 report_raw_details / report_valuation_facts 수집·파싱·정규화 흐름을 사용
+  -> report_chunks / pgvector 기반 RAG 흐름은 복구 후보이며 현재 queue에 연결되어 있지 않음
   -> 리포트 원문 PDF 자체를 사용자에게 노출하지 않고 요약/근거/링크 중심으로 사용
 
 [MAIN/WEB]
@@ -107,7 +108,8 @@ web
 stocks
   -> raw_documents
   -> dart_raw_details / report_raw_details
-  -> report_chunks
+  -> report_valuation_facts
+  -> report_chunks (RAG 복구 후보)
   -> source_documents
   -> signal_events
   -> signal_metrics
@@ -129,7 +131,7 @@ stocks
 ### 다음 구현 우선순위
 
 1. DART `analysis_results`/`agent_results`를 `final_signals` 집계 흐름에 연결한다.
-2. Report RAG의 실제 리포트 수집/청킹/임베딩/분석 경로를 완성한다.
+2. Report 수집/파싱/밸류에이션 fact 정규화 경로를 안정화하고, 별도 설계 후 RAG/Report Agent 복구 여부를 결정한다.
 3. PRICE 수집 데이터의 과거 OHLCV backfill과 PRICE analyzer 결과 저장을 연결한다.
 4. main-server에 관심종목, 분석 실행, 최신 시그널 목록, 시그널 상세 API를 확장한다.
 5. web 대시보드에서 실제 main-server API를 연결하고, 종목 추가-상세-근거 확인 흐름을 완성한다.
@@ -228,7 +230,7 @@ Signal α는 이 질문에 답하기 위한 서비스다.
 
 3. 3개 분석 에이전트가 병렬 실행
    - DART Watcher Agent
-   - Report RAG Agent
+   - Report Valuation Agent / Report RAG Agent `[계획]`
    - Alternative Signal Agent
 
 4. Debate Aggregation Agent가 결과 통합
@@ -289,7 +291,7 @@ Signal α는 이 질문에 답하기 위한 서비스다.
   │ Fan-out 병렬 실행                         │
   │                                          │
   │  Agent 1: DART Watcher                   │
-  │  Agent 2: Report RAG                     │
+  │  Agent 2: Report Valuation / RAG [계획]  │
   │  Agent 3: Alternative Signal             │
   └──────────────────────────────────────────┘
         ↓
@@ -370,7 +372,7 @@ DART 공시 수집, 유형 분류, 주요 공시 분석, 실적 기반 신호 �
 
 ---
 
-## 8. Agent 2 — Report RAG
+## 8. Agent 2 — Report Valuation / RAG `[계획]`
 
 ### 담당
 
@@ -378,14 +380,20 @@ DART 공시 수집, 유형 분류, 주요 공시 분석, 실적 기반 신호 �
 
 ### 역할
 
-증권사 리포트 수집, PDF 파싱, 벡터 검색, 투자의견/목표주가/핵심 근거 추출, 증권사 간 의견 충돌 탐지.
+현재 구현은 증권사 리포트 목록 수집, PDF 다운로드/파싱, 목표가·투자의견·EPS·적용 배수·피어 그룹 등 밸류에이션 fact 구조화, `source_documents`/`signal_events`/`signal_metrics` 정규화까지이다.
+
+`report_chunks` 기반 벡터 검색, Report 전용 `analysis_results`/`agent_results` 저장, Report Agent 합성은 현재 queue 런타임에 연결되어 있지 않으며 후속 복구 후보로 둔다.
 
 ### 수집 방법
 
 1. 네이버 증권 리포트 목록 크롤링
    - 증권사명, 투자의견, 목표주가, 리포트 제목 등 메타데이터 확보
-2. 로컬 PDF RAG
-   - 선별 PDF 3~5개를 로컬에 저장
+2. PDF 파싱과 밸류에이션 fact 구조화
+   - 로컬 또는 GCS에 PDF 저장
+   - PyMuPDF 기반 텍스트 추출과 deterministic fallback
+   - 목표가, 이전 목표가, 투자의견 변화, EPS, 적용 배수, 내재 배수, 피어 그룹을 `report_valuation_facts`에 저장
+   - 후속 `normalize_report`에서 canonical 근거/이벤트/지표 테이블로 승격
+3. RAG 복구 후보
    - PyMuPDF로 텍스트 추출
    - 500토큰 chunking
    - BGE-M3 임베딩
@@ -393,10 +401,10 @@ DART 공시 수집, 유형 분류, 주요 공시 분석, 실적 기반 신호 �
 
 ### 처리 로직
 
-- Top-K 검색 후 LLM으로 의견 추출
-- 목표주가 평균과 현재 주가 괴리율 계산
-- 최근 3개월 목표주가 상향/하향 트렌드 추적
-- 증권사 간 목표주가 갭 25% 이상이면 `conflict_detected = true`
+- 현재: PDF 파싱 결과와 리포트 메타데이터를 결합해 valuation fact를 저장한다.
+- 현재: 정규화 단계에서 목표가/투자의견/밸류에이션 가정 변화를 공통 신호 이벤트와 지표로 변환한다.
+- 현재: 수치 계산은 코드와 DB row 기반으로 수행하며 LLM이 수치를 생성하지 않는다.
+- 계획: RAG를 복구하면 Top-K 근거 검색 후 Report Agent가 근거 요약과 소스 간 일치도 판단을 저장한다.
 
 ### 출력 JSON 예시
 
@@ -408,14 +416,18 @@ DART 공시 수집, 유형 분류, 주요 공시 분석, 실적 기반 신호 �
   "stock_name": "삼성전자",
   "score": 68,
   "direction": "positive",
-  "avg_target": 112000,
-  "upside_pct": 31.8,
-  "target_trend": "up",
-  "conflict_detected": false,
-  "opinions": [
+  "source_agreement": "MEDIUM",
+  "target_price": 112000,
+  "target_price_change_pct": 8.7,
+  "valuation": {
+    "implied_multiple": 14.2,
+    "applied_multiple": 13.5,
+    "needs_review": false
+  },
+  "evidence": [
     {
       "firm": "신한",
-      "view": "매수",
+      "view": "긍정 방향",
       "target": 115000,
       "key_reason": "반도체 업황 회복 기대"
     }
@@ -427,7 +439,8 @@ DART 공시 수집, 유형 분류, 주요 공시 분석, 실적 기반 신호 �
 ### 개발 시 주의
 
 - PDF 원문을 사용자에게 그대로 노출하지 않는다.
-- DB에는 LLM 분석 결과 JSON과 원문 링크 중심으로 저장한다.
+- 현재 DB에는 파싱 결과와 정규화된 근거/이벤트/지표를 저장한다.
+- LLM을 사용할 경우 PDF 파싱 보강과 근거 요약에 한정하고, 수치 값은 원천 데이터 또는 DB row로 검증한다.
 - 발표/서비스 문구에는 “데이터 제공 계약 필요”를 known issue로 명시 가능.
 
 ---
@@ -804,7 +817,7 @@ Report 분석 작업을 큐에 등록한다.
 - `raw_documents`: 모든 수집 원문의 공통 헤더. `source_type`, `stock_code`, `external_id`, `collected_at` 등을 저장
 - `dart_raw_details`: DART 공시 상세. `receipt_no`, 공시 제목, XML/텍스트 추출 결과, 정정 공시 관계 등을 저장
 - `report_raw_details`: 증권사 리포트 원천 메타데이터
-- `report_chunks`: RAG용 리포트 청크와 pgvector embedding
+- `report_chunks`: RAG 복구 후보인 리포트 청크와 pgvector embedding. 현재 Report queue 런타임은 이 테이블을 적재하지 않는다.
 - `collector_runs`: 수집 실행 이력
 - `dart_collection_states`: DART 증분 수집 상태
 
@@ -831,7 +844,8 @@ Report 분석 작업을 큐에 등록한다.
 stocks
   -> raw_documents
   -> dart_raw_details / report_raw_details
-  -> report_chunks
+  -> report_valuation_facts
+  -> report_chunks (RAG 복구 후보)
   -> source_documents
   -> signal_events
   -> signal_metrics
@@ -990,12 +1004,12 @@ LLM 프롬프트에는 반드시 다음 원칙을 넣는다.
 ### 현재 1차 우선순위
 
 1. DART 수집-정규화-분석 결과를 `final_signals` 집계 흐름에 연결
-2. Report RAG 실제 데이터 파이프라인 완성
+2. Report 수집-파싱-정규화 경로 안정화와 RAG 복구 설계
    - 리포트 원천 수집
-   - 청킹
-   - embedding
-   - pgvector 검색
-   - 분석 결과 저장
+   - PDF 저장/파싱
+   - valuation fact 저장
+   - `source_documents`/`signal_events`/`signal_metrics` 정규화
+   - RAG/Report Agent 복구 시 청킹, embedding, pgvector 검색, 분석 결과 저장 추가
 3. PRICE 수집 데이터 분석 연결
    - 과거 OHLCV backfill
    - PRICE analyzer 결과 저장
@@ -1038,7 +1052,7 @@ LLM 프롬프트에는 반드시 다음 원칙을 넣는다.
 |---|---|---|
 | 1주차 | DART 실제 수집/정규화/분석 안정화 | corp_code 동기화, document.xml 텍스트 추출, queue 재시도 |
 | 2주차 | DART 결과 최종 시그널 통합 | analysis_results/agent_results/final_signals 연결 |
-| 3주차 | Report RAG 실제 데이터 연결 | 리포트 수집, 청킹, embedding, pgvector 검색, 분석 저장 |
+| 3주차 | Report 수집·밸류에이션 정규화 안정화 및 RAG 복구 설계 | 리포트 수집, PDF 파싱, valuation fact 저장, canonical 정규화, RAG 복구 범위 확정 |
 | 4주차 | PRICE 수집/분석 연결 | Kiwoom REST 수집, OHLCV backfill, PRICE analyzer 결과 저장 |
 | 5주차 | main-server/web E2E | 종목 추가, 분석 실행, 최신 시그널, 상세 근거, Signal Journal |
 | 6주차 | 발표/검증 정리 | 데모 시나리오, 실패 fallback, 백테스팅 기획, 운영 리스크 |
