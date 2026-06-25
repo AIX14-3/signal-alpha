@@ -16,11 +16,30 @@ from app.core.security import create_access_token
 from app.main import app
 
 
-class _FakeYearlyPortone:
-    dev_mode = True
+class FakePortone:
+    """real PortOne 클라이언트 대체. 결제 검증/취소를 외부 호출 없이 모의한다.
+    raw 에 amount.total 을 넣어 history/receipt 의 실제 결제액 복원 경로도 함께 검증한다."""
+
+    def __init__(self, amount: int = 9900):
+        self.amount = amount
+        self.cancelled: list = []
 
     async def verify_payment(self, payment_id: str) -> PaymentResult:
-        return PaymentResult(payment_id=payment_id, amount=99000, status="paid", raw={})
+        return PaymentResult(
+            payment_id=payment_id,
+            amount=self.amount,
+            status="paid",
+            raw={"amount": {"total": self.amount}},
+        )
+
+    async def cancel_payment(self, payment_id, *, reason="user_cancel", amount=None):
+        self.cancelled.append((payment_id, reason, amount))
+        return {"paymentId": payment_id, "status": "CANCELLED", "amount": amount}
+
+
+class _FakeYearlyPortone(FakePortone):
+    def __init__(self):
+        super().__init__(amount=99000)
 
 
 def _plan(plan_id, plan_type, name, max_watchlist, price_monthly, is_active=True):
@@ -149,6 +168,7 @@ class SubscriptionRoutesTest(unittest.TestCase):
     def setUp(self):
         self.connection = FakeConnection()
         app.dependency_overrides[get_database_pool] = lambda: FakePool(self.connection)
+        app.dependency_overrides[get_portone_client] = lambda: FakePortone()
         self.client = TestClient(app)
         self.token = create_access_token(
             user_id=1,

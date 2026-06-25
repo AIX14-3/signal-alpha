@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from asyncpg import UniqueViolationError
 from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel
 
@@ -32,6 +34,21 @@ class UpdateSubscriptionRequest(BaseModel):
     plan_type: str
     status: str | None = None
     expires_at: str | None = None
+
+
+class UpdateUserRequest(BaseModel):
+    nickname: str | None = None
+    email: str | None = None
+
+
+_EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _admin_email(value: str) -> str:
+    email = (value or "").strip().lower()
+    if not _EMAIL_PATTERN.match(email):
+        raise admin_error(400, "INVALID_EMAIL", "이메일 형식이 올바르지 않습니다.")
+    return email
 
 
 @admin_router.post("/login")
@@ -122,6 +139,43 @@ async def get_user_detail(
     return _user_detail(dict(row))
 
 
+@admin_router.patch("/users/{user_id}")
+async def update_user(
+    user_id: int,
+    payload: UpdateUserRequest,
+    _admin: dict[str, Any] = Depends(get_current_admin),
+    pool: Any = Depends(get_database_pool),
+) -> dict[str, Any]:
+    """회원 닉네임/이메일 수정(보낸 필드만 변경). 이메일 중복 시 409."""
+    nickname = payload.nickname.strip() if payload.nickname is not None else None
+    email = _admin_email(payload.email) if payload.email is not None else None
+    if nickname is None and email is None:
+        raise admin_error(400, "NOTHING_TO_UPDATE", "수정할 내용이 없습니다.")
+    async with pool.acquire() as connection:
+        billing = UserBillingRepository(connection)
+        try:
+            updated = await billing.update_user_profile(
+                user_id=user_id, nickname=nickname, email=email
+            )
+        except UniqueViolationError:
+            raise admin_error(409, "EMAIL_EXISTS", "이미 사용 중인 이메일입니다.") from None
+    if updated is None:
+        raise admin_error(404, "USER_NOT_FOUND", "회원을 찾을 수 없습니다.")
+    return _user_row(dict(updated))
+
+
+@admin_router.delete("/users/{user_id}")
+async def delete_user(
+    user_id: int,
+    _admin: dict[str, Any] = Depends(get_current_admin),
+    pool: Any = Depends(get_database_pool),
+) -> dict[str, Any]:
+    """회원 삭제(soft delete). 동일 휴대폰/이메일 재가입을 막지 않도록 deleted_at 만 기록."""
+    async with pool.acquire() as connection:
+        await UserBillingRepository(connection).soft_delete_user(user_id=user_id)
+    return {"status": "deleted", "user_id": user_id}
+
+
 @admin_router.post("/users/{user_id}/subscription")
 @admin_router.put("/users/{user_id}/subscription")
 async def set_user_subscription(
@@ -175,11 +229,10 @@ async def refund_user(
         if not paid:
             raise admin_error(404, "NO_REFUNDABLE_PAYMENT", "환불 가능한 결제 내역이 없습니다.")
         latest = dict(paid[0])
-        if not portone.dev_mode:
-            try:
-                await portone.cancel_payment(str(latest["imp_uid"]), reason="admin_refund")
-            except PortOneError:
-                raise admin_error(502, "REFUND_FAILED", "환불 처리에 실패했습니다.") from None
+        try:
+            await portone.cancel_payment(str(latest["imp_uid"]), reason="admin_refund")
+        except PortOneError as exc:
+            raise admin_error(502, "REFUND_FAILED", f"환불 처리에 실패했습니다: {exc}") from None
         await repository.record_portone_verification(
             user_id=user_id,
             imp_uid=str(latest["imp_uid"]),

@@ -212,6 +212,19 @@ function SubscriptionTab() {
   const active = subscription?.status === "active";
   const cancelScheduled = active && Boolean(subscription?.cancelled_at);
   const expiringSoon = active && Boolean(subscription?.expiring_soon);
+  const yearly = subscription?.billing_cycle === "yearly";
+  const monthlyPrice = plan?.price_monthly && plan.price_monthly > 0 ? plan.price_monthly : 9900;
+  const yearlyPrice = plan?.price_yearly && plan.price_yearly > 0 ? plan.price_yearly : 99000;
+  // 남은 기간을 사람이 읽기 쉬운 단위로(연간권은 "약 1년"/"약 N개월"). days_remaining 은 /me 가 내려줌.
+  const daysLeft = subscription?.days_remaining ?? null;
+  const remainingLabel =
+    daysLeft == null
+      ? null
+      : daysLeft >= 330
+        ? "약 1년"
+        : daysLeft >= 60
+          ? `약 ${Math.round(daysLeft / 30)}개월`
+          : `${daysLeft}일`;
 
   return (
     <div className="card max-w-[480px] p-7">
@@ -224,16 +237,20 @@ function SubscriptionTab() {
       )}
       <div className="text-[13px] font-bold uppercase tracking-[0.1em] text-sky-deep">현재 상태</div>
       <div className="mt-2 text-[28px] font-extrabold">
-        {cancelScheduled ? "해지 예약됨" : active ? "월 구독 중" : "무료"}
+        {cancelScheduled ? "해지 예약됨" : active ? (yearly ? "연 구독 중" : "월 구독 중") : "무료"}
       </div>
       <div className="mt-1 text-[14px] text-muted">
         {active && subscription?.expires_at
           ? cancelScheduled
             ? `만료 ${subscription.expires_at.slice(0, 10)}까지 이용 가능 (이후 종료)`
-            : `만료 ${subscription.expires_at.slice(0, 10)}`
+            : `만료 ${subscription.expires_at.slice(0, 10)}${remainingLabel ? ` · 남은 기간 ${remainingLabel}` : ""}`
           : "무료 회원은 리포트를 3회까지 열람할 수 있습니다."}
       </div>
-      <div className="mt-3 text-[15px]">{won(plan?.price_monthly && plan.price_monthly > 0 ? plan.price_monthly : 9900)} /월 · 무제한 열람</div>
+      <div className="mt-3 text-[15px]">
+        {active && yearly
+          ? `${won(yearlyPrice)} /년 · 무제한 열람`
+          : `${won(monthlyPrice)} /월 · 무제한 열람`}
+      </div>
       <div className="mt-6 flex flex-wrap gap-2">
         {active ? (
           cancelScheduled ? (
@@ -274,7 +291,7 @@ function SubscriptionTab() {
             {payments.map((p) => (
               <li key={p.payment_id} className="flex items-center justify-between text-[13.5px]">
                 <span className="text-muted">{p.paid_at ? p.paid_at.slice(0, 10) : "—"}</span>
-                <span className="font-semibold">월 구독 · {won(p.amount)}</span>
+                <span className="font-semibold">{(p.order_name ?? "구독").replace("Signal Alpha ", "")} · {won(p.amount)}</span>
               </li>
             ))}
           </ul>

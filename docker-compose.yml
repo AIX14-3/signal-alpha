@@ -147,6 +147,11 @@ services:
     volumes:
       - ./services/main-server:/workspace/services/main-server
       - ./packages/data-access:/workspace/packages/data-access
+    # 로컬 .env 의 PortOne/소셜/구독가/시크릿을 컨테이너로 주입한다(real 모드 필수 —
+    # 미주입 시 PORTONE_API_SECRET 부재로 결제 confirm 이 400). DATABASE_URL/PYTHONPATH 등
+    # 컨테이너 네트워크용 값은 아래 environment 가 우선해 덮어쓴다(.env 의 localhost 값 무시).
+    env_file:
+      - ./services/main-server/.env
     environment:
       SERVICE_NAME: main-server
       SERVICE_VERSION: ${SERVICE_VERSION:-0.1.0}

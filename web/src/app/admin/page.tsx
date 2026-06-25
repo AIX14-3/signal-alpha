@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   adminCancelSubscription,
+  adminDeleteUser,
   adminGetStats,
   adminListUsers,
   adminLogin,
@@ -10,6 +11,7 @@ import {
   adminMe,
   adminRefund,
   adminSetSubscription,
+  adminUpdateUser,
   type AdminStats,
   type AdminUser,
 } from "@/lib/apiClient";
@@ -76,6 +78,11 @@ function AdminDashboard({ onLogout }: { onLogout: () => Promise<void> }) {
   const [total, setTotal] = useState(0);
   const [q, setQ] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  // 인라인 수정(행 단위)
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editEmail, setEditEmail] = useState("");
+  const [editNickname, setEditNickname] = useState("");
 
   const reload = useCallback(async (query?: string) => {
     try {
@@ -113,6 +120,41 @@ function AdminDashboard({ onLogout }: { onLogout: () => Promise<void> }) {
     }
   }
 
+  function startEdit(user: AdminUser) {
+    setEditingId(user.id);
+    setEditEmail(user.email ?? "");
+    setEditNickname(user.nickname ?? "");
+    setError(null);
+  }
+
+  async function saveEdit(userId: number) {
+    setBusy(true);
+    setError(null);
+    try {
+      await adminUpdateUser(userId, { email: editEmail.trim(), nickname: editNickname.trim() });
+      setEditingId(null);
+      await reload(q);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteUser(user: AdminUser) {
+    if (!window.confirm(`'${user.nickname ?? user.email ?? user.id}' 회원을 삭제할까요? 되돌릴 수 없습니다.`)) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await adminDeleteUser(user.id);
+      await reload(q);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="py-12">
       <div className="flex items-center justify-between">
@@ -133,7 +175,7 @@ function AdminDashboard({ onLogout }: { onLogout: () => Promise<void> }) {
         </div>
       )}
 
-      <div className="mt-10 flex items-center justify-between">
+      <div className="mt-10 flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-[18px] font-bold">회원 ({total})</h2>
         <input
           value={q}
@@ -149,6 +191,7 @@ function AdminDashboard({ onLogout }: { onLogout: () => Promise<void> }) {
             <tr>
               <th className="px-5 py-3 font-semibold">회원번호</th>
               <th className="px-5 py-3 font-semibold">닉네임</th>
+              <th className="px-5 py-3 font-semibold">이메일</th>
               <th className="px-5 py-3 font-semibold">구독</th>
               <th className="px-5 py-3 font-semibold">가입일</th>
               <th className="px-5 py-3 font-semibold">관리</th>
@@ -157,20 +200,45 @@ function AdminDashboard({ onLogout }: { onLogout: () => Promise<void> }) {
           <tbody>
             {users.map((user) => {
               const active = user.subscription?.status === "active";
+              const editing = editingId === user.id;
               return (
                 <tr key={user.id} className="border-t border-line">
                   <td className="px-5 py-3 font-semibold">{user.member_code ?? user.id}</td>
-                  <td className="px-5 py-3">{user.nickname ?? "-"}</td>
+                  <td className="px-5 py-3">
+                    {editing ? (
+                      <input value={editNickname} onChange={(e) => setEditNickname(e.target.value)} placeholder="닉네임" className="card w-[120px] px-2 py-1 text-[13px] outline-none focus:border-sky" />
+                    ) : (
+                      user.nickname ?? "-"
+                    )}
+                  </td>
+                  <td className="px-5 py-3 text-muted">
+                    {editing ? (
+                      <input type="email" value={editEmail} onChange={(e) => setEditEmail(e.target.value)} placeholder="이메일" className="card w-[200px] px-2 py-1 text-[13px] outline-none focus:border-sky" />
+                    ) : (
+                      user.email ?? "-"
+                    )}
+                  </td>
                   <td className="px-5 py-3">{active ? "월 구독" : "무료"}</td>
                   <td className="px-5 py-3 text-muted">{user.created_at ? user.created_at.slice(0, 10) : "-"}</td>
                   <td className="px-5 py-3">
-                    {active ? (
+                    {editing ? (
                       <div className="flex gap-3">
-                        <button type="button" onClick={() => void revoke(user.id)} className="text-[13px] font-semibold text-muted hover:text-red">구독 취소</button>
-                        <button type="button" onClick={() => void refundUser(user.id)} className="text-[13px] font-semibold text-muted hover:text-red">환불</button>
+                        <button type="button" onClick={() => void saveEdit(user.id)} disabled={busy} className="text-[13px] font-semibold text-sky-deep disabled:opacity-60">저장</button>
+                        <button type="button" onClick={() => setEditingId(null)} className="text-[13px] font-semibold text-muted">취소</button>
                       </div>
                     ) : (
-                      <button type="button" onClick={() => void grant(user.id)} className="text-[13px] font-semibold text-sky-deep">구독 부여</button>
+                      <div className="flex flex-wrap gap-3">
+                        {active ? (
+                          <>
+                            <button type="button" onClick={() => void revoke(user.id)} className="text-[13px] font-semibold text-muted hover:text-red">구독 취소</button>
+                            <button type="button" onClick={() => void refundUser(user.id)} className="text-[13px] font-semibold text-muted hover:text-red">환불</button>
+                          </>
+                        ) : (
+                          <button type="button" onClick={() => void grant(user.id)} className="text-[13px] font-semibold text-sky-deep">구독 부여</button>
+                        )}
+                        <button type="button" onClick={() => startEdit(user)} className="text-[13px] font-semibold text-navy-soft hover:text-navy">수정</button>
+                        <button type="button" onClick={() => void deleteUser(user)} className="text-[13px] font-semibold text-muted hover:text-red">삭제</button>
+                      </div>
                     )}
                   </td>
                 </tr>

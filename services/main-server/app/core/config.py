@@ -93,11 +93,6 @@ class Settings:
                 "Invalid production configuration (APP_ENV=production): " + "; ".join(problems)
             )
 
-    @property
-    def portone_dev_mode(self) -> bool:
-        """V2 api_secret 미설정이면 외부 호출 없이 결정적 모의값으로 동작(로컬/CI)."""
-        return not self.portone_api_secret
-
 
 @lru_cache
 def get_settings() -> Settings:
