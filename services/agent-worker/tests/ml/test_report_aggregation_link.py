@@ -62,6 +62,7 @@ class ReportAggregationLinkTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(result["skipped_reason"], "no_ohlcv")
+        self.assertEqual(result["aggregate_task_id"], 701)
         enqueue = connection.aggregate_enqueue()
         self.assertEqual(enqueue[2][1], "aggregate_signal")
         self.assertEqual(enqueue[2][5], [100])

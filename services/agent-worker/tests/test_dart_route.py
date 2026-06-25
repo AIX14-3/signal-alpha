@@ -24,6 +24,29 @@ class FakeConnection:
 
     async def fetch(self, sql, *args):
         self.calls.append(("fetch", sql, args))
+        if "FROM final_signals" in sql:
+            return [
+                {
+                    "id": 900,
+                    "stock_id": 1,
+                    "stock_code": "005930",
+                    "signal_date": date(2026, 6, 8),
+                    "run_key": "AGGREGATED",
+                    "version": "final-agg-v1",
+                    "final_score": 0.25,
+                    "confidence": 0.5,
+                    "signal": "positive",
+                    "source_agreement": "LOW",
+                    "warning_level": "CAUTION",
+                    "score_breakdown": {"DART": {"score": 0.25}},
+                    "summary": "DART 단일 소스 데이터 방향성",
+                    "needs_review": False,
+                    "is_published": True,
+                    "created_at": None,
+                    "updated_at": None,
+                    "published_at": None,
+                }
+            ]
         return [
             {
                 "id": 10,
@@ -202,7 +225,22 @@ class DartRouteTest(unittest.TestCase):
             return {"normalized_count": 1, "analysis_task_ids": [301]}
 
         async def analyze_handler(task):
-            return {"analysis_result_id": 10}
+            return {"analysis_result_id": 10, "ml_infer_task_id": 401}
+
+        async def ml_handler(task):
+            return {"meta_combine_task_id": 501}
+
+        async def meta_handler(task):
+            return {"aggregate_task_id": 601}
+
+        async def aggregate_handler(task):
+            return {"final_signal_id": 900, "synthesize_task_id": 701}
+
+        async def synthesize_handler(task):
+            return {"final_signal_id": 900, "risk_veto_task_id": 801}
+
+        async def risk_veto_handler(task):
+            return {"final_signal_id": 900, "vetoed": False}
 
         connection = FakeConnection()
         app.dependency_overrides[get_database_pool] = lambda: FakePool(connection)
@@ -210,6 +248,11 @@ class DartRouteTest(unittest.TestCase):
             "collect_dart": collect_handler,
             "normalize_dart": normalize_handler,
             "analyze_dart": analyze_handler,
+            "ml_infer": ml_handler,
+            "meta_combine": meta_handler,
+            "aggregate_signal": aggregate_handler,
+            "synthesize": synthesize_handler,
+            "risk_veto": risk_veto_handler,
         }
         client = TestClient(app)
 
@@ -232,8 +275,17 @@ class DartRouteTest(unittest.TestCase):
         self.assertEqual(payload["normalize"][0]["task_id"], 201)
         self.assertEqual(payload["analyze"][0]["status"], "success")
         self.assertEqual(payload["analyze"][0]["task_id"], 301)
+        self.assertEqual(payload["ml_infer"][0]["status"], "success")
+        self.assertEqual(payload["meta_combine"][0]["status"], "success")
+        self.assertEqual(payload["aggregate_signal"][0]["status"], "success")
+        self.assertEqual(payload["synthesize"][0]["status"], "success")
+        self.assertEqual(payload["risk_veto"][0]["status"], "success")
         self.assertEqual(payload["analysis_results"]["count"], 1)
+        self.assertEqual(payload["final_signals"]["count"], 1)
+        self.assertEqual(payload["final_signals"]["items"][0]["run_key"], "AGGREGATED")
         self.assertEqual(payload["queue_summary"]["normalize_pending_count"], 0)
+        self.assertEqual(payload["queue_summary"]["ml_infer_run_count"], 1)
+        self.assertFalse(payload["queue_summary"]["aggregate_signal_limit_reached"])
         self.assertFalse(payload["queue_summary"]["normalize_limit_reached"])
 
     def test_run_e2e_reports_limited_pending_tasks(self):
