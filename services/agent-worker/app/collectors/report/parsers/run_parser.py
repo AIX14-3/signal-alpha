@@ -21,6 +21,7 @@ if hasattr(sys.stdout, "reconfigure"):
 sys.path.insert(0, str(Path(__file__).parent))
 from pdf_extractor import extract_text
 from llm_parser import parse_report
+from valuation_extractor import extract_valuation_facts
 
 ROOT_DIR = Path(__file__).resolve().parents[6]
 DATA_DIR = ROOT_DIR / "data"
@@ -110,7 +111,11 @@ def process_from_s3(
         try:
             llm_config = _build_llm_config(settings)
             if llm_config is None:
-                return {**result, "raw_text": text}
+                return {
+                    **result,
+                    "valuation_facts": extract_valuation_facts(text, target_price=result.get("target_price")),
+                    "raw_text": text,
+                }
             result = _merge_parser_results(
                 result,
                 parse_report(
@@ -120,6 +125,7 @@ def process_from_s3(
             )
         except Exception as exc:
             print(f"  [LLM 보강 오류] {exc}")
+    result["valuation_facts"] = extract_valuation_facts(text, target_price=result.get("target_price"))
     result["raw_text"] = text
     return result
 

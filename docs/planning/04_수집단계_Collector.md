@@ -41,7 +41,7 @@
 
 | 항목 | C-1 Dart | C-2 Report | C-3 Hiring | C-4 Patent | C-5 DataLab | C-6 Price |
 | --- | --- | --- | --- | --- | --- | --- |
-| 상세 저장 테이블 | dart_raw_details | report_raw_details · report_chunks · `[계획] report_valuation_facts` | hiring_raw_details | patent_raw_details | datalab_raw_details | price_snapshots · ohlcv_data |
+| 상세 저장 테이블 | dart_raw_details | report_raw_details · report_chunks · report_valuation_facts | hiring_raw_details | patent_raw_details | datalab_raw_details | price_snapshots · ohlcv_data |
 | 데이터 소스 | DART OpenAPI | 네이버 증권 + PDF | 사람인·잡코리아·기업 채용 페이지 | KIPRIS OpenAPI | 네이버 DataLab API | 키움증권 REST API |
 | 수집 방식 | REST API | 크롤링 + PDF URL/메타 저장 | 멀티소스 크롤링 | API 호출 | API 호출 | REST 폴링 (OAuth) |
 | 수집 기간 | 90일 + 즉시 | 90일 | 90일 | 180일 | 30일 | 실시간 + 120영업일 백필 `[계획]` |
@@ -70,7 +70,7 @@
 - **수집 제외**: 산업·시장·전략 리포트처럼 종목 특정 데이터가 부족한 문서
 - **운영 방침**: 공개 접근 가능한 리포트만 사용하며, PDF 원문과 긴 원문 청크는 사용자에게 노출하지 않음
 - **저장소**: canonical queue 경로는 GCS 또는 local report storage를 사용하며, 저장 key는 `reports/{stock_code}/{publish_date}_{firm_slug}_{source_hash8}.pdf` 형식
-- **구현 메모**: PDF 추출 → 청크(`report_chunks.chunk_text`) → BGE-M3 임베딩 → RAG 검색. 밸류에이션 재해석 전략은 후속 `[계획] report_valuation_facts`에 구조화 fact를 저장하는 방향으로 확장
+- **구현 메모**: PDF 추출 → 청크(`report_chunks.chunk_text`) → BGE-M3 임베딩 → RAG 검색. 밸류에이션 재해석 전략은 `report_valuation_facts`에 구조화 fact를 저장하는 방향으로 확장
 
 ### C-3. Hiring_Collector — 구현
 

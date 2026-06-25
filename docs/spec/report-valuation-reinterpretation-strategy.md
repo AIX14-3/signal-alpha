@@ -141,11 +141,10 @@ LangGraph는 아래 요구가 생길 때 검토합니다.
 
 ## 개발 순서
 
-1. `report_valuation_facts` 스키마 설계
-2. PDF fixture 기반 valuation extractor 테스트 추가
-3. `target_price`, `forward_eps_est`, `implied_multiple` 결정론 계산 구현
+1. `report_valuation_facts` 스키마 설계 - 구현 완료
+2. PDF fixture 기반 valuation extractor 테스트 추가 - 구현 완료
+3. `target_price`, `forward_eps_est`, `implied_multiple` 결정론 계산 구현 - 구현 완료
 4. LLM 분류/패러프레이즈 보강 연결
 5. valuation analyzer에서 배수 분산과 peer gap 산출
 6. Report Agent와 Aggregator에 valuation fact를 보조 근거로 연결
 7. 백테스트 fixture에 성공/실패 사례를 함께 추가
-

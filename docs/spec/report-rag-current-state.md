@@ -268,18 +268,18 @@ ReportAnalyzeTaskHandler
 - `raw_documents`: source 공통 메타데이터
 - `report_raw_details`: 증권사 리포트 상세, PDF 상태, 파싱 필드
 - `report_chunks`: PDF 청크와 embedding
+- `report_valuation_facts`: 리포트별 목표가 산정 fact, EPS, 적용 배수, 내재 배수, 피어 그룹
 - `processing_queue`: queue 작업 상태
 - `analysis_results`: 분석 실행 결과
 - `agent_results`: Report agent 방식별 결과
 
-### 계획 테이블
+### 밸류에이션 fact
 
-- `report_valuation_facts`: 리포트별 목표가 산정 fact와 내재 배수 계산 결과를 저장하는 후보 테이블입니다.
-  - `raw_document_id`, `stock_id`, `target_price`, `forward_eps_est`, `eps_fy`
-  - `methodology`, `applied_multiple`, `implied_multiple`
-  - `peer_group`, `category_tag`, `rerating_thesis`
-  - `extraction_source`, `needs_review`
-  - 실제 추가 시 기존 migration을 수정하지 말고 새 migration을 추가합니다.
+- `029_report_valuation_facts.sql`에서 `report_valuation_facts` 테이블을 추가했습니다.
+- `process_report`는 PDF 파싱 결과에서 `target_price`, `forward_eps_est`, `eps_fy`, `methodology`, `applied_multiple`, `implied_multiple`, `peer_group`를 구조화해 저장합니다.
+- `implied_multiple = target_price / forward_eps_est` 계산은 결정론 코드가 담당합니다.
+- `category_tag`, `rerating_thesis`는 필드만 열어두었고 LLM 분류/패러프레이즈 보강은 후속 작업입니다.
+- 추출 실패나 핵심 값 결측 시 `needs_review = TRUE`로 저장해 추가 확인 필요 상태를 남깁니다.
 
 ### Legacy 테이블
 
@@ -377,8 +377,8 @@ Invoke-RestMethod `
 후속 개발 전에 아래 결정을 먼저 내리는 것이 좋습니다.
 
 0. 밸류에이션 재해석 확장
-   - 다음 큰 작업은 `docs/spec/report-valuation-reinterpretation-strategy.md` 기준의 `report_valuation_facts` 스키마와 extractor MVP입니다.
-   - `implied_multiple = target_price / forward_eps_est` 계산은 코드가 담당하고, LLM은 methodology/category/thesis 분류와 패러프레이즈만 담당해야 합니다.
+   - `report_valuation_facts` 스키마와 extractor MVP는 구현되었습니다.
+   - 다음 작업은 LLM이 methodology/category/thesis 분류와 패러프레이즈만 보강하도록 연결하는 것입니다.
    - PDF 원문과 긴 청크를 사용자에게 노출하지 않고, valuation 전략용 결과는 구조화 fact 중심으로 저장합니다.
 1. 저장 backend
    - canonical queue 경로의 기본 backend는 GCS입니다. 개발과 테스트용 local storage adapter도 구현되어 있으므로, 운영 환경에서는 GCS bucket/권한을 확정하고 로컬 환경에서는 `REPORT_STORAGE_BACKEND=local` 사용 여부를 정하면 됩니다.
