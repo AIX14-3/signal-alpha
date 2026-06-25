@@ -46,6 +46,7 @@ class NormalizedSourceResult:
     risk_flags: list[str]
     summary: str | None
     source_signal_event_ids: list[int]
+    valuation: dict[str, Any] | None
 
 
 class AggregateSignalTaskHandler:
@@ -173,6 +174,11 @@ def _normalize_source_result(row: dict[str, Any]) -> NormalizedSourceResult | No
     data_status = str(detail.get("data_status") or "ok")
     needs_review = bool(detail.get("needs_review")) or data_status in {"partial", "failed"}
     risk_flags = _string_list(detail.get("risk_flags"))
+    valuation = _valuation_summary(detail)
+    risk_flags.extend(_valuation_risk_flags(valuation))
+    if _valuation_needs_review(valuation):
+        needs_review = True
+        data_status = "partial" if data_status == "ok" else data_status
     if data_status == "failed" and "failed_source" not in risk_flags:
         risk_flags.append("failed_source")
     return NormalizedSourceResult(
@@ -189,6 +195,7 @@ def _normalize_source_result(row: dict[str, Any]) -> NormalizedSourceResult | No
         source_signal_event_ids=_int_list(
             row.get("agent_source_signal_event_ids") or row.get("analysis_source_signal_event_ids")
         ),
+        valuation=valuation,
     )
 
 
@@ -279,6 +286,7 @@ def _score_breakdown(results: list[NormalizedSourceResult]) -> dict[str, dict[st
             "analysis_result_id": result.analysis_result_id,
             "agent_result_id": result.agent_result_id,
             "risk_flags": result.risk_flags,
+            **({"valuation": result.valuation} if result.valuation is not None else {}),
         }
     return breakdown
 
@@ -428,6 +436,7 @@ def _caution_items(
             "summary": result.summary,
             "risk_flags": result.risk_flags,
             "agent_result_id": result.agent_result_id,
+            **({"valuation": result.valuation} if result.valuation is not None else {}),
         }
         for result in [*available, *failed]
         if result.needs_review or result.risk_flags or result.direction in {"negative", "mixed"}
@@ -466,6 +475,31 @@ def _method_detail(value: Any) -> dict[str, Any]:
         parsed = json.loads(value)
         return parsed if isinstance(parsed, dict) else {}
     return dict(value)
+
+
+def _valuation_summary(detail: dict[str, Any]) -> dict[str, Any] | None:
+    report_quant = detail.get("report_quant")
+    if not isinstance(report_quant, dict):
+        return None
+    valuation = report_quant.get("valuation")
+    if not isinstance(valuation, dict):
+        return None
+    return dict(valuation)
+
+
+def _valuation_needs_review(valuation: dict[str, Any] | None) -> bool:
+    if valuation is None:
+        return False
+    return bool(valuation.get("needs_review")) or valuation.get("data_status") == "partial"
+
+
+def _valuation_risk_flags(valuation: dict[str, Any] | None) -> list[str]:
+    if valuation is None:
+        return []
+    flags = _string_list(valuation.get("risk_flags"))
+    if flags:
+        return flags
+    return ["valuation_review_required"] if _valuation_needs_review(valuation) else []
 
 
 def _int_list(value: Any) -> list[int]:

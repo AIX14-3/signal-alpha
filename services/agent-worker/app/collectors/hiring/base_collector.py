@@ -98,16 +98,27 @@ def get_target_companies(database_url: str) -> list[str]:
 
     기업 추가/제거는 SQL UPDATE 한 줄이면 충분하고 코드 수정이 불필요하다.
     (stocks 초기 데이터: database/migrations/016_seed_stocks_targets.sql)
+
+    name 과 함께 short_name(약칭)도 반환한다. 수집/backfill 의 사전필터가 이 목록으로
+    후보를 거르는데, insert 게이트(_match_stock_row)는 name·short_name 둘 다로 매칭하므로
+    사전필터가 name 만 쓰면 게이트보다 엄격해져 유효 공고가 유실된다(#176). 대표 사례:
+    공고 회사명 '네이버' ↔ stocks.name 'NAVER'(영문)·short_name '네이버' — name 만으로는
+    한글 공고가 사전필터에서 전량 누락된다. 사전필터는 관대해야 안전하다(권위 판정은 게이트).
     """
     engine = create_engine(database_url, echo=False, future=True)
     try:
         with engine.connect() as conn:
             rows = conn.execute(
-                text("SELECT name FROM stocks WHERE is_target = TRUE ORDER BY name")
+                text("SELECT name, short_name FROM stocks WHERE is_target = TRUE ORDER BY name")
             ).fetchall()
         if rows:
-            names = [row[0] for row in rows]
-            logger.info("🎯 수집 대상 %d개 기업 (DB is_target=TRUE)", len(names))
+            # name + short_name(비어있지 않은 것)을 순서 보존하며 dedup.
+            names: list[str] = []
+            for row in rows:
+                for val in (row[0], row[1]):
+                    if val and val not in names:
+                        names.append(val)
+            logger.info("🎯 수집 대상 %d개 기업 (DB is_target=TRUE, name+short_name)", len(rows))
             return names
         logger.warning("⚠️  is_target=TRUE 기업이 DB에 없습니다. 016_seed_stocks_targets.sql 을 실행하세요.")
         return []

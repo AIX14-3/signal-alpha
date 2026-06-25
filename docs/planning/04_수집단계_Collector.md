@@ -18,7 +18,7 @@
 | 실패 격리 | 특정 소스 수집 실패는 해당 소스에만 국한, 다른 모듈로 전파 안 됨. 실행 로그는 `collector_runs`에 기록 |
 | 인터페이스 | 공통 베이스 인터페이스 상속 (`app/collectors/base.py`) |
 
-> 알려진 예외: Report 수집 경로의 PDF 파서(`report/parsers/llm_parser.py`)에 LLM 호출이 남아 있다. "Collector는 LLM을 호출하지 않는다" 원칙에 맞춰 분석 단계로 이동이 필요하다. `[정리 필요]`
+> Report 경로의 PDF 다운로드, 파싱, LLM 보강은 `collect_report`가 아니라 후속 queue 단계(`process_report`, `embed_report`, `analyze_report`)에서 수행한다. Collector는 리포트 목록 메타데이터와 원천 URL을 저장하고 후속 작업을 등록하는 책임만 가진다.
 
 ---
 
@@ -41,12 +41,12 @@
 
 | 항목 | C-1 Dart | C-2 Report | C-3 Hiring | C-4 Patent | C-5 DataLab | C-6 Price |
 | --- | --- | --- | --- | --- | --- | --- |
-| 상세 저장 테이블 | dart_raw_details | report_raw_details · report_chunks | hiring_raw_details | patent_raw_details | datalab_raw_details | price_snapshots · ohlcv_data |
+| 상세 저장 테이블 | dart_raw_details | report_raw_details · report_chunks · report_valuation_facts | hiring_raw_details | patent_raw_details | datalab_raw_details | price_snapshots · ohlcv_data |
 | 데이터 소스 | DART OpenAPI | 네이버 증권 + PDF | 사람인·잡코리아·기업 채용 페이지 | KIPRIS OpenAPI | 네이버 DataLab API | 키움증권 REST API |
-| 수집 방식 | REST API | 크롤링 + PDF 파싱 | 멀티소스 크롤링 | API 호출 | API 호출 | REST 폴링 (OAuth) |
+| 수집 방식 | REST API | 크롤링 + PDF URL/메타 저장 | 멀티소스 크롤링 | API 호출 | API 호출 | REST 폴링 (OAuth) |
 | 수집 기간 | 90일 + 즉시 | 90일 | 90일 | 180일 | 30일 | 실시간 + 120영업일 백필 `[계획]` |
 | 우선순위 | 고임팩트 immediate / 그 외 batch | batch | batch | batch | batch | 장중 상시 (데몬) |
-| 운영 제약 | LLM 없음 | 원문 로컬 처리 (Known Issue) | IP 차단 대비 (Known Issue) | — | 정책 변경 시 대체 | 결측·정렬 보장, 7일 초과 stale 표시 |
+| 운영 제약 | LLM 없음 | 공개 접근 리포트만, 원문 사용자 노출 금지 | IP 차단 대비 (Known Issue) | — | 정책 변경 시 대체 | 결측·정렬 보장, 7일 초과 stale 표시 |
 | 담당 | 성진 | 은진 | 광현 | 이슬 | 이슬 | 규태 |
 | 구현 (main) | 구현 | 구현 | 구현 | 부분 | 부분 | 구현 |
 
@@ -64,12 +64,13 @@
 
 ### C-2. Report_Collector — 구현
 
-- **1차 수집**: 네이버 증권에서 증권사명·투자의견·목표주가 크롤링
-- **2차 수집**: 신한·미래에셋·KB 3개사 PDF 로컬 저장 후 텍스트 추출
+- **1차 수집**: 네이버 금융 리서치 목록에서 리포트 제목, 증권사명, 발행일, PDF URL 등 메타데이터를 수집
+- **후속 처리**: 저장된 raw 문서마다 `process_report` 작업을 등록하고, PDF 다운로드·파싱·LLM 보강은 후속 queue handler가 수행
 - **수집 대상 리포트**: 실적 분석(Earnings Review), 이벤트 노트(Event Note), 정기 분석(Company Report), 실적 전망(Earnings Preview)
-- **수집 제외**: 산업·시장·전략 리포트 (종목 특정 데이터 없음)
-- **운영 방침**: PDF 원문 미노출. 분석 결과(JSON)만 저장, 원문 링크 연결 (Known Issue)
-- **구현 메모**: PDF 추출 → 청크(`report_chunks.chunk_text`) → 임베딩 워커가 BGE-M3 벡터 갱신 (`database/docs/db_design_summary.md` 참조)
+- **수집 제외**: 산업·시장·전략 리포트처럼 종목 특정 데이터가 부족한 문서
+- **운영 방침**: 공개 접근 가능한 리포트만 사용하며, PDF 원문과 긴 원문 청크는 사용자에게 노출하지 않음
+- **저장소**: canonical queue 경로는 GCS 또는 local report storage를 사용하며, 저장 key는 `reports/{stock_code}/{publish_date}_{firm_slug}_{source_hash8}.pdf` 형식
+- **구현 메모**: PDF 추출 → 청크(`report_chunks.chunk_text`) → BGE-M3 임베딩 → RAG 검색. 밸류에이션 재해석 전략은 `report_valuation_facts`에 구조화 fact를 저장하는 방향으로 확장
 
 ### C-3. Hiring_Collector — 구현
 

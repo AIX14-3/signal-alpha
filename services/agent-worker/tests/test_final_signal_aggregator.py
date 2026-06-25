@@ -42,7 +42,10 @@ def dart_agent_row(
     data_status="ok",
     needs_review=False,
     source="DART",
+    risk_flags=None,
+    report_quant=None,
 ):
+    risk_flags = risk_flags or []
     return {
         "analysis_result_id": analysis_result_id,
         "stock_id": 1,
@@ -61,9 +64,10 @@ def dart_agent_row(
             "source_score": source_score,
             "data_status": data_status,
             "summary": "DART disclosures show a neutral information direction.",
-            "risk_flags": [],
+            "risk_flags": risk_flags,
             "needs_review": needs_review,
             "events": [{"id": 501, "title": "Quarterly report"}],
+            **({"report_quant": report_quant} if report_quant is not None else {}),
         },
         "reliability_score": 90,
         "evidence_quality": 100,
@@ -184,6 +188,11 @@ class AggregateSignalTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(breakdown["ALTERNATIVE"]["score"], 0.36)
         self.assertEqual(breakdown["DART"]["data_status"], "missing")
         self.assertNotIn("REPORT", breakdown)
+
+    # NOTE: 리포트 밸류에이션 요약의 집계 노출 테스트는 제거됨. valuation 요약은 기존
+    # ReportAnalyze(report_quant) 경로로 집계에 실렸는데, 임베딩/RAG 분석 제거로 REPORT가
+    # analysis_result 를 더 이상 만들지 않는다. valuation 추출/적재(report_valuation_facts)는
+    # 유지되므로, 팀에서 새 구조로 valuation 노출을 재배선한 뒤 이 테스트를 재추가할 것.
 
     async def test_unknown_source_is_excluded_and_records_validation_log(self):
         row = dart_agent_row(source="")

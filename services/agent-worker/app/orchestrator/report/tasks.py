@@ -245,6 +245,27 @@ class ReportProcessTaskHandler:
             parsed.get("raw_text", "")[:2000],
         )
 
+        # 밸류에이션 fact 추출(PROCESS 단계, 임베딩 무관) → report_valuation_facts 적재.
+        valuation_facts = dict(parsed.get("valuation_facts") or {})
+        await CollectionRepository(self._connection).upsert_report_valuation_fact(
+            raw_document_id=raw_document_id,
+            stock_id=int(row["stock_id"]),
+            ticker=str(row["stock_code"]),
+            broker=row["securities_firm"],
+            publish_date=row["publish_date"],
+            target_price=valuation_facts.get("target_price") or parsed.get("target_price"),
+            forward_eps_est=valuation_facts.get("forward_eps_est"),
+            eps_fy=valuation_facts.get("eps_fy"),
+            methodology=valuation_facts.get("methodology") or "unknown",
+            applied_multiple=valuation_facts.get("applied_multiple"),
+            implied_multiple=valuation_facts.get("implied_multiple"),
+            peer_group=valuation_facts.get("peer_group") or [],
+            category_tag=valuation_facts.get("category_tag"),
+            rerating_thesis=valuation_facts.get("rerating_thesis"),
+            extraction_source=valuation_facts.get("extraction_source") or "rules",
+            needs_review=bool(valuation_facts.get("needs_review", True)),
+        )
+
         # 파싱 완료 → 정규화 태스크 자동 등록. 파싱 실패와 격리하고 독립 재시도하도록
         # 별도 normalize_report 태스크로 분리한다.
         queue = ProcessingQueueRepository(self._connection)

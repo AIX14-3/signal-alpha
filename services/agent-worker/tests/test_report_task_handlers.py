@@ -37,6 +37,7 @@ class ProcessHandlerConn:
     def __init__(self):
         self.executed = []
         self.fetchvals = []
+        self.valuation_facts = []
 
     async def fetchrow(self, sql, *args):
         if "JOIN report_raw_details" in sql:
@@ -51,6 +52,9 @@ class ProcessHandlerConn:
                 "s3_key": None,
                 "parsing_status": "pending",
             }
+        if "INSERT INTO report_valuation_facts" in sql:
+            self.valuation_facts.append(args)
+            return {"raw_document_id": args[0], "stock_id": args[1]}
         return None
 
     async def execute(self, sql, *args):
@@ -103,7 +107,20 @@ class ReportProcessTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
             observed["process"] = (s3_key, passed_storage, settings)
             return {
                 "opinion": "neutral",
-                "target_price": 90000,
+                "target_price": 120000,
+                "valuation_facts": {
+                    "target_price": 120000,
+                    "forward_eps_est": 8000,
+                    "eps_fy": 2026,
+                    "methodology": "PER",
+                    "applied_multiple": 15.0,
+                    "implied_multiple": 15.0,
+                    "peer_group": [],
+                    "category_tag": None,
+                    "rerating_thesis": None,
+                    "extraction_source": "rules",
+                    "needs_review": False,
+                },
                 "key_rationale": "근거",
                 "raw_text": "본문",
             }
@@ -120,6 +137,12 @@ class ReportProcessTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertIs(observed["process"][2], settings)
         self.assertEqual(observed["process"][0], "reports/005930/20260624_test_securities_abcdef12.pdf")
         self.assertTrue(any("UPDATE report_raw_details" in sql for sql, _ in conn.executed))
+        self.assertEqual(conn.valuation_facts[0][2], "005930")
+        self.assertEqual(conn.valuation_facts[0][6], 120000)
+        self.assertEqual(conn.valuation_facts[0][7], 8000)
+        self.assertEqual(conn.valuation_facts[0][9], "PER")
+        self.assertEqual(conn.valuation_facts[0][10], 15.0)
+        self.assertEqual(conn.valuation_facts[0][11], 15.0)
         self.assertTrue(any(args[1] == "normalize_report" for _, args in conn.fetchvals))
 
 

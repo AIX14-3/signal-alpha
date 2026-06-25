@@ -1,3 +1,4 @@
+import json
 import sys
 import unittest
 from datetime import datetime
@@ -43,6 +44,7 @@ class FakeReportPipelineConnection:
         self.signal_events = {}
         self.signal_metrics = []
         self.validation_logs = []
+        self.report_valuation_facts = {}
         self.analysis_results = {}
         self.agent_results = {}
         self.processing_queue = []
@@ -200,6 +202,62 @@ class FakeReportPipelineConnection:
             }
             self.signal_metrics.append(row)
             return row
+        if "INSERT INTO report_valuation_facts" in sql:
+            row = {
+                "raw_document_id": args[0],
+                "stock_id": args[1],
+                "ticker": args[2],
+                "broker": args[3],
+                "analyst": args[4],
+                "publish_date": args[5],
+                "target_price": args[6],
+                "forward_eps_est": args[7],
+                "eps_fy": args[8],
+                "methodology": args[9],
+                "applied_multiple": args[10],
+                "implied_multiple": args[11],
+                "peer_group": json.loads(args[12]),
+                "category_tag": args[13],
+                "rerating_thesis": args[14],
+                "extraction_source": args[15],
+                "needs_review": args[16],
+            }
+            self.report_valuation_facts[args[0]] = row
+            return row
+        if "INSERT INTO analysis_results" in sql:
+            analysis_result_id = self._take("analysis_result")
+            row = {
+                "id": analysis_result_id,
+                "request_id": args[0],
+                "stock_id": args[1],
+                "analysis_date": args[2],
+                "run_key": args[3],
+                "source_signal_event_ids": args[4],
+                "base_score": args[5],
+                "analysis_mode": args[8],
+                "warning": args[9],
+                "version": args[11],
+            }
+            self.analysis_results[analysis_result_id] = row
+            return row
+        if "INSERT INTO agent_results" in sql:
+            agent_result_id = self._take("agent_result")
+            row = {
+                "id": agent_result_id,
+                "result_id": args[0],
+                "stock_id": args[1],
+                "debate_method": args[2],
+                "source_signal_event_ids": args[3],
+                "method_score": args[4],
+                "method_signal": args[5],
+                "method_detail": json.loads(args[6]),
+                "reliability_score": args[7],
+                "evidence_quality": args[8],
+                "llm_model": args[9],
+                "prompt_ver": args[10],
+            }
+            self.agent_results[agent_result_id] = row
+            return row
         raise AssertionError(f"unexpected fetchrow SQL: {sql}")
 
     async def fetch(self, sql, *args):
@@ -211,6 +269,32 @@ class FakeReportPipelineConnection:
                 for raw_document_id in raw_ids
                 if self.report_raw_details[raw_document_id]["parsing_status"] == "success"
             ]
+        if "FROM signal_events" in sql and "INNER JOIN source_documents" in sql:
+            signal_event_ids = set(args[0])
+            return [
+                self._signal_event_join_row(signal_event_id)
+                for signal_event_id in signal_event_ids
+                if signal_event_id in self.signal_events
+            ]
+        if "FROM report_raw_details" in sql and "parsing_status = 'success'" in sql:
+            stock_id = args[0]
+            return [
+                {
+                    "investment_opinion": detail["investment_opinion"],
+                    "target_price": detail["target_price"],
+                }
+                for detail in self.report_raw_details.values()
+                if detail["stock_id"] == stock_id and detail["parsing_status"] == "success"
+            ]
+        if "FROM report_valuation_facts" in sql:
+            stock_id = args[0]
+            return [
+                fact
+                for fact in self.report_valuation_facts.values()
+                if fact["stock_id"] == stock_id
+            ]
+        if "FROM ohlcv_data" in sql:
+            return []
         raise AssertionError(f"unexpected fetch SQL: {sql}")
 
     async def execute(self, sql, *args):

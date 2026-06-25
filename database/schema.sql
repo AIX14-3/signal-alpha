@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict JuhNDggbao0pPlzubybxWXeQPTQ6ODl2Zt7LbaswF6Unn0K48q9k9fRh0wGrivc
+\restrict 60F2EtFMPdNqXELNW0KGf1xmB6tQHU8j5JErwhh1Oh5vYrsoaqU3jXGMiT4Cscn
 
 -- Dumped from database version 16.14 (Debian 16.14-1.pgdg13+1)
 -- Dumped by pg_dump version 16.14 (Debian 16.14-1.pgdg13+1)
@@ -1788,6 +1788,35 @@ ALTER SEQUENCE public.report_signal_id_seq OWNED BY public.report_signal.id;
 
 
 --
+-- Name: report_valuation_facts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.report_valuation_facts (
+    raw_document_id bigint NOT NULL,
+    stock_id bigint NOT NULL,
+    ticker character varying(20) NOT NULL,
+    broker character varying(100),
+    analyst character varying(100),
+    publish_date date,
+    target_price integer,
+    forward_eps_est integer,
+    eps_fy integer,
+    methodology character varying(20) DEFAULT 'unknown'::character varying NOT NULL,
+    applied_multiple numeric(12,4),
+    implied_multiple numeric(12,4),
+    peer_group jsonb DEFAULT '[]'::jsonb NOT NULL,
+    category_tag character varying(80),
+    rerating_thesis text,
+    extraction_source character varying(30) DEFAULT 'rules'::character varying NOT NULL,
+    needs_review boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT report_valuation_facts_extraction_source_check CHECK (((extraction_source)::text = ANY ((ARRAY['rules'::character varying, 'llm'::character varying, 'rules_fallback'::character varying])::text[]))),
+    CONSTRAINT report_valuation_facts_methodology_check CHECK (((methodology)::text = ANY ((ARRAY['PER'::character varying, 'PBR'::character varying, 'EV_EBITDA'::character varying, 'SOTP'::character varying, 'DCF'::character varying, 'mixed'::character varying, 'unknown'::character varying])::text[])))
+);
+
+
+--
 -- Name: schema_migrations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -3334,6 +3363,14 @@ ALTER TABLE ONLY public.report_signal
 
 
 --
+-- Name: report_valuation_facts report_valuation_facts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.report_valuation_facts
+    ADD CONSTRAINT report_valuation_facts_pkey PRIMARY KEY (raw_document_id);
+
+
+--
 -- Name: schema_migrations schema_migrations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -4318,6 +4355,27 @@ CREATE INDEX idx_report_signal_stock ON public.report_signal USING btree (stock_
 
 
 --
+-- Name: idx_report_valuation_methodology; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_report_valuation_methodology ON public.report_valuation_facts USING btree (methodology, stock_id);
+
+
+--
+-- Name: idx_report_valuation_needs_review; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_report_valuation_needs_review ON public.report_valuation_facts USING btree (needs_review, stock_id) WHERE (needs_review = true);
+
+
+--
+-- Name: idx_report_valuation_stock_publish; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_report_valuation_stock_publish ON public.report_valuation_facts USING btree (stock_id, publish_date DESC);
+
+
+--
 -- Name: idx_score_history_final_signal; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -4532,6 +4590,13 @@ CREATE TRIGGER trg_hiring_job_functions_updated_at BEFORE UPDATE ON public.hirin
 --
 
 CREATE TRIGGER trg_processing_queue_updated_at BEFORE UPDATE ON public.processing_queue FOR EACH ROW EXECUTE FUNCTION public.update_updated_at();
+
+
+--
+-- Name: report_valuation_facts trg_report_valuation_facts_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_report_valuation_facts_updated_at BEFORE UPDATE ON public.report_valuation_facts FOR EACH ROW EXECUTE FUNCTION public.update_updated_at();
 
 
 --
@@ -5036,6 +5101,14 @@ ALTER TABLE ONLY public.report_raw_details
 
 
 --
+-- Name: report_valuation_facts report_valuation_facts_raw_document_id_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.report_valuation_facts
+    ADD CONSTRAINT report_valuation_facts_raw_document_id_stock_id_fkey FOREIGN KEY (raw_document_id, stock_id) REFERENCES public.raw_documents(id, stock_id) ON DELETE CASCADE;
+
+
+--
 -- Name: score_history score_history_analysis_result_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5207,5 +5280,5 @@ ALTER TABLE ONLY public.watchlists
 -- PostgreSQL database dump complete
 --
 
-\unrestrict JuhNDggbao0pPlzubybxWXeQPTQ6ODl2Zt7LbaswF6Unn0K48q9k9fRh0wGrivc
+\unrestrict 60F2EtFMPdNqXELNW0KGf1xmB6tQHU8j5JErwhh1Oh5vYrsoaqU3jXGMiT4Cscn
 
