@@ -10,12 +10,12 @@
 uv sync --extra ml          # 또는: pip install scikit-learn numpy scipy
 
 # 2) 모델 경연 실행 — 가짜(합성) 데이터로 비교표 출력
-python -m app.ml.bakeoff
+python -m app.ml.research.bakeoff
 
 # 옵션
-python -m app.ml.bakeoff --csv out.csv     # 전체 지표 CSV로 저장
-python -m app.ml.bakeoff --noise 2.0       # 문제를 더 어렵게 (신호 약화)
-python -m app.ml.bakeoff --folds 6 --seed 1
+python -m app.ml.research.bakeoff --csv out.csv     # 전체 지표 CSV로 저장
+python -m app.ml.research.bakeoff --noise 2.0       # 문제를 더 어렵게 (신호 약화)
+python -m app.ml.research.bakeoff --folds 6 --seed 1
 ```
 
 ## DataLab 단독 테스트 (실제 파이프라인)
@@ -25,10 +25,10 @@ python -m app.ml.bakeoff --folds 6 --seed 1
 
 ```bash
 # (a) 데모 데이터 — DB 없이 배관 전체 검증 (실제 변환 코드 사용)
-python -m app.ml.bakeoff --source datalab-demo --weeks 104
+python -m app.ml.research.bakeoff --source datalab-demo --weeks 104
 
 # (b) 실제 데이터 — DataLab은 DB, 주가는 로컬 CSV (ohlcv_data 안 건드림)
-DATABASE_URL=... python -m app.ml.bakeoff --source datalab-db \
+DATABASE_URL=... python -m app.ml.research.bakeoff --source datalab-db \
     --tickers 005930,000660,035420 --start 2021-01-01 --end 2023-12-31 \
     --prices-csv prices_2021_2023.csv --benchmark KS11
 
@@ -97,7 +97,7 @@ backtest_results 라벨  →  features.py(피처) + labels.py(라벨)로 X,y 구
 | `datalab_dataset.py` | DataLab 행+주가 → (X, y) **빌더** (누수 차단) | numpy |
 | `datalab_demo.py` | 현실적 DataLab+주가 데모 행 생성 | numpy |
 | `datalab_db.py` | 실제 DB에서 DataLab+주가 적재 (저장소 재사용) | data-access |
-| `bakeoff.py` | 실행 진입점 (`python -m app.ml.bakeoff`) | 위 전부 |
+| `bakeoff.py` | 실행 진입점 (`python -m app.ml.research.bakeoff`) | 위 전부 |
 
 테스트:
 - `pytest tests/test_ml_harness.py` — 라벨 로직 + 워크포워드 누수 가드

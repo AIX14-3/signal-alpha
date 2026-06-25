@@ -13,7 +13,7 @@ from datetime import date, timedelta
 
 import pytest
 
-from app.ml.datalab_dataset import (
+from app.ml.research.datalab_dataset import (
     PriceSeries,
     build_dataset,
     weekly_signal_dates,
@@ -154,7 +154,7 @@ def test_weekly_signal_dates_strides():
 # --- CSV price loader -------------------------------------------------------
 
 def test_load_prices_csv_groups_by_ticker_and_skips_bad_rows(tmp_path):
-    from app.ml.prices_csv import load_prices_csv
+    from app.ml.research.prices_csv import load_prices_csv
 
     p = tmp_path / "prices.csv"
     p.write_text(
@@ -175,7 +175,7 @@ def test_load_prices_csv_groups_by_ticker_and_skips_bad_rows(tmp_path):
 
 
 def test_load_prices_csv_requires_columns(tmp_path):
-    from app.ml.prices_csv import load_prices_csv
+    from app.ml.research.prices_csv import load_prices_csv
 
     p = tmp_path / "bad.csv"
     p.write_text("symbol,day,price\n005930,2021-01-04,83000\n", encoding="utf-8")

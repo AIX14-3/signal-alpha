@@ -9,7 +9,7 @@ there is no new SQL to keep in sync, then hands plain rows to the pure
 Not exercised by unit tests (it needs a live DB); the transformation it feeds is
 fully covered by ``test_ml_datalab_dataset``. Run via:
 
-    DATABASE_URL=... python -m app.ml.bakeoff --source datalab-db \
+    DATABASE_URL=... python -m app.ml.research.bakeoff --source datalab-db \
         --tickers 005930,000660,035420 --start 2021-01-01 --end 2023-12-31
 """
 

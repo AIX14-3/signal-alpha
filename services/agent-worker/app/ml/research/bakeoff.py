@@ -2,9 +2,9 @@
 
 Run the synthetic smoke test:
 
-    python -m app.ml.bakeoff                # synthetic data, text table
-    python -m app.ml.bakeoff --csv out.csv  # also dump full metrics as CSV
-    python -m app.ml.bakeoff --folds 6 --seed 1
+    python -m app.ml.research.bakeoff                # synthetic data, text table
+    python -m app.ml.research.bakeoff --csv out.csv  # also dump full metrics as CSV
+    python -m app.ml.research.bakeoff --folds 6 --seed 1
 
 When real labels exist, swap ``make_synthetic`` for a loader that pulls features
 (via ``features``) and labels (via ``labels`` / ``backtest_results``) — the

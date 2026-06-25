@@ -11,7 +11,7 @@ the DataLab-only experiment self-contained.
         --start 2021-01-01 --end 2023-12-31 --out prices_2021_2023.csv
 
 Then:
-    DATABASE_URL=... python -m app.ml.bakeoff --source datalab-db \
+    DATABASE_URL=... python -m app.ml.research.bakeoff --source datalab-db \
         --prices-csv prices_2021_2023.csv --benchmark KS11
 """
 

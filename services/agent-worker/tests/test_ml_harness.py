@@ -15,9 +15,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from app.ml import labels
-from app.ml.evaluation import walk_forward_folds
-from app.ml.features import build_feature_row, feature_matrix
+from app.ml.research import labels
+from app.ml.research.evaluation import walk_forward_folds
+from app.ml.research.features import build_feature_row, feature_matrix
 
 
 # --- labels -----------------------------------------------------------------

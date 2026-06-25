@@ -1,7 +1,7 @@
 # DataLab ML 백필 런북
 
 2021~2023 DataLab(검색 트렌드)을 Supabase에 백필하고, 주가는 로컬 CSV로 받아
-모델 경연(`app.ml.bakeoff`)을 돌리는 전체 절차.
+모델 경연(`app.ml.research.bakeoff`)을 돌리는 전체 절차.
 
 > **GPU 불필요·연산 초소형**이라 **로컬 실행이 권장**입니다(한국 로컬은 Supabase 서울·
 > Naver와 지연이 낮아 vast.ai보다 백필이 빠름). 아래 A(로컬) 또는 B(vast.ai) 선택.
@@ -29,7 +29,7 @@ uv run python scripts/backfill_prices_fdr.py --start 2021-01-01 --end 2023-12-31
 uv run python scripts/backfill_datalab.py --start-year 2021 --end-year 2021
 uv run python scripts/backfill_datalab.py --start-year 2021 --end-year 2023
 # (3) 모델 경연
-uv run python -m app.ml.bakeoff --source datalab-db --start 2021-01-01 --end 2023-12-31 `
+uv run python -m app.ml.research.bakeoff --source datalab-db --start 2021-01-01 --end 2023-12-31 `
     --prices-csv prices_2021_2023.csv --benchmark KS11 --csv results.csv
 ```
 
@@ -118,7 +118,7 @@ uv run python scripts/backfill_datalab.py --start-year 2021 --end-year 2023
 ## 6. 모델 경연 (진짜 데이터)
 
 ```bash
-uv run python -m app.ml.bakeoff --source datalab-db \
+uv run python -m app.ml.research.bakeoff --source datalab-db \
   --tickers 005930,000660,035420 --start 2021-01-01 --end 2023-12-31 \
   --prices-csv prices_2021_2023.csv --benchmark KS11 \
   --csv results_2021_2023.csv
@@ -150,6 +150,6 @@ uv run python -m app.ml.bakeoff --source datalab-db \
 DB 없이 변환 파이프라인만 확인하려면:
 ```bash
 cd services/agent-worker
-uv run python -m app.ml.bakeoff --source datalab-demo
+uv run python -m app.ml.research.bakeoff --source datalab-demo
 uv run pytest tests/test_ml_harness.py tests/test_ml_datalab_dataset.py -q
 ```
