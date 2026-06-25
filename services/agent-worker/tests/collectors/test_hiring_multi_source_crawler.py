@@ -18,6 +18,7 @@ from app.collectors.hiring.base_collector import CollectorResult
 from app.collectors.hiring.multi_source_crawler import (
     CrawlerSpec,
     MultiSourceCrawler,
+    _group_companies_by_stock,
     _instantiate_crawlers,
 )
 from app.collectors.hiring.sites import http as http_mod
@@ -285,6 +286,126 @@ class CollectBlockSensorTest(unittest.TestCase):
             with self.assertLogs(_LOGGER, level="WARNING") as cm, self.assertRaises(RuntimeError):
                 crawler.collect(["삼성전자"])
         self.assertTrue(any("차단 신호 감지" in m and "403=5" in m for m in cm.output))
+
+
+class GroupCompaniesByStockTest(unittest.TestCase):
+    """평면 회사명 리스트 → 종목(canonical)별 그룹. 별칭(풀네임·약칭) 병합 + 순서 보존."""
+
+    def test_groups_aliases_under_canonical_preserving_order(self):
+        amap = {
+            "naver": "NAVER", "네이버": "NAVER",
+            "sk하이닉스": "SK하이닉스", "하이닉스": "SK하이닉스",
+        }
+        groups = _group_companies_by_stock(
+            ["NAVER", "네이버", "SK하이닉스", "하이닉스"], amap
+        )
+        self.assertEqual(
+            groups,
+            [("NAVER", ["NAVER", "네이버"]), ("SK하이닉스", ["SK하이닉스", "하이닉스"])],
+        )
+
+    def test_unmapped_company_is_its_own_group(self):
+        """alias_map 에 없으면(맵 로드 실패/미등록) 입력 그대로 단독 그룹 — 회귀 없음."""
+        groups = _group_companies_by_stock(["기아", "듣보종목"], {})
+        self.assertEqual(groups, [("기아", ["기아"]), ("듣보종목", ["듣보종목"])])
+
+    def test_dedups_repeated_terms(self):
+        groups = _group_companies_by_stock(["NAVER", "NAVER"], {"naver": "NAVER"})
+        self.assertEqual(groups, [("NAVER", ["NAVER"])])
+
+    def test_skips_empty_entries(self):
+        groups = _group_companies_by_stock(["", "NAVER"], {"naver": "NAVER"})
+        self.assertEqual(groups, [("NAVER", ["NAVER"])])
+
+
+def _stub_portal(label: str) -> MagicMock:
+    m = MagicMock()
+    m.source_label = label
+    m.crawl.return_value = []
+    m.crawl_by_member_id.return_value = []
+    return m
+
+
+class CollectAliasGroupingTest(unittest.TestCase):
+    """collect() 가 별칭을 종목별로 묶어 '종목당 1회' 반복하되, 포털은 모든 별칭으로
+    검색해 커버리지를 유지하는지(방금 고친 NAVER 한글 누락 회귀 방지)."""
+
+    def test_portals_search_every_alias_official_runs_once_per_stock(self):
+        saramin = _stub_portal("SARAMIN")
+        jobkorea = _stub_portal("JOBKOREA")
+        jasoseol = _stub_portal("JASOSEOL")
+        official = _stub_portal("NAVER_OFFICIAL")
+
+        crawler = MultiSourceCrawler(
+            database_url="postgresql://test/ignored",
+            use_portals=True,
+            use_official=True,
+            rate_limit_sec=0.0,
+            driver_rotation_size=0,
+        )
+        alias_map = {"naver": "NAVER", "네이버": "NAVER", "삼성전자": "삼성전자"}
+
+        with patch.object(
+            multi_source_crawler, "_load_stock_aliases", return_value=alias_map
+        ), patch.object(
+            multi_source_crawler, "_load_jobkorea_company_ids", return_value={}
+        ), patch.object(
+            multi_source_crawler, "_load_source_specs",
+            return_value=[_spec("NAVER", "official_selenium", "StubCrawler")],
+        ), patch.object(
+            multi_source_crawler, "_instantiate_crawlers", return_value={"NAVER": official}
+        ), patch.object(
+            MultiSourceCrawler, "_get_portal_crawlers",
+            return_value=(saramin, jobkorea, jasoseol),
+        ), patch.object(
+            MultiSourceCrawler, "_setup_driver", autospec=True
+        ), patch.object(MultiSourceCrawler, "_quit_driver", autospec=True):
+            crawler.collect(["NAVER", "네이버", "삼성전자"])
+
+        # 포털(사람인·자소설): NAVER 그룹의 두 별칭 + 삼성전자 → 별칭마다 검색(커버리지 유지)
+        self.assertEqual(
+            [c.args[0] for c in saramin.crawl.call_args_list], ["NAVER", "네이버", "삼성전자"]
+        )
+        self.assertEqual(
+            [c.args[0] for c in jasoseol.crawl.call_args_list], ["NAVER", "네이버", "삼성전자"]
+        )
+        # 잡코리아 미매핑 → 별칭마다 키워드 폴백
+        self.assertEqual(
+            [c.args[0] for c in jobkorea.crawl.call_args_list], ["NAVER", "네이버", "삼성전자"]
+        )
+        # 공식 사이트: NAVER+네이버는 한 종목 → canonical "NAVER" 로 정확히 1회만
+        official.crawl.assert_called_once_with("NAVER")
+
+    def test_jobkorea_member_id_collected_once_per_stock(self):
+        """회원번호 매핑(canonical) 종목은 별칭이 여럿이어도 직접수집 1회(노이즈 0, #313)."""
+        saramin = _stub_portal("SARAMIN")
+        jobkorea = _stub_portal("JOBKOREA")
+        jasoseol = _stub_portal("JASOSEOL")
+
+        crawler = MultiSourceCrawler(
+            database_url="postgresql://test/ignored",
+            use_portals=True,
+            use_official=False,
+            rate_limit_sec=0.0,
+            driver_rotation_size=0,
+        )
+        with patch.object(
+            multi_source_crawler, "_load_stock_aliases",
+            return_value={"naver": "NAVER", "네이버": "NAVER"},
+        ), patch.object(
+            multi_source_crawler, "_load_jobkorea_company_ids",
+            return_value={"NAVER": "21572628"},
+        ), patch.object(
+            MultiSourceCrawler, "_get_portal_crawlers",
+            return_value=(saramin, jobkorea, jasoseol),
+        ), patch.object(
+            MultiSourceCrawler, "_setup_driver", autospec=True
+        ), patch.object(MultiSourceCrawler, "_quit_driver", autospec=True):
+            crawler.collect(["NAVER", "네이버"])
+
+        # 직접수집은 canonical 로 1회, 키워드 crawl 은 호출 안 함(매핑됨).
+        jobkorea.crawl_by_member_id.assert_called_once_with("21572628", "NAVER")
+        jobkorea.crawl.assert_not_called()
 
 
 if __name__ == "__main__":

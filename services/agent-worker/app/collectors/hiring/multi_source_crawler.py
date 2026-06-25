@@ -135,6 +135,55 @@ def _load_jobkorea_company_ids(db_url: str) -> dict[str, str]:
     return {row.name: row.company_id for row in rows}
 
 
+def _load_stock_aliases(db_url: str) -> dict[str, str]:
+    """{별칭(소문자) → canonical 종목명(stocks.name)} (is_target).
+
+    canonical 은 stocks.name(공식 크롤러·잡코리아 매핑 키와 동일). 별칭 = name·short_name.
+    get_target_companies 가 name+short_name 을 평면으로 주므로, 영문 'NAVER' 와 한글 '네이버'
+    처럼 정규화로는 묶이지 않는 별칭을 같은 종목으로 묶어 '종목당 1회' 수집을 가능케 한다.
+    실패/빈 결과 시 빈 dict → 그룹핑 없이 입력 그대로(graceful, 회귀 없음).
+    """
+    from sqlalchemy import create_engine, text
+
+    engine = create_engine(db_url, echo=False, future=True)
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(text(
+                "SELECT name, short_name FROM stocks WHERE is_target = TRUE"
+            )).fetchall()
+    finally:
+        engine.dispose()
+    alias_map: dict[str, str] = {}
+    for row in rows:
+        for alias in (row.name, row.short_name):
+            if alias:
+                alias_map[alias.lower()] = row.name
+    return alias_map
+
+
+def _group_companies_by_stock(
+    target_companies: list[str], alias_map: dict[str, str]
+) -> list[tuple[str, list[str]]]:
+    """평면 회사명 리스트 → [(canonical, [검색별칭...])] (첫 등장 순서 보존).
+
+    canonical = alias_map 로 해석(없으면 입력 그대로). 같은 종목의 풀네임·약칭을 한 그룹으로
+    묶어 '종목당 1회' 반복하게 한다. 별칭은 포털 검색어로 모두 쓰여 커버리지를 유지한다.
+    """
+    groups: list[tuple[str, list[str]]] = []
+    index: dict[str, int] = {}
+    for company in target_companies:
+        if not company:
+            continue
+        canonical = alias_map.get(company.lower(), company)
+        if canonical not in index:
+            index[canonical] = len(groups)
+            groups.append((canonical, []))
+        terms = groups[index[canonical]][1]
+        if company not in terms:
+            terms.append(company)
+    return groups
+
+
 def _instantiate_crawlers(
     specs: list[CrawlerSpec], driver, registry: dict[str, type] | None = None
 ) -> dict[str, object]:
@@ -297,7 +346,20 @@ class MultiSourceCrawler(BaseCollector):
                         "⚠️  잡코리아 회원번호 매핑 로드 실패(전 종목 키워드 폴백): %s", exc
                     )
 
-            for idx, company in enumerate(target_companies):
+            # 별칭(풀네임·약칭)을 종목별로 묶어 '종목당 1회' 반복(중복 드라이버 재시작·로그·
+            # 헛조회 제거). 커버리지 유지: 포털은 그룹의 모든 별칭으로 검색. 별칭 그룹핑은
+            # 포털 검색어 커버리지에만 의미가 있으므로 use_portals 일 때만 DB 조회(공식 전용
+            # 모드는 동일성 그룹핑 = 기존 거동 유지). 맵 로드 실패 시 입력 그대로(회귀 없음).
+            alias_map: dict[str, str] = {}
+            if self.use_portals:
+                try:
+                    alias_map = _load_stock_aliases(self.database_url)
+                except Exception as exc:
+                    logger.warning("⚠️  종목 별칭 맵 로드 실패(그룹핑 없이 진행): %s", exc)
+                    alias_map = {}
+            company_groups = _group_companies_by_stock(target_companies, alias_map)
+
+            for idx, (company, search_terms) in enumerate(company_groups):
 
                 # ── 드라이버 로테이션 ────────────────────────────────────────
                 if (
@@ -307,7 +369,7 @@ class MultiSourceCrawler(BaseCollector):
                 ):
                     logger.info(
                         "🔄 드라이버 로테이션 (기업 %d/%d, 배치 크기 %d) — 재시작 중...",
-                        idx + 1, len(target_companies), self.driver_rotation_size,
+                        idx + 1, len(company_groups), self.driver_rotation_size,
                     )
                     self._quit_driver()
                     self._setup_driver()
@@ -322,33 +384,42 @@ class MultiSourceCrawler(BaseCollector):
 
                 company_jobs: list[dict] = []
                 logger.info("─" * 60)
-                logger.info("🏢 [%d/%d] %s 수집 시작",
-                            idx + 1, len(target_companies), company)
+                logger.info("🏢 [%d/%d] %s 수집 시작 (검색어: %s)",
+                            idx + 1, len(company_groups), company, ", ".join(search_terms))
 
                 # 1) 포털 수집 (사람인 + 잡코리아 + 자소설닷컴)
+                # 포털은 그룹의 모든 별칭(풀네임·약칭)으로 검색해 커버리지를 유지한다
+                # (예: jasoseol 은 한글 '네이버' 로만 매칭 — 영문 'NAVER' 로는 누락).
                 if self.use_portals:
                     saramin, jobkorea, jasoseol = self._get_portal_crawlers()
 
-                    # 사람인: 키워드 검색(현행)
-                    try:
-                        results = saramin.crawl(company)
-                        company_jobs.extend(results)
-                        logger.info("  ✓ [%s] %d건", saramin.source_label, len(results))
-                    except Exception as exc:
-                        logger.warning("  ⚠️  [%s] 오류: %s", saramin.source_label, exc)
-                    time.sleep(self.rate_limit_sec)
+                    # 사람인: 별칭마다 키워드 검색
+                    for term in search_terms:
+                        try:
+                            results = saramin.crawl(term)
+                            company_jobs.extend(results)
+                            logger.info("  ✓ [%s] %d건 (%s)",
+                                        saramin.source_label, len(results), term)
+                        except Exception as exc:
+                            logger.warning("  ⚠️  [%s] 오류(%s): %s",
+                                           saramin.source_label, term, exc)
+                        time.sleep(self.rate_limit_sec)
 
-                    # 잡코리아: 회원번호 매핑 있으면 직접수집(노이즈 0). 미매핑·DOM깨짐이면
-                    # crawl_by_member_id가 None → 기존 키워드 crawl()로 폴백(#313).
+                    # 잡코리아: 회원번호 매핑(canonical) 있으면 직접수집 1회(노이즈 0, #313).
+                    # 미매핑이면 별칭마다 키워드 폴백. crawl_by_member_id None(DOM깨짐) 도 별칭 폴백.
                     member_id = jobkorea_company_ids.get(company)
                     try:
                         results = (
                             jobkorea.crawl_by_member_id(member_id, company)
                             if member_id else None
                         )
-                        via = "회원번호" if results is not None else "키워드"
-                        if results is None:
-                            results = jobkorea.crawl(company)
+                        via = "회원번호"
+                        if results is None:           # 미매핑 또는 DOM 깨짐 → 별칭 키워드 폴백
+                            via = "키워드"
+                            results = []
+                            for term in search_terms:
+                                results.extend(jobkorea.crawl(term))
+                                time.sleep(self.rate_limit_sec)
                         company_jobs.extend(results)
                         logger.info(
                             "  ✓ [%s] %d건 (%s)", jobkorea.source_label, len(results), via
@@ -357,14 +428,17 @@ class MultiSourceCrawler(BaseCollector):
                         logger.warning("  ⚠️  [%s] 오류: %s", jobkorea.source_label, exc)
                     time.sleep(self.rate_limit_sec)
 
-                    # 자소설닷컴: 공개 JSON API(현재 열린 공고). 런당 1회 fetch+기업별 필터.
-                    try:
-                        results = jasoseol.crawl(company)
-                        company_jobs.extend(results)
-                        logger.info("  ✓ [%s] %d건", jasoseol.source_label, len(results))
-                    except Exception as exc:
-                        logger.warning("  ⚠️  [%s] 오류: %s", jasoseol.source_label, exc)
-                    time.sleep(self.rate_limit_sec)
+                    # 자소설닷컴: 공개 JSON API(런당 1회 fetch+기업별 필터). 별칭마다 필터.
+                    for term in search_terms:
+                        try:
+                            results = jasoseol.crawl(term)
+                            company_jobs.extend(results)
+                            logger.info("  ✓ [%s] %d건 (%s)",
+                                        jasoseol.source_label, len(results), term)
+                        except Exception as exc:
+                            logger.warning("  ⚠️  [%s] 오류(%s): %s",
+                                           jasoseol.source_label, term, exc)
+                        time.sleep(self.rate_limit_sec)
 
                 # 2) 공식 사이트 수집 (hiring_sources DB 기반)
                 if self.use_official:
