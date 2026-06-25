@@ -100,6 +100,14 @@ docs/Signal_Alpha_기획서_v4.md
 docs/Report_RAG_은진_다음작업.md
 docs/report_sej/
 
+# MVP synthetic pipeline outputs (run_pipeline.py / seed / run_recommend.py)
+data/mvp_baseline*.csv
+data/report_*.json
+data/recommendations*.csv
+services/agent-worker/data/mvp_baseline*.csv
+services/agent-worker/data/report_*.json
+services/agent-worker/data/recommendations*.csv
+
 # Local data/runtime files
 db.sqlite3
 db.sqlite3-journal

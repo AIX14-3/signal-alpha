@@ -8,11 +8,21 @@ ML_INFER가 적재한 ml_inferences(모델별 pred_vol)를 읽어 ``meta_learner
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import date, datetime
 from typing import Any
 
 from app.ml.inference import DEFAULT_HORIZON, DEFAULT_RUN_KEY
 from app.ml.meta_learner import combine, load_weights
 from app.orchestrator.queue.context import enqueue_aggregate, parse_task_context
+
+
+def _to_date(value: Any) -> date:
+    """task_context 의 asof_date 는 JSONB 왕복으로 ISO 문자열이 된다 → DATE 파라미터용 date 로."""
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    return datetime.fromisoformat(str(value)[:10]).date()
 
 
 class MetaCombineTaskHandler:
@@ -31,10 +41,10 @@ class MetaCombineTaskHandler:
         stock_id = int(task["stock_id"])
         ctx = parse_task_context(task.get("task_context"))
         run_key = str(ctx.get("run_key") or DEFAULT_RUN_KEY)
-        asof_date = ctx.get("asof_date")
+        raw_asof = ctx.get("asof_date")
         horizon = int(ctx.get("horizon") or DEFAULT_HORIZON)
         aggregate_ctx = ctx.get("aggregate_ctx")
-        if not asof_date:
+        if not raw_asof:
             # 결합 불가여도 선형 체인은 끊지 않는다 → 게이트2로 진행.
             await enqueue_aggregate(
                 self._queue,
@@ -44,6 +54,7 @@ class MetaCombineTaskHandler:
             )
             return {"stock_id": stock_id, "skipped_reason": "asof_date_required"}
 
+        asof_date = _to_date(raw_asof)
         rows = [
             dict(row)
             for row in await self._inferences.list_for_run(
