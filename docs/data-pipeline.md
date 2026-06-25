@@ -21,7 +21,7 @@ aggregate 소스 결과 통합 → final_signals (소스 방향성 일치도·�
 | 소스 | 수집 | 주요 처리 |
 |---|---|---|
 | **DART** | OpenDART corp_code/list/document.xml | `raw_documents` + `dart_raw_details` → 정규화 → 규칙 기반 분석, 고임팩트 공시는 선택적 LLM |
-| **Report** | 네이버 리포트 목록 + 선별 PDF | `report_raw_details` → `report_chunks`(pgvector) → RAG 분석. 원문 PDF 미노출, 요약·근거·링크 중심 |
+| **Report** | 네이버 리포트 목록 + PDF | `report_raw_details`(PDF 파싱: 목표가·의견·근거) → `report_valuation_facts`(EPS·적용/내재 배수) → 결정론 분석. 원문 PDF 미노출, 구조화 fact·링크 중심 |
 | **PRICE** | 키움 REST (agent-worker 내장 데몬) | `price_snapshots`, `ohlcv_data` 저장 → PRICE analyzer는 **DB만** 읽어 분석 |
 | **Alternative** | 채용 / 특허(KIPRIS) / 네이버 DataLab / SEC | 소스별 collector→analyzer. DataLab은 카테고리 기반 키워드 검색량 |
 
@@ -34,7 +34,7 @@ aggregate 소스 결과 통합 → final_signals (소스 방향성 일치도·�
 stocks
   └─ raw_documents
        ├─ dart_raw_details / report_raw_details
-       │     └─ report_chunks (pgvector)
+       │     └─ report_valuation_facts (리포트 목표가·EPS·배수)
        └─ source_documents
             └─ signal_events
                  └─ signal_metrics
@@ -57,9 +57,9 @@ stocks
 - **구현됨**: 가격 수집은 `agent-worker` lifespan 백그라운드 데몬으로 동작, `price_snapshots`/`ohlcv_data` 적재.
   PRICE analyzer는 DB만 읽음(키움 API 직접 호출 금지).
 - **구현됨**: DataLab 카테고리 기반 수집 경로.
-- **계획/진행 중**: Aggregator/Debate 흐름은 스키마는 있으나 운영 핸들러 미완.
-  Report는 canonical schema(`raw_documents → report_raw_details → report_chunks`) 이전이 진행 중인 기술 부채
-  (legacy `report_raw`, `report_signal`은 과거 경로용으로만 유지).
+- **구현됨**: Report 큐 경로 `collect_report → process_report → normalize_report → analyze_report` (결정론 밸류에이션 fact 추출). 단, Report 분석 결과를 Aggregator/ML 체인으로 자동 전달하는 연결은 아직 없음.
+- **폐지됨**: 리포트 PDF **임베딩/RAG 검색**과 **pgvector** 확장은 제거되었습니다(`report_chunks` 테이블 제거, `embed_report`/RAG retriever/Report Agent 부재). 리포트 분석은 RAG가 아니라 `report_valuation_facts` 기반 결정론 추출입니다. 자세한 현황은 `spec/report-rag-current-state.md`.
+- **계획/진행 중**: Aggregator/Debate 흐름은 스키마는 있으나 운영 핸들러 미완. legacy `report_raw`, `report_signal`은 과거 경로용으로만 유지.
 
 ## LLM·분석 규칙
 
