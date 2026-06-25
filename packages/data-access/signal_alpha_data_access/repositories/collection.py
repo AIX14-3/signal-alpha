@@ -319,6 +319,38 @@ class CollectionRepository:
             needs_review,
         )
 
+    async def list_report_valuation_facts(self, *, stock_id: int, limit: int = 20) -> list[Any]:
+        return list(await self._connection.fetch(
+            """
+            SELECT
+                raw_document_id,
+                stock_id,
+                ticker,
+                broker,
+                analyst,
+                publish_date,
+                target_price,
+                forward_eps_est,
+                eps_fy,
+                methodology,
+                applied_multiple,
+                implied_multiple,
+                peer_group,
+                category_tag,
+                rerating_thesis,
+                extraction_source,
+                needs_review,
+                created_at,
+                updated_at
+            FROM report_valuation_facts
+            WHERE stock_id = $1
+            ORDER BY publish_date DESC NULLS LAST, raw_document_id DESC
+            LIMIT $2
+            """,
+            stock_id,
+            limit,
+        ))
+
     async def delete_dart_test_data(
         self,
         *,

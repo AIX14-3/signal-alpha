@@ -19,7 +19,7 @@
 | 역할 | 공시 임팩트 분석 | 리포트 근거 검색과 밸류에이션 가정 재해석 |
 | 입력 | DART 정규화 데이터 (dart_raw_details 경유) | report_raw_details · report_chunks · report_valuation_facts |
 | 처리 | 고임팩트 즉시 / 저임팩트 배치 | 배치 전용 |
-| 핵심 로직 | ① Few-shot 방향 일관성 ② 정정공시 반전 ③ BEAT/MISS 분류 (`app/analyzers/dart/` — financials·rules·llm) | ① 텍스트→청크→BGE-M3 임베딩→pgvector→RAG ② 목표가·의견 원천값 추출 ③ EPS/적용 배수/피어 그룹 구조화 ④ 내재 배수(`target_price / forward_eps_est`) 결정론 계산 ⑤ Gemini 기반 카테고리 변화와 재평가 thesis 패러프레이즈 ⑥ `[계획]` 배수 분산과 peer gap 계산 |
+| 핵심 로직 | ① Few-shot 방향 일관성 ② 정정공시 반전 ③ BEAT/MISS 분류 (`app/analyzers/dart/` — financials·rules·llm) | ① 텍스트→청크→BGE-M3 임베딩→pgvector→RAG ② 목표가·의견 원천값 추출 ③ EPS/적용 배수/피어 그룹 구조화 ④ 내재 배수(`target_price / forward_eps_est`) 결정론 계산 ⑤ Gemini 기반 카테고리 변화와 재평가 thesis 패러프레이즈 ⑥ 배수 분산과 peer gap 계산 |
 | 출력 | score, signal, top_disclosures, earnings_surprise, summary | data_status, risk_flags, report_quant, evidence_chunks, valuation_facts, `[계획] scenario_band` |
 | 사용 모델 | Gemini 3 Flash (프로바이더·모델은 env 주입: `DART_LLM_PROVIDER`/`DART_LLM_MODEL`) | BGE-M3 (검색) + Gemini 계열 (분류/패러프레이즈, 수치 생성 금지) |
 | 담당 | 성진 | 은진 |

@@ -361,6 +361,29 @@ class AnalyzeHandlerConn:
                 {"investment_opinion": "Buy", "target_price": 100000},
                 {"investment_opinion": "Hold", "target_price": None},
             ]
+        if "FROM report_valuation_facts" in sql:
+            return [
+                {
+                    "raw_document_id": 42,
+                    "broker": "A",
+                    "publish_date": datetime(2026, 6, 24).date(),
+                    "methodology": "PER",
+                    "applied_multiple": 14.0,
+                    "implied_multiple": 15.0,
+                    "peer_group": ["SK Hynix", "Micron"],
+                    "needs_review": False,
+                },
+                {
+                    "raw_document_id": 43,
+                    "broker": "B",
+                    "publish_date": datetime(2026, 6, 23).date(),
+                    "methodology": "PER",
+                    "applied_multiple": 21.0,
+                    "implied_multiple": 20.0,
+                    "peer_group": ["Micron"],
+                    "needs_review": False,
+                },
+            ]
         if "FROM signal_events" in sql:
             return [
                 {
@@ -443,9 +466,13 @@ class ReportAnalyzeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(quant["report_count"], 3)
         self.assertEqual(quant["avg_target"], 95000)
         self.assertTrue(quant["conflict_detected"])
+        self.assertEqual(quant["valuation"]["valuation_count"], 2)
+        self.assertEqual(quant["valuation"]["implied_multiple_avg"], 17.5)
+        self.assertEqual(quant["valuation"]["peer_gap_avg"], 0.0)
         # method_signal은 허용값(positive). agent에 정량이 context로 주입됐는지
         self.assertEqual(conn.method_signal, "positive")
         self.assertEqual(agent.received.context["report_quant"]["avg_target"], 95000)
+        self.assertEqual(agent.received.context["report_quant"]["valuation"]["usable_multiple_count"], 2)
         self.assertEqual(agent.received.events[0]["id"], 801)
         self.assertEqual(result["ml_infer_task_id"], 601)
         ml_enqueue = next(call for call in conn.fetchvals if "INSERT INTO processing_queue" in call[0])

@@ -55,6 +55,25 @@ def _input(stock_id=1):
     )
 
 
+def _input_with_partial_valuation():
+    return SourceAgentInput(
+        source="REPORT",
+        stock_code="005930",
+        stock_id=1,
+        context={
+            "report_quant": {
+                "avg_target": 90000,
+                "conflict_detected": False,
+                "valuation": {
+                    "data_status": "partial",
+                    "needs_review": True,
+                    "risk_flags": ["valuation_review_required"],
+                },
+            }
+        },
+    )
+
+
 class ReportAnalysisAgentTest(unittest.IsolatedAsyncioTestCase):
     async def test_llm_path_returns_parsed_output_with_coverage(self):
         retriever = FakeRetriever()
@@ -76,6 +95,19 @@ class ReportAnalysisAgentTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(out.method_detail["report_quant"]["avg_target"], 90000)
         # 프롬프트에 3사 한계 note 포함
         self.assertIn(COVERAGE["note"], llm.prompts[0])
+
+    async def test_partial_valuation_summary_marks_output_for_review(self):
+        agent = ReportAnalysisAgent(
+            retriever=FakeRetriever(),
+            llm_client=FakeLlm(_GOOD_JSON),
+            llm_model="gpt-x",
+        )
+
+        out = await agent.analyze(_input_with_partial_valuation())
+
+        self.assertEqual(out.data_status, "partial")
+        self.assertTrue(out.needs_review)
+        self.assertIn("valuation_review_required", out.risk_flags)
 
     async def test_no_llm_falls_back_to_partial(self):
         agent = ReportAnalysisAgent(retriever=FakeRetriever(), llm_client=None, llm_model=None)

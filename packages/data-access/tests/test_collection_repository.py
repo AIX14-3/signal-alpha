@@ -12,6 +12,10 @@ class FakeConnection:
         self.calls.append(("fetchrow", sql, args))
         return {"raw_document_id": args[0], "stock_id": args[1]}
 
+    async def fetch(self, sql, *args):
+        self.calls.append(("fetch", sql, args))
+        return []
+
 
 class CollectionRepositoryTest(unittest.IsolatedAsyncioTestCase):
     async def test_upsert_report_detail_serializes_extra_payload_for_jsonb(self):
@@ -62,3 +66,16 @@ class CollectionRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("ON CONFLICT (raw_document_id)", call[1])
         self.assertIsInstance(call[2][12], str)
         self.assertEqual(json.loads(call[2][12]), ["SK Hynix", "Micron"])
+
+    async def test_list_report_valuation_facts_filters_by_stock_and_limit(self):
+        connection = FakeConnection()
+        repository = CollectionRepository(connection)
+
+        await repository.list_report_valuation_facts(stock_id=10, limit=5)
+
+        call = connection.calls[0]
+        self.assertEqual(call[0], "fetch")
+        self.assertIn("FROM report_valuation_facts", call[1])
+        self.assertIn("WHERE stock_id = $1", call[1])
+        self.assertIn("LIMIT $2", call[1])
+        self.assertEqual(call[2], (10, 5))
