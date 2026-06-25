@@ -2,19 +2,6 @@ from __future__ import annotations
 
 from typing import Any
 
-# 회원이 소유한, users.id 를 NOT NULL 로 참조하는 자식 테이블.
-# hard_delete_user 가 이 순서대로 먼저 비운 뒤 users 행을 삭제한다.
-# (report_issuances / social_accounts / user_sessions 는 ON DELETE CASCADE 라 자동 정리.)
-# analysis_requests 는 공용 시그널 파이프라인의 뿌리이므로 여기 포함하지 않고 user_id 만 NULL 로 분리한다.
-_USER_OWNED_CHILD_TABLES = (
-    "portone_verifications",
-    "signal_journals",
-    "signal_subscriptions",
-    "terms_agreements",
-    "user_signal_reads",
-    "watchlists",
-)
-
 
 class UserBillingRepository:
     def __init__(self, connection: Any) -> None:
@@ -151,45 +138,20 @@ class UserBillingRepository:
             email,
         )
 
-    async def soft_delete_user(self, *, user_id: int) -> None:
-        """회원탈퇴(soft delete). 활성 phone 유니크가 해제되어 동일 번호 재가입 가능."""
-        await self._connection.execute(
-            """
-            UPDATE users
-            SET deleted_at = NOW()
-            WHERE id = $1
-              AND deleted_at IS NULL
-            """,
-            user_id,
-        )
-
     async def hard_delete_user(self, *, user_id: int) -> int:
         """회원 완전 삭제(hard delete).
 
-        회원 소유 자식 행을 FK-안전 순서로 모두 지우고 users 행을 삭제한다. 전체를 단일
-        트랜잭션으로 처리해 중간 실패 시 전부 롤백한다. analysis_requests 는 공용 시그널
-        (analysis_results → final_signals → scores/backtest 등) 의 뿌리이므로 삭제하지 않고
-        user_id 만 NULL 로 분리(detach)해 플랫폼 공용 데이터를 보존한다.
-        report_issuances / social_accounts / user_sessions 는 ON DELETE CASCADE 로 자동 정리된다.
+        users 행만 삭제하면 회원 소유 자식 행은 FK 의 ON DELETE CASCADE 로 함께 정리되고,
+        analysis_requests 는 ON DELETE SET NULL 로 user_id 만 분리(detach)되어 공용 시그널
+        (analysis_results → final_signals → …) 데이터가 보존된다. 단일 DELETE 라 원자적이다.
+        (마이그레이션 20260626_0244_user_owned_fks_on_delete_cascade_for_hard_delete 참고.)
 
         반환: 삭제된 users 행 수(0 = 대상 없음, 1 = 삭제됨).
         """
-        async with self._connection.transaction():
-            # 공용 시그널 보존: 분석요청을 회원에서 분리(삭제 아님).
-            await self._connection.execute(
-                "UPDATE analysis_requests SET user_id = NULL WHERE user_id = $1",
-                user_id,
-            )
-            # 회원 소유 자식 행 정리(내부 화이트리스트라 테이블명 보간 안전).
-            for table in _USER_OWNED_CHILD_TABLES:
-                await self._connection.execute(
-                    f"DELETE FROM {table} WHERE user_id = $1", user_id
-                )
-            # 부모 삭제 → CASCADE 자식(report_issuances/social_accounts/user_sessions) 자동 정리.
-            result = await self._connection.execute(
-                "DELETE FROM users WHERE id = $1", user_id
-            )
         # asyncpg execute() 는 "DELETE <n>" 형태의 명령 태그를 반환한다.
+        result = await self._connection.execute(
+            "DELETE FROM users WHERE id = $1", user_id
+        )
         return int(result.split()[-1]) if result else 0
 
     async def upsert_subscription_plan(

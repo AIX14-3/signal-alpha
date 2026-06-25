@@ -118,33 +118,16 @@ class FakeConnection:
             return len(self.users)
         raise AssertionError(f"Unexpected fetchval SQL: {sql}")
 
-    def transaction(self):
-        return _FakeTransaction()
-
     async def execute(self, sql, *args):
         if "UPDATE admin_accounts" in sql and "last_login_at" in sql:
             self.last_login_updated.append(args[0])
             return "UPDATE 1"
-        if "UPDATE analysis_requests" in sql and "user_id = NULL" in sql:
-            # hard_delete_user: 공용 시그널 보존용 분리(테스트 데이터 없음).
-            return "UPDATE 0"
-        if sql.strip().startswith("DELETE FROM") and "WHERE user_id = $1" in sql:
-            # hard_delete_user: 회원 소유 자식 행 정리(테스트 데이터 없음).
-            return "DELETE 0"
         if "DELETE FROM users" in sql and "WHERE id = $1" in sql:
-            # hard_delete_user: 부모 행 삭제.
+            # hard_delete_user: users 행만 삭제(자식은 DB 의 ON DELETE CASCADE/SET NULL).
             existed = any(u["id"] == args[0] for u in self.users)
             self.users = [u for u in self.users if u["id"] != args[0]]
             return "DELETE 1" if existed else "DELETE 0"
         raise AssertionError(f"Unexpected execute SQL: {sql}")
-
-
-class _FakeTransaction:
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, exc_type, exc, traceback):
-        return False
 
 
 class FakeAcquire:

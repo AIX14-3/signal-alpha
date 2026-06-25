@@ -104,44 +104,25 @@ class FakeConnection:
             return {**session, **{f"user_{key}": value for key, value in user.items()}}
         raise AssertionError(f"Unexpected fetchrow SQL: {sql}")
 
-    def transaction(self):
-        return _FakeTransaction()
-
     async def execute(self, sql, *args):
         if "UPDATE user_sessions" in sql:
             session = self.sessions_by_hash.get(args[0])
             if session:
                 session["revoked_at"] = "now"
             return "UPDATE 1"
-        if "UPDATE analysis_requests" in sql and "user_id = NULL" in sql:
-            return "UPDATE 0"
-        if sql.strip().startswith("DELETE FROM") and "WHERE user_id = $1" in sql:
-            # hard_delete_user: 회원 소유 자식 행 정리.
-            if "user_sessions" in sql:
-                self.sessions_by_hash = {
-                    h: s for h, s in self.sessions_by_hash.items() if s["user_id"] != args[0]
-                }
-            return "DELETE 0"
         if "DELETE FROM users" in sql and "WHERE id = $1" in sql:
+            # hard_delete_user: users 행만 삭제. 자식은 DB 의 ON DELETE CASCADE 로
+            # 함께 정리되므로, fake 에서도 세션 CASCADE 를 흉내 낸다.
             user = self.users_by_id.pop(args[0], None)
             if user is None:
                 return "DELETE 0"
             self.users_by_phone.pop(user.get("phone"), None)
             self.users_by_email.pop(user.get("email"), None)
-            # CASCADE: user_sessions 동반 삭제.
             self.sessions_by_hash = {
                 h: s for h, s in self.sessions_by_hash.items() if s["user_id"] != args[0]
             }
             return "DELETE 1"
         raise AssertionError(f"Unexpected execute SQL: {sql}")
-
-
-class _FakeTransaction:
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, exc_type, exc, traceback):
-        return False
 
 
 class FakeAcquire:

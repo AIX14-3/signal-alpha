@@ -4673,7 +4673,7 @@ ALTER TABLE ONLY public.analysis_requests
 --
 
 ALTER TABLE ONLY public.analysis_requests
-    ADD CONSTRAINT analysis_requests_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id);
+    ADD CONSTRAINT analysis_requests_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE SET NULL;
 
 
 --
@@ -5009,7 +5009,7 @@ ALTER TABLE ONLY public.patent_raw_details
 --
 
 ALTER TABLE ONLY public.portone_verifications
-    ADD CONSTRAINT portone_verifications_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id);
+    ADD CONSTRAINT portone_verifications_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
 
 
 --
@@ -5169,7 +5169,7 @@ ALTER TABLE ONLY public.signal_journals
 --
 
 ALTER TABLE ONLY public.signal_journals
-    ADD CONSTRAINT signal_journals_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id);
+    ADD CONSTRAINT signal_journals_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
 
 
 --
@@ -5193,7 +5193,7 @@ ALTER TABLE ONLY public.signal_subscriptions
 --
 
 ALTER TABLE ONLY public.signal_subscriptions
-    ADD CONSTRAINT signal_subscriptions_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id);
+    ADD CONSTRAINT signal_subscriptions_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
 
 
 --
@@ -5233,7 +5233,7 @@ ALTER TABLE ONLY public.ta_scores
 --
 
 ALTER TABLE ONLY public.terms_agreements
-    ADD CONSTRAINT terms_agreements_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id);
+    ADD CONSTRAINT terms_agreements_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
 
 
 --
@@ -5257,7 +5257,7 @@ ALTER TABLE ONLY public.user_signal_reads
 --
 
 ALTER TABLE ONLY public.user_signal_reads
-    ADD CONSTRAINT user_signal_reads_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id);
+    ADD CONSTRAINT user_signal_reads_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
 
 
 --
@@ -5273,7 +5273,7 @@ ALTER TABLE ONLY public.watchlists
 --
 
 ALTER TABLE ONLY public.watchlists
-    ADD CONSTRAINT watchlists_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id);
+    ADD CONSTRAINT watchlists_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
 
 
 --
