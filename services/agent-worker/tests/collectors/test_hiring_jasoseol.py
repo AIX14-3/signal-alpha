@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import unittest
+from datetime import datetime
 
 import app.collectors.hiring.sites.jasoseol as jaso
 from app.collectors.hiring.sites.jasoseol import JasoseolCrawler, _image_urls, _norm
@@ -35,6 +36,10 @@ class JasoseolMatchTest(unittest.TestCase):
     def setUp(self):
         jaso.reset_cache()
         jaso._fetch_all_postings = lambda: list(SAMPLE)  # 네트워크 차단
+        # crawl() 이 매칭 공고마다 상세 fetch → 폴백 경로(목록 posting 사용)로 고정.
+        # 패치 scope 는 이 클래스 한정(setUp). 포스터 캡처 동작은 별도 클래스에서 검증.
+        jaso._fetch_detail = lambda pid: None
+        jaso._FETCH_PAUSE_SEC = 0.0                       # 테스트 속도(예의 대기 제거)
         self.c = JasoseolCrawler(driver=None)
 
     def tearDown(self):
@@ -74,6 +79,46 @@ class JasoseolMatchTest(unittest.TestCase):
         for rec_list in (self.c.crawl("깨진공고"), self.c.crawl("안랩")):
             for r in rec_list:
                 self.assertTrue(r["job_title"])
+
+
+class JasoseolDailyPosterTest(unittest.TestCase):
+    """일일 crawl() 이 매칭 공고 상세를 fetch 해 포스터 image_urls + 실제 게시일을 캡처."""
+
+    def setUp(self):
+        jaso.reset_cache()
+        jaso._fetch_all_postings = lambda: list(SAMPLE)  # 네트워크 차단(목록)
+        jaso._FETCH_PAUSE_SEC = 0.0
+        self.c = JasoseolCrawler(driver=None)
+
+    def tearDown(self):
+        jaso.reset_cache()
+
+    def test_crawl_captures_poster_and_real_posting_date(self):
+        # 매칭 공고 상세에 포스터 content + start_time 가 있으면 둘 다 레코드에 반영.
+        def fake_detail(pid):
+            assert pid == 104762  # 안랩 공고만 fetch 됨
+            return {
+                "id": pid, "name": "안랩", "title": "2026 6월 신입 채용",
+                "start_time": "2026-06-10T09:00:00.000+09:00",
+                "end_time": "2026-07-05T23:59:00.000+09:00",
+                "employments": [{"field": "SW 개발(Linux)"}],
+                "content": '<img src="https://cdn.jasoseol.com/content_images/poster.png">',
+            }
+        jaso._fetch_detail = fake_detail
+        r = self.c.crawl("안랩")[0]
+        self.assertEqual(r["image_urls"], ["https://cdn.jasoseol.com/content_images/poster.png"])
+        self.assertEqual(r["posting_date"], "2026-06-10T09:00:00.000+09:00")
+
+    def test_crawl_fallback_when_detail_missing(self):
+        # 상세 fetch 실패(마감/오류 → None)면 목록 posting 으로 폴백:
+        # 레코드는 유지(무음 회귀 방지), image_urls 빈 리스트, posting_date 는 now() 기본.
+        jaso._fetch_detail = lambda pid: None
+        recs = self.c.crawl("안랩")
+        self.assertEqual(len(recs), 1)
+        r = recs[0]
+        self.assertEqual(r["image_urls"], [])
+        # 목록 posting 에 start_time 없음 → _detail_date None → _to_record 가 now() 기본 유지.
+        self.assertEqual(r["posting_date"][:4], str(datetime.now().year))
 
 
 HISTORY = [

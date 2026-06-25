@@ -37,6 +37,7 @@ _HEADERS = {
 }
 _PAGE_CAP = 30          # 안전 상한(현재 ~5페이지면 소진). 무한루프 방지.
 _PAGE_PAUSE_SEC = 0.5   # 페이지 간 예의 대기(rate-limit)
+_FETCH_PAUSE_SEC = 0.2  # 일일 crawl 에서 매칭 공고 상세 fetch 사이 예의 대기
 _CACHE_TTL = timedelta(minutes=10)
 
 # ── 런 단위 모듈 캐시 ────────────────────────────────────────────────────────
@@ -367,9 +368,18 @@ class JasoseolCrawler(BaseSiteCrawler):
                 or (len(cand) >= 3 and cand in target)
             ):
                 continue
-            rec = self._to_record(company_name, src_name, posting)
+            # 목록 API 에는 포스터가 없으므로(image_url 은 로고/배너), 매칭된 공고만
+            # 상세를 fetch 해 content(포스터 <img>)를 확보 → image_urls 캡처 + 실제 게시일 보존.
+            # 마감/오류 시 _fetch_detail 은 None → 목록 posting 으로 폴백(이미지 없이 레코드 유지).
+            detail = _fetch_detail(posting["id"])
+            detail = detail if detail else posting
+            rec = self._to_record(
+                company_name, src_name, detail,
+                posting_date=_detail_date(detail),
+            )
             if rec:
                 records.append(rec)
+            time.sleep(_FETCH_PAUSE_SEC)   # 매칭분만 fetch — 예의 대기(상한 없음)
 
         if records:
             logger.info("자소설닷컴 [%s]: %d건", company_name, len(records))
