@@ -229,7 +229,8 @@ ReportAnalyzeTaskHandler
 
 - Report 분석은 `final_signals`를 직접 쓰지 않습니다.
 - 사용자-facing 최종 데이터 방향성 발행 여부는 Aggregator와 후속 gate가 결정합니다.
-- 현재 Report 분석은 목표가, 의견, RAG 근거 중심입니다. 밸류에이션 재해석 전략의 `forward_eps_est`, `applied_multiple`, `implied_multiple`, `peer_group`, `category_tag`, `rerating_thesis` 구조화는 아직 구현되지 않았습니다.
+- `process_report`는 밸류에이션 재해석 전략의 `forward_eps_est`, `applied_multiple`, `implied_multiple`, `peer_group`를 규칙 기반으로 구조화하고, LLM 설정이 활성화된 경우 `category_tag`, `rerating_thesis`, `methodology`를 보강합니다.
+- 아직 valuation analyzer의 배수 분산, peer gap, scenario band 계산은 구현되지 않았습니다.
 - LLM 설정이 비활성화되었거나 model/key/provider가 불완전하면 Report Agent는 보수적 fallback을 사용합니다.
   - 방향성: `unknown`
   - 점수: `50`
@@ -278,7 +279,8 @@ ReportAnalyzeTaskHandler
 - `029_report_valuation_facts.sql`에서 `report_valuation_facts` 테이블을 추가했습니다.
 - `process_report`는 PDF 파싱 결과에서 `target_price`, `forward_eps_est`, `eps_fy`, `methodology`, `applied_multiple`, `implied_multiple`, `peer_group`를 구조화해 저장합니다.
 - `implied_multiple = target_price / forward_eps_est` 계산은 결정론 코드가 담당합니다.
-- `category_tag`, `rerating_thesis`는 필드만 열어두었고 LLM 분류/패러프레이즈 보강은 후속 작업입니다.
+- `REPORT_USE_LLM=true`이고 provider/model/API key가 모두 설정되면 LLM이 `methodology`, `category_tag`, `rerating_thesis`만 보강합니다. 목표가, EPS, 적용 배수, 내재 배수는 LLM 결과를 사용하지 않습니다.
+- LLM JSON 오류, timeout, 금지 표현 감지 시 `extraction_source='rules_fallback'`, `needs_review=TRUE`로 저장합니다.
 - 추출 실패나 핵심 값 결측 시 `needs_review = TRUE`로 저장해 추가 확인 필요 상태를 남깁니다.
 
 ### Legacy 테이블
@@ -377,8 +379,8 @@ Invoke-RestMethod `
 후속 개발 전에 아래 결정을 먼저 내리는 것이 좋습니다.
 
 0. 밸류에이션 재해석 확장
-   - `report_valuation_facts` 스키마와 extractor MVP는 구현되었습니다.
-   - 다음 작업은 LLM이 methodology/category/thesis 분류와 패러프레이즈만 보강하도록 연결하는 것입니다.
+   - `report_valuation_facts` 스키마, extractor MVP, LLM 기반 methodology/category/thesis 보강은 구현되었습니다.
+   - 다음 작업은 `report_valuation_facts`를 읽는 valuation analyzer에서 배수 분산과 peer gap을 계산하는 것입니다.
    - PDF 원문과 긴 청크를 사용자에게 노출하지 않고, valuation 전략용 결과는 구조화 fact 중심으로 저장합니다.
 1. 저장 backend
    - canonical queue 경로의 기본 backend는 GCS입니다. 개발과 테스트용 local storage adapter도 구현되어 있으므로, 운영 환경에서는 GCS bucket/권한을 확정하고 로컬 환경에서는 `REPORT_STORAGE_BACKEND=local` 사용 여부를 정하면 됩니다.
