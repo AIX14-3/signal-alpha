@@ -102,26 +102,16 @@ class PatentCollector:
                 await _finish_run(conn, run_id=run_id, status="failed", error_message=str(exc))
             raise
 
-        inserted = skipped = requeued = failed = 0
-        for record in collected:
-            try:
-                saved = await self._save_record(
-                    stock_id=stock_id,
-                    run_id=run_id,
-                    record=record,
-                    known_categories=known_categories,
-                )
-                if saved == "inserted":
-                    inserted += 1
-                    tech_cat = _tech_category(record.ipc_code)
-                    if tech_cat:
-                        known_categories.add(tech_cat)
-                elif saved == "requeued":
-                    requeued += 1
-                else:
-                    skipped += 1
-            except Exception:
-                failed += 1
+        counts = await self._persist_records(
+            stock_id=stock_id,
+            run_id=run_id,
+            collected=collected,
+            known_categories=known_categories,
+        )
+        inserted = counts["inserted"]
+        skipped = counts["skipped"]
+        requeued = counts["requeued"]
+        failed = counts["failed"]
 
         # requeued(F1 재인큐 복구)는 usable·non-failed 결과다. collector_runs 에는 requeued
         # 컬럼이 없어 DB 의 skipped_count 에 합산하고, 반환 dict 에만 별도로 노출한다.
@@ -146,6 +136,104 @@ class PatentCollector:
             "status": status,
         }
 
+    async def ingest_records(
+        self,
+        *,
+        stock_id: int,
+        records: list[KiprisPatentRecord],
+        source_name: str = SOURCE_NAME,
+    ) -> dict[str, Any]:
+        """Persist pre-collected patent records (e.g. a Google Patents BigQuery
+        backfill) through the exact same DB contract as :meth:`run`.
+
+        Unlike :meth:`run`, the caller supplies the records (no KIPRIS API call),
+        so this is the seam for alternative patent sources. It opens a
+        ``collector_runs`` row, de-duplicates by ``application_no``, persists each
+        record via :meth:`_save_record` (raw + detail + queue, F1 safety net), and
+        finalizes the run status. Re-running is idempotent: already-collected
+        patents skip on the ``source_hash`` UNIQUE constraint.
+        """
+        seen: set[str] = set()
+        collected: list[KiprisPatentRecord] = []
+        for record in records:
+            if record.application_no and record.application_no not in seen:
+                seen.add(record.application_no)
+                collected.append(record)
+
+        async with self._pool.acquire() as conn:
+            run_id = await _create_run(conn)
+            known_categories = await _fetch_known_categories(conn, stock_id)
+
+        counts = await self._persist_records(
+            stock_id=stock_id,
+            run_id=run_id,
+            collected=collected,
+            known_categories=known_categories,
+            source_name=source_name,
+        )
+        status = _run_status(
+            counts["inserted"], counts["skipped"] + counts["requeued"], counts["failed"]
+        )
+        async with self._pool.acquire() as conn:
+            await _finish_run(
+                conn,
+                run_id=run_id,
+                status=status,
+                collected_count=len(collected),
+                inserted_count=counts["inserted"],
+                skipped_count=counts["skipped"] + counts["requeued"],
+                failed_count=counts["failed"],
+            )
+        return {
+            "collector_run_id": run_id,
+            "collected_count": len(collected),
+            "inserted_count": counts["inserted"],
+            "skipped_count": counts["skipped"],
+            "requeued_count": counts["requeued"],
+            "failed_count": counts["failed"],
+            "status": status,
+        }
+
+    async def _persist_records(
+        self,
+        *,
+        stock_id: int,
+        run_id: int,
+        collected: list[KiprisPatentRecord],
+        known_categories: set[str],
+        source_name: str = SOURCE_NAME,
+    ) -> dict[str, int]:
+        """Save each record and tally outcomes. Shared by :meth:`run` (KIPRIS) and
+        :meth:`ingest_records` (external backfills) so the persistence contract
+        lives in one place."""
+        inserted = skipped = requeued = failed = 0
+        for record in collected:
+            try:
+                saved = await self._save_record(
+                    stock_id=stock_id,
+                    run_id=run_id,
+                    record=record,
+                    known_categories=known_categories,
+                    source_name=source_name,
+                )
+                if saved == "inserted":
+                    inserted += 1
+                    tech_cat = _tech_category(record.ipc_code)
+                    if tech_cat:
+                        known_categories.add(tech_cat)
+                elif saved == "requeued":
+                    requeued += 1
+                else:
+                    skipped += 1
+            except Exception:
+                failed += 1
+        return {
+            "inserted": inserted,
+            "skipped": skipped,
+            "requeued": requeued,
+            "failed": failed,
+        }
+
     async def _save_record(
         self,
         *,
@@ -153,6 +241,7 @@ class PatentCollector:
         run_id: int,
         record: KiprisPatentRecord,
         known_categories: set[str],
+        source_name: str = SOURCE_NAME,
     ) -> str:
         """Insert raw + detail + queue in one transaction.
 
@@ -160,6 +249,14 @@ class PatentCollector:
         (duplicate with an active/successful NORMALIZE task already present), or
         ``"requeued"`` (F1: duplicate raw whose normalization was never completed —
         a fresh NORMALIZE task is re-enqueued so it can self-recover).
+
+        ``source_name`` distinguishes the origin in ``raw_documents`` (default
+        ``KIPRIS``; backfills from other registries, e.g. Google Patents via
+        BigQuery, pass their own). ``source_hash`` is always
+        ``PATENT|application_no``, so re-collecting the *same* source de-duplicates
+        on the UNIQUE constraint. (Cross-source dedup only holds when the sources
+        use the same application_no string — KIPRIS and BigQuery format it
+        differently, so they do not collapse against each other.)
         """
         source_hash = make_source_hash(SOURCE_TYPE, record.application_no)
         external_id = record.application_no
@@ -183,7 +280,7 @@ class PatentCollector:
                         stock_id,
                         run_id,
                         SOURCE_TYPE,
-                        SOURCE_NAME,
+                        source_name,
                         external_id,
                         source_hash,
                         record.invention_title or external_id,
