@@ -29,6 +29,15 @@ RUN uv sync --locked --package signal-alpha-agent-worker --no-dev
 
 WORKDIR /workspace/services/agent-worker
 
+# alt-data 파이프라인 CLI(수집/정규화/분석) + 실행 래퍼 — Cloud Run Job/스케줄러용.
+# 평소 서비스 CMD(uvicorn)와 무관하게, Job이 `sh run_altdata_pipeline.sh`로 덮어써 1회 실행한다.
+# 이 스크립트들은 app.*(위에서 설치) + 설치된 패키지만 import하므로 추가 의존성이 없다.
+COPY services/agent-worker/run_collectors.py \
+     services/agent-worker/run_normalizers.py \
+     services/agent-worker/run_analyzers.py \
+     services/agent-worker/run_altdata_pipeline.sh \
+     ./
+
 EXPOSE 8011
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8011"]
