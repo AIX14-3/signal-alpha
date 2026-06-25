@@ -1,0 +1,301 @@
+{
+  "samples": [
+    {
+      "case_id": "real-sample-hynix-confirmed-2026-03",
+      "ticker": "000660",
+      "stock_name": "SK Hynix",
+      "signal_date": "2026-03-12",
+      "expected_outcome": "confirmed",
+      "raw_documents": [
+        {
+          "id": 301,
+          "stock_id": 20,
+          "ticker": "000660",
+          "provider": "Broker A",
+          "published_at": "2026-03-12"
+        },
+        {
+          "id": 302,
+          "stock_id": 20,
+          "ticker": "000660",
+          "provider": "Broker B",
+          "published_at": "2026-03-13"
+        }
+      ],
+      "report_raw_details": [
+        {
+          "raw_document_id": 301,
+          "stock_id": 20,
+          "ticker": "000660",
+          "broker": "Broker A",
+          "publish_date": "2026-03-12",
+          "target_price": 123000,
+          "parsing_status": "success"
+        },
+        {
+          "raw_document_id": 302,
+          "stock_id": 20,
+          "ticker": "000660",
+          "broker": "Broker B",
+          "publish_date": "2026-03-13",
+          "target_price": 126000,
+          "parsing_status": "success"
+        }
+      ],
+      "report_valuation_facts": [
+        {
+          "raw_document_id": 301,
+          "stock_id": 20,
+          "target_price": 123000,
+          "forward_eps_est": 8200,
+          "eps_fy": 2026,
+          "methodology": "PER",
+          "applied_multiple": 15.0,
+          "implied_multiple": 15.0,
+          "peer_group": ["Micron", "Samsung Electronics"],
+          "category_tag": "ai_memory",
+          "rerating_thesis": "AI memory demand was repeated as valuation context.",
+          "extraction_source": "llm",
+          "needs_review": false
+        },
+        {
+          "raw_document_id": 302,
+          "stock_id": 20,
+          "target_price": 126000,
+          "forward_eps_est": 8182,
+          "eps_fy": 2026,
+          "methodology": "PER",
+          "applied_multiple": 15.4,
+          "implied_multiple": 15.4,
+          "peer_group": ["Micron"],
+          "category_tag": "ai_memory",
+          "rerating_thesis": "Peer comparison kept the same valuation context.",
+          "extraction_source": "rules",
+          "needs_review": false
+        }
+      ],
+      "followup_observations": [
+        {
+          "observed_date": "2026-04-12",
+          "source": "REPORT",
+          "alignment": "confirmed",
+          "evidence_type": "valuation_assumption_repeated",
+          "note": "Later report facts repeated the same data direction."
+        },
+        {
+          "observed_date": "2026-04-18",
+          "source": "DART",
+          "alignment": "confirmed",
+          "evidence_type": "source_direction_maintained",
+          "note": "Later structured data did not conflict with the valuation context."
+        }
+      ]
+    },
+    {
+      "case_id": "real-sample-samsung-confirmed-2026-03",
+      "ticker": "005930",
+      "stock_name": "Samsung Electronics",
+      "signal_date": "2026-03-20",
+      "expected_outcome": "confirmed",
+      "raw_documents": [
+        {
+          "id": 401,
+          "stock_id": 10,
+          "ticker": "005930",
+          "provider": "Broker C",
+          "published_at": "2026-03-20"
+        },
+        {
+          "id": 402,
+          "stock_id": 10,
+          "ticker": "005930",
+          "provider": "Broker D",
+          "published_at": "2026-03-21"
+        }
+      ],
+      "report_raw_details": [
+        {
+          "raw_document_id": 401,
+          "stock_id": 10,
+          "ticker": "005930",
+          "broker": "Broker C",
+          "publish_date": "2026-03-20",
+          "target_price": 90000,
+          "parsing_status": "success"
+        },
+        {
+          "raw_document_id": 402,
+          "stock_id": 10,
+          "ticker": "005930",
+          "broker": "Broker D",
+          "publish_date": "2026-03-21",
+          "target_price": 91200,
+          "parsing_status": "success"
+        }
+      ],
+      "report_valuation_facts": [
+        {
+          "raw_document_id": 401,
+          "stock_id": 10,
+          "target_price": 90000,
+          "forward_eps_est": 6000,
+          "eps_fy": 2026,
+          "methodology": "PER",
+          "applied_multiple": 15.0,
+          "implied_multiple": 15.0,
+          "peer_group": ["SK Hynix", "Micron"],
+          "category_tag": "memory_cycle",
+          "rerating_thesis": "Memory cycle recovery was cited as valuation context.",
+          "extraction_source": "rules",
+          "needs_review": false
+        },
+        {
+          "raw_document_id": 402,
+          "stock_id": 10,
+          "target_price": 91200,
+          "forward_eps_est": 6000,
+          "eps_fy": 2026,
+          "methodology": "PER",
+          "applied_multiple": 15.2,
+          "implied_multiple": 15.2,
+          "peer_group": ["SK Hynix"],
+          "category_tag": "memory_cycle",
+          "rerating_thesis": "Peer context and cycle recovery remained aligned.",
+          "extraction_source": "llm",
+          "needs_review": false
+        }
+      ],
+      "followup_observations": [
+        {
+          "observed_date": "2026-04-20",
+          "source": "REPORT",
+          "alignment": "confirmed",
+          "evidence_type": "valuation_assumption_repeated",
+          "note": "Follow-up report facts kept the same valuation context."
+        }
+      ]
+    },
+    {
+      "case_id": "real-sample-naver-review-2026-04",
+      "ticker": "035420",
+      "stock_name": "NAVER",
+      "signal_date": "2026-04-05",
+      "expected_outcome": "not_confirmed",
+      "raw_documents": [
+        {
+          "id": 501,
+          "stock_id": 30,
+          "ticker": "035420",
+          "provider": "Broker E",
+          "published_at": "2026-04-05"
+        },
+        {
+          "id": 502,
+          "stock_id": 30,
+          "ticker": "035420",
+          "provider": "Broker F",
+          "published_at": "2026-04-06"
+        },
+        {
+          "id": 503,
+          "stock_id": 30,
+          "ticker": "035420",
+          "provider": "Broker G",
+          "published_at": "2026-04-07"
+        }
+      ],
+      "report_raw_details": [
+        {
+          "raw_document_id": 501,
+          "stock_id": 30,
+          "ticker": "035420",
+          "broker": "Broker E",
+          "publish_date": "2026-04-05",
+          "target_price": 190000,
+          "parsing_status": "success"
+        },
+        {
+          "raw_document_id": 502,
+          "stock_id": 30,
+          "ticker": "035420",
+          "broker": "Broker F",
+          "publish_date": "2026-04-06",
+          "target_price": 260000,
+          "parsing_status": "success"
+        },
+        {
+          "raw_document_id": 503,
+          "stock_id": 30,
+          "ticker": "035420",
+          "broker": "Broker G",
+          "publish_date": "2026-04-07",
+          "target_price": 230000,
+          "parsing_status": "success"
+        }
+      ],
+      "report_valuation_facts": [
+        {
+          "raw_document_id": 501,
+          "stock_id": 30,
+          "target_price": 190000,
+          "forward_eps_est": 10000,
+          "eps_fy": 2026,
+          "methodology": "PER",
+          "applied_multiple": 19.0,
+          "implied_multiple": 19.0,
+          "peer_group": ["Kakao"],
+          "category_tag": "platform_ads",
+          "rerating_thesis": "Advertising recovery was cited as valuation context.",
+          "extraction_source": "rules",
+          "needs_review": false
+        },
+        {
+          "raw_document_id": 502,
+          "stock_id": 30,
+          "target_price": 260000,
+          "forward_eps_est": 10000,
+          "eps_fy": 2026,
+          "methodology": "PER",
+          "applied_multiple": 26.0,
+          "implied_multiple": 26.0,
+          "peer_group": ["Kakao", "LINE Yahoo"],
+          "category_tag": "platform_ads",
+          "rerating_thesis": "The valuation context depended on uncertain platform ad recovery.",
+          "extraction_source": "llm",
+          "needs_review": true
+        },
+        {
+          "raw_document_id": 503,
+          "stock_id": 30,
+          "target_price": 230000,
+          "forward_eps_est": null,
+          "eps_fy": null,
+          "methodology": "unknown",
+          "applied_multiple": null,
+          "implied_multiple": null,
+          "peer_group": [],
+          "category_tag": "platform_ads",
+          "rerating_thesis": "Required numeric assumptions were missing from parsed facts.",
+          "extraction_source": "rules_fallback",
+          "needs_review": true
+        }
+      ],
+      "followup_observations": [
+        {
+          "observed_date": "2026-05-05",
+          "source": "REPORT",
+          "alignment": "conflicted",
+          "evidence_type": "valuation_assumption_not_repeated",
+          "note": "Later report facts did not repeat the same valuation context."
+        },
+        {
+          "observed_date": "2026-05-12",
+          "source": "DATALAB",
+          "alignment": "conflicted",
+          "evidence_type": "source_direction_conflicted",
+          "note": "Later alternative data conflicted with the original data direction."
+        }
+      ]
+    }
+  ]
+}
