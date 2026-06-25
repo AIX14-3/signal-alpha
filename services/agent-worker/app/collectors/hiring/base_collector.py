@@ -46,6 +46,7 @@ from __future__ import annotations
 import datetime
 import json
 import logging
+import re
 import zoneinfo
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -57,6 +58,9 @@ from app.observability import calculate_run_status
 from app.utils.hash_utils import make_source_hash
 
 _KST = zoneinfo.ZoneInfo("Asia/Seoul")
+
+# stocks 매칭 전용: 회사명 끝의 괄호 그룹(부문/지역 표기) 제거용. _match_key 참고.
+_TRAILING_PAREN = re.compile(r"(\s*\([^)]*\))+\s*$")
 
 
 def _kst_today() -> datetime.date:
@@ -215,11 +219,27 @@ class BaseCollector(ABC):
     # ── 공통 유틸 ──────────────────────────────────────────────────────────────
     @staticmethod
     def _clean_company_name(raw_name: str) -> str:
-        """기업명 정규화. '(주)카카오'→'카카오', '주식회사 네이버'→'네이버'."""
+        """기업명 정규화. '(주)카카오'→'카카오', '주식회사 네이버'→'네이버'.
+
+        주의: 저장(source_name)·로깅에도 쓰이므로 **부문/지역 괄호는 보존**한다
+        ('삼성물산(건설)' 의 granularity 유지). stocks 매칭 전용 정규화는 _match_key 참고.
+        """
         cleaned = (raw_name or "").strip()
         for pattern in ["(주)", "주식회사", "㈜", "(유)", "(재)"]:
             cleaned = cleaned.replace(pattern, "")
         return " ".join(cleaned.split()).strip()  # 연속 공백 1칸으로
+
+    @staticmethod
+    def _match_key(clean: str) -> str:
+        """stocks 매칭 **전용** 키 — 끝 괄호 그룹 제거('삼성물산(건설)'→'삼성물산',
+        '한국전력공사(KEPCO)'→'한국전력공사'). jasoseol 등이 회사명을 부문/지역으로 장식해
+        종목명보다 길어지면 _match_stock_row(종목명⊇공고명) 가 실패하던 문제 해소.
+
+        저장용 _clean_company_name 과 분리 — source_name granularity 는 보존하고 매칭만 넓힌다.
+        한계(jasoseol 실데이터엔 사실상 없음): bare prefix('삼성(반도체)'→'삼성')는 다중매칭 가능,
+        중첩 괄호('삼성물산(건설(협력업체))')는 ``[^)]*`` 가 못 떼어 원문 유지. (test 로 박제)
+        """
+        return _TRAILING_PAREN.sub("", clean).strip() or clean  # 빈 결과 방어
 
     @staticmethod
     def _get_current_quarter() -> str:
@@ -247,7 +267,9 @@ class BaseCollector(ABC):
         is_target 조건을 두지 않는다 — stocks 에 존재하면 매칭한다(수집단계 필터가
         is_target 으로 좁히면 insert 게이트 대비 회귀가 되므로 동일하게 유지).
         """
-        clean = self._clean_company_name(raw_company_name)
+        # 저장용 clean 에서 끝 괄호(부문/지역 표기)를 떼어 매칭 키를 만든다 — 'X(부문)' 이
+        # 종목명 'X' 보다 길어 매칭 실패하던 문제 해소. 저장(source_name)은 원문 granularity 유지.
+        key = self._match_key(self._clean_company_name(raw_company_name))
 
         row = db.execute(
             text("""
@@ -261,7 +283,7 @@ class BaseCollector(ABC):
                     LENGTH(name) ASC
                 LIMIT 1
             """),
-            {"exact": clean, "like": f"%{clean}%"},
+            {"exact": key, "like": f"%{key}%"},
         ).fetchone()
 
         if row:
