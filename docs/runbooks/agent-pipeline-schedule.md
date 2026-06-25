@@ -120,6 +120,34 @@ Useful local variations:
 .\ops\run_agent_pipeline_schedule.ps1 -Mode All -SkipDart -ReportDaysBack 14 -ReportMaxPages 50
 ```
 
+### 5.1 Automatic publishing helper (Windows Task Scheduler)
+
+`ops/register_report_autopublish_tasks.ps1` registers the runner as recurring
+Windows scheduled tasks so the worker publishes signals without manual runs.
+
+```powershell
+cd services/agent-worker
+# Register (CorpCodeSync weekly + DartCollectDrain 30m + ReportCollect 2x/day + QueueDrain 5m)
+.\ops\register_report_autopublish_tasks.ps1 -WorkerBaseUrl "http://localhost:8011"
+
+# Remove all of them (rollback)
+.\ops\register_report_autopublish_tasks.ps1 -Remove
+```
+
+Notes:
+
+- The worker must be running at `-WorkerBaseUrl`; tasks only call its HTTP endpoints.
+- Publishing needs a scoring source. `REPORT` is not a scoring source
+  (`SCORING_SOURCES = {DART, ALTERNATIVE}` in `aggregation/tasks.py`), so the
+  `DartCollectDrain` task must stay enabled for `final_signals.is_published` to
+  become true.
+- DART collection requires the `dart_corp_codes` mapping. The script runs an
+  initial `POST /internal/dart/corp-codes/sync` on registration (skip with
+  `-SkipInitialSync`) and re-syncs weekly via the `CorpCodeSync` task; without
+  it DART collection fails with `corp_code is not mapped`.
+- Tasks default to "run only when the user is logged on". Use
+  `-RunWhenLoggedOff` (S4U) to keep them running after sign-out.
+
 ## 6. Local Smoke Test
 
 Use this order before adding an OS scheduler.
