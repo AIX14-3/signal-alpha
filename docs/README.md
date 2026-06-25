@@ -38,7 +38,7 @@ Signal α 프로젝트 문서의 진입점입니다. 새로 합류했다면 **�
 
 - 데이터 레이어: `data-foundations-and-l1-l10-workflow.md`, `data-layers-l2-l10-spec.md`, `db-schema-spec.md`
 - DART: `dart-collector-analyzer-spec.md`, `dart-l1-financials-spec.md`, `dart-l1-financials-impl-plan.md`, `analyzer-raw-access-conformance.md`
-- Report RAG: `report-rag-current-state.md`, `report-gemini-pdf-parsing-dev-guide.md`, `report-valuation-reinterpretation-strategy.md`
+- Report(밸류에이션): `report-rag-current-state.md`, `report-gemini-pdf-parsing-dev-guide.md`, `report-valuation-reinterpretation-strategy.md`
 - 가격: `kiwoom-rest-spec.md`
 - Alternative(채용): `agent-worker-hiring.md`, `hiring-skill-enrichment-design.md`, `hiring-cutover-and-final-signals-naming.md`
 - 집계/오케스트레이션: `final-signal-aggregator-spec.md`, `cross-layer-orchestration-and-risks.md`, `source-agent-contract.md`

@@ -22,7 +22,7 @@
 | 소스 타입 | 에이전트 | 데이터 |
 |---|---|---|
 | `dart` | DART Watcher | 공시·분기 실적 (OpenDART) |
-| `report` | Report RAG | 증권사 리포트 (메타 + PDF Local RAG) |
+| `report` | Report (밸류에이션) | 증권사 리포트 PDF 파싱 → 목표가·의견·EPS·배수 결정론 추출(`report_valuation_facts`) |
 | `price` | PRICE Analyzer | 키움 REST 수집 가격(`price_snapshots`, `ohlcv_data`) |
 | `alternative` | Alternative Signal | 채용·특허(KIPRIS)·네이버 DataLab·SEC |
 | (통합) | Debate Aggregation | 소스 결과 통합 → `final_signals` |
@@ -77,5 +77,7 @@ type AggregatedSignal = {    // 집계 결과 → final_signals
 ## 기타 약어
 
 - **Signal Journal**: 사용자의 주관적 판단 기록·복기 도구 (플랫폼이 성과 평가/추천하지 않음)
-- **RAG**: 리포트 청크를 pgvector로 검색해 LLM 분석에 근거를 제공하는 방식
+- **report_valuation_facts**: 리포트별 목표가·forward EPS·적용 배수·내재 배수(`목표가/EPS`)·피어 그룹을 구조화 저장하는 테이블. 현재 Report 분석의 핵심 입력
 - **corp_code**: DART 고유 기업 코드 (종목코드와 별도 매핑 필요)
+
+> 참고: 과거 기획의 리포트 **PDF 임베딩/RAG 검색(pgvector)** 은 폐지되었습니다(`report_chunks` 테이블·`embed_report`·RAG retriever 제거). 현재 리포트 분석은 RAG가 아니라 결정론 밸류에이션 추출입니다. 상세는 `spec/report-rag-current-state.md`.

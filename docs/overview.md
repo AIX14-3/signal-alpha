@@ -32,7 +32,7 @@
 | 에이전트 | 소스 | 역할 |
 |---|---|---|
 | DART Watcher | 공시 | 공시 수집·유형 분류·고임팩트 공시 분석·실적 기반 신호 추출 |
-| Report RAG | 증권사 리포트 | 리포트 메타/PDF RAG, 투자의견·목표주가·근거 추출, 증권사 간 의견 충돌 탐지 |
+| Report (밸류에이션) | 증권사 리포트 | PDF 파싱으로 투자의견·목표주가·EPS·적용/내재 배수를 결정론 추출(`report_valuation_facts`) |
 | Alternative Signal | 채용·특허·DataLab 등 | 사업 확장·R&D·수요 변화의 **흔적** 탐지 (긍/부정 단정 아님) |
 | Debate Aggregation | (통합) | 긍정 근거 / 주의 근거를 분리 정리하고 소스 방향성 일치도 산출 |
 
@@ -46,7 +46,7 @@
 | 소스 | 유형 | 수집 방식 |
 |---|---|---|
 | DART 공시 / 분기 실적 | 공식 | OpenDART API |
-| 증권사 리포트 | 전문가 | 네이버 증권 리포트 목록 + 선별 PDF Local RAG (pgvector) |
+| 증권사 리포트 | 전문가 | 네이버 증권 리포트 목록 + PDF 파싱(결정론 밸류에이션 추출) |
 | 채용공고 | Alternative | 채용 사이트 수집 |
 | 특허 출원 | Alternative | KIPRIS 등 |
 | 네이버 DataLab | Alternative | DataLab API (키워드 검색량) |
