@@ -7,6 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "packages" / "data-access"))
 
 from app.orchestrator.queue.task_types import (
+    ANALYZE_REPORT,
     COLLECT_REPORT,
     NORMALIZE_REPORT,
     PROCESS_REPORT,
@@ -14,6 +15,7 @@ from app.orchestrator.queue.task_types import (
 from app.orchestrator.queue.tasks import QueueTaskRunner
 from app.orchestrator.report import tasks as report_tasks
 from app.orchestrator.report.tasks import (
+    ReportAnalyzeTaskHandler,
     ReportCollectTaskHandler,
     ReportNormalizeTaskHandler,
     ReportProcessTaskHandler,
@@ -431,6 +433,29 @@ class FakeReportPipelineConnection:
             "extracted_text": detail["extracted_text"],
         }
 
+    def _signal_event_join_row(self, signal_event_id):
+        event = self.signal_events[signal_event_id]
+        source_document = self.source_documents[event["source_document_id"]]
+        fact = self.report_valuation_facts.get(source_document["raw_document_id"], {})
+        return {
+            **event,
+            "raw_document_id": source_document["raw_document_id"],
+            "ticker": fact.get("ticker"),
+            "broker": fact.get("broker"),
+            "publish_date": fact.get("publish_date"),
+            "target_price": fact.get("target_price"),
+            "forward_eps_est": fact.get("forward_eps_est"),
+            "eps_fy": fact.get("eps_fy"),
+            "methodology": fact.get("methodology"),
+            "applied_multiple": fact.get("applied_multiple"),
+            "implied_multiple": fact.get("implied_multiple"),
+            "peer_group": fact.get("peer_group"),
+            "category_tag": fact.get("category_tag"),
+            "rerating_thesis": fact.get("rerating_thesis"),
+            "extraction_source": fact.get("extraction_source"),
+            "fact_needs_review": fact.get("needs_review"),
+        }
+
 
 class ReportE2EPipelineTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
@@ -483,14 +508,19 @@ class ReportE2EPipelineTest(unittest.IsolatedAsyncioTestCase):
         normalize_result = await ReportNormalizeTaskHandler(connection=conn)(
             conn.task("normalize_report")
         )
+        analyze_result = await ReportAnalyzeTaskHandler(connection=conn)(
+            conn.task("analyze_report")
+        )
 
         self.assertEqual(collect_result["collected"], 1)
         self.assertEqual(process_result["status"], "success")
         self.assertEqual(normalize_result["normalized_count"], 1)
-        # 파이프라인은 NORMALIZE에서 끝난다 — 임베딩/분석 단계는 제거됨.
+        self.assertEqual(analyze_result["analyzed_count"], 1)
+        self.assertIsNotNone(analyze_result["analysis_result_id"])
+        self.assertIsNotNone(analyze_result["agent_result_id"])
         self.assertEqual(
             conn.task_types(),
-            ["process_report", "normalize_report"],
+            ["process_report", "normalize_report", "analyze_report"],
         )
 
         raw_document_id = next(iter(conn.raw_documents))
@@ -508,6 +538,14 @@ class ReportE2EPipelineTest(unittest.IsolatedAsyncioTestCase):
         event = conn.signal_events[signal_event_id]
         self.assertEqual(event["source_type"], "REPORT")
         self.assertEqual(event["event_type"], "report_published")
+        self.assertTrue(conn.analysis_results)
+        self.assertTrue(conn.agent_results)
+        agent_result = next(iter(conn.agent_results.values()))
+        self.assertEqual(agent_result["method_detail"]["source"], "REPORT")
+        self.assertEqual(
+            agent_result["method_detail"]["report_quant"]["valuation"]["target_price"],
+            90000,
+        )
 
     async def test_report_pipeline_runs_through_queue_runner_to_normalize(self):
         conn = FakeReportPipelineConnection()
@@ -550,10 +588,11 @@ class ReportE2EPipelineTest(unittest.IsolatedAsyncioTestCase):
                     connection=conn, settings=None, storage=storage
                 ),
                 NORMALIZE_REPORT: ReportNormalizeTaskHandler(connection=conn),
+                ANALYZE_REPORT: ReportAnalyzeTaskHandler(connection=conn),
             },
         )
 
-        for task_type in (COLLECT_REPORT, PROCESS_REPORT, NORMALIZE_REPORT):
+        for task_type in (COLLECT_REPORT, PROCESS_REPORT, NORMALIZE_REPORT, ANALYZE_REPORT):
             result = await runner.run_task(task_type)
             self.assertEqual(result["status"], "success", task_type)
 
@@ -563,8 +602,10 @@ class ReportE2EPipelineTest(unittest.IsolatedAsyncioTestCase):
                 for task in conn.processing_queue
                 if task["status"] == "success"
             ],
-            [COLLECT_REPORT, PROCESS_REPORT, NORMALIZE_REPORT],
+            [COLLECT_REPORT, PROCESS_REPORT, NORMALIZE_REPORT, ANALYZE_REPORT],
         )
+        self.assertTrue(conn.analysis_results)
+        self.assertTrue(conn.agent_results)
 
 
 if __name__ == "__main__":

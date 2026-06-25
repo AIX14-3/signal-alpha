@@ -191,9 +191,9 @@ agent-worker를 Railway에 띄우고, Railway의 Cron 서비스에서 위 2)의 
 이러면 GitHub Actions는 1)·3)만, 정규화는 worker 쪽에서 처리된다.
 
 ### 6.4 리포트/DART 경로 (팀원 영역 — 설계만)
-`COLLECT_REPORT → PROCESS_REPORT → EMBED_REPORT → ANALYZE_REPORT`, `COLLECT_DART` 등은 Selenium·S3·LLM·임베딩이
-필요해 **agent-worker(메모리 2–3GB)가 반드시 떠 있어야** 한다. 트리거는 `/internal/schedules/report/collect`,
-`/internal/schedules/report/analyze`, `/internal/schedules/dart/collect`를 Railway cron 또는 Actions로 호출.
+`COLLECT_REPORT → PROCESS_REPORT → NORMALIZE_REPORT → ANALYZE_REPORT`, `COLLECT_DART` 등은 Selenium·스토리지·선택적 LLM 보강이
+필요해 **agent-worker(메모리 2–3GB)가 반드시 떠 있어야** 한다. Report RAG 임베딩(`EMBED_REPORT`)은 현재 런타임에 연결되어 있지 않다. 트리거는 `/internal/schedules/report/collect`,
+`/internal/schedules/dart/collect`를 Railway cron 또는 Actions로 호출.
 이 경로는 팀원 영역이므로 본 가이드는 설계 제시까지만 한다.
 
 ---

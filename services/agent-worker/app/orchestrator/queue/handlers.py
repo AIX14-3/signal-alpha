@@ -7,6 +7,7 @@ from app.orchestrator.queue.task_types import (
     AGGREGATE_SIGNAL,
     ANALYZE_ALTERNATIVE,
     ANALYZE_DART,
+    ANALYZE_REPORT,
     COLLECT_DART,
     COLLECT_REPORT,
     ENRICH_HIRING,
@@ -52,6 +53,7 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
     llm_analyzer = None
     from app.orchestrator.report.tasks import (
         ReportCollectTaskHandler,
+        ReportAnalyzeTaskHandler,
         ReportNormalizeTaskHandler,
         ReportProcessTaskHandler,
     )
@@ -75,6 +77,7 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
         COLLECT_REPORT: ReportCollectTaskHandler(connection=connection, settings=settings),
         PROCESS_REPORT: ReportProcessTaskHandler(connection=connection, settings=settings),
         NORMALIZE_REPORT: ReportNormalizeTaskHandler(connection=connection),
+        ANALYZE_REPORT: ReportAnalyzeTaskHandler(connection=connection),
         # Alternative sources (hiring/patent/datalab) — converged onto the queue.
         NORMALIZE_HIRING: HiringNormalizeTaskHandler(connection),
         NORMALIZE_PATENT: PatentNormalizeTaskHandler(connection),

@@ -1,5 +1,7 @@
 import sys
 import unittest
+import json
+from datetime import date
 from datetime import datetime
 from pathlib import Path
 
@@ -7,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "packages" / "data-
 
 from app.orchestrator.report import tasks as report_tasks
 from app.orchestrator.report.tasks import (
+    ReportAnalyzeTaskHandler,
     ReportCollectTaskHandler,
     ReportNormalizeTaskHandler,
     ReportProcessTaskHandler,
@@ -203,7 +206,7 @@ class NormalizeHandlerConn:
 
 
 class ReportNormalizeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
-    async def test_normalizes_report_to_canonical_event_without_downstream_enqueue(self):
+    async def test_normalizes_report_to_canonical_event_and_enqueues_analysis(self):
         conn = NormalizeHandlerConn()
         handler = ReportNormalizeTaskHandler(connection=conn)
 
@@ -217,7 +220,7 @@ class ReportNormalizeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result["normalized_count"], 1)
         self.assertEqual(result["signal_event_ids"], [801])
-        self.assertNotIn("embed_task_ids", result)
+        self.assertEqual(result["analyze_task_id"], 701)
         self.assertTrue(conn._inserts("source_documents"))
         event_call = conn._inserts("signal_events")[0]
         self.assertEqual(event_call[2][3], "REPORT")
@@ -226,12 +229,102 @@ class ReportNormalizeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         metric_names = [call[2][1] for call in conn._inserts("signal_metrics")]
         self.assertIn("report_target_price", metric_names)
         self.assertIn("report_upside_pct", metric_names)
-        # NORMALIZE는 더 이상 임베딩/분석 태스크를 인큐하지 않는다.
+        # NORMALIZE는 RAG 임베딩 없이 deterministic Report 분석 태스크만 인큐한다.
         enqueue_task_types = [
             call[2][1] for call in conn._enqueue_inserts() if len(call[2]) > 1
         ]
         self.assertNotIn("embed_report", enqueue_task_types)
-        self.assertNotIn("analyze_report", enqueue_task_types)
+        self.assertIn("analyze_report", enqueue_task_types)
+        analyze_call = conn._enqueue_inserts()[0]
+        self.assertEqual(analyze_call[2][4], [801])
+
+
+# ── analyze_report ───────────────────────────────────────────────
+class AnalyzeHandlerConn:
+    def __init__(self):
+        self.calls = []
+
+    async def fetch(self, sql, *args):
+        self.calls.append(("fetch", sql, args))
+        if "FROM signal_events" in sql and "report_valuation_facts" in sql:
+            return [
+                {
+                    "id": 801,
+                    "stock_id": 1,
+                    "event_date": date(2026, 6, 24),
+                    "signal_direction": "positive",
+                    "impact_level": "medium",
+                    "title": "삼성전자 실적 점검",
+                    "summary": "신한투자증권 리포트에서 확인된 데이터 방향성입니다.",
+                    "evidence_url": "https://example.com/report.pdf",
+                    "needs_review": False,
+                    "raw_document_id": 42,
+                    "ticker": "005930",
+                    "broker": "신한투자증권",
+                    "publish_date": date(2026, 6, 24),
+                    "target_price": 90000,
+                    "forward_eps_est": 6000,
+                    "eps_fy": 2026,
+                    "methodology": "PER",
+                    "applied_multiple": 14.0,
+                    "implied_multiple": 15.0,
+                    "peer_group": ["SK하이닉스"],
+                    "category_tag": "earnings",
+                    "rerating_thesis": "실적 개선 근거",
+                    "extraction_source": "rules",
+                    "fact_needs_review": False,
+                }
+            ]
+        return []
+
+    async def fetchrow(self, sql, *args):
+        self.calls.append(("fetchrow", sql, args))
+        if "INSERT INTO analysis_results" in sql:
+            return {"id": 901}
+        if "INSERT INTO agent_results" in sql:
+            return {"id": 902}
+        return None
+
+    def _insert(self, table):
+        return next(call for call in self.calls if call[0] == "fetchrow" and f"INSERT INTO {table}" in call[1])
+
+
+class ReportAnalyzeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
+    async def test_persists_report_analysis_from_valuation_facts(self):
+        conn = AnalyzeHandlerConn()
+        handler = ReportAnalyzeTaskHandler(connection=conn)
+
+        result = await handler(
+            {
+                "stock_id": 1,
+                "source_signal_event_ids": [801],
+                "task_context": {"stock_code": "005930", "run_key": "REPORT_EVENT_801"},
+            }
+        )
+
+        self.assertEqual(result["analyzed_count"], 1)
+        self.assertEqual(result["analysis_result_id"], 901)
+        self.assertEqual(result["agent_result_id"], 902)
+        self.assertEqual(result["direction"], "positive")
+        self.assertFalse(result["needs_review"])
+
+        analysis_call = conn._insert("analysis_results")
+        self.assertEqual(analysis_call[2][2], date(2026, 6, 24))
+        self.assertEqual(analysis_call[2][3], "REPORT_EVENT_801")
+        self.assertEqual(analysis_call[2][4], [801])
+        self.assertGreater(analysis_call[2][5], 50.0)
+        self.assertEqual(analysis_call[2][8], "full")
+
+        agent_call = conn._insert("agent_results")
+        self.assertEqual(agent_call[2][2], "D-1")
+        self.assertEqual(agent_call[2][3], [801])
+        self.assertEqual(agent_call[2][5], "positive")
+        self.assertEqual(agent_call[2][10], "report-valuation-v1")
+        method_detail = json.loads(agent_call[2][6])
+        self.assertEqual(method_detail["source"], "REPORT")
+        self.assertEqual(method_detail["report_quant"]["valuation"]["target_price"], 90000)
+        self.assertEqual(method_detail["report_quant"]["valuation"]["implied_multiple"], 15.0)
+        self.assertEqual(method_detail["report_quant"]["valuation"]["needs_review"], False)
 
 
 # ── collect_report ───────────────────────────────────────────────

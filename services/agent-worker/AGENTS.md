@@ -17,7 +17,7 @@
 - `normalize_dart`
 - `analyze_dart`
 
-기획 문서에 언급되어 있어도 `analyze_report`, `analyze_alt`, `aggregate_debate`, `ml_score`, `create_final_signal` 핸들러가 존재한다고 가정하지 마세요. 새 핸들러는 명시적으로 추가하고 `app/orchestrator/queue` 경로에서 테스트하세요.
+기획 문서에 언급되어 있어도 `analyze_alt`, `aggregate_debate`, `ml_score`, `create_final_signal` 핸들러가 존재한다고 가정하지 마세요. 새 핸들러는 명시적으로 추가하고 `app/orchestrator/queue` 경로에서 테스트하세요. Report는 `collect_report`, `process_report`, `normalize_report`, `analyze_report`가 연결되어 있습니다.
 
 ## Collector 규칙
 

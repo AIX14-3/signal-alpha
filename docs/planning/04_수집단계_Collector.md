@@ -18,7 +18,7 @@
 | 실패 격리 | 특정 소스 수집 실패는 해당 소스에만 국한, 다른 모듈로 전파 안 됨. 실행 로그는 `collector_runs`에 기록 |
 | 인터페이스 | 공통 베이스 인터페이스 상속 (`app/collectors/base.py`) |
 
-> Report 경로의 PDF 다운로드, 파싱, 선택적 LLM 보강은 `collect_report`가 아니라 후속 queue 단계(`process_report`)에서 수행한다. 현재 런타임은 `process_report` 이후 `normalize_report`로 이어지며, `embed_report`/`analyze_report`/RAG 단계는 연결되어 있지 않다. Collector는 리포트 목록 메타데이터와 원천 URL을 저장하고 후속 작업을 등록하는 책임만 가진다.
+> Report 경로의 PDF 다운로드, 파싱, 선택적 LLM 보강은 `collect_report`가 아니라 후속 queue 단계(`process_report`)에서 수행한다. 현재 런타임은 `process_report` 이후 `normalize_report`와 deterministic `analyze_report`로 이어진다. `embed_report`/RAG 단계는 연결되어 있지 않다. Collector는 리포트 목록 메타데이터와 원천 URL을 저장하고 후속 작업을 등록하는 책임만 가진다.
 
 ---
 
