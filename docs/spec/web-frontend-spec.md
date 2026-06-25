@@ -13,7 +13,7 @@ Frontend가 담당한다: 종목 검색→리포트 흐름, 포트원 본인인�
 
 Frontend가 하지 않는다: 데이터 수집/분석/스코어링, 비즈니스 규칙 최종 판정(쿼터/권한은 백엔드가 최종 검증, 프론트는 표시·유도만).
 
-모든 문구는 투자 추천처럼 보이면 안 된다. 방향성 라벨: `positive`→"매수 우위", `negative`→"매도 우위", `neutral`→"중립", `mixed`→"혼조", `unknown`→"데이터 없음". 모든 리포트에 `notice` 노출. [[main-server-api-spec]] 원칙 준수.
+모든 문구는 투자 추천처럼 보이면 안 된다. 방향성 라벨: `positive`→"상방 데이터 우세", `negative`→"하방 데이터 우세", `neutral`→"중립", `mixed`→"혼조", `unknown`→"데이터 없음". 모든 리포트에 `notice` 노출. [[main-server-api-spec]] 원칙 준수.
 
 ### 페이지 인벤토리
 

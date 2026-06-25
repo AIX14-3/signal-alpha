@@ -81,6 +81,7 @@ class FakeReportPipelineConnection:
         self.signal_metrics = []
         self.validation_logs = []
         self.report_chunks = []
+        self.report_valuation_facts = {}
         self.analysis_results = {}
         self.agent_results = {}
         self.processing_queue = []
@@ -240,6 +241,28 @@ class FakeReportPipelineConnection:
             }
             self.signal_metrics.append(row)
             return row
+        if "INSERT INTO report_valuation_facts" in sql:
+            row = {
+                "raw_document_id": args[0],
+                "stock_id": args[1],
+                "ticker": args[2],
+                "broker": args[3],
+                "analyst": args[4],
+                "publish_date": args[5],
+                "target_price": args[6],
+                "forward_eps_est": args[7],
+                "eps_fy": args[8],
+                "methodology": args[9],
+                "applied_multiple": args[10],
+                "implied_multiple": args[11],
+                "peer_group": json.loads(args[12]),
+                "category_tag": args[13],
+                "rerating_thesis": args[14],
+                "extraction_source": args[15],
+                "needs_review": args[16],
+            }
+            self.report_valuation_facts[args[0]] = row
+            return row
         if "INSERT INTO analysis_results" in sql:
             analysis_result_id = self._take("analysis_result")
             row = {
@@ -301,6 +324,13 @@ class FakeReportPipelineConnection:
                 }
                 for detail in self.report_raw_details.values()
                 if detail["stock_id"] == stock_id and detail["parsing_status"] == "success"
+            ]
+        if "FROM report_valuation_facts" in sql:
+            stock_id = args[0]
+            return [
+                fact
+                for fact in self.report_valuation_facts.values()
+                if fact["stock_id"] == stock_id
             ]
         if "FROM ohlcv_data" in sql:
             return []

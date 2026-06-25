@@ -237,6 +237,120 @@ class CollectionRepository:
             rows,
         )
 
+    async def upsert_report_valuation_fact(
+        self,
+        *,
+        raw_document_id: int,
+        stock_id: int,
+        ticker: str,
+        broker: str | None = None,
+        analyst: str | None = None,
+        publish_date: Any | None = None,
+        target_price: int | None = None,
+        forward_eps_est: int | None = None,
+        eps_fy: int | None = None,
+        methodology: str = "unknown",
+        applied_multiple: Any | None = None,
+        implied_multiple: Any | None = None,
+        peer_group: Any | None = None,
+        category_tag: str | None = None,
+        rerating_thesis: str | None = None,
+        extraction_source: str = "rules",
+        needs_review: bool = False,
+    ) -> Any:
+        return await self._connection.fetchrow(
+            """
+            INSERT INTO report_valuation_facts (
+                raw_document_id,
+                stock_id,
+                ticker,
+                broker,
+                analyst,
+                publish_date,
+                target_price,
+                forward_eps_est,
+                eps_fy,
+                methodology,
+                applied_multiple,
+                implied_multiple,
+                peer_group,
+                category_tag,
+                rerating_thesis,
+                extraction_source,
+                needs_review
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+            ON CONFLICT (raw_document_id)
+            DO UPDATE SET
+                ticker = EXCLUDED.ticker,
+                broker = EXCLUDED.broker,
+                analyst = EXCLUDED.analyst,
+                publish_date = EXCLUDED.publish_date,
+                target_price = EXCLUDED.target_price,
+                forward_eps_est = EXCLUDED.forward_eps_est,
+                eps_fy = EXCLUDED.eps_fy,
+                methodology = EXCLUDED.methodology,
+                applied_multiple = EXCLUDED.applied_multiple,
+                implied_multiple = EXCLUDED.implied_multiple,
+                peer_group = EXCLUDED.peer_group,
+                category_tag = EXCLUDED.category_tag,
+                rerating_thesis = EXCLUDED.rerating_thesis,
+                extraction_source = EXCLUDED.extraction_source,
+                needs_review = EXCLUDED.needs_review,
+                updated_at = NOW()
+            RETURNING *
+            """,
+            raw_document_id,
+            stock_id,
+            ticker,
+            broker,
+            analyst,
+            publish_date,
+            target_price,
+            forward_eps_est,
+            eps_fy,
+            methodology,
+            applied_multiple,
+            implied_multiple,
+            _jsonb(peer_group or []),
+            category_tag,
+            rerating_thesis,
+            extraction_source,
+            needs_review,
+        )
+
+    async def list_report_valuation_facts(self, *, stock_id: int, limit: int = 20) -> list[Any]:
+        return list(await self._connection.fetch(
+            """
+            SELECT
+                raw_document_id,
+                stock_id,
+                ticker,
+                broker,
+                analyst,
+                publish_date,
+                target_price,
+                forward_eps_est,
+                eps_fy,
+                methodology,
+                applied_multiple,
+                implied_multiple,
+                peer_group,
+                category_tag,
+                rerating_thesis,
+                extraction_source,
+                needs_review,
+                created_at,
+                updated_at
+            FROM report_valuation_facts
+            WHERE stock_id = $1
+            ORDER BY publish_date DESC NULLS LAST, raw_document_id DESC
+            LIMIT $2
+            """,
+            stock_id,
+            limit,
+        ))
+
     async def delete_dart_test_data(
         self,
         *,

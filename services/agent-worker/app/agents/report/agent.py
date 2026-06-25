@@ -123,14 +123,17 @@ class ReportAnalysisAgent:
                 llm_error=str(exc),
             )
 
-        data_status: SourceAgentStatus = "partial" if analysis["needs_review"] else "ok"
+        valuation_risk_flags = _valuation_risk_flags(quant)
+        risk_flags = _merge_unique(analysis["risk_flags"], valuation_risk_flags)
+        needs_review = bool(analysis["needs_review"]) or _valuation_needs_review(quant)
+        data_status: SourceAgentStatus = "partial" if needs_review else "ok"
         return SourceAgentOutput(
             source="REPORT",
             stock_code=stock_code,
             direction=analysis["direction"],
             score=float(analysis["score"]),
             summary=analysis["summary"],
-            risk_flags=analysis["risk_flags"],
+            risk_flags=risk_flags,
             method_detail={
                 "coverage": COVERAGE,
                 "key_rationale": analysis["key_rationale"],
@@ -138,7 +141,7 @@ class ReportAnalysisAgent:
                 "evidence_chunks": _evidence_refs(chunks),
                 "llm_confidence": analysis["confidence"],
             },
-            needs_review=analysis["needs_review"],
+            needs_review=needs_review,
             data_status=data_status,
             analysis_source="llm",
             llm_model=self._llm_model,
@@ -174,7 +177,7 @@ class ReportAnalysisAgent:
             direction="unknown",
             score=50.0,
             summary=summary,
-            risk_flags=risk_flags or [],
+            risk_flags=_merge_unique(risk_flags or [], _valuation_risk_flags(quant)),
             method_detail={
                 "coverage": COVERAGE,
                 "report_quant": quant,
@@ -217,6 +220,32 @@ def _evidence_refs(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 ref[key] = str(value)
         refs.append(ref)
     return refs
+
+
+def _valuation_needs_review(quant: dict[str, Any]) -> bool:
+    valuation = quant.get("valuation")
+    if not isinstance(valuation, dict):
+        return False
+    return bool(valuation.get("needs_review")) or valuation.get("data_status") == "partial"
+
+
+def _valuation_risk_flags(quant: dict[str, Any]) -> list[str]:
+    valuation = quant.get("valuation")
+    if not isinstance(valuation, dict):
+        return []
+    flags = valuation.get("risk_flags")
+    if not isinstance(flags, list):
+        return ["valuation_review_required"] if _valuation_needs_review(quant) else []
+    return [str(flag) for flag in flags if str(flag or "").strip()]
+
+
+def _merge_unique(first: list[str], second: list[str]) -> list[str]:
+    merged: list[str] = []
+    for value in [*first, *second]:
+        text = str(value or "").strip()
+        if text and text not in merged:
+            merged.append(text)
+    return merged
 
 
 def _build_prompt(

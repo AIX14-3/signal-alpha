@@ -150,6 +150,7 @@ class ProcessHandlerConn:
     def __init__(self):
         self.executed = []
         self.fetchvals = []
+        self.valuation_facts = []
 
     async def fetchrow(self, sql, *args):
         if "JOIN report_raw_details" in sql:
@@ -164,6 +165,9 @@ class ProcessHandlerConn:
                 "s3_key": None,
                 "parsing_status": "pending",
             }
+        if "INSERT INTO report_valuation_facts" in sql:
+            self.valuation_facts.append(args)
+            return {"raw_document_id": args[0], "stock_id": args[1]}
         return None
 
     async def execute(self, sql, *args):
@@ -217,7 +221,20 @@ class ReportProcessTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
             observed["process"] = (s3_key, passed_storage, settings)
             return {
                 "opinion": "neutral",
-                "target_price": 90000,
+                "target_price": 120000,
+                "valuation_facts": {
+                    "target_price": 120000,
+                    "forward_eps_est": 8000,
+                    "eps_fy": 2026,
+                    "methodology": "PER",
+                    "applied_multiple": 15.0,
+                    "implied_multiple": 15.0,
+                    "peer_group": [],
+                    "category_tag": None,
+                    "rerating_thesis": None,
+                    "extraction_source": "rules",
+                    "needs_review": False,
+                },
                 "key_rationale": "근거",
                 "raw_text": "본문",
             }
@@ -234,6 +251,12 @@ class ReportProcessTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertIs(observed["process"][2], settings)
         self.assertEqual(observed["process"][0], "reports/005930/20260624_test_securities_abcdef12.pdf")
         self.assertTrue(any("UPDATE report_raw_details" in sql for sql, _ in conn.executed))
+        self.assertEqual(conn.valuation_facts[0][2], "005930")
+        self.assertEqual(conn.valuation_facts[0][6], 120000)
+        self.assertEqual(conn.valuation_facts[0][7], 8000)
+        self.assertEqual(conn.valuation_facts[0][9], "PER")
+        self.assertEqual(conn.valuation_facts[0][10], 15.0)
+        self.assertEqual(conn.valuation_facts[0][11], 15.0)
         self.assertTrue(any(args[1] == "normalize_report" for _, args in conn.fetchvals))
 
 
@@ -338,6 +361,29 @@ class AnalyzeHandlerConn:
                 {"investment_opinion": "Buy", "target_price": 100000},
                 {"investment_opinion": "Hold", "target_price": None},
             ]
+        if "FROM report_valuation_facts" in sql:
+            return [
+                {
+                    "raw_document_id": 42,
+                    "broker": "A",
+                    "publish_date": datetime(2026, 6, 24).date(),
+                    "methodology": "PER",
+                    "applied_multiple": 14.0,
+                    "implied_multiple": 15.0,
+                    "peer_group": ["SK Hynix", "Micron"],
+                    "needs_review": False,
+                },
+                {
+                    "raw_document_id": 43,
+                    "broker": "B",
+                    "publish_date": datetime(2026, 6, 23).date(),
+                    "methodology": "PER",
+                    "applied_multiple": 21.0,
+                    "implied_multiple": 20.0,
+                    "peer_group": ["Micron"],
+                    "needs_review": False,
+                },
+            ]
         if "FROM signal_events" in sql:
             return [
                 {
@@ -420,9 +466,15 @@ class ReportAnalyzeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(quant["report_count"], 3)
         self.assertEqual(quant["avg_target"], 95000)
         self.assertTrue(quant["conflict_detected"])
+        self.assertEqual(quant["valuation"]["valuation_count"], 2)
+        self.assertEqual(quant["valuation"]["implied_multiple_avg"], 17.5)
+        self.assertEqual(quant["valuation"]["peer_gap_avg"], 0.0)
+        self.assertEqual(quant["valuation"]["scenario_band"]["base_multiple"], 17.5)
+        self.assertEqual(quant["valuation"]["scenario_band"]["dispersion_level"], "medium")
         # method_signal은 허용값(positive). agent에 정량이 context로 주입됐는지
         self.assertEqual(conn.method_signal, "positive")
         self.assertEqual(agent.received.context["report_quant"]["avg_target"], 95000)
+        self.assertEqual(agent.received.context["report_quant"]["valuation"]["usable_multiple_count"], 2)
         self.assertEqual(agent.received.events[0]["id"], 801)
         self.assertEqual(result["ml_infer_task_id"], 601)
         ml_enqueue = next(call for call in conn.fetchvals if "INSERT INTO processing_queue" in call[0])

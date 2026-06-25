@@ -177,6 +177,67 @@ def test_process_from_s3_builds_llm_config_from_settings(monkeypatch):
     assert result["opinion"] == "buy"
 
 
+def test_process_from_s3_enriches_valuation_facts_with_report_llm_config(monkeypatch):
+    class LlmSettings:
+        report_use_llm = True
+        report_llm_provider = "gemini"
+        report_llm_model = "gemini-test-model"
+
+    class ValuationLlmConfig:
+        model = "gemini-test-model"
+        timeout_seconds = 8.0
+
+        def __init__(self):
+            self.client = ValuationLlmClient()
+
+    class ValuationLlmClient:
+        def __init__(self):
+            self.calls = []
+
+        async def complete(self, *, prompt, model, timeout_seconds):
+            self.calls.append({
+                "prompt": prompt,
+                "model": model,
+                "timeout_seconds": timeout_seconds,
+            })
+            return (
+                '{"methodology": "DCF", "category_tag": "ai_memory", '
+                '"rerating_thesis": "HBM demand and peer premium explain the valuation context.", '
+                '"needs_review": false}'
+            )
+
+    config = ValuationLlmConfig()
+
+    monkeypatch.setattr(
+        run_parser,
+        "extract_text",
+        lambda _: "Target Price KRW 120,000\n2026E EPS 8,000\nTarget PER 15.0x",
+    )
+    monkeypatch.setattr(
+        run_parser,
+        "parse_report",
+        lambda text, **_kwargs: {
+            "target_price": 120000,
+            "opinion": "neutral",
+            "key_rationale": "LLM rationale",
+        },
+    )
+    monkeypatch.setattr(run_parser, "_build_llm_config", lambda settings: config)
+
+    result = run_parser.process_from_s3(
+        "reports/005930/report.pdf",
+        FakeStorage(),
+        settings=LlmSettings(),
+    )
+
+    assert result["valuation_facts"]["target_price"] == 120000
+    assert result["valuation_facts"]["forward_eps_est"] == 8000
+    assert result["valuation_facts"]["methodology"] == "DCF"
+    assert result["valuation_facts"]["category_tag"] == "ai_memory"
+    assert result["valuation_facts"]["extraction_source"] == "llm"
+    assert config.client.calls
+
+
 def test_deterministic_parser_handles_common_broker_price_and_opinion_formats():
     cases = [
         (

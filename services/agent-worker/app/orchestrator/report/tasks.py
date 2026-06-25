@@ -9,6 +9,7 @@ from typing import Any
 
 from app.agents.base import SourceAgentInput
 from app.agents.report.agent import ReportAnalysisAgent
+from app.analyzers.report.valuation import build_valuation_summary
 from app.analyzers.report.rag_retriever import ReportRagRetriever
 from app.collectors.report.crawler import collect_stock
 from app.collectors.report.parsers.chunker import chunk_text
@@ -253,6 +254,26 @@ class ReportProcessTaskHandler:
             parsed.get("target_price"),
             parsed.get("key_rationale"),
             parsed.get("raw_text", "")[:2000],
+        )
+
+        valuation_facts = dict(parsed.get("valuation_facts") or {})
+        await CollectionRepository(self._connection).upsert_report_valuation_fact(
+            raw_document_id=raw_document_id,
+            stock_id=int(row["stock_id"]),
+            ticker=str(row["stock_code"]),
+            broker=row["securities_firm"],
+            publish_date=row["publish_date"],
+            target_price=valuation_facts.get("target_price") or parsed.get("target_price"),
+            forward_eps_est=valuation_facts.get("forward_eps_est"),
+            eps_fy=valuation_facts.get("eps_fy"),
+            methodology=valuation_facts.get("methodology") or "unknown",
+            applied_multiple=valuation_facts.get("applied_multiple"),
+            implied_multiple=valuation_facts.get("implied_multiple"),
+            peer_group=valuation_facts.get("peer_group") or [],
+            category_tag=valuation_facts.get("category_tag"),
+            rerating_thesis=valuation_facts.get("rerating_thesis"),
+            extraction_source=valuation_facts.get("extraction_source") or "rules",
+            needs_review=bool(valuation_facts.get("needs_review", True)),
         )
 
         # 파싱 완료 → 임베딩 태스크 자동 등록. 모델(~2GB) 싱글톤 1회 로딩을 위해
@@ -660,6 +681,9 @@ class ReportAnalyzeTaskHandler:
             opinion = str(r["investment_opinion"] or "").strip()
             if opinion:
                 opinions[opinion] = opinions.get(opinion, 0) + 1
+        valuation_rows = await CollectionRepository(self._connection).list_report_valuation_facts(
+            stock_id=stock_id
+        )
         return {
             "report_count": len(rows),
             "avg_target": round(sum(targets) / len(targets)) if targets else None,
@@ -667,6 +691,7 @@ class ReportAnalyzeTaskHandler:
                 {"opinion": k, "count": v} for k, v in sorted(opinions.items())
             ],
             # 표본 작아 통계적 신뢰는 낮지만, 서로 다른 의견이 섞이면 conflict로 표시.
+            "valuation": build_valuation_summary(valuation_rows),
             "conflict_detected": len(opinions) > 1,
         }
 

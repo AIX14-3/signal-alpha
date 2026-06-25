@@ -1,6 +1,6 @@
 # 증권사 리포트 RAG 현재 구현 상태
 
-최종 갱신일: 2026-06-24
+최종 갱신일: 2026-06-25
 
 ## 목적
 
@@ -16,6 +16,7 @@ Signal Alpha는 투자 추천 서비스가 아닙니다. 증권사 리포트 데
 - canonical DB 경로: `raw_documents -> report_raw_details -> report_chunks`
 - 큐 핸들러: `services/agent-worker/app/orchestrator/report/tasks.py`
 - RAG 검색과 Report Agent: `services/agent-worker/app/analyzers/report/rag_retriever.py`, `services/agent-worker/app/agents/report/agent.py`
+- 밸류에이션 재해석 전략: `docs/spec/report-valuation-reinterpretation-strategy.md`
 - 과거 담당자 인수인계 문서: `docs/spec/eunjinspec.md`
 
 `docs/spec/eunjinspec.md`는 과거 작업 맥락을 이해하는 데 유용하지만, `report_raw` / `report_signal` 중심의 레거시 경로를 많이 설명합니다. 신규 개발은 명시적인 legacy 이전 작업이 아니라면 canonical 경로를 기준으로 진행합니다.
@@ -117,6 +118,12 @@ ReportProcessTaskHandler
 - `pdf_downloader.py`, `run_parser.py` 같은 과거 CLI 경로는 `data/reports/` 아래에 PDF를 저장할 수 있습니다.
 - queue handler는 `REPORT_STORAGE_BACKEND` 값에 따라 GCS 또는 local storage client를 사용합니다.
 - DB 컬럼명은 아직 `s3_key`이지만, 현재 구현에서는 선택된 storage backend의 object key로 사용합니다.
+
+저작권과 보존 관련 주의:
+
+- 사용자-facing 응답에는 PDF 원문이나 긴 verbatim 청크를 노출하지 않습니다.
+- 현재 `report_chunks`는 내부 RAG 검색과 근거 추적을 위한 canonical 저장소입니다.
+- 밸류에이션 재해석 확장에서는 원문 문장을 그대로 저장하는 대신 구조화된 fact와 패러프레이즈된 thesis를 별도 저장하는 방향을 우선합니다.
 
 ### 4. `normalize_report`
 
@@ -222,6 +229,10 @@ ReportAnalyzeTaskHandler
 
 - Report 분석은 `final_signals`를 직접 쓰지 않습니다.
 - 사용자-facing 최종 데이터 방향성 발행 여부는 Aggregator와 후속 gate가 결정합니다.
+- `process_report`는 밸류에이션 재해석 전략의 `forward_eps_est`, `applied_multiple`, `implied_multiple`, `peer_group`를 규칙 기반으로 구조화하고, LLM 설정이 활성화된 경우 `category_tag`, `rerating_thesis`, `methodology`를 보강합니다.
+- valuation analyzer MVP는 `report_valuation_facts`를 읽어 내재 배수 평균·중앙값·분산, 적용 배수 대비 gap, 피어 그룹 빈도, `needs_review` 비율, `scenario_band`를 `report_quant.valuation`에 포함합니다.
+- Aggregator는 Report `method_detail.report_quant.valuation`을 `score_breakdown.REPORT.valuation`과 caution evidence로 전달하고, valuation review risk를 최종 `needs_review`와 warning 판단에 반영합니다.
+- `scenario_band`는 내재 배수 중앙값을 base로 두고 분산의 제곱근 범위를 low/high로 계산하는 내부 구조화 값입니다. 투자 행동 제안으로 노출하지 않습니다.
 - LLM 설정이 비활성화되었거나 model/key/provider가 불완전하면 Report Agent는 보수적 fallback을 사용합니다.
   - 방향성: `unknown`
   - 점수: `50`
@@ -260,9 +271,21 @@ ReportAnalyzeTaskHandler
 - `raw_documents`: source 공통 메타데이터
 - `report_raw_details`: 증권사 리포트 상세, PDF 상태, 파싱 필드
 - `report_chunks`: PDF 청크와 embedding
+- `report_valuation_facts`: 리포트별 목표가 산정 fact, EPS, 적용 배수, 내재 배수, 피어 그룹
 - `processing_queue`: queue 작업 상태
 - `analysis_results`: 분석 실행 결과
 - `agent_results`: Report agent 방식별 결과
+
+### 밸류에이션 fact
+
+- `029_report_valuation_facts.sql`에서 `report_valuation_facts` 테이블을 추가했습니다.
+- `process_report`는 PDF 파싱 결과에서 `target_price`, `forward_eps_est`, `eps_fy`, `methodology`, `applied_multiple`, `implied_multiple`, `peer_group`를 구조화해 저장합니다.
+- `implied_multiple = target_price / forward_eps_est` 계산은 결정론 코드가 담당합니다.
+- `REPORT_USE_LLM=true`이고 provider/model/API key가 모두 설정되면 LLM이 `methodology`, `category_tag`, `rerating_thesis`만 보강합니다. 목표가, EPS, 적용 배수, 내재 배수는 LLM 결과를 사용하지 않습니다.
+- LLM JSON 오류, timeout, 금지 표현 감지 시 `extraction_source='rules_fallback'`, `needs_review=TRUE`로 저장합니다.
+- 추출 실패나 핵심 값 결측 시 `needs_review = TRUE`로 저장해 추가 확인 필요 상태를 남깁니다.
+- `analyze_report`는 `report_valuation_facts`를 읽어 valuation summary를 만들고, `needs_review` 비율이 높으면 Report 결과의 `data_status='partial'`과 `valuation_review_required` risk flag로 반영합니다.
+- valuation summary에는 내부용 `scenario_band.low_multiple/base_multiple/high_multiple`, `dispersion_level`, `confidence_note`가 포함됩니다.
 
 ### Legacy 테이블
 
@@ -359,6 +382,10 @@ Invoke-RestMethod `
 
 후속 개발 전에 아래 결정을 먼저 내리는 것이 좋습니다.
 
+0. 밸류에이션 재해석 확장
+   - `report_valuation_facts` 스키마, extractor MVP, LLM 기반 methodology/category/thesis 보강, valuation analyzer MVP, scenario band MVP, Aggregator 전달은 구현되었습니다.
+   - 다음 작업은 백테스트 fixture에 성공/실패 사례를 함께 추가하는 것입니다.
+   - PDF 원문과 긴 청크를 사용자에게 노출하지 않고, valuation 전략용 결과는 구조화 fact 중심으로 저장합니다.
 1. 저장 backend
    - canonical queue 경로의 기본 backend는 GCS입니다. 개발과 테스트용 local storage adapter도 구현되어 있으므로, 운영 환경에서는 GCS bucket/권한을 확정하고 로컬 환경에서는 `REPORT_STORAGE_BACKEND=local` 사용 여부를 정하면 됩니다.
 2. 정규화 경로
