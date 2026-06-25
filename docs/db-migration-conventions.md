@@ -21,23 +21,23 @@
   둘 다 존재(브랜치 충돌 흔적). `migrate.py` 는 파일명 단위로 추적하므로 둘 다 정상 적용된다
   (검증 완료). 적용본은 보존하고, 앞으로는 타임스탬프 명명으로 재발 방지.
 
-## 기능 제거 = forward-only drop
-머지된 기능 제거 시 과거 마이그레이션을 수정하지 않고 **새 drop 마이그레이션**을 추가한다
-(예: `012_drop_sec_filings.sql`). 이번 임베딩/pgvector 제거도 동일:
-- `20260625_1024_drop_embeddings_pgvector.sql` 가 `dart_chunks`/`dart_document_features`/
-  `report_chunks` 3개 테이블과 `vector` 확장을 드롭.
-- 과거 `001`/`021`/`022` 의 `CREATE EXTENSION vector` + vector 컬럼은 보존 → fresh DB 적용 시
-  생성됐다가 마지막 drop 에서 제거되어 **최종 스키마는 pgvector-free**.
-- GCP Cloud SQL 은 pgvector 를 지원하므로 배포 시 `CREATE EXTENSION` 단계가 통과한다.
-  로컬 docker 는 같은 이유로 `pgvector/pgvector:pg16` 이미지를 유지.
+## 기능 제거 정책
+보통은 과거 마이그레이션을 수정하지 않고 **새 drop 마이그레이션**을 추가한다
+(예: `012_drop_sec_filings.sql`) — 이미 배포된 DB 체크섬을 보존하기 위함.
+
+**예외 — 이번 임베딩/pgvector 완전 제거(배포 전, 운영 DB 없음):**
+pgvector 자체를 의존성에서 빼고 로컬도 일반 `postgres:16` 으로 가기 위해, 과거 마이그레이션을
+직접 편집했다(운영 DB 부재라 체크섬 리셋 비용을 감수).
+- `001_baseline.sql`: `CREATE EXTENSION vector` 와 `report_chunks` 테이블/인덱스 제거.
+- `021_dart_chunks.sql`, `022_dart_document_features.sql`: 임베딩 전용 → **파일 삭제**.
+- → 마이그레이션 전체에 vector 흔적 0. fresh DB 는 pgvector 없이 적용 가능.
+
+⚠️ **체크섬 리셋 필요**: 이 브랜치를 pull 한 기존 로컬/dev DB 는 `001` 체크섬 불일치 +
+삭제된 021/022 ledger 잔존으로 `migrate` 가 실패한다. **DB 를 재생성**(drop→create→
+`migrate apply --seeds`)하면 깨끗하게 적용된다. 배포(GCP Cloud SQL)는 신규 인스턴스라 무관.
 
 ## 검증 결과(이 브랜치)
-- 전체 마이그레이션(29) + 시드(7) fresh 적용 성공.
-- `check_schema.py` → **드리프트 없음**(CREATE EXTENSION → … → DROP EXTENSION 전체 시퀀스
-  무결성 확인).
-- 임베딩 제거 후 테이블 **68 → 65**, `vector` 타입/확장/인덱스 0.
-
-## (선택) 완전 pgvector 제거 변형
-로컬 이미지까지 `postgres:16`(pgvector 없음)으로 가려면 과거 마이그레이션에서 vector 흔적을
-직접 제거해야 한다 → 기존 DB 체크섬 리셋(재생성) 필요. 배포 전 단계라 가능하지만, 본 PR 은
-무위험 forward-only 를 택했다. 필요 시 별도 작업으로 진행.
+- 전체 마이그레이션(27) + 시드(7) 를 **일반 `postgres:16`(pgvector 미설치)** 에 fresh 적용 성공.
+- `check_schema.py` → **드리프트 없음**(전체 시퀀스 무결성 확인).
+- 임베딩 제거 후 테이블 **68 → 65**, `vector` 타입/확장/인덱스 0, `CREATE EXTENSION` 0.
+- docker-compose 이미지 `pgvector/pgvector:pg16` → `postgres:16`.

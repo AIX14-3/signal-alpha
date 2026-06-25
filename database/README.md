@@ -1,6 +1,6 @@
 # Signal Alpha Database
 
-Signal Alpha 데이터베이스는 DART 공시, 증권사 리포트, 채용공고, 특허, DataLab 검색 트렌드, 주가 데이터를 수집하고 정규화한 뒤, 여러 데이터 소스가 같은 방향의 투자 시그널을 보이는지 분석하기 위한 PostgreSQL(pgvector) 기반 저장소입니다.
+Signal Alpha 데이터베이스는 DART 공시, 증권사 리포트, 채용공고, 특허, DataLab 검색 트렌드, 주가 데이터를 수집하고 정규화한 뒤, 여러 데이터 소스가 같은 방향의 투자 시그널을 보이는지 분석하기 위한 PostgreSQL 기반 저장소입니다.
 
 > ## ⚠️ 소스 오브 트루스 선언
 >
@@ -49,9 +49,8 @@ docker compose run --rm migrate
 
 | Zone | 테이블 |
 | --- | --- |
-| - (extension) | (pgvector `vector` extension) |
 | A Market | `stocks`, `ohlcv_data`, `fundamentals`, `price_snapshots` |
-| C Collection 핵심 | `collector_runs`, `raw_documents`, `dart_raw_details`, `report_raw_details`, `hiring_raw_details`, `patent_raw_details`, `report_chunks` |
+| C Collection 핵심 | `collector_runs`, `raw_documents`, `dart_raw_details`, `report_raw_details`, `hiring_raw_details`, `patent_raw_details` |
 | C Collection DART | `dart_corp_codes`, `dart_collection_states` |
 | C Collection DataLab | `datalab_categories`, `datalab_category_stocks`, `datalab_category_keywords`, `datalab_raw_documents`, `datalab_raw_details` |
 | C Collection Hiring | `hiring_baseline`, `hiring_signals`, `hiring_sources`, `hiring_job_functions`, `hiring_job_function_stocks`, `hiring_quarantine` (+ `hiring_crawler_type` ENUM) |
@@ -114,7 +113,7 @@ DataLab은 종목이 아닌 **카테고리 단위**로 수집합니다: 원본�
 | Collector | 저장 흐름 |
 | --- | --- |
 | DART Collector | `collector_runs` -> `raw_documents` -> `dart_raw_details` -> `processing_queue` |
-| Report Collector | `collector_runs` -> `raw_documents` -> `report_raw_details` -> `report_chunks` -> `processing_queue` |
+| Report Collector | `collector_runs` -> `raw_documents` -> `report_raw_details` -> `processing_queue` |
 | Hiring Collector | `collector_runs` -> `raw_documents` -> `hiring_raw_details` -> `processing_queue` (계절성 기준선은 `hiring_baseline`) |
 | Patent Collector | `collector_runs` -> `raw_documents` -> `patent_raw_details` -> `processing_queue` |
 | DataLab Collector | `collector_runs` -> `datalab_raw_documents` -> `datalab_raw_details` -> `processing_queue` (stock_id=NULL, 카테고리 기반) |
@@ -171,19 +170,18 @@ Frontend는 원칙적으로 `final_signals`를 중심으로 조회합니다.
 | DART 고임팩트 즉시 분석 | `IMMEDIATE` |
 | 수동 재분석 | `MANUAL` |
 
-Report RAG 검색은 `report_chunks`에서 `stock_id`로 먼저 필터링 후 `embedding <=> :query_embedding` 순으로 조회합니다 (다른 종목 리포트가 분석 근거에 섞이지 않게).
+(리포트 임베딩/RAG 검색 기능은 제거됨 — `report_chunks`/pgvector 폐지.)
 
 ## 7. Legacy 테이블 (폐기 예정)
 
 `013_legacy_report_mvp.sql`의 `report_raw` / `report_signal`은 report RAG MVP가 마이그레이션 체계 밖(`setup_db.py`)에서 만들어 쓰던 테이블입니다. 현재 report 런타임 코드는 canonical 경로로 이전되어 더 이상 이 테이블을 참조하지 않습니다. 테이블은 기존 환경 호환성과 추후 DROP migration 준비를 위해 베이스라인에 남아 있습니다.
 
-- **신규 코드에서 참조 금지.** 리포트 데이터는 `raw_documents` -> `report_raw_details` -> `report_chunks` 경로를 사용하세요.
+- **신규 코드에서 참조 금지.** 리포트 데이터는 `raw_documents` -> `report_raw_details` 경로를 사용하세요.
 - 이전 계획: 운영 데이터 호환성 확인 뒤 별도 마이그레이션으로 DROP.
 
 ## 8. 주의사항
 
 - Signal Alpha가 제공하는 시그널은 AI Agent의 데이터 분석 결과이며 투자 권유가 아닙니다. 투자 판단과 손실 책임은 사용자 본인에게 있습니다.
 - 수치 데이터는 LLM이 생성하지 않습니다. 점수, 지표, 가격, 변화율, 재무 수치 등 정량 데이터는 반드시 DB에 저장된 값만 사용합니다.
-- `pgvector` extension이 설치된 환경(pgvector/pgvector:pg16 이미지 등)이 필요합니다. embedding 차원 변경 시 `report_chunks.embedding`의 `VECTOR(1024)` 차원도 함께 바꿔야 합니다.
 - PostgreSQL 배열 컬럼(`processing_queue.source_*_ids`, `analysis_results.source_signal_event_ids`, `agent_results.source_signal_event_ids`)은 원소별 FK 무결성을 강제하지 못합니다. MVP에서는 배열을 유지하고 `validation_logs`로 source trace 검증을 기록하며, 안정화 후 매핑 테이블로 분리합니다.
 - `source_hash`, `event_hash`, unique constraint, partial unique index로 중복 저장을 방지합니다.

@@ -53,7 +53,7 @@ Signal Alpha가 아래 기능을 제공하는 것처럼 표현하면 안 됩니�
 - 애플리케이션 코드나 임시 setup 스크립트에서 테이블을 만들지 마세요.
 - DB 문서가 명시적으로 허용하지 않는 한 migration에서 `IF NOT EXISTS`를 사용하지 마세요.
 - seed는 `ON CONFLICT` 기반으로 재실행 가능하게 만드세요.
-- legacy `report_raw`, `report_signal`은 과거 Report MVP 경로를 위해서만 존재합니다. 신규 코드는 `raw_documents -> report_raw_details -> report_chunks`와 정규화/분석 테이블을 사용해야 합니다.
+- legacy `report_raw`, `report_signal`은 과거 Report MVP 경로를 위해서만 존재합니다. 신규 코드는 `raw_documents -> report_raw_details`와 정규화/분석 테이블을 사용해야 합니다.
 
 ## 현재 구현 상태
 

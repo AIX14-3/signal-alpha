@@ -1,6 +1,6 @@
 # AGENTS.md
 
-이 디렉터리는 PostgreSQL + pgvector 스키마, migration, seed, ERD, DB 거버넌스 문서를 담당합니다.
+이 디렉터리는 PostgreSQL 스키마, migration, seed, ERD, DB 거버넌스 문서를 담당합니다.
 
 ## 스키마 기준
 
@@ -22,7 +22,7 @@
 canonical 수집 흐름:
 
 - DART: `collector_runs -> raw_documents -> dart_raw_details -> processing_queue`
-- Report: `collector_runs -> raw_documents -> report_raw_details -> report_chunks -> processing_queue`
+- Report: `collector_runs -> raw_documents -> report_raw_details -> processing_queue`
 - Hiring: `collector_runs -> raw_documents -> hiring_raw_details -> processing_queue`
 - Patent: `collector_runs -> raw_documents -> patent_raw_details -> processing_queue`
 - DataLab: `collector_runs -> datalab_raw_documents -> datalab_raw_details -> processing_queue(stock_id=NULL)`

@@ -108,21 +108,11 @@ erDiagram
         VARCHAR tech_category
     }
 
-    report_chunks {
-        BIGINT id PK
-        BIGINT raw_document_id FK "복합FK CASCADE, UK(raw_document_id,chunk_index)"
-        BIGINT stock_id
-        INTEGER chunk_index
-        TEXT chunk_text
-        VECTOR embedding "1024, ivfflat"
-    }
-
     collector_runs ||--o{ raw_documents : "collector_run_id"
     raw_documents ||--o| dart_raw_details : "raw_document_id"
     raw_documents ||--o| report_raw_details : "raw_document_id"
     raw_documents ||--o| hiring_raw_details : "raw_document_id"
     raw_documents ||--o| patent_raw_details : "raw_document_id"
-    raw_documents ||--o{ report_chunks : "raw_document_id"
 ```
 
 `stocks ||--o{ raw_documents` (stock_id). detail 테이블의 복합 FK `(raw_document_id, stock_id) → raw_documents(id, stock_id)`는 detail 행의 종목이 원본 문서와 일치함을 DB 차원에서 보장한다.
@@ -484,7 +474,7 @@ erDiagram
 
 ## Legacy — report MVP (013_legacy_report_mvp.sql) ⚠️ 폐기 예정
 
-신규 코드 참조 금지. 공용 경로(`raw_documents` → `report_raw_details` → `report_chunks`)로 이전 후 DROP 예정.
+신규 코드 참조 금지. 공용 경로(`raw_documents` → `report_raw_details`)로 이전 후 DROP 예정.
 
 ```mermaid
 erDiagram
