@@ -150,4 +150,7 @@ LangGraph는 아래 요구가 생길 때 검토합니다.
 7. 데이터 시나리오 밴드 MVP 생성 - 구현 완료
    - `report_quant.valuation.scenario_band`에 `low_multiple`, `base_multiple`, `high_multiple`, `dispersion_level`, `confidence_note`, `needs_review`를 저장합니다.
    - 수치는 내재 배수 중앙값과 분산 기반 범위로 계산하며, 투자 행동 제안으로 노출하지 않습니다.
-8. 백테스트 fixture에 성공/실패 사례를 함께 추가
+8. 백테스트 fixture에 확인/미확인 사례를 함께 추가 - 구현 완료
+   - `services/agent-worker/tests/fixtures/report/valuation_backtest_cases.json`에 확인 사례와 미확인 사례를 함께 둡니다.
+   - `evaluate_valuation_backtest_case`는 valuation summary와 사후 관찰의 일치/충돌 수를 기반으로 fixture 기대 결과를 검증합니다.
+   - fixture는 투자 성과가 아니라 데이터 방향성 유지 여부와 추가 확인 필요 상태를 검증합니다.

@@ -383,8 +383,8 @@ Invoke-RestMethod `
 후속 개발 전에 아래 결정을 먼저 내리는 것이 좋습니다.
 
 0. 밸류에이션 재해석 확장
-   - `report_valuation_facts` 스키마, extractor MVP, LLM 기반 methodology/category/thesis 보강, valuation analyzer MVP, scenario band MVP, Aggregator 전달은 구현되었습니다.
-   - 다음 작업은 백테스트 fixture에 성공/실패 사례를 함께 추가하는 것입니다.
+   - `report_valuation_facts` 스키마, extractor MVP, LLM 기반 methodology/category/thesis 보강, valuation analyzer MVP, scenario band MVP, Aggregator 전달, 백테스트 fixture 확인/미확인 사례는 구현되었습니다.
+   - 다음 작업은 실제 수집 샘플에서 fixture 후보를 늘리고, 운영 backfill 결과와 비교하는 것입니다.
    - PDF 원문과 긴 청크를 사용자에게 노출하지 않고, valuation 전략용 결과는 구조화 fact 중심으로 저장합니다.
 1. 저장 backend
    - canonical queue 경로의 기본 backend는 GCS입니다. 개발과 테스트용 local storage adapter도 구현되어 있으므로, 운영 환경에서는 GCS bucket/권한을 확정하고 로컬 환경에서는 `REPORT_STORAGE_BACKEND=local` 사용 여부를 정하면 됩니다.
@@ -418,6 +418,9 @@ Invoke-RestMethod `
 - Report RAG retriever
 - Report LLM wiring
 - Report analysis agent fallback과 LLM 응답 파싱
+- Report valuation backtest fixture
+  - 확인/미확인 사례 fixture 로드
+  - valuation summary와 사후 관찰 일치/충돌 수 기반 기대 결과 검증
 - Report E2E queue pipeline
   - fake connection 기반 직접 핸들러 체인 검증
   - `QueueTaskRunner` 기반 claim/mark_success와 `aggregate_signal` enqueue 검증
@@ -427,6 +430,8 @@ Invoke-RestMethod `
 
 ```powershell
 uv run pytest services\agent-worker\tests\test_report_e2e_pipeline.py services\agent-worker\tests\test_report_task_handlers.py services\agent-worker\tests\test_report_llm_wiring.py services\agent-worker\tests\test_report_scheduler.py services\agent-worker\tests\test_report_schedule_route.py services\agent-worker\tests\test_report_agent.py services\agent-worker\tests\test_report_rag_retriever.py -q
+
+uv run pytest services\agent-worker\tests\test_report_valuation_backtest_fixtures.py services\agent-worker\tests\test_report_valuation_analyzer.py -q
 
 uv run pytest packages\data-access\tests\test_collection_repository.py packages\data-access\tests\test_report_chunk_repository.py packages\data-access\tests\test_raw_detail_repository.py -q
 ```
