@@ -1,0 +1,48 @@
+# 루트 빌드 컨텍스트 제외 목록. agent-worker / main-server / database 이미지는 모두
+# 빌드 컨텍스트가 레포 루트(`context: .`)라, 여기서 대용량·불필요 파일을 빼면
+# 도커 데몬 전송량과 빌드 시간이 크게 준다. (web 은 자체 web/.dockerignore 사용)
+
+# --- VCS / 에디터 / 로컬 환경 ---
+.git
+.gitignore
+.gitattributes
+.claude
+.vscode
+.idea
+
+# --- 로컬 시크릿 (이미지에 새지 않도록) ---
+.env
+.env.*
+!.env.example
+
+# --- 프론트엔드: 별도 이미지로 빌드 (백엔드/워커 컨텍스트엔 불필요) ---
+web
+
+# --- 문서 / 플랜 (런타임 무관) ---
+docs
+**/*.md
+
+# --- 파이썬 캐시 / 가상환경 / 빌드 산출물 ---
+.venv
+**/.venv
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+**/*.egg-info
+**/build
+**/dist
+
+# --- 노트북 / 실험 산출물 (오프라인 연구물, 런타임 미사용) ---
+**/*.ipynb
+**/.ipynb_checkpoints
+
+# --- agent-worker 로컬 데이터 덤프 (수집/백테스트 산출 CSV — 이미지에 불필요) ---
+services/agent-worker/prices_*.csv
+services/agent-worker/results_*.csv
+services/agent-worker/prices_kospi15.csv
+services/agent-worker/data
+services/agent-worker/kw_out
+services/agent-worker/keyword_reviews
