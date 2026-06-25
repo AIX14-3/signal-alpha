@@ -11,6 +11,7 @@ from starlette.testclient import TestClient
 
 from app.api.routes.subscriptions import get_database_pool
 from app.core.config import get_settings
+from app.core.portone import PortOneError, get_portone_client
 from app.core.security import create_access_token
 from app.main import app
 
@@ -45,6 +46,8 @@ class FakeConnection:
             "premium": _plan(4, "premium", "Premium", 100, 19900, is_active=False),
         }
         self.active_subscription = None
+        # 최근 결제 검증 레코드(없으면 None — 관리자 부여 구독을 모사).
+        self.latest_payment = None
         self.created = []
 
     async def fetchrow(self, sql, *args):
@@ -56,6 +59,8 @@ class FakeConnection:
             cancelled = self.active_subscription
             self.active_subscription = None
             return cancelled
+        if "FROM portone_verifications" in sql:
+            return self.latest_payment
         if "INSERT INTO portone_verifications" in sql:
             return {"id": 1}
         if "INSERT INTO signal_subscriptions" in sql:
@@ -82,6 +87,24 @@ class FakeConnection:
         if "FROM subscription_plans" in sql and "ORDER BY price_monthly" in sql:
             return [p for p in self.plans.values() if p["is_active"]]
         raise AssertionError(f"Unexpected fetch SQL: {sql}")
+
+
+class FakePortOne:
+    """real 모드(dev_mode=False) 포트원 클라이언트 대역.
+
+    실제 키 없이 cancel_payment 호출/실패 경로를 검증한다.
+    """
+
+    def __init__(self, *, dev_mode=False, raise_error=False):
+        self.dev_mode = dev_mode
+        self.raise_error = raise_error
+        self.calls = []
+
+    async def cancel_payment(self, payment_id, *, reason="user_cancel"):
+        self.calls.append((payment_id, reason))
+        if self.raise_error:
+            raise PortOneError("cancel failed")
+        return {"paymentId": payment_id, "status": "CANCELLED"}
 
 
 class FakeAcquire:
@@ -154,7 +177,7 @@ class SubscriptionRoutesTest(unittest.TestCase):
         self.assertEqual(confirm.json()["subscription"]["status"], "active")
         self.assertEqual(len(self.connection.created), 1)
 
-    def test_payment_cancel_clears_subscription(self):
+    def _seed_active_subscription(self):
         self.connection.active_subscription = {
             "id": 5,
             "user_id": 1,
@@ -165,10 +188,57 @@ class SubscriptionRoutesTest(unittest.TestCase):
             "billing_cycle": "monthly",
             **self.connection.plans["monthly_9900"],
         }
+
+    def test_payment_cancel_clears_subscription(self):
+        # dev 모드(기본): 포트원 외부 호출 없이 구독만 취소된다.
+        self._seed_active_subscription()
         response = self.client.post("/api/payments/cancel", headers=self.auth_headers())
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "cancelled")
         self.assertIsNone(self.connection.active_subscription)
+
+    def test_payment_cancel_without_active_returns_404(self):
+        # 활성 구독이 없으면 404 SUBSCRIPTION_NOT_FOUND.
+        self.assertIsNone(self.connection.active_subscription)
+        response = self.client.post("/api/payments/cancel", headers=self.auth_headers())
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["detail"]["code"], "SUBSCRIPTION_NOT_FOUND")
+
+    def test_payment_cancel_admin_granted_without_payment_record(self):
+        # 관리자 부여 구독(결제 레코드 없음): real 모드라도 포트원 호출 없이 취소 성공.
+        self._seed_active_subscription()
+        self.connection.latest_payment = None
+        portone = FakePortOne(dev_mode=False)
+        app.dependency_overrides[get_portone_client] = lambda: portone
+        response = self.client.post("/api/payments/cancel", headers=self.auth_headers())
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "cancelled")
+        self.assertIsNone(self.connection.active_subscription)
+        self.assertEqual(portone.calls, [])  # 결제 레코드 없음 → cancel_payment 미호출
+
+    def test_payment_cancel_real_mode_calls_portone(self):
+        # real 모드 + 결제 레코드 존재: 포트원 cancel_payment 가 호출되고 구독 취소.
+        self._seed_active_subscription()
+        self.connection.latest_payment = {"imp_uid": "sa-pay-abc123"}
+        portone = FakePortOne(dev_mode=False)
+        app.dependency_overrides[get_portone_client] = lambda: portone
+        response = self.client.post("/api/payments/cancel", headers=self.auth_headers())
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(portone.calls, [("sa-pay-abc123", "user_cancel")])
+        self.assertIsNone(self.connection.active_subscription)
+
+    def test_payment_cancel_portone_error_still_cancels(self):
+        # 포트원 취소가 실패해도 구독은 취소되고 200 (실패는 로깅으로 표면화).
+        self._seed_active_subscription()
+        self.connection.latest_payment = {"imp_uid": "sa-pay-err"}
+        portone = FakePortOne(dev_mode=False, raise_error=True)
+        app.dependency_overrides[get_portone_client] = lambda: portone
+        with self.assertLogs("app.api.routes.payments", level="WARNING") as logs:
+            response = self.client.post("/api/payments/cancel", headers=self.auth_headers())
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "cancelled")
+        self.assertIsNone(self.connection.active_subscription)
+        self.assertTrue(any("PortOne cancel failed" in line for line in logs.output))
 
 
 if __name__ == "__main__":

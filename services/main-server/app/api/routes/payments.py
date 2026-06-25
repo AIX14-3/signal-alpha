@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -13,6 +14,8 @@ from app.core.config import Settings, get_settings
 from app.core.database import get_database_pool
 from app.core.portone import PortOneClient, PortOneError, get_portone_client, normalize_phone
 from signal_alpha_data_access.repositories import UserBillingRepository
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/payments", tags=["payments"])
 
@@ -118,8 +121,15 @@ async def cancel(
             if latest is not None:
                 try:
                     await portone.cancel_payment(str(latest["imp_uid"]), reason="user_cancel")
-                except PortOneError:
-                    pass
+                except PortOneError as exc:
+                    # 구독 자체는 계속 취소하되, 포트원 환불 실패가 조용히 묻히지
+                    # 않도록 남긴다(고객지원/대사용). user_id/imp_uid 로 추적.
+                    logger.warning(
+                        "PortOne cancel failed for user_id=%s imp_uid=%s: %s",
+                        user_id,
+                        latest["imp_uid"],
+                        exc,
+                    )
         await repository.cancel_subscription(user_id=user_id)
     return {"status": "cancelled", "notice": NOTICE}
 
