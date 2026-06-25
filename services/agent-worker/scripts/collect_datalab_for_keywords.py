@@ -120,7 +120,7 @@ async def _run(argv: list[str] | None = None) -> int:
         done_fh.close()
 
     print(f"\n[out] appended to {args.out}  (resume sidecar: {done_path.name})")
-    print(f"this run: validated {total_valid}, {failed} failed (quota/network — re-run to retry)")
+    print(f"this run: validated {total_valid}, {failed} failed (quota/network - re-run to retry)")
     return 0
 
 

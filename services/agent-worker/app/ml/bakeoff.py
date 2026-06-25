@@ -131,13 +131,55 @@ def _load_datalab_db(args):
     return ds.X, ds.y, ds.excess_returns, ds.dates
 
 
+def _load_period_keyword(args):
+    """Patent-derived period-keyword DataLab features (Stage 5), DB-free from CSVs."""
+    from datetime import date
+
+    from .period_keyword_dataset import load_period_keyword_dataset, resolve_meta_paths
+
+    if not args.prices_csv:
+        raise SystemExit("--prices-csv is required for --source period-keyword")
+    tickers = [t.strip() for t in args.tickers.split(",") if t.strip()]
+    meta_paths = resolve_meta_paths(args.keyword_meta)
+    ds = load_period_keyword_dataset(
+        keyword_csv=args.keyword_csv,
+        meta_paths=meta_paths,
+        prices_csv=args.prices_csv,
+        tickers=tickers,
+        start=date.fromisoformat(args.start),
+        end=date.fromisoformat(args.end),
+        benchmark_ticker=args.benchmark,
+        feature_mode=args.feature_mode,
+        lookback_days=args.lookback,
+        horizon_sessions=args.horizon,
+        neutral_band_pct=args.band,
+        signal_step=args.signal_step,
+    )
+    up_rate = ds.y.mean() if len(ds) else 0.0
+    print(
+        f"[period-keyword:{args.feature_mode}] samples={len(ds)}  "
+        f"features={len(ds.feature_names)}  "
+        f"stocks={len(np.unique(ds.stock_ids)) if len(ds) else 0}  "
+        f"dates={len(np.unique(ds.dates)) if len(ds) else 0}  "
+        f"up-rate={up_rate:.2f}\n  dropped={dict(ds.dropped)}\n"
+        f"  features={ds.feature_names}\n"
+    )
+    if len(ds) == 0:
+        raise SystemExit(
+            "No samples built — check --keyword-csv / --keyword-meta / --prices-csv "
+            f"cover {tickers}. dropped={dict(ds.dropped)}"
+        )
+    return ds.X, ds.y, ds.excess_returns, ds.dates
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Alternative-data ML model bake-off")
     parser.add_argument(
         "--source",
-        choices=["synthetic", "datalab-demo", "datalab-db"],
+        choices=["synthetic", "datalab-demo", "datalab-db", "period-keyword"],
         default="synthetic",
-        help="synthetic matrix, the real DataLab pipeline on demo rows, or live DB",
+        help="synthetic matrix, the real DataLab pipeline on demo rows, live DB, "
+             "or patent-derived period-keyword features from CSVs (Stage 5)",
     )
     parser.add_argument("--folds", type=int, default=5, help="walk-forward folds")
     parser.add_argument("--seed", type=int, default=42, help="model/data seed")
@@ -167,10 +209,22 @@ def main(argv: list[str] | None = None) -> int:
                         help="benchmark ticker for excess return (e.g. KOSPI 'KS11')")
     parser.add_argument("--prices-csv", type=str, default=None,
                         help="local ticker,date,close CSV for prices (skips ohlcv_data)")
+    # period-keyword knobs (Stage 5)
+    parser.add_argument("--keyword-csv", type=str, default="datalab_patent_keywords.csv",
+                        help="ticker,keyword,period,ratio CSV from collect_datalab_for_keywords.py")
+    parser.add_argument("--keyword-meta", type=str, default="kw_out/patent_keywords_*.json",
+                        help="comma-separated paths/globs of per-ticker keyword meta JSON "
+                             "(supplies first_avail_date for the point-in-time gate)")
+    parser.add_argument("--feature-mode", type=str, default="period_keyword",
+                        choices=["period_keyword", "fixed_keyword"],
+                        help="period_keyword gates by first_avail_date; fixed_keyword is the "
+                             "no-gate control")
     parser.add_argument("--csv", type=str, default=None, help="write full metrics CSV here")
     args = parser.parse_args(argv)
 
-    if args.source == "datalab-db":
+    if args.source == "period-keyword":
+        X, y, excess, dates = _load_period_keyword(args)
+    elif args.source == "datalab-db":
         X, y, excess, dates = _load_datalab_db(args)
     elif args.source == "datalab-demo":
         X, y, excess, dates = _load_datalab_demo(args)

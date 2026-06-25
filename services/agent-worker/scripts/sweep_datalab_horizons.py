@@ -39,7 +39,7 @@ def run_one(args: argparse.Namespace, horizon: int, csv_path: Path) -> tuple[int
     step = signal_step_for(horizon)
     cmd = [
         sys.executable, "-m", "app.ml.bakeoff",
-        "--source", "datalab-db",
+        "--source", args.source,
         "--tickers", args.tickers,
         "--start", args.start,
         "--end", args.end,
@@ -52,6 +52,12 @@ def run_one(args: argparse.Namespace, horizon: int, csv_path: Path) -> tuple[int
         cmd += ["--benchmark", args.benchmark]
     if args.prices_csv:
         cmd += ["--prices-csv", args.prices_csv]
+    if args.source == "period-keyword":
+        cmd += [
+            "--feature-mode", args.feature_mode,
+            "--keyword-csv", args.keyword_csv,
+            "--keyword-meta", args.keyword_meta,
+        ]
     banner = f"[h={horizon} ({LABELS.get(horizon, horizon)})  step={step}]"
     print(f"\n{'=' * 72}\n{banner}  {' '.join(cmd)}\n{'=' * 72}")
     proc = subprocess.run(cmd, capture_output=True, text=True)
@@ -91,6 +97,14 @@ def main() -> int:
     p.add_argument("--folds", type=int, default=5)
     p.add_argument("--out-dir", default="sweep_out")
     p.add_argument("--horizons", default=None, help="comma list override (sessions)")
+    p.add_argument("--source", default="datalab-db",
+                   choices=["datalab-db", "period-keyword"],
+                   help="which bake-off data source to sweep")
+    p.add_argument("--feature-mode", default="period_keyword",
+                   choices=["period_keyword", "fixed_keyword"],
+                   help="period-keyword source only: gate by first_avail_date or not (control)")
+    p.add_argument("--keyword-csv", default="datalab_patent_keywords.csv")
+    p.add_argument("--keyword-meta", default="kw_out/patent_keywords_*.json")
     args = p.parse_args()
 
     horizons = [int(x) for x in args.horizons.split(",")] if args.horizons else HORIZONS
@@ -103,8 +117,11 @@ def main() -> int:
         samples, rc = run_one(args, h, csv_path)
         summary.append((h, samples, best_rankic(csv_path), rc))
 
+    tag = f"{args.source}" + (
+        f":{args.feature_mode}" if args.source == "period-keyword" else ""
+    )
     print("\n\n" + "=" * 72)
-    print("CROSS-HORIZON SUMMARY (DataLab-only)")
+    print(f"CROSS-HORIZON SUMMARY ({tag})")
     print("=" * 72)
     print(f"{'horizon':>10} {'samples':>9} {'best_model':>22} {'rankIC':>9} {'sd_IC':>8}")
     print("-" * 62)
