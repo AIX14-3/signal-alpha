@@ -1269,8 +1269,8 @@ EXECUTE FUNCTION set_final_signal_current();
 --   - services/agent-worker/app/collectors/report/collector.py  (report_raw SELECT)
 --   - services/agent-worker/app/collectors/report/parsers/vector_store.py  (report_raw INSERT/백필)
 --   - services/agent-worker/app/analyzers/report/analyzer.py  (report_signal INSERT)
--- 이전 계획: report 파이프라인을 공용 스키마(raw_documents → report_raw_details →
--- report_chunks)로 이전한 뒤 이 테이블들을 DROP한다. 새 코드에서 참조 금지.
+-- 이전 계획: report 파이프라인을 공용 스키마(raw_documents → report_raw_details)로
+-- 이전한 뒤 이 테이블들을 DROP한다. 새 코드에서 참조 금지.
 
 CREATE TABLE report_raw (
     id                BIGSERIAL PRIMARY KEY,

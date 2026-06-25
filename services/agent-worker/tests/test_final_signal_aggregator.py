@@ -115,8 +115,9 @@ class AggregateSignalTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         breakdown = json.loads(args[10])
         self.assertEqual(breakdown["DART"]["score"], 0.0)
         self.assertEqual(breakdown["PRICE"]["data_status"], "missing")
-        self.assertEqual(breakdown["REPORT"]["data_status"], "missing")
         self.assertEqual(breakdown["ALTERNATIVE"]["data_status"], "missing")
+        # REPORT 는 채점 소스에서 제거됨 → breakdown 에 존재하지 않음.
+        self.assertNotIn("REPORT", breakdown)
 
     async def test_positive_and_negative_sources_publish_mixed_caution_before_score_threshold(self):
         rows = [
@@ -127,7 +128,7 @@ class AggregateSignalTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
                 direction="negative",
                 source_score=-0.5,
                 method_score=25.0,
-                source="REPORT",
+                source="ALTERNATIVE",
             ),
         ]
         connection = FakeConnection(rows=rows)
@@ -148,7 +149,7 @@ class AggregateSignalTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result["needs_review"])
         self.assertTrue(result["is_published"])
 
-    async def test_handler_accepts_report_single_source_final_signal(self):
+    async def test_handler_accepts_alternative_single_source_final_signal(self):
         connection = FakeConnection(
             rows=[
                 dart_agent_row(
@@ -157,7 +158,7 @@ class AggregateSignalTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
                     direction="positive",
                     source_score=0.36,
                     method_score=68.0,
-                    source="REPORT",
+                    source="ALTERNATIVE",
                 )
             ]
         )
@@ -179,9 +180,10 @@ class AggregateSignalTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result["is_published"])
         final_call = next(call for call in connection.calls if "INSERT INTO final_signals" in call[1])
         breakdown = json.loads(final_call[2][10])
-        self.assertEqual(breakdown["REPORT"]["analysis_result_id"], 100)
-        self.assertEqual(breakdown["REPORT"]["score"], 0.36)
+        self.assertEqual(breakdown["ALTERNATIVE"]["analysis_result_id"], 100)
+        self.assertEqual(breakdown["ALTERNATIVE"]["score"], 0.36)
         self.assertEqual(breakdown["DART"]["data_status"], "missing")
+        self.assertNotIn("REPORT", breakdown)
 
     async def test_unknown_source_is_excluded_and_records_validation_log(self):
         row = dart_agent_row(source="")

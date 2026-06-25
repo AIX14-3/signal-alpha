@@ -1,7 +1,7 @@
 -- Signal Alpha MVP sample data flow test.
 --
 -- Assumptions:
--- - migrations/001_extensions.sql through migrations/010_report_chunk_index.sql have been executed.
+-- - database/migrations/*.sql have all been applied.
 -- - seeds/001_seed_stocks.sql and seeds/002_seed_subscription_plans.sql have been executed.
 -- - This script uses TEST-prefixed values and is intended for development databases only.
 

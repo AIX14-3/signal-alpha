@@ -569,10 +569,6 @@ def _source_raw_ids(value: Any) -> list[int]:
     return _int_list(value)
 
 
-def _source_signal_event_ids(value: Any) -> list[int]:
-    return _int_list(value)
-
-
 def _int_list(value: Any) -> list[int]:
     if value is None:
         return []
