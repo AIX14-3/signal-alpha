@@ -95,6 +95,21 @@ LLM 정제를 1회 거쳐 발행한다.
   **수치/판정 불변, 설명만**, 투자조언 차단.
 - **관측**: LangSmith는 LLM 호출 trace만(점선). 흐름·결과·지연에 영향 없음(스레드 오프로딩·실패 삼킴).
 
+## 3-라인 모델 확정 (MVP)
+
+ML/DL/LLM 라인의 모델·입출력·파라미터 구체화는 [`ml-dl-llm-lines.md`](./ml-dl-llm-lines.md) 참조.
+요약:
+
+| 라인 | 단계 | 확정 모델 | MVP 실행 |
+|---|---|---|---|
+| ML | `ml_infer`→`meta_combine` | EWMA · HAR-RV · GARCH(1,1) · LightGBM (CPU) | ✅ |
+| DL | `ml_infer`(가용성 게이트) | Kronos · Chronos-2 (GPU) | ⛔ 설계만(CPU 호스트 자동 제외) |
+| LLM | `synthesize` | Gemini 3.x — `gemini-3.1-pro-preview` | ✅ 키 주입 시(미설정→결정론 폴백) |
+
+MVP 러너(`services/agent-worker/seed_synthetic_ohlcv.py`·`run_pipeline.py`)로 합성 OHLCV → 끝단까지
+돌려 첫 결과값(`ml_inferences`·`meta_signals`·RiskReport)을 산출한다. meta_learner.json 부재 시
+`equal_fallback`(균등) — 후속 harness 학습으로 `stacking` 전환.
+
 ## 후속 과제
 
 - **게이트1/quarantine 일반화**: 현재 검증 게이트·레코드 격리는 hiring에 구현됨(DLQ는 공용).
