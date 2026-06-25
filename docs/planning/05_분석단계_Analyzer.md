@@ -16,12 +16,12 @@
 
 | 항목 | A-1 Dart_Analyzer (구현) | A-2 Report_Analyzer (구현) |
 | --- | --- | --- |
-| 역할 | 공시 임팩트 분석 | 리포트 의견·목표가 추출 |
-| 입력 | DART 정규화 데이터 (dart_raw_details 경유) | report_chunks (RAG) |
+| 역할 | 공시 임팩트 분석 | 리포트 근거 검색과 밸류에이션 가정 재해석 |
+| 입력 | DART 정규화 데이터 (dart_raw_details 경유) | report_raw_details · report_chunks · `[계획] report_valuation_facts` |
 | 처리 | 고임팩트 즉시 / 저임팩트 배치 | 배치 전용 |
-| 핵심 로직 | ① Few-shot 방향 일관성 ② 정정공시 반전 ③ BEAT/MISS 분류 (`app/analyzers/dart/` — financials·rules·llm) | ① 텍스트→청크→BGE-M3 임베딩→pgvector→RAG ② 컨센서스 목표가 괴리율 ③ 3개월 목표가 추이 ④ 갭 25%↑ → conflict |
-| 출력 | score, signal, top_disclosures, earnings_surprise, summary | score, signal, avg_target, upside_pct, target_trend, conflict_detected, opinions |
-| 사용 모델 | Gemini 3 Flash (프로바이더·모델은 env 주입: `DART_LLM_PROVIDER`/`DART_LLM_MODEL`) | BGE-M3 (검색) + Gemini 3 Flash (추출) |
+| 핵심 로직 | ① Few-shot 방향 일관성 ② 정정공시 반전 ③ BEAT/MISS 분류 (`app/analyzers/dart/` — financials·rules·llm) | ① 텍스트→청크→BGE-M3 임베딩→pgvector→RAG ② 목표가·의견 원천값 추출 ③ `[계획]` EPS/적용 배수/피어 그룹 구조화 ④ `[계획]` 내재 배수(`target_price / forward_eps_est`)와 배수 분산 계산 ⑤ `[계획]` 카테고리 변화와 재평가 thesis 패러프레이즈 |
+| 출력 | score, signal, top_disclosures, earnings_surprise, summary | data_status, risk_flags, report_quant, evidence_chunks, `[계획] valuation_facts`, `[계획] scenario_band` |
+| 사용 모델 | Gemini 3 Flash (프로바이더·모델은 env 주입: `DART_LLM_PROVIDER`/`DART_LLM_MODEL`) | BGE-M3 (검색) + Gemini 계열 (분류/패러프레이즈, 수치 생성 금지) |
 | 담당 | 성진 | 은진 |
 
 ### A-1 Dart_Analyzer 출력 예시
@@ -36,12 +36,21 @@
 ### A-2 Report_Analyzer 출력 예시
 
 ```
-점수: 68점 / 방향: 긍정
-컨센서스 목표가: 112,000원 (현재가 대비 +31.8%)
-목표가 트렌드: 3개월 연속 상향
-의견 충돌: 없음
-증권사별: 신한 매수(115,000) · 미래에셋 매수(110,000) · KB 중립(95,000)
+데이터 상태: partial
+근거: 리포트 근거 청크 6건, 증권사 3곳
+밸류에이션 fact [계획]: 목표가 원천값, 추정 EPS, 적용 배수, 내재 배수
+데이터 방향성: 증권사 간 내재 배수 분산 확대, 카테고리 재평가 근거는 추가 확인 필요
+주의: PDF에서 EPS 또는 적용 배수 누락 시 needs_review=true
 ```
+
+### A-2 Report valuation 확장 원칙 `[계획]`
+
+- 목표주가 자체보다 목표주가 산정에 사용된 EPS, 적용 배수, 피어 그룹, 카테고리 가정을 우선 구조화한다.
+- `implied_multiple = target_price / forward_eps_est`는 코드가 결정론적으로 계산한다.
+- LLM은 methodology 분류, peer group 후보 정리, category tag, rerating thesis 패러프레이즈만 담당한다.
+- LLM이 목표가, EPS, 배수, 점수 같은 수치를 생성하면 안 된다.
+- 사용자-facing 출력은 Bear/Base/Bull을 투자 행동 제안이 아니라 데이터 시나리오 밴드로 표현한다.
+- 상세 기준은 [`docs/spec/report-valuation-reinterpretation-strategy.md`](../spec/report-valuation-reinterpretation-strategy.md)를 따른다.
 
 ---
 
