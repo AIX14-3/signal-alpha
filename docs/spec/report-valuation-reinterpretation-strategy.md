@@ -154,3 +154,7 @@ LangGraph는 아래 요구가 생길 때 검토합니다.
    - `services/agent-worker/tests/fixtures/report/valuation_backtest_cases.json`에 확인 사례와 미확인 사례를 함께 둡니다.
    - `evaluate_valuation_backtest_case`는 valuation summary와 사후 관찰의 일치/충돌 수를 기반으로 fixture 기대 결과를 검증합니다.
    - fixture는 투자 성과가 아니라 데이터 방향성 유지 여부와 추가 확인 필요 상태를 검증합니다.
+9. 수집 파이프라인 형태 valuation 샘플을 백테스트 case로 변환 - 구현 완료
+   - `services/agent-worker/tests/fixtures/report/valuation_collection_samples.json`에 `raw_documents`, `report_raw_details`, `report_valuation_facts` 형태의 샘플을 둡니다.
+   - `build_valuation_backtest_case_from_sample`은 수집·파싱 산출물 형태의 샘플을 기존 백테스트 evaluator 입력으로 변환합니다.
+   - 실제 운영 DB row 추출은 후속 작업으로 분리합니다.
