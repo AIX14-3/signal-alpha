@@ -168,6 +168,9 @@ services:
   web:
     build:
       context: ./web
+      # web/Dockerfile 은 멀티스테이지(dev/builder/runner). 로컬 compose 는 dev 스테이지
+      # (next dev + 소스 바인드마운트). 프로덕션 이미지는 기본 타깃(runner)으로 별도 빌드.
+      target: dev
     container_name: signal-alpha-web
     working_dir: /app
     volumes:
