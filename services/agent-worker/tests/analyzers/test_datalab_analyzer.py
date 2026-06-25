@@ -60,9 +60,11 @@ def _evidence(rows):
 
 
 class DataLabAnalyzerTest(unittest.IsolatedAsyncioTestCase):
-    async def test_no_data_is_failed(self):
+    async def test_no_data_is_no_signal(self):
+        # Ran but had no rows → "no_signal" (the report shows "시그널이 없습니다"),
+        # distinct from "failed" (a loader/analyzer error) and "missing" (never ran).
         result = await DataLabAnalyzer(CONFIG).analyze("005930", _evidence([]))
-        self.assertEqual(result.data_status, "failed")
+        self.assertEqual(result.data_status, "no_signal")
         self.assertIn("no_data", result.risk_flags)
 
     async def test_rising_search_index_is_positive(self):

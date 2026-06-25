@@ -29,6 +29,40 @@ class EnqueueTaskRequest(BaseModel):
     dedupe: bool = Field(default=True)
 
 
+class FullPipelineRequest(BaseModel):
+    stock_code: str
+    signal_date: str | None = None
+    priority: str = "batch"
+    include_dart_collection: bool = False
+
+
+@router.post("/pipeline/{stock_id}/run")
+async def run_full_pipeline(
+    stock_id: int,
+    request: FullPipelineRequest,
+    pool: Any = Depends(get_database_pool),
+) -> dict[str, Any]:
+    """Fan one stock out across every report source (PRICE/ALTERNATIVE/DART) + a
+    fan-in AGGREGATE. Drain the queue per task_type afterwards to materialize the
+    blended report."""
+    from datetime import date
+
+    from app.orchestrator.full_pipeline import enqueue_stock_pipeline
+    from signal_alpha_data_access.repositories import ProcessingQueueRepository
+
+    signal_date = date.fromisoformat(request.signal_date) if request.signal_date else date.today()
+    async with pool.acquire() as connection:
+        enqueued = await enqueue_stock_pipeline(
+            ProcessingQueueRepository(connection),
+            stock_id=stock_id,
+            stock_code=request.stock_code,
+            signal_date=signal_date,
+            priority=request.priority,
+            include_dart_collection=request.include_dart_collection,
+        )
+    return {"stock_id": stock_id, "enqueued": enqueued}
+
+
 @router.post("/{task_type}/enqueue")
 async def enqueue_task(
     task_type: str,

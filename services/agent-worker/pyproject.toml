@@ -8,7 +8,6 @@ dependencies = [
   "boto3>=1.34.0",          # legacy s3_client.py
   "fastapi>=0.115.0",
   "google-cloud-storage>=2.18.0",  # report GCS storage adapter
-  "langgraph>=0.2.0",
   # price 수집 데몬(키움 REST)이 런타임에 사용 — dev extra로 내리면 --no-dev 컨테이너에서 ImportError
   "httpx>=0.27.0",
   "langchain-text-splitters>=0.2.0",  # parsers/chunker.py (RecursiveCharacterTextSplitter)

@@ -47,10 +47,11 @@ def _evidence(rows):
 
 
 class PatentAnalyzerTest(unittest.IsolatedAsyncioTestCase):
-    async def test_no_data_is_failed(self):
+    async def test_no_data_is_no_signal(self):
+        # Ran but had no rows → "no_signal", not "failed"/"missing".
         result = await PatentAnalyzer(CONFIG).analyze("005930", _evidence([]))
         self.assertEqual(result.direction, "unknown")
-        self.assertEqual(result.data_status, "failed")
+        self.assertEqual(result.data_status, "no_signal")
         self.assertIn("no_data", result.risk_flags)
 
     async def test_rising_filings_with_new_category_is_positive(self):

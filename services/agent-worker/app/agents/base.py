@@ -7,7 +7,7 @@ from typing import Any, Literal, Protocol, runtime_checkable
 from app.schemas.evidence import RawEvidence, SourceType
 from app.schemas.source_result import Direction
 
-SourceAgentStatus = Literal["ok", "partial", "failed"]
+SourceAgentStatus = Literal["ok", "partial", "failed", "no_signal"]
 
 
 @dataclass(frozen=True)

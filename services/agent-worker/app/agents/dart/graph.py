@@ -1,23 +1,24 @@
+"""DART analysis flow: validate input → analyze → annotate.
+
+This was a LangGraph ``StateGraph``, but the flow is a fixed 3-step linear
+pipeline with a single guard (skip ``analyze`` when input validation fails), so it
+is expressed directly here — no langgraph dependency. Behaviour is byte-identical
+to the former graph: the ``method_detail['graph']`` / ``graph_nodes`` provenance
+tags are preserved, and ``analyze`` still delegates to ``DartAnalysisAgent`` (rules
++ optional LLM) unchanged. The class name/module path are kept so callers and
+stored-row consumers don't change.
+"""
+
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Literal, TypedDict
-
-from langgraph.graph import END, StateGraph
 
 from app.agents.base import SourceAgentInput, SourceAgentOutput
 from app.agents.dart.agent import DartAnalysisAgent
 from app.analyzers.dart.llm import DartLlmAnalyzer
 
-
 DART_ANALYSIS_GRAPH_NAME = "dart_analysis_v1"
 DART_GRAPH_PROMPT_VERSION = "dart-graph-v1"
-
-
-class DartAnalysisGraphState(TypedDict, total=False):
-    input: SourceAgentInput
-    output: SourceAgentOutput
-    graph_nodes: list[str]
 
 
 class DartAnalysisGraphAgent:
@@ -34,38 +35,39 @@ class DartAnalysisGraphAgent:
             llm_analyzer=llm_analyzer,
             llm_high_impact_only=llm_high_impact_only,
         )
-        self._graph = self._build_graph()
 
     async def analyze(self, input_data: SourceAgentInput) -> SourceAgentOutput:
-        state = await self._graph.ainvoke(
-            {
-                "input": input_data,
-                "graph_nodes": [],
-            }
-        )
-        return state["output"]
-
-    def _build_graph(self):
-        graph = StateGraph(DartAnalysisGraphState)
-        graph.add_node("validate_input", self._validate_input)
-        graph.add_node("analyze", self._analyze)
-        graph.add_node("validate_output", self._validate_output)
-        graph.set_entry_point("validate_input")
-        graph.add_conditional_edges(
-            "validate_input",
-            self._route_after_validation,
-            {
-                "analyze": "analyze",
-                "validate_output": "validate_output",
+        nodes = ["validate_input"]
+        validation_errors = self._validation_errors(input_data)
+        if validation_errors:
+            output = SourceAgentOutput(
+                source="DART",
+                stock_code=input_data.stock_code,
+                direction="neutral",
+                score=0,
+                summary="DART analysis input did not pass graph validation.",
+                risk_flags=validation_errors,
+                method_detail={"validation_errors": validation_errors},
+                needs_review=True,
+                data_status="failed",
+                analysis_source="graph_validation",
+                prompt_ver=DART_GRAPH_PROMPT_VERSION,
+            )
+        else:
+            output = await self._analysis_agent.analyze(input_data)
+            nodes.append("analyze")
+        nodes.append("validate_output")
+        return replace(
+            output,
+            method_detail={
+                **output.method_detail,
+                "graph": DART_ANALYSIS_GRAPH_NAME,
+                "graph_nodes": nodes,
             },
         )
-        graph.add_edge("analyze", "validate_output")
-        graph.add_edge("validate_output", END)
-        return graph.compile()
 
-    async def _validate_input(self, state: DartAnalysisGraphState) -> DartAnalysisGraphState:
-        input_data = state["input"]
-        graph_nodes = [*state.get("graph_nodes", []), "validate_input"]
+    @staticmethod
+    def _validation_errors(input_data: SourceAgentInput) -> list[str]:
         risk_flags: list[str] = []
         if input_data.source != "DART":
             risk_flags.append("source_must_be_dart")
@@ -73,52 +75,4 @@ class DartAnalysisGraphAgent:
             risk_flags.append("stock_code_required")
         if not input_data.events:
             risk_flags.append("events_required")
-        if not risk_flags:
-            return {**state, "graph_nodes": graph_nodes}
-        return {
-            **state,
-            "graph_nodes": graph_nodes,
-            "output": SourceAgentOutput(
-                source="DART",
-                stock_code=input_data.stock_code,
-                direction="neutral",
-                score=0,
-                summary="DART analysis input did not pass graph validation.",
-                risk_flags=risk_flags,
-                method_detail={"validation_errors": risk_flags},
-                needs_review=True,
-                data_status="failed",
-                analysis_source="graph_validation",
-                prompt_ver=DART_GRAPH_PROMPT_VERSION,
-            ),
-        }
-
-    async def _analyze(self, state: DartAnalysisGraphState) -> DartAnalysisGraphState:
-        result = await self._analysis_agent.analyze(state["input"])
-        return {
-            **state,
-            "graph_nodes": [*state.get("graph_nodes", []), "analyze"],
-            "output": result,
-        }
-
-    async def _validate_output(self, state: DartAnalysisGraphState) -> DartAnalysisGraphState:
-        output = state["output"]
-        graph_nodes = [*state.get("graph_nodes", []), "validate_output"]
-        method_detail = {
-            **output.method_detail,
-            "graph": DART_ANALYSIS_GRAPH_NAME,
-            "graph_nodes": graph_nodes,
-        }
-        return {
-            **state,
-            "graph_nodes": graph_nodes,
-            "output": replace(output, method_detail=method_detail),
-        }
-
-    def _route_after_validation(
-        self,
-        state: DartAnalysisGraphState,
-    ) -> Literal["analyze", "validate_output"]:
-        if state.get("output") is not None:
-            return "validate_output"
-        return "analyze"
+        return risk_flags

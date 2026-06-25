@@ -53,7 +53,11 @@ class SourceResult:
     summary: str
     evidence_items: list[EvidenceItem] = field(default_factory=list)
     risk_flags: list[str] = field(default_factory=list)
-    data_status: Literal["ok", "partial", "failed"] = "ok"
+    # "no_signal": the source ran and had data (or legitimately had none) but
+    # produced no actionable signal — distinct from "failed" (loader/analyzer
+    # error) and from a source that never ran (surfaced as "missing" only at the
+    # cross-source aggregation/breakdown layer, never set here).
+    data_status: Literal["ok", "partial", "failed", "no_signal"] = "ok"
     report_meta: ReportMeta | None = None
     # LLM provenance: model name when an LLM contributed to this source's result
     # (e.g. DataLab polarity classification). None for pure-rule output. Flows to

@@ -41,12 +41,13 @@ def make_evidence(rows, stale=False):
 
 
 class PriceAnalyzerTest(unittest.IsolatedAsyncioTestCase):
-    async def test_empty_evidence_is_failed(self):
+    async def test_empty_evidence_is_no_signal(self):
+        # No ohlcv rows → "no_signal" (report shows "시그널이 없습니다"), not "failed".
         result = await PriceAnalyzer().analyze("005930", [])
 
         self.assertEqual(result.source, "PRICE")
         self.assertEqual(result.direction, "unknown")
-        self.assertEqual(result.data_status, "failed")
+        self.assertEqual(result.data_status, "no_signal")
         self.assertIn("no_data", result.risk_flags)
 
     async def test_uptrend_with_buying_flows_is_positive(self):

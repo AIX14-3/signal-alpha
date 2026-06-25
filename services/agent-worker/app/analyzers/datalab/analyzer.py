@@ -35,7 +35,7 @@ class DataLabAnalyzer:
                 score=0.0,
                 summary="분석할 검색 트렌드 데이터가 없습니다 (datalab_raw_details 미적재 또는 카테고리 미매핑).",
                 risk_flags=["no_data"],
-                data_status="failed",
+                data_status="no_signal",
             )
 
         metadata = evidence[0].metadata

@@ -266,6 +266,48 @@ class AggregateSignalTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         breakdown = json.loads(final_call[2][10])
         self.assertEqual(breakdown["DART"]["data_status"], "missing")
 
+    async def test_fanin_blends_all_sources_distinguishing_no_signal_and_missing(self):
+        # No source_analysis_result_ids → the handler fans in by (stock, date) and
+        # blends every source. PRICE/DATALAB ran but produced no signal; REPORT was
+        # never collected. FakeConnection.fetch is SQL-agnostic, so it returns these
+        # rows for the fan-in query the same way it would for the legacy id query.
+        rows = [
+            dart_agent_row(direction="positive", source_score=0.4, method_score=70.0, source="DART"),
+            dart_agent_row(
+                analysis_result_id=110, agent_result_id=210, source="PRICE",
+                direction="neutral", source_score=0.0, method_score=50.0, data_status="no_signal",
+            ),
+            dart_agent_row(
+                analysis_result_id=120, agent_result_id=220, source="HIRING",
+                direction="positive", source_score=0.3, method_score=65.0,
+            ),
+            dart_agent_row(
+                analysis_result_id=130, agent_result_id=230, source="DATALAB",
+                direction="neutral", source_score=0.0, method_score=50.0, data_status="no_signal",
+            ),
+        ]
+        connection = FakeConnection(rows=rows)
+        handler = AggregateSignalTaskHandler(connection)
+
+        result = await handler(
+            {
+                "id": 31,
+                "stock_id": 1,
+                "task_context": {"stock_code": "005930", "signal_date": "2026-06-19"},
+            }
+        )
+
+        self.assertEqual(result["aggregated_count"], 4)
+        final_call = next(call for call in connection.calls if "INSERT INTO final_signals" in call[1])
+        breakdown = json.loads(final_call[2][10])
+        self.assertEqual(breakdown["DART"]["data_status"], "ok")
+        self.assertEqual(breakdown["PRICE"]["data_status"], "no_signal")
+        self.assertEqual(breakdown["REPORT"]["data_status"], "missing")
+        # The alternative trio is nested under ALTERNATIVE so the report renders
+        # hiring/datalab as their own cards, each with its own state.
+        self.assertEqual(breakdown["ALTERNATIVE"]["hiring"]["data_status"], "ok")
+        self.assertEqual(breakdown["ALTERNATIVE"]["datalab"]["data_status"], "no_signal")
+
     async def test_queue_handlers_registers_aggregate_signal(self):
         handlers = build_task_handlers(FakeConnection())
 

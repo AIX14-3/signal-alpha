@@ -78,7 +78,7 @@ class RuleSourceAgentTest(unittest.IsolatedAsyncioTestCase):
         agent = RuleSourceAgent(HiringAnalyzer())
         self.assertEqual(agent.source, "HIRING")
 
-        # Empty evidence → analyzer reports failed/unknown; mapping must surface it.
+        # Empty evidence → analyzer reports no_signal/unknown; mapping must surface it.
         output = await agent.analyze(
             SourceAgentInput(
                 source="HIRING",
@@ -97,8 +97,9 @@ class RuleSourceAgentTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(output.source, "HIRING")
         self.assertEqual(output.direction, "unknown")
-        self.assertEqual(output.data_status, "failed")
-        self.assertTrue(output.needs_review)
+        self.assertEqual(output.data_status, "no_signal")
+        # no_signal is not a review-required state (unlike partial/failed).
+        self.assertFalse(output.needs_review)
         self.assertEqual(output.analysis_source, "rules")
         self.assertEqual(output.prompt_ver, "hiring-rules-v1")
 

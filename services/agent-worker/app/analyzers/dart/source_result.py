@@ -25,11 +25,11 @@ def build_dart_analysis_result(events: list[dict[str, Any]]) -> DartAnalysisResu
             risk_flags=["no_dart_events"],
             method_detail={
                 "source": "DART",
-                "data_status": "failed",
+                "data_status": "no_signal",
                 "event_count": 0,
                 "events": [],
             },
-            needs_review=True,
+            needs_review=False,
         )
 
     direction_scores = Counter[str]()
