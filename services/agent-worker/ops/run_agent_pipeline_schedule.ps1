@@ -27,7 +27,9 @@ param(
 
   [switch]$SkipDart,
   [switch]$SkipReport,
-  [switch]$ContinueOnError
+  [switch]$ContinueOnError,
+  [switch]$DryRun,
+  [switch]$HealthCheck
 )
 
 $ErrorActionPreference = "Stop"
@@ -52,6 +54,16 @@ function Invoke-WorkerPost {
   $base = $WorkerBaseUrl.TrimEnd("/")
   $uri = "$base$Path"
   $json = ConvertTo-JsonBody $Body
+  if ($DryRun) {
+    Write-Step "DRY-RUN POST $Path $json"
+    return [pscustomobject]@{
+      status = "dry_run"
+      path = $Path
+      body = $Body
+      run_count = 0
+    }
+  }
+
   Write-Step "POST $Path $json"
 
   try {
@@ -60,6 +72,39 @@ function Invoke-WorkerPost {
       -Uri $uri `
       -ContentType "application/json" `
       -Body $json `
+      -TimeoutSec $TimeoutSec
+  }
+  catch {
+    $message = "Request failed: $Path - $($_.Exception.Message)"
+    if ($ContinueOnError) {
+      Write-Warning $message
+      return @{ status = "failed"; error = $message }
+    }
+    throw $message
+  }
+}
+
+function Invoke-WorkerGet {
+  param(
+    [Parameter(Mandatory = $true)][string]$Path
+  )
+
+  $base = $WorkerBaseUrl.TrimEnd("/")
+  $uri = "$base$Path"
+
+  if ($DryRun) {
+    Write-Step "DRY-RUN GET $Path"
+    return [pscustomobject]@{
+      status = "dry_run"
+      path = $Path
+    }
+  }
+
+  Write-Step "GET $Path"
+  try {
+    return Invoke-RestMethod `
+      -Method Get `
+      -Uri $uri `
       -TimeoutSec $TimeoutSec
   }
   catch {
@@ -140,6 +185,10 @@ function Invoke-QueueDrain {
 }
 
 Write-Step "agent pipeline schedule start mode=$Mode base=$WorkerBaseUrl"
+
+if ($HealthCheck) {
+  [void](Invoke-WorkerGet -Path "/health")
+}
 
 if ($Mode -eq "All" -or $Mode -eq "Collect") {
   Invoke-CollectionSchedules
