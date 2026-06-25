@@ -289,6 +289,66 @@ class AnalysisRepository:
             analysis_result_ids,
         )
 
+    async def list_final_signals_by_stock(
+        self,
+        *,
+        stock_code: str,
+        signal_date: Any | None = None,
+        bgn_de: Any | None = None,
+        end_de: Any | None = None,
+        run_key: str = "AGGREGATED",
+        limit: int = 20,
+    ) -> list[Any]:
+        return await self._connection.fetch(
+            """
+            SELECT
+                final_signals.id,
+                final_signals.stock_id,
+                stocks.ticker AS stock_code,
+                stocks.name AS stock_name,
+                final_signals.analysis_result_id,
+                final_signals.signal_date,
+                final_signals.run_key,
+                final_signals.version,
+                final_signals.final_score,
+                final_signals.confidence,
+                final_signals.signal,
+                final_signals.source_agreement,
+                final_signals.warning_level,
+                final_signals.score_breakdown,
+                final_signals.summary,
+                final_signals.bull_point,
+                final_signals.bear_point,
+                final_signals.disclaimer,
+                final_signals.needs_review,
+                final_signals.min_plan_required,
+                final_signals.is_published,
+                final_signals.published_at,
+                final_signals.consensus_score,
+                final_signals.positive_evidence,
+                final_signals.caution_evidence,
+                final_signals.created_at
+            FROM final_signals
+            INNER JOIN stocks
+                ON stocks.id = final_signals.stock_id
+            WHERE stocks.ticker = $1
+              AND ($2::DATE IS NULL OR final_signals.signal_date = $2::DATE)
+              AND ($3::DATE IS NULL OR final_signals.signal_date >= $3::DATE)
+              AND ($4::DATE IS NULL OR final_signals.signal_date <= $4::DATE)
+              AND final_signals.run_key = $5
+            ORDER BY final_signals.signal_date DESC,
+                     final_signals.created_at DESC,
+                     final_signals.id DESC
+            LIMIT $6
+            """,
+            stock_code,
+            signal_date,
+            bgn_de,
+            end_de,
+            run_key,
+            limit,
+        )
+
     async def upsert_final_signal(
         self,
         *,

@@ -108,7 +108,7 @@ class MlInferTaskHandler:
         if not rows:
             # OHLCV가 없어도 선형 체인은 끊지 않는다 — 결합할 모델이 없으니 메타 없이
             # 게이트2(AGGREGATE)로 바로 보내 consensus-only로 발행 판정하게 한다.
-            await enqueue_aggregate(
+            aggregate_task_id = await enqueue_aggregate(
                 self._queue,
                 stock_id=stock_id,
                 aggregate_ctx=task_context.get("aggregate_ctx"),
@@ -120,6 +120,7 @@ class MlInferTaskHandler:
                 "model_count": 0,
                 "persisted": 0,
                 "skipped_reason": "no_ohlcv",
+                "aggregate_task_id": aggregate_task_id,
             }
 
         contract = build_contract(rows, ticker=stock_code or str(stock_id))
@@ -163,7 +164,7 @@ class MlInferTaskHandler:
                 dedupe=True,
             )
         else:
-            await enqueue_aggregate(
+            aggregate_task_id = await enqueue_aggregate(
                 self._queue,
                 stock_id=stock_id,
                 aggregate_ctx=aggregate_ctx,
@@ -180,6 +181,7 @@ class MlInferTaskHandler:
             "succeeded": succeeded,
             "failed": {r.model_name: r.error for r in results if r.error is not None},
             "meta_combine_task_id": meta_task_id,
+            **({"aggregate_task_id": aggregate_task_id} if not succeeded else {}),
         }
 
 

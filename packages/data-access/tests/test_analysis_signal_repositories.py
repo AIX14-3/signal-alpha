@@ -173,6 +173,22 @@ class AnalysisAndSignalRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("ORDER BY analysis_results.analysis_date DESC", sql)
         self.assertEqual(connection.calls[0][2], ([100, 101],))
 
+    async def test_list_final_signals_by_stock_filters_aggregated_signals(self):
+        connection = FakeConnection()
+        repository = AnalysisRepository(connection)
+
+        rows = await repository.list_final_signals_by_stock(
+            stock_code="005930",
+            signal_date="2026-06-08",
+        )
+
+        self.assertEqual(rows[0]["id"], 7)
+        sql = connection.calls[0][1]
+        self.assertIn("FROM final_signals", sql)
+        self.assertIn("INNER JOIN stocks", sql)
+        self.assertIn("final_signals.run_key = $5", sql)
+        self.assertEqual(connection.calls[0][2], ("005930", "2026-06-08", None, None, "AGGREGATED", 20))
+
     async def test_get_current_by_ticker_filters_to_current_published_signal(self):
         connection = FakeConnection()
         repository = SignalRepository(connection)
