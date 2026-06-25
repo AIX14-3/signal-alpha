@@ -17,8 +17,9 @@ from app.main import app
 
 
 class FakeConnection:
-    def __init__(self):
+    def __init__(self, *, existing_task_ids_by_raw_id=None):
         self.calls = []
+        self.existing_task_ids_by_raw_id = existing_task_ids_by_raw_id or {}
 
     async def fetch(self, sql, *args):
         self.calls.append(("fetch", sql, args))
@@ -54,6 +55,11 @@ class FakeConnection:
     async def fetchval(self, sql, *args):
         self.calls.append(("fetchval", sql, args))
         if "SELECT id" in sql:
+            source_raw_ids = args[3] if len(args) > 3 else None
+            if source_raw_ids:
+                existing_id = self.existing_task_ids_by_raw_id.get(source_raw_ids[0])
+                if existing_id is not None:
+                    return existing_id
             return None
         return 80 + args[0]
 
@@ -70,8 +76,8 @@ class FakeAcquire:
 
 
 class FakePool:
-    def __init__(self):
-        self.connection = FakeConnection()
+    def __init__(self, *, connection=None):
+        self.connection = connection or FakeConnection()
 
     def acquire(self):
         return FakeAcquire(self.connection)
@@ -138,12 +144,39 @@ class ReportScheduleRouteTest(unittest.TestCase):
         self.assertFalse(body["dry_run"])
         self.assertEqual(body["candidate_count"], 2)
         self.assertEqual(body["scheduled_count"], 2)
+        self.assertEqual(body["enqueued_count"], 2)
+        self.assertEqual(body["reused_count"], 0)
         enqueue_calls = [
             call for call in pool.connection.calls
             if call[0] == "fetchval" and "INSERT INTO processing_queue" in call[1]
         ]
         self.assertEqual(len(enqueue_calls), 2)
         self.assertTrue(all(call[2][1] == "normalize_report" for call in enqueue_calls))
+
+    def test_report_normalize_backfill_reuses_existing_open_tasks(self):
+        connection = FakeConnection(existing_task_ids_by_raw_id={101: 501})
+        pool = FakePool(connection=connection)
+        app.dependency_overrides[get_database_pool] = lambda: pool
+        client = TestClient(app)
+
+        response = client.post(
+            "/internal/schedules/report/normalize-backfill",
+            json={"limit": 2, "dry_run": False},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["candidate_count"], 2)
+        self.assertEqual(body["scheduled_count"], 2)
+        self.assertEqual(body["task_ids"], [501, 82])
+        self.assertEqual(body["enqueued_count"], 1)
+        self.assertEqual(body["reused_count"], 1)
+        enqueue_calls = [
+            call for call in connection.calls
+            if call[0] == "fetchval" and "INSERT INTO processing_queue" in call[1]
+        ]
+        self.assertEqual(len(enqueue_calls), 1)
+        self.assertEqual(enqueue_calls[0][2][3], [102])
 
 
 if __name__ == "__main__":
