@@ -84,10 +84,22 @@ class PortOneClient:
         status = "paid" if data.get("status") == "PAID" else str(data.get("status") or "failed").lower()
         return PaymentResult(payment_id=payment_id, amount=int(amount), status=status, raw=data)
 
-    async def cancel_payment(self, payment_id: str, *, reason: str = "user_cancel") -> dict[str, Any]:
+    async def cancel_payment(
+        self, payment_id: str, *, reason: str = "user_cancel", amount: int | None = None
+    ) -> dict[str, Any]:
+        """결제 취소. amount 지정 시 부분취소(일할 환불), 미지정 시 전액취소."""
         if self.dev_mode:
-            return {"paymentId": payment_id, "status": "CANCELLED", "reason": reason, "dev": True}
-        return await self._post(f"/payments/{payment_id}/cancel", {"reason": reason})
+            return {
+                "paymentId": payment_id,
+                "status": "CANCELLED",
+                "reason": reason,
+                "amount": amount,
+                "dev": True,
+            }
+        payload: dict[str, Any] = {"reason": reason}
+        if amount is not None:
+            payload["amount"] = amount
+        return await self._post(f"/payments/{payment_id}/cancel", payload)
 
     # ----- dev 모드 결정적 모의값 -----
     def _dev_identity(self, identity_verification_id: str) -> IdentityResult:

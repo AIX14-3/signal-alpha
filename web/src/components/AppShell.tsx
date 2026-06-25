@@ -57,7 +57,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             ) : (
               <Link
                 href="/login"
-                className="rounded-full bg-navy px-5 py-[10px] text-[14.5px] font-semibold text-white hover:opacity-90"
+                className="brand-grad rounded-full px-5 py-[10px] text-[14.5px] font-bold text-white hover:opacity-90"
               >
                 로그인
               </Link>

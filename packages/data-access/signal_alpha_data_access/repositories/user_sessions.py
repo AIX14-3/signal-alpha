@@ -52,6 +52,27 @@ class UserSessionRepository:
             refresh_token_hash,
         )
 
+    async def rotate_session(
+        self,
+        *,
+        old_refresh_token_hash: str,
+        new_refresh_token_hash: str,
+        expires_at: Any,
+    ) -> Any:
+        """기존 활성 세션의 refresh 토큰을 제자리 회전(created_at 유지 → 절대 만료 앵커 보존)."""
+        return await self._connection.fetchrow(
+            """
+            UPDATE user_sessions
+            SET refresh_token_hash = $2, expires_at = $3
+            WHERE refresh_token_hash = $1
+              AND revoked_at IS NULL
+            RETURNING *
+            """,
+            old_refresh_token_hash,
+            new_refresh_token_hash,
+            expires_at,
+        )
+
     async def revoke_session_by_refresh_hash(self, refresh_token_hash: str) -> None:
         await self._connection.execute(
             """

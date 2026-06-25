@@ -3,11 +3,19 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel
 
-from app.api.routes.admin_auth import ADMIN_SESSION_HOURS, admin_error, get_current_admin
+from app.api.routes.admin_auth import (
+    ADMIN_SESSION_HOURS,
+    admin_error,
+    clear_admin_cookie,
+    get_current_admin,
+    set_admin_cookie,
+)
+from app.core.config import Settings, get_settings
 from app.core.database import get_database_pool
+from app.core.portone import PortOneClient, PortOneError, get_portone_client
 from app.core.security import create_refresh_token, verify_password
 from signal_alpha_data_access.repositories import AdminRepository, UserBillingRepository
 
@@ -29,7 +37,9 @@ class UpdateSubscriptionRequest(BaseModel):
 @admin_router.post("/login")
 async def admin_login(
     payload: AdminLoginRequest,
+    response: Response,
     pool: Any = Depends(get_database_pool),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
     email = payload.email.strip().lower()
     async with pool.acquire() as connection:
@@ -46,22 +56,34 @@ async def admin_login(
             expires_at=expires_at,
         )
         await repository.update_last_login(admin_id=int(admin["id"]))
+    # 세션 토큰은 응답 body 가 아니라 HttpOnly 쿠키(sa_admin)로만 전달.
+    set_admin_cookie(response, session_token, expires_at, settings)
     return {
-        "session_token": session_token,
         "expires_at": expires_at.isoformat(),
         "admin": {"id": admin["id"], "email": admin["email"]},
     }
 
 
+@admin_router.get("/me")
+async def admin_me(
+    admin: dict[str, Any] = Depends(get_current_admin),
+) -> dict[str, Any]:
+    """쿠키 세션 유효성 확인용(프론트 부팅 시 로그인 상태 판별)."""
+    return {"admin": {"id": admin["admin_id"], "email": admin.get("admin_email")}}
+
+
 @admin_router.post("/logout")
 async def admin_logout(
+    response: Response,
     admin: dict[str, Any] = Depends(get_current_admin),
     pool: Any = Depends(get_database_pool),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, str]:
     async with pool.acquire() as connection:
         await AdminRepository(connection).delete_session(
             session_token=str(admin["session_token"])
         )
+    clear_admin_cookie(response, settings)
     return {"status": "ok"}
 
 
@@ -137,6 +159,37 @@ async def cancel_user_subscription(
     async with pool.acquire() as connection:
         await UserBillingRepository(connection).cancel_subscription(user_id=user_id)
     return {"status": "cancelled", "user_id": user_id}
+
+
+@admin_router.post("/users/{user_id}/refund")
+async def refund_user(
+    user_id: int,
+    _admin: dict[str, Any] = Depends(get_current_admin),
+    pool: Any = Depends(get_database_pool),
+    portone: PortOneClient = Depends(get_portone_client),
+) -> dict[str, Any]:
+    """관리자 전액 환불 + 즉시 해지(최근 성공 결제 기준)."""
+    async with pool.acquire() as connection:
+        repository = UserBillingRepository(connection)
+        paid = await repository.list_payment_verifications(user_id=user_id, limit=1)
+        if not paid:
+            raise admin_error(404, "NO_REFUNDABLE_PAYMENT", "환불 가능한 결제 내역이 없습니다.")
+        latest = dict(paid[0])
+        if not portone.dev_mode:
+            try:
+                await portone.cancel_payment(str(latest["imp_uid"]), reason="admin_refund")
+            except PortOneError:
+                raise admin_error(502, "REFUND_FAILED", "환불 처리에 실패했습니다.") from None
+        await repository.record_portone_verification(
+            user_id=user_id,
+            imp_uid=str(latest["imp_uid"]),
+            merchant_uid=str(latest.get("merchant_uid") or latest["imp_uid"]),
+            status="refunded",
+            verification_type="payment",
+            verified_at=datetime.now(UTC),
+        )
+        await repository.cancel_subscription(user_id=user_id)
+    return {"status": "refunded", "user_id": user_id}
 
 
 @admin_router.get("/stats")

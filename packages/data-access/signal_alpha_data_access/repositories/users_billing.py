@@ -297,6 +297,34 @@ class UserBillingRepository:
             user_id,
         )
 
+    async def resume_subscription(self, *, user_id: int) -> Any:
+        """해지 예약(갱신 중지) 철회: cancelled_at 을 비워 정상 활성 상태로 되돌린다."""
+        return await self._connection.fetchrow(
+            """
+            UPDATE signal_subscriptions
+            SET cancelled_at = NULL, updated_at = NOW()
+            WHERE user_id = $1
+              AND status = 'active'
+              AND cancelled_at IS NOT NULL
+            RETURNING *
+            """,
+            user_id,
+        )
+
+    async def schedule_subscription_cancel(self, *, user_id: int) -> Any:
+        """갱신 중지형 해지: status='active' 를 유지(만료일까지 접근권 유지)하고
+        cancelled_at 으로 해지 의도만 기록한다. 만료 시 자연 종료."""
+        return await self._connection.fetchrow(
+            """
+            UPDATE signal_subscriptions
+            SET cancelled_at = NOW(), updated_at = NOW()
+            WHERE user_id = $1
+              AND status = 'active'
+            RETURNING *
+            """,
+            user_id,
+        )
+
     async def cancel_subscription(self, *, user_id: int) -> Any:
         """활성 구독을 취소 처리(부분 유니크 인덱스 idx_subscription_active 해제)."""
         return await self._connection.fetchrow(
@@ -393,6 +421,33 @@ class UserBillingRepository:
             LIMIT 1
             """,
             user_id,
+        )
+
+    async def get_payment_verification_by_imp_uid(self, *, imp_uid: str) -> Any:
+        """결제 멱등 처리용: imp_uid(=paymentId)로 단건 조회. webhook↔confirm 중복 방지."""
+        return await self._connection.fetchrow(
+            """
+            SELECT *
+            FROM portone_verifications
+            WHERE imp_uid = $1
+            """,
+            imp_uid,
+        )
+
+    async def list_payment_verifications(self, *, user_id: int, limit: int = 50) -> list[Any]:
+        """결제 내역(성공 건만) 최신순 조회."""
+        return await self._connection.fetch(
+            """
+            SELECT *
+            FROM portone_verifications
+            WHERE user_id = $1
+              AND verification_type = 'payment'
+              AND status = 'paid'
+            ORDER BY created_at DESC
+            LIMIT $2
+            """,
+            user_id,
+            limit,
         )
 
     async def record_portone_verification(

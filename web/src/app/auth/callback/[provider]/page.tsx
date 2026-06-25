@@ -55,7 +55,7 @@ export default function SocialCallbackPage() {
     } else {
       socialLogin(provider, body)
         .then(async (res) => {
-          setUserTokens(res.access_token, res.refresh_token);
+          setUserTokens(res.access_token); // refresh 는 HttpOnly 쿠키로 설정됨
           await hydrate();
           showToast("로그인되었습니다.", "success");
           router.replace(saved.returnTo || "/mypage");

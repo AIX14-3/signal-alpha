@@ -1,5 +1,6 @@
 import unittest
 import warnings
+from datetime import UTC, datetime
 
 warnings.filterwarnings(
     "ignore",
@@ -61,9 +62,19 @@ class FakeConnection:
                 "user_agent": args[3],
                 "ip_address": args[4],
                 "revoked_at": None,
+                "created_at": datetime.now(UTC),
             }
             self.next_session_id += 1
             self.sessions_by_hash[session["refresh_token_hash"]] = session
+            return session
+        if "UPDATE user_sessions" in sql and "SET refresh_token_hash" in sql:
+            # rotate_session: 제자리 회전(키를 새 해시로 재배치, created_at 유지).
+            session = self.sessions_by_hash.pop(args[0], None)
+            if session is None or session["revoked_at"] is not None:
+                return None
+            session["refresh_token_hash"] = args[1]
+            session["expires_at"] = args[2]
+            self.sessions_by_hash[args[1]] = session
             return session
         if "FROM user_sessions" in sql:
             session = self.sessions_by_hash.get(args[0])
@@ -127,7 +138,9 @@ class AuthRoutesTest(unittest.TestCase):
         self.assertIsNotNone(body["user"]["phone_masked"])
         self.assertEqual(body["token_type"], "bearer")
         self.assertIn("access_token", body)
-        self.assertIn("refresh_token", body)
+        # refresh 토큰은 응답 body 가 아니라 HttpOnly 쿠키로만 전달된다.
+        self.assertNotIn("refresh_token", body)
+        self.assertIsNotNone(response.cookies.get("sa_refresh"))
         self.assertEqual(len(self.connection.sessions_by_hash), 1)
 
     def test_signup_requires_risk_agreement(self):
@@ -166,15 +179,14 @@ class AuthRoutesTest(unittest.TestCase):
         self.assertEqual(me_response.status_code, 200)
         self.assertEqual(me_response.json()["member_code"], member_code)
 
-        refresh_response = self.client.post(
-            "/api/auth/refresh", json={"refresh_token": login_body["refresh_token"]}
-        )
+        # refresh 토큰은 TestClient 쿠키 자(sa_refresh)에서 자동 송신된다(body 불필요).
+        refresh_response = self.client.post("/api/auth/refresh")
         self.assertEqual(refresh_response.status_code, 200)
         self.assertIn("access_token", refresh_response.json())
+        self.assertNotIn("refresh_token", refresh_response.json())
+        self.assertIsNotNone(refresh_response.cookies.get("sa_refresh"))
 
-        logout_response = self.client.post(
-            "/api/auth/logout", json={"refresh_token": signup["refresh_token"]}
-        )
+        logout_response = self.client.post("/api/auth/logout")
         self.assertEqual(logout_response.status_code, 200)
         self.assertEqual(logout_response.json(), {"status": "ok"})
 
