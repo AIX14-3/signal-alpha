@@ -154,3 +154,6 @@ hiring-pptx/
 
 # OCR Evaluation Datasets (Local Only — #390 평가셋 이미지·라벨 드래프트)
 services/agent-worker/data/eval_set/
+
+# Meta-learner harness outputs (synthetic sweep artifacts)
+tools/harness/out/
