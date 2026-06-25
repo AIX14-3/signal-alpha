@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { ApiError, type ReportSource } from "@/lib/apiClient";
 import { WatchlistButton } from "@/components/WatchlistButton";
-import { directionLabel, SOURCE_META, SOURCE_ORDER, sourceLabel } from "@/lib/format";
+import { directionLabel, SOURCE_META, SOURCE_ORDER, sourceLabel, sourceStatusLine } from "@/lib/format";
 import { useAuthStore } from "@/stores/authStore";
 import { useReportStore } from "@/stores/reportStore";
 import { useToastStore } from "@/stores/toastStore";
@@ -189,8 +189,8 @@ function SourceCard({
         {meta.icon} {meta.label}
         <span className={`pill ${tone(dir.tone)} ml-auto`} style={{ padding: "3px 9px", fontSize: 12 }}>{dir.label}</span>
       </div>
-      <p className="mt-2 min-h-[38px] text-[13.5px] text-navy-soft">{src.summary ?? sourceLabel(sourceKey) + " 데이터 요약"}</p>
-      <div className="mt-2 text-[12px] text-muted">점수 {src.score ?? "–"} · {src.data_status ?? "—"}</div>
+      <p className="mt-2 min-h-[38px] text-[13.5px] text-navy-soft">{src.summary ?? (src.data_status === "no_signal" ? "시그널이 없습니다." : sourceLabel(sourceKey) + " 데이터 요약")}</p>
+      <div className="mt-2 text-[12px] text-muted">{sourceStatusLine(src.data_status, src.score)}</div>
       <div className="mt-2 text-[13px] font-semibold text-sky-deep">상세 보기 →</div>
     </Link>
   );

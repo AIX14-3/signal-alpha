@@ -36,7 +36,7 @@ class HiringAnalyzer:
                 score=0.0,
                 summary="분석할 채용 데이터가 없습니다 (hiring_raw_details 미적재).",
                 risk_flags=["no_data"],
-                data_status="failed",
+                data_status="no_signal",
             )
 
         metadata = evidence[0].metadata

@@ -93,6 +93,6 @@ class DartAnalysisAgent:
 
 
 def _data_status(value: str) -> SourceAgentStatus:
-    if value in {"ok", "partial", "failed"}:
+    if value in {"ok", "partial", "failed", "no_signal"}:
         return cast(SourceAgentStatus, value)
     return "partial"

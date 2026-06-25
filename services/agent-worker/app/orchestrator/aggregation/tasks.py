@@ -47,6 +47,12 @@ class NormalizedSourceResult:
     summary: str | None
     source_signal_event_ids: list[int]
     valuation: dict[str, Any] | None
+    # The un-aliased source (HIRING/PATENT/DATALAB/DART/PRICE/REPORT). ``source``
+    # above is coarse (the alternative trio collapses to ALTERNATIVE for scoring);
+    # this preserves the individual collector so the report card per source can be
+    # nested under ALTERNATIVE in the breakdown. Defaults to "" so direct
+    # constructions in tests stay valid.
+    fine_source: str = ""
 
 
 class AggregateSignalTaskHandler:
@@ -59,20 +65,32 @@ class AggregateSignalTaskHandler:
         stock_id = int(task["stock_id"])
         task_context = _task_context(task.get("task_context"))
         source_analysis_result_ids = _int_list(task.get("source_analysis_result_ids"))
-        if not source_analysis_result_ids:
+        if source_analysis_result_ids:
+            # Legacy single-producer path: aggregate exactly the ids handed in.
+            rows = [
+                dict(row)
+                for row in await self._analysis_repository.list_agent_results_for_aggregation(
+                    source_analysis_result_ids
+                )
+            ]
+        else:
+            # Fan-in path: gather EVERY source's latest result for this stock/date,
+            # so DART/PRICE/HIRING/PATENT/DATALAB/REPORT blend into one AGGREGATED
+            # signal instead of whichever single source happened to trigger us.
+            rows = [
+                dict(row)
+                for row in await self._analysis_repository.list_latest_source_results_for_stock(
+                    stock_id=stock_id,
+                    analysis_date=_signal_date([], task_context),
+                )
+            ]
+        if not rows:
             return {
                 "analysis_result_id": None,
                 "final_signal_id": None,
                 "aggregated_count": 0,
-                "skipped_reason": "source_analysis_result_ids_required",
+                "skipped_reason": "no_source_results",
             }
-
-        rows = [
-            dict(row)
-            for row in await self._analysis_repository.list_agent_results_for_aggregation(
-                source_analysis_result_ids
-            )
-        ]
         normalized: list[NormalizedSourceResult] = []
         unknown_agent_result_ids: list[int] = []
         for row in rows:
@@ -92,7 +110,12 @@ class AggregateSignalTaskHandler:
             )
 
         signal_date = _signal_date(rows, task_context)
-        aggregate = _aggregate(normalized)
+        # Blend the alternative trio (HIRING/PATENT/DATALAB) into one ALTERNATIVE
+        # peer BEFORE scoring so the three don't outvote DART 3:1, then re-nest the
+        # individual collectors into the breakdown for per-source report cards.
+        coarse = _coalesce_by_source(normalized)
+        aggregate = _aggregate(coarse)
+        aggregate["score_breakdown"] = _nest_alternatives(aggregate["score_breakdown"], normalized)
         source_signal_event_ids = _source_signal_event_ids(normalized)
         warning = "; ".join(aggregate["risk_flags"]) or None
         analysis_result = await self._analysis_repository.upsert_analysis_result(
@@ -196,12 +219,127 @@ def _normalize_source_result(row: dict[str, Any]) -> NormalizedSourceResult | No
             row.get("agent_source_signal_event_ids") or row.get("analysis_source_signal_event_ids")
         ),
         valuation=valuation,
+        fine_source=_fine_source_from(row, detail) or source,
     )
+
+
+# Source families recognized when un-aliasing a run_key/method_detail.source into
+# its individual collector (the opposite of SOURCE_ALIASES, which collapses the
+# alternative trio into ALTERNATIVE).
+_FINE_SOURCES = ("DART", "PRICE", "REPORT", "HIRING", "PATENT", "DATALAB")
+
+
+def _fine_source_from(row: dict[str, Any], detail: dict[str, Any]) -> str | None:
+    for candidate in (detail.get("source"), detail.get("source_type"), row.get("analysis_run_key")):
+        if candidate is None:
+            continue
+        text = str(candidate).strip().upper()
+        for known in _FINE_SOURCES:
+            if text == known or text.startswith(f"{known}_"):
+                return known
+    return None
+
+
+def _coalesce_by_source(results: list[NormalizedSourceResult]) -> list[NormalizedSourceResult]:
+    """Reduce the fan-in to exactly one peer per coarse source for scoring.
+
+    A coarse source can legitimately have several rows for one (stock, date): the
+    alternative trio (HIRING/PATENT/DATALAB all map to ALTERNATIVE) and DART (one
+    analysis_result per event run_key). Without this, ``_aggregate`` would weight a
+    source by how many rows it happened to produce. Each group is equal-averaged
+    into one peer so the cross-source balance is preserved; a single-row group is
+    passed through unchanged (only re-tagged with its coarse source).
+    """
+    groups: dict[str, list[NormalizedSourceResult]] = {}
+    order: list[str] = []
+    for result in results:
+        if result.source not in groups:
+            groups[result.source] = []
+            order.append(result.source)
+        groups[result.source].append(result)
+    coalesced: list[NormalizedSourceResult] = []
+    for source in order:
+        group = groups[source]
+        coalesced.append(group[0] if len(group) == 1 else _blend_group(source, group))
+    return coalesced
+
+
+def _blend_group(source: str, group: list[NormalizedSourceResult]) -> NormalizedSourceResult:
+    score = round(sum(r.score for r in group) / len(group), 3)
+    risk_flags: list[str] = []
+    event_ids: list[int] = []
+    for r in group:
+        risk_flags.extend(r.risk_flags)
+        event_ids.extend(r.source_signal_event_ids)
+    summaries = [r.summary for r in group if r.summary]
+    return NormalizedSourceResult(
+        source=source,
+        analysis_result_id=group[0].analysis_result_id,
+        agent_result_id=group[0].agent_result_id,
+        direction=_resolve_signal(group, score),
+        score=score,
+        score_100=_to_100(score),
+        data_status=_blend_status([r.data_status for r in group]),
+        needs_review=any(r.needs_review for r in group),
+        risk_flags=_dedupe(risk_flags),
+        summary=" / ".join(summaries) if summaries else None,
+        source_signal_event_ids=sorted(set(event_ids)),
+        valuation=next((r.valuation for r in group if r.valuation is not None), None),
+        fine_source=source,
+    )
+
+
+def _blend_status(statuses: list[str]) -> str:
+    """Most-informative status wins: ok > partial > no_signal > failed."""
+    for level in ("ok", "partial", "no_signal"):
+        if level in statuses:
+            return level
+    return "failed"
+
+
+def _nest_alternatives(
+    breakdown: dict[str, dict[str, Any]],
+    normalized: list[NormalizedSourceResult],
+) -> dict[str, dict[str, Any]]:
+    """Nest each individual alternative collector under breakdown["ALTERNATIVE"].
+
+    The report renders hiring/datalab as their own cards by reading
+    ``breakdown["ALTERNATIVE"][source]`` (reports.py). The coarse ALTERNATIVE entry
+    keeps its blended scoring fields; this only ADDS per-collector sub-entries.
+    """
+    alt_entry = breakdown.get("ALTERNATIVE")
+    if not isinstance(alt_entry, dict):
+        return breakdown
+    for result in normalized:
+        if result.source != "ALTERNATIVE":
+            continue
+        key = (result.fine_source or "").lower()
+        if not key or key == "alternative":
+            continue
+        alt_entry[key] = {
+            "direction": result.direction,
+            "score": result.score,
+            "score_100": result.score_100,
+            "data_status": result.data_status,
+            "needs_review": result.needs_review,
+            "analysis_result_id": result.analysis_result_id,
+            "agent_result_id": result.agent_result_id,
+            "risk_flags": result.risk_flags,
+            "summary": result.summary,
+        }
+    return breakdown
 
 
 def _aggregate(results: list[NormalizedSourceResult]) -> dict[str, Any]:
     available = [result for result in results if result.data_status != "failed"]
-    scoring = [result for result in available if result.source in SCORING_SOURCES]
+    # A "no_signal" source ran but carries no direction — it must not dilute the
+    # blended score toward 0, so it is available (shown, counted for coverage) but
+    # excluded from the numeric scoring average.
+    scoring = [
+        result
+        for result in available
+        if result.source in SCORING_SOURCES and result.data_status != "no_signal"
+    ]
     failed = [result for result in results if result.data_status == "failed"]
     missing_sources = [source for source in SOURCE_ORDER if not any(result.source == source for result in results)]
     aggregate_score = round(sum(result.score for result in scoring) / len(scoring), 3) if scoring else 0.0
@@ -286,6 +424,7 @@ def _score_breakdown(results: list[NormalizedSourceResult]) -> dict[str, dict[st
             "analysis_result_id": result.analysis_result_id,
             "agent_result_id": result.agent_result_id,
             "risk_flags": result.risk_flags,
+            "summary": result.summary,
             **({"valuation": result.valuation} if result.valuation is not None else {}),
         }
     return breakdown

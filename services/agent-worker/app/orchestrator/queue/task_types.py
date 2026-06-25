@@ -3,6 +3,11 @@ NORMALIZE_DART = "normalize_dart"
 ANALYZE_DART = "analyze_dart"
 AGGREGATE_SIGNAL = "aggregate_signal"
 
+# PRICE 소스 분석 — ohlcv_data 를 PriceAnalyzer 로 분석해 analysis_result+agent_result 적재.
+# DART/ALTERNATIVE 와 달리 별도 NORMALIZE 단계 없이(가격은 signal_events 없음) 바로 분석한다.
+# fan-in AGGREGATE 가 (stock,date)로 집어가는 PRICE 피어를 만든다. 13 chars (VARCHAR(50)).
+ANALYZE_PRICE = "analyze_price"
+
 # ML/DL 추론 (게이트 통과 모델만) — 종목 OHLCV를 vol-benchmark 모델로 추론해 ml_inferences 적재.
 # architecture.mermaid의 ML/DL 단계. 메타러너 결합 입력. 9 chars (task_type VARCHAR(50)).
 ML_INFER = "ml_infer"

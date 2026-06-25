@@ -46,6 +46,41 @@ export function directionLabel(direction: string | null | undefined): {
   }
 }
 
+/**
+ * 소스 카드 data_status → 사용자 표기.
+ * - ok/partial: 점수를 대신 노출하므로 빈 문자열
+ * - no_signal: 수집은 됐으나 유의 시그널 없음
+ * - missing: 아직 수집/분석 전 (집계 시점에 해당 소스 결과 행이 없음)
+ * - failed: 수집·분석 오류
+ */
+export function dataStatusLabel(status: string | null | undefined): string {
+  switch ((status ?? "").toLowerCase()) {
+    case "ok":
+    case "partial":
+      return "";
+    case "no_signal":
+      return "시그널이 없습니다";
+    case "missing":
+      return "데이터 수집 전";
+    case "failed":
+      return "분석 실패";
+    default:
+      return "—";
+  }
+}
+
+/** ok/partial 이면 점수, 그 외에는 상태 라벨(시그널 없음/수집 전/실패)을 노출. */
+export function sourceStatusLine(
+  status: string | null | undefined,
+  score: number | null | undefined,
+): string {
+  const s = (status ?? "").toLowerCase();
+  if (s === "ok" || s === "partial") {
+    return `점수 ${score ?? "–"}`;
+  }
+  return dataStatusLabel(status);
+}
+
 /** 리포트 5개 연결점 소스 키 → 한글 라벨/아이콘/힌트. */
 export const SOURCE_META: Record<
   string,

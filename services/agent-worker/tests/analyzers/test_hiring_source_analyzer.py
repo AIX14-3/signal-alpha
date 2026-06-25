@@ -46,9 +46,11 @@ def _evidence(rows, *, sector_demand=None):
 
 
 class HiringAnalyzerTest(unittest.IsolatedAsyncioTestCase):
-    async def test_no_data_is_failed(self):
+    async def test_no_data_is_no_signal(self):
+        # Ran but had no rows → "no_signal" (report shows "시그널이 없습니다"),
+        # not "failed" (error) or "missing" (never ran).
         result = await HiringAnalyzer(CONFIG).analyze("005930", _evidence([]))
-        self.assertEqual(result.data_status, "failed")
+        self.assertEqual(result.data_status, "no_signal")
         self.assertIn("no_data", result.risk_flags)
 
     async def test_hiring_expansion_is_positive(self):

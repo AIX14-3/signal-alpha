@@ -7,6 +7,7 @@ from app.orchestrator.queue.task_types import (
     AGGREGATE_SIGNAL,
     ANALYZE_ALTERNATIVE,
     ANALYZE_DART,
+    ANALYZE_PRICE,
     ANALYZE_REPORT,
     COLLECT_DART,
     COLLECT_REPORT,
@@ -41,6 +42,7 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
         DartNormalizeTaskHandler,
     )
     from app.orchestrator.aggregation.tasks import AggregateSignalTaskHandler
+    from app.orchestrator.price.tasks import PriceAnalyzeTaskHandler
     from app.ml.inference import MlInferTaskHandler
     from app.ml.meta_combine import MetaCombineTaskHandler
     from app.gates.risk_veto import RiskVetoTaskHandler
@@ -69,6 +71,7 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
             llm_analyzer=llm_analyzer,
             llm_high_impact_only=settings.dart_llm_high_impact_only,
         ),
+        ANALYZE_PRICE: PriceAnalyzeTaskHandler(connection),
         AGGREGATE_SIGNAL: AggregateSignalTaskHandler(connection),
         ML_INFER: MlInferTaskHandler(connection),
         META_COMBINE: MetaCombineTaskHandler(connection),

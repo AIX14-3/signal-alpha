@@ -260,14 +260,14 @@ class DartAnalyzeTaskHandler:
         )
         # 선형 파이프라인: 분석 → ML_INFER → META_COMBINE → 게이트2(AGGREGATE) → 종합 → veto.
         # 게이트2가 메타러너의 모델 신뢰도까지 보고 발행 판정하도록 ML_INFER를 먼저 인큐한다.
-        # AGGREGATE가 나중에 필요로 하는 컨텍스트(소스 분석결과·signal_date)는 aggregate_ctx로
-        # 실어 ML→META가 불투명하게 통과시킨다.
+        # AGGREGATE는 fan-in 방식이라 DART 단일 분석결과 id 를 싣지 않는다 — (stock_id, signal_date)
+        # 로 DART/PRICE/HIRING/PATENT/DATALAB/REPORT 의 최신 결과를 한꺼번에 모아 블렌드한다.
+        # signal_date·aggregation_key 만 ML→META 가 불투명하게 통과시킨다.
         aggregate_ctx = {
             "stock_code": task_context.get("stock_code"),
             "signal_date": analysis_date.isoformat(),
             "run_key": "AGGREGATED",
             "aggregation_key": f"AGGREGATED:{stock_id}:{analysis_date.isoformat()}:final-agg-v1",
-            "source_analysis_result_ids": [int(analysis_result["id"])],
         }
         ml_infer_task_id = await self._queue_repository.enqueue(
             stock_id=stock_id,

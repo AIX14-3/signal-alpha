@@ -233,7 +233,8 @@ class DartAnalyzeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(task_context["stock_code"], "005930")
         self.assertEqual(task_context["run_key"], "ML")
         aggregate_ctx = task_context["aggregate_ctx"]
-        self.assertEqual(aggregate_ctx["source_analysis_result_ids"], [401])
+        # AGGREGATE 는 fan-in — DART 단일 분석결과 id 를 더 이상 싣지 않는다.
+        self.assertNotIn("source_analysis_result_ids", aggregate_ctx)
         self.assertEqual(aggregate_ctx["signal_date"], "2026-06-08")
         self.assertEqual(aggregate_ctx["run_key"], "AGGREGATED")
 
