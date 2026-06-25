@@ -12,7 +12,10 @@ dependencies = [
 # baselines, all pure numpy/pandas) stays light. PR2 wires these into the registry.
 [project.optional-dependencies]
 garch = ["arch>=6.0.0"]
+# NOTE: lightgbm 의 sklearn API(LGBMRegressor)는 scikit-learn 도 필요하다.
+# 이 extra 를 쓰려면 lgbm = ["lightgbm>=4.0.0", "scikit-learn>=1.3.0"] 로 켤 것.
 lgbm = ["lightgbm>=4.0.0"]
+dl = ["torch>=2.2.0"]    # CPU TCN — the CPU torch wheel is enough
 gpu = ["torch>=2.2.0"]
 
 [tool.pytest.ini_options]

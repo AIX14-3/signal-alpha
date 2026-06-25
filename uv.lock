@@ -2645,7 +2645,7 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "selenium" },
     { name = "signal-alpha-data-access" },
-    { name = "signal-alpha-vol-models" },
+    { name = "signal-alpha-vol-models", extra = ["garch"] },
     { name = "sqlalchemy" },
     { name = "tzdata" },
     { name = "uvicorn", extra = ["standard"] },
@@ -2675,7 +2675,7 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "selenium", specifier = ">=4.20.0" },
     { name = "signal-alpha-data-access", editable = "packages/data-access" },
-    { name = "signal-alpha-vol-models", editable = "packages/vol-models" },
+    { name = "signal-alpha-vol-models", extras = ["garch"], editable = "packages/vol-models" },
     { name = "sqlalchemy", specifier = ">=2.0.0" },
     { name = "tzdata", specifier = ">=2024.1" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30.0" },
@@ -2735,6 +2735,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+dl = [
+    { name = "torch" },
+]
 garch = [
     { name = "arch" },
 ]
@@ -2751,9 +2754,10 @@ requires-dist = [
     { name = "lightgbm", marker = "extra == 'lgbm'", specifier = ">=4.0.0" },
     { name = "numpy", specifier = ">=1.26.0" },
     { name = "pandas", specifier = ">=2.0.0" },
+    { name = "torch", marker = "extra == 'dl'", specifier = ">=2.2.0" },
     { name = "torch", marker = "extra == 'gpu'", specifier = ">=2.2.0" },
 ]
-provides-extras = ["garch", "lgbm", "gpu"]
+provides-extras = ["garch", "lgbm", "dl", "gpu"]
 
 [[package]]
 name = "signal-core"

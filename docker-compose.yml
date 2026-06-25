@@ -94,6 +94,9 @@ services:
       KIWOOM_MIN_REQUEST_INTERVAL_SEC: ${KIWOOM_MIN_REQUEST_INTERVAL_SEC:-0.25}
       PRICE_POLL_INTERVAL_SEC: ${PRICE_POLL_INTERVAL_SEC:-60}
       PRICE_FLOW_DELAY_AFTER_CLOSE_MIN: ${PRICE_FLOW_DELAY_AFTER_CLOSE_MIN:-30}
+      # ML_INFER 변동성 모델 화이트리스트 — ML 3종(ewma/har_rv/garch, lightgbm 제외:
+      # scikit-learn 의존 회피) + DL 1종(tcn, torch[dl] 설치 시 가용 / 미설치면 자동 skip).
+      ML_GATE_PASSED_MODELS: ${ML_GATE_PASSED_MODELS:-ewma,har_rv,garch,tcn}
     ports:
       - "${AGENT_WORKER_PORT:-8011}:8011"
     command: >
