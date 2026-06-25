@@ -4,7 +4,7 @@
 
 통합 단계는 두 개의 통합기로 구성된다. 대안 데이터를 묶는 `Alt_Aggregator`와, 전체 소스를 종합 판단하는 `Debate_Aggregator`다.
 
-> **구현 현황**: 통합 단계는 전체가 미구현이다. 저장 스키마(`agent_results`·`final_signals`)와 큐 작업 유형(`ANALYZE_ALT`·`AGGREGATE_DEBATE`·`ML_SCORE`·`CREATE_FINAL_SIGNAL`)은 마이그레이션 베이스라인에 준비되어 있다.
+> **구현 현황**: D-1 룰베이스 통합은 `AGGREGATE_SIGNAL` 큐 작업으로 구현되어 `agent_results`를 읽고 `final_signals`를 생성한다. Report valuation summary는 최종 `score_breakdown.REPORT.valuation`과 caution evidence에 전달된다. D-2~D-5 토론/투표 방식과 scenario band는 계획 상태다.
 
 ---
 

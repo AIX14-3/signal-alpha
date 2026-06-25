@@ -231,6 +231,7 @@ ReportAnalyzeTaskHandler
 - 사용자-facing 최종 데이터 방향성 발행 여부는 Aggregator와 후속 gate가 결정합니다.
 - `process_report`는 밸류에이션 재해석 전략의 `forward_eps_est`, `applied_multiple`, `implied_multiple`, `peer_group`를 규칙 기반으로 구조화하고, LLM 설정이 활성화된 경우 `category_tag`, `rerating_thesis`, `methodology`를 보강합니다.
 - valuation analyzer MVP는 `report_valuation_facts`를 읽어 내재 배수 평균·중앙값·분산, 적용 배수 대비 gap, 피어 그룹 빈도, `needs_review` 비율을 `report_quant.valuation`에 포함합니다.
+- Aggregator는 Report `method_detail.report_quant.valuation`을 `score_breakdown.REPORT.valuation`과 caution evidence로 전달하고, valuation review risk를 최종 `needs_review`와 warning 판단에 반영합니다.
 - 아직 scenario band 계산은 구현되지 않았습니다.
 - LLM 설정이 비활성화되었거나 model/key/provider가 불완전하면 Report Agent는 보수적 fallback을 사용합니다.
   - 방향성: `unknown`
@@ -381,8 +382,8 @@ Invoke-RestMethod `
 후속 개발 전에 아래 결정을 먼저 내리는 것이 좋습니다.
 
 0. 밸류에이션 재해석 확장
-   - `report_valuation_facts` 스키마, extractor MVP, LLM 기반 methodology/category/thesis 보강, valuation analyzer MVP는 구현되었습니다.
-   - 다음 작업은 valuation summary를 Aggregator와 scenario band 계산에 연결하는 것입니다.
+   - `report_valuation_facts` 스키마, extractor MVP, LLM 기반 methodology/category/thesis 보강, valuation analyzer MVP, Aggregator 전달은 구현되었습니다.
+   - 다음 작업은 valuation summary 기반 scenario band 계산입니다.
    - PDF 원문과 긴 청크를 사용자에게 노출하지 않고, valuation 전략용 결과는 구조화 fact 중심으로 저장합니다.
 1. 저장 backend
    - canonical queue 경로의 기본 backend는 GCS입니다. 개발과 테스트용 local storage adapter도 구현되어 있으므로, 운영 환경에서는 GCS bucket/권한을 확정하고 로컬 환경에서는 `REPORT_STORAGE_BACKEND=local` 사용 여부를 정하면 됩니다.

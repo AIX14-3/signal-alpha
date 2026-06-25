@@ -42,7 +42,10 @@ def dart_agent_row(
     data_status="ok",
     needs_review=False,
     source="DART",
+    risk_flags=None,
+    report_quant=None,
 ):
+    risk_flags = risk_flags or []
     return {
         "analysis_result_id": analysis_result_id,
         "stock_id": 1,
@@ -61,9 +64,10 @@ def dart_agent_row(
             "source_score": source_score,
             "data_status": data_status,
             "summary": "DART disclosures show a neutral information direction.",
-            "risk_flags": [],
+            "risk_flags": risk_flags,
             "needs_review": needs_review,
             "events": [{"id": 501, "title": "Quarterly report"}],
+            **({"report_quant": report_quant} if report_quant is not None else {}),
         },
         "reliability_score": 90,
         "evidence_quality": 100,
@@ -182,6 +186,52 @@ class AggregateSignalTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(breakdown["REPORT"]["analysis_result_id"], 100)
         self.assertEqual(breakdown["REPORT"]["score"], 0.36)
         self.assertEqual(breakdown["DART"]["data_status"], "missing")
+
+    async def test_report_valuation_summary_is_preserved_in_aggregate_outputs(self):
+        valuation = {
+            "data_status": "partial",
+            "needs_review": True,
+            "risk_flags": ["valuation_review_required"],
+            "valuation_count": 3,
+            "usable_multiple_count": 2,
+            "implied_multiple_avg": 17.5,
+            "peer_gap_avg": 0.0,
+        }
+        connection = FakeConnection(
+            rows=[
+                dart_agent_row(
+                    analysis_result_id=100,
+                    agent_result_id=200,
+                    direction="positive",
+                    source_score=0.36,
+                    method_score=68.0,
+                    source="REPORT",
+                    data_status="partial",
+                    needs_review=True,
+                    risk_flags=["valuation_review_required"],
+                    report_quant={"valuation": valuation},
+                )
+            ]
+        )
+        handler = AggregateSignalTaskHandler(connection)
+
+        result = await handler(
+            {
+                "id": 30,
+                "stock_id": 1,
+                "source_analysis_result_ids": [100],
+                "task_context": {"stock_code": "005930", "signal_date": "2026-06-24"},
+            }
+        )
+
+        self.assertEqual(result["warning_level"], "CAUTION")
+        self.assertTrue(result["needs_review"])
+        final_call = next(call for call in connection.calls if "INSERT INTO final_signals" in call[1])
+        breakdown = json.loads(final_call[2][10])
+        caution_evidence = json.loads(final_call[2][21])
+        self.assertEqual(breakdown["REPORT"]["valuation"], valuation)
+        self.assertIn("valuation_review_required", breakdown["REPORT"]["risk_flags"])
+        self.assertEqual(caution_evidence[0]["valuation"], valuation)
 
     async def test_unknown_source_is_excluded_and_records_validation_log(self):
         row = dart_agent_row(source="")
