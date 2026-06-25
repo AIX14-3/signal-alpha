@@ -109,7 +109,8 @@
     <rect x="320" y="306" width="300" height="70" rx="9" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.5"/>
     <text x="470" y="330" text-anchor="middle" font-size="14" font-weight="700" fill="#1e3a8a">소스별 전처리 (분석기)</text>
     <text x="470" y="349" text-anchor="middle" font-size="10.5" fill="#1e40af">규칙 · 임베딩 · 통계지표 → 피처 (결정론)</text>
-    <text x="470" y="366" text-anchor="middle" font-size="9.5" fill="#1e40af">DART규칙+공시임베딩 · PRICE지표 · DataLab지표 · Report RAG검색</text>
+    <text x="470" y="366" text-anchor="middle" font-size="9.5" fill="#1e40af">DART규칙+공시임베딩 · PRICE지표 · DataLab지표 · Report valuation fact</text>
+    <text x="470" y="378" text-anchor="middle" font-size="9.5" fill="#1e40af">Report RAG검색은 복구 후보</text>
   </g>
 
   <!-- C 데이터 적재 (det) -->

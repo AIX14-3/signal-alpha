@@ -18,7 +18,7 @@
 | 실패 격리 | 특정 소스 수집 실패는 해당 소스에만 국한, 다른 모듈로 전파 안 됨. 실행 로그는 `collector_runs`에 기록 |
 | 인터페이스 | 공통 베이스 인터페이스 상속 (`app/collectors/base.py`) |
 
-> Report 경로의 PDF 다운로드, 파싱, LLM 보강은 `collect_report`가 아니라 후속 queue 단계(`process_report`, `embed_report`, `analyze_report`)에서 수행한다. Collector는 리포트 목록 메타데이터와 원천 URL을 저장하고 후속 작업을 등록하는 책임만 가진다.
+> Report 경로의 PDF 다운로드, 파싱, 선택적 LLM 보강은 `collect_report`가 아니라 후속 queue 단계(`process_report`)에서 수행한다. 현재 런타임은 `process_report` 이후 `normalize_report`로 이어지며, `embed_report`/`analyze_report`/RAG 단계는 연결되어 있지 않다. Collector는 리포트 목록 메타데이터와 원천 URL을 저장하고 후속 작업을 등록하는 책임만 가진다.
 
 ---
 
@@ -41,7 +41,7 @@
 
 | 항목 | C-1 Dart | C-2 Report | C-3 Hiring | C-4 Patent | C-5 DataLab | C-6 Price |
 | --- | --- | --- | --- | --- | --- | --- |
-| 상세 저장 테이블 | dart_raw_details | report_raw_details · report_chunks · report_valuation_facts | hiring_raw_details | patent_raw_details | datalab_raw_details | price_snapshots · ohlcv_data |
+| 상세 저장 테이블 | dart_raw_details | report_raw_details · report_valuation_facts (`report_chunks`는 RAG 복구 후보) | hiring_raw_details | patent_raw_details | datalab_raw_details | price_snapshots · ohlcv_data |
 | 데이터 소스 | DART OpenAPI | 네이버 증권 + PDF | 사람인·잡코리아·기업 채용 페이지 | KIPRIS OpenAPI | 네이버 DataLab API | 키움증권 REST API |
 | 수집 방식 | REST API | 크롤링 + PDF URL/메타 저장 | 멀티소스 크롤링 | API 호출 | API 호출 | REST 폴링 (OAuth) |
 | 수집 기간 | 90일 + 즉시 | 90일 | 90일 | 180일 | 30일 | 실시간 + 120영업일 백필 `[계획]` |

@@ -31,7 +31,7 @@ Signal Alpha는 투자 추천 서비스가 아닙니다. 이 전략의 출력은
 - 사용자-facing 응답에는 원문 PDF 또는 긴 verbatim 청크를 노출하지 않습니다.
 - 밸류에이션 전략용 저장물은 구조화 fact 중심으로 둡니다.
 - `rerating_thesis`는 원문 인용이 아니라 짧은 패러프레이즈로 저장합니다.
-- 내부 RAG용 `report_chunks`는 근거 검색과 검증용으로만 사용하고, 장기적으로 보존 기간 또는 fact-only 모드를 검토합니다.
+- RAG를 복구할 경우 `report_chunks`는 근거 검색과 검증용으로만 사용하고, 장기적으로 보존 기간 또는 fact-only 모드를 검토합니다. 현재 Report 런타임은 `report_chunks` 기반 RAG를 실행하지 않습니다.
 
 ## 추출 대상
 
@@ -146,7 +146,9 @@ LangGraph는 아래 요구가 생길 때 검토합니다.
 3. `target_price`, `forward_eps_est`, `implied_multiple` 결정론 계산 구현 - 구현 완료
 4. LLM 분류/패러프레이즈 보강 연결 - 구현 완료
 5. valuation analyzer에서 배수 분산과 peer gap 산출 - MVP 구현 완료
-6. Report Agent와 Aggregator에 valuation fact를 보조 근거로 연결 - 구현 완료
+6. valuation fact를 Aggregator가 보존 가능한 payload 형태로 정리 - 부분 구현
+   - Aggregator는 Report valuation payload를 받으면 보존할 수 있습니다.
+   - 현재 Report 전용 `analyze_report`/Report Agent 런타임은 없으므로 자동 연결은 후속 작업입니다.
 7. 데이터 시나리오 밴드 MVP 생성 - 구현 완료
    - `report_quant.valuation.scenario_band`에 `low_multiple`, `base_multiple`, `high_multiple`, `dispersion_level`, `confidence_note`, `needs_review`를 저장합니다.
    - 수치는 내재 배수 중앙값과 분산 기반 범위로 계산하며, 투자 행동 제안으로 노출하지 않습니다.

@@ -33,7 +33,7 @@
 | 소스 | 모듈 | 상태 | 담당 | 비고 |
 |---|---|---|---|---|
 | 공시(국내) DART | `collectors/dart`,`analyzers/dart` | ⚠️ 부분(룰·LLM·텍스트재무) | 🧑‍💼 | 정형 재무(L1)로 심화 예정 |
-| 증권사 리포트 RAG | `collectors/report`,`report_chunks` | ⚠️ 부분(pgvector·BGE-M3) | 🙋 | 의존성 정리 필요 |
+| 증권사 리포트 수집/밸류에이션 | `collectors/report`,`report_valuation_facts` | ⚠️ 부분(PDF 파싱·정규화 구현, RAG 미연결) | 🙋 | `report_chunks`/pgvector·BGE-M3는 복구 후보 |
 | 검색 트렌드(데이터랩) | `collectors/datalab`,`analyzers/datalab` | ⚠️ 부분 | 👤 | LangGraph attention 에이전트 |
 | 수급·가격 | `collectors/price`,`analyzers/price` | ✅ 실시간(키움 REST) | 🙋 | 공매도/외국인/창구 hard data |
 | 채용 | `collectors/hiring`,`analyzers/hiring` | ⚠️ 부분 | 🙋 | NPS·DART와 3중 교차 |
@@ -52,7 +52,7 @@
 | L1 정형 재무 | DART `fnlttSinglAcntAll` → `dart_financial_facts` | 📝 스펙 작성(PR #129) |
 | L2 지분·내부자 | `majorstock`/`elestock` | ⬜ 예정 |
 | L3 임직원 | 사업보고서 정형 | ⬜ 예정 |
-| L4 비정형 corpus | 보고서 섹션 → `report_chunks` 임베딩 | ⚠️ RAG 인프라 일부 |
+| L4 비정형 corpus | 보고서 섹션 → `report_chunks` 임베딩 | ⬜ 복구/확장 예정 |
 | L5 엔티티·관계 | corp_code·발주처 그래프 | ⬜ 예정 |
 | L6 백테스트 패널 | 이벤트 ⨯ price forward return | ⬜ 예정 |
 

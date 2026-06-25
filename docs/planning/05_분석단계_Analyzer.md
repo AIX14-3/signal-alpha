@@ -8,7 +8,7 @@
 
 > **규칙 1.** 수치는 LLM이 생성하지 않는다. DB에서 꺼내 템플릿에 삽입하고, LLM은 문장만 생성한다.
 > **규칙 2.** 모든 LLM 출력은 검증 함수를 통과한 후에만 프론트엔드로 전달된다. (`packages/signal-core/signal_core/safety.py`)
-> **규칙 3.** 분석기는 외부 API를 직접 호출하지 않고 DB만 읽는다. (정규화 테이블 기준 — `source_documents`·`signal_events`·`signal_metrics`·`report_chunks`)
+> **규칙 3.** 분석기는 외부 API를 직접 호출하지 않고 DB만 읽는다. (정규화 테이블 기준 — `source_documents`·`signal_events`·`signal_metrics`, RAG 복구 시 `report_chunks`)
 
 ---
 
@@ -16,12 +16,12 @@
 
 | 항목 | A-1 Dart_Analyzer (구현) | A-2 Report_Analyzer (구현) |
 | --- | --- | --- |
-| 역할 | 공시 임팩트 분석 | 리포트 근거 검색과 밸류에이션 가정 재해석 |
-| 입력 | DART 정규화 데이터 (dart_raw_details 경유) | report_raw_details · report_chunks · report_valuation_facts |
+| 역할 | 공시 임팩트 분석 | 리포트 수집/정규화와 밸류에이션 가정 구조화 |
+| 입력 | DART 정규화 데이터 (dart_raw_details 경유) | report_raw_details · report_valuation_facts · source_documents/signal_events |
 | 처리 | 고임팩트 즉시 / 저임팩트 배치 | 배치 전용 |
-| 핵심 로직 | ① Few-shot 방향 일관성 ② 정정공시 반전 ③ BEAT/MISS 분류 (`app/analyzers/dart/` — financials·rules·llm) | ① 텍스트→청크→BGE-M3 임베딩→pgvector→RAG ② 목표가·의견 원천값 추출 ③ EPS/적용 배수/피어 그룹 구조화 ④ 내재 배수(`target_price / forward_eps_est`) 결정론 계산 ⑤ Gemini 기반 카테고리 변화와 재평가 thesis 패러프레이즈 ⑥ 배수 분산과 peer gap 계산 |
-| 출력 | score, signal, top_disclosures, earnings_surprise, summary | data_status, risk_flags, report_quant, evidence_chunks, valuation_facts, scenario_band |
-| 사용 모델 | Gemini 3 Flash (프로바이더·모델은 env 주입: `DART_LLM_PROVIDER`/`DART_LLM_MODEL`) | BGE-M3 (검색) + Gemini 계열 (분류/패러프레이즈, 수치 생성 금지) |
+| 핵심 로직 | ① Few-shot 방향 일관성 ② 정정공시 반전 ③ BEAT/MISS 분류 (`app/analyzers/dart/` — financials·rules·llm) | ① PDF 저장/파싱 ② 목표가·의견 원천값 추출 ③ EPS/적용 배수/피어 그룹 구조화 ④ 내재 배수(`target_price / forward_eps_est`) 결정론 계산 ⑤ Gemini 기반 카테고리 변화와 재평가 thesis 패러프레이즈 ⑥ 배수 분산과 scenario band helper |
+| 출력 | score, signal, top_disclosures, earnings_surprise, summary | report_valuation_facts, source_documents, signal_events, signal_metrics, scenario_band helper |
+| 사용 모델 | Gemini 3 Flash (프로바이더·모델은 env 주입: `DART_LLM_PROVIDER`/`DART_LLM_MODEL`) | Gemini 계열 (선택적 분류/패러프레이즈, 수치 생성 금지). BGE-M3/RAG는 현재 런타임 미연결 |
 | 담당 | 성진 | 은진 |
 
 ### A-1 Dart_Analyzer 출력 예시
@@ -37,7 +37,7 @@
 
 ```
 데이터 상태: partial
-근거: 리포트 근거 청크 6건, 증권사 3곳
+근거: 구조화 valuation fact와 정규화된 Report signal event
 밸류에이션 fact: 목표가 원천값, 추정 EPS, 적용 배수, 내재 배수
 데이터 방향성: 증권사 간 내재 배수 분산 확대, 카테고리 재평가 근거는 추가 확인 필요
 주의: PDF에서 EPS 또는 적용 배수 누락 시 needs_review=true
@@ -50,6 +50,7 @@
 - LLM은 methodology 분류, peer group 후보 정리, category tag, rerating thesis 패러프레이즈만 담당한다.
 - LLM이 목표가, EPS, 배수, 점수 같은 수치를 생성하면 안 된다.
 - `scenario_band`는 내재 배수 중앙값과 분산 기반 범위를 내부 구조화 값으로 저장한다.
+- RAG 기반 evidence_chunks는 현재 런타임에 연결되어 있지 않으며, 복구 시 별도 설계와 테스트가 필요하다.
 - 사용자-facing 출력은 Bear/Base/Bull을 투자 행동 제안이 아니라 데이터 시나리오 밴드로 표현한다.
 - 상세 기준은 [`docs/spec/report-valuation-reinterpretation-strategy.md`](../spec/report-valuation-reinterpretation-strategy.md)를 따른다.
 
