@@ -57,6 +57,18 @@ TECH_KEYWORDS: list[str] = [
 ]
 
 
+# 안티봇 차단 페이지 시그니처(소스 공통). 차단을 "공고 없음"으로 무음 처리하지 않게,
+# 호출부가 is_blocked() 로 감지·경보하도록 한다. 사람인 차단 페이지 실측 문구 + 일반형.
+_BLOCK_SIGNATURES: tuple[str, ...] = (
+    "비정상적인 접근으로 차단",   # 사람인 실측
+    "차단 IP주소",               # 사람인 실측
+    "비정상적인 접근",
+    "접근이 차단",
+    "Access Denied",
+    "Forbidden",
+)
+
+
 class BaseSiteCrawler(ABC):
     """사이트 크롤러 공통 인터페이스."""
 
@@ -87,6 +99,18 @@ class BaseSiteCrawler(ABC):
         """텍스트에서 기술 키워드 추출 (대소문자 무시, 중복 제거, 정렬)."""
         low = text.lower()
         return sorted({t for t in TECH_KEYWORDS if t.lower() in low})
+
+    @staticmethod
+    def is_blocked(page_source: str | None) -> bool:
+        """안티봇 차단 페이지인지 시그니처로 판정.
+
+        Selenium 경로(사람인/잡코리아 등)에서 IP가 차단되면 공고 카드가 없어 호출부가
+        '공고 없음'(빈 리스트)으로 무음 처리해 버린다(#사람인차단). 차단을 0건과 구분해
+        명시적으로 경보하도록, 차단 페이지의 안정적 문구를 감지한다.
+        """
+        if not page_source:
+            return False
+        return any(sig in page_source for sig in _BLOCK_SIGNATURES)
 
     @staticmethod
     def normalize_url(href: str, base: str) -> str:

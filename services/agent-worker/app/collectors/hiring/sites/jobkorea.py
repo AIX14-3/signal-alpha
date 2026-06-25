@@ -44,6 +44,14 @@ class JobkoreaCrawler(BaseSiteCrawler):
 
         self._safe_get(f"{_SEARCH}?stext={company_name}")
 
+        # IP 차단 페이지를 '공고 없음'으로 무음 처리하지 않게 먼저 감지(#사람인차단 패리티).
+        if self.is_blocked(self.driver.page_source):
+            logger.warning(
+                "🚫 잡코리아 [%s]: 안티봇 IP 차단 페이지 감지 — '공고 없음' 아님. IP 교체 필요",
+                company_name,
+            )
+            return []
+
         # 결과 로드 신호: 공고 상세 링크가 하나라도 나타나면 OK
         try:
             self._wait_for(By.CSS_SELECTOR, _LINK_SELECTOR, timeout=6)
