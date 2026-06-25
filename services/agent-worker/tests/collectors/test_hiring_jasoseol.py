@@ -269,6 +269,44 @@ class ImageUrlTest(unittest.TestCase):
         self.assertEqual(r["image_urls"], [])
 
 
+class CalendarBackfillTest(unittest.TestCase):
+    """calendar_list 기반 기간 열거: 월 윈도우 분할 · id 전역 dedup · since/until 경계."""
+
+    def setUp(self):
+        jaso.reset_cache()
+
+    def tearDown(self):
+        jaso.reset_cache()
+
+    def test_month_windows_boundaries(self):
+        wins = list(jaso._month_windows("2020-01-01", "2020-03-15"))
+        # 1월·2월·3월 = 3개 윈도우, 인접 비오버랩 [월초, 다음월초)
+        self.assertEqual(len(wins), 3)
+        self.assertEqual(wins[0], ("2020-01-01T00:00:00.000Z", "2020-02-01T00:00:00.000Z"))
+        self.assertEqual(wins[1][0], "2020-02-01T00:00:00.000Z")  # 1월 끝 = 2월 시작(비오버랩)
+        self.assertEqual(wins[2][1], "2020-04-01T00:00:00.000Z")  # 3월 끝 = 4월 시작
+
+    def test_year_rollover(self):
+        wins = list(jaso._month_windows("2020-12-01", "2021-01-31"))
+        self.assertEqual(wins[0], ("2020-12-01T00:00:00.000Z", "2021-01-01T00:00:00.000Z"))
+        self.assertEqual(wins[1], ("2021-01-01T00:00:00.000Z", "2021-02-01T00:00:00.000Z"))
+
+    def test_iter_dedups_across_month_boundary(self):
+        # 같은 id 가 인접 월에 재등장(경계 공고) → 한 번만 yield.
+        per_month = {
+            "2020-01-01T00:00:00.000Z": [{"id": 1, "name": "A"}, {"id": 2, "name": "B"}],
+            "2020-02-01T00:00:00.000Z": [{"id": 2, "name": "B"}, {"id": 3, "name": "C"}],
+        }
+        jaso._fetch_calendar = lambda s, e: list(per_month.get(s, []))
+        got = list(jaso.iter_calendar_postings("2020-01-01", "2020-02-15", pause_sec=0.0))
+        self.assertEqual([p["id"] for p in got], [1, 2, 3])  # id2 중복 제거
+
+    def test_iter_handles_empty_and_malformed(self):
+        jaso._fetch_calendar = lambda s, e: [{"id": 5, "name": "X"}, {"no_id": True}, "junk"]
+        got = list(jaso.iter_calendar_postings("2020-01-01", "2020-01-31", pause_sec=0.0))
+        self.assertEqual([p["id"] for p in got], [5])  # id 없는/비-dict 항목 스킵
+
+
 class NormalizeTest(unittest.TestCase):
     def test_strip_paren_space_suffix(self):
         self.assertEqual(_norm("주택도시보증공사(HUG)"), "주택도시보증공사")

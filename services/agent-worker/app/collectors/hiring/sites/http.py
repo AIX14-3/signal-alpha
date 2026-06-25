@@ -104,17 +104,20 @@ def _retry_delay(exc: requests.RequestException, attempt: int, cfg: Settings) ->
     return None
 
 
-def get(
+def _request(
+    method: str,
     url: str,
     *,
-    headers: dict[str, str] | None = None,
     params: dict | None = None,
+    json: object | None = None,
+    headers: dict[str, str] | None = None,
     settings: Settings | None = None,
 ) -> requests.Response:
-    """retry/backoff + UA 로테이션이 적용된 GET. 성공 시 raise_for_status 통과 Response 반환.
+    """retry/backoff + UA 로테이션이 적용된 HTTP 요청. 성공 시 raise_for_status 통과 Response 반환.
 
     매 시도마다 UA를 풀에서 새로 주입(호출부 고정 UA를 덮어씀 — 로테이션이 목적).
     재시도 한도를 모두 소진하면 마지막 예외를 raise한다(호출부의 기존 except 동작 보존).
+    ``json`` 은 명시 파라미터로 받아 requests 에 직접 전달한다(POST 본문; Content-Type 자동 설정).
     """
     cfg = settings or get_settings()
     retries = max(0, cfg.hiring_max_retries)
@@ -124,8 +127,9 @@ def get(
         # 매 시도 UA 로테이션 — 차단(403/429) 후 핑거프린트를 바꿔 재시도.
         attempt_headers = {**(headers or {}), "User-Agent": pick_ua(cfg)}
         try:
-            response = _get_session().get(
-                url, headers=attempt_headers, params=params,
+            # session.get / session.post 로 디스패치(메서드별 Session 헬퍼 재사용).
+            response = getattr(_get_session(), method.lower())(
+                url, headers=attempt_headers, params=params, json=json,
                 timeout=cfg.hiring_timeout_seconds,
             )
             response.raise_for_status()
@@ -147,3 +151,26 @@ def get(
 
     # 도달 불가(루프가 return 또는 raise로 종료) — 방어적.
     raise last_exc  # type: ignore[misc]
+
+
+def get(
+    url: str,
+    *,
+    headers: dict[str, str] | None = None,
+    params: dict | None = None,
+    settings: Settings | None = None,
+) -> requests.Response:
+    """retry/backoff + UA 로테이션이 적용된 GET. _request 위임."""
+    return _request("GET", url, params=params, headers=headers, settings=settings)
+
+
+def post(
+    url: str,
+    *,
+    json: object | None = None,
+    headers: dict[str, str] | None = None,
+    params: dict | None = None,
+    settings: Settings | None = None,
+) -> requests.Response:
+    """retry/backoff + UA 로테이션이 적용된 POST(JSON 본문). _request 위임."""
+    return _request("POST", url, params=params, json=json, headers=headers, settings=settings)
