@@ -1,0 +1,199 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1480" height="1140" viewBox="0 0 1480 1140" font-family="'Segoe UI','Malgun Gothic','Noto Sans KR',sans-serif">
+  <defs>
+    <marker id="arr" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L7,3 L0,6 Z" fill="#475569"/>
+    </marker>
+    <marker id="arrL" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L7,3 L0,6 Z" fill="#a855f7"/>
+    </marker>
+    <style>
+      .t{font-weight:700;}
+      .h{font-size:13px;font-weight:700;}
+      .s{font-size:10.5px;fill:#475569;}
+      .c{font-family:'Consolas','D2Coding',monospace;font-size:10.5px;}
+      .lbl{font-size:9.5px;fill:#64748b;}
+      .box{rx:8;}
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1480" height="1140" fill="#ffffff"/>
+
+  <!-- Header -->
+  <text x="40" y="38" font-size="22" class="t" fill="#0f172a">Signal α — agent-worker 설계도 (게이트형 큐 드레인)</text>
+  <text x="40" y="60" font-size="12" fill="#475569">github.com/AIX14-3/signal-alpha · services/agent-worker · DB 롤 signal_worker (public DML) · backend는 worker 산출물을 api.* 읽기 view로만 조회</text>
+
+  <!-- Top band: API + daemons -->
+  <rect x="40" y="82" width="690" height="78" rx="8" fill="#eef6ff" stroke="#3b82f6"/>
+  <text x="56" y="103" class="h" fill="#1e40af">FastAPI 내부 API · app/main.py</text>
+  <text x="56" y="124" class="s">라우트: health · tasks · queue · dart · price · schedules · dead_letter · observability</text>
+  <text x="56" y="143" class="s">사용자(web/main-server)는 호출하지 않음 — 내부 운영/수집·분석 트리거 전용</text>
+
+  <rect x="750" y="82" width="690" height="78" rx="8" fill="#fff7ed" stroke="#ea580c"/>
+  <text x="766" y="103" class="h" fill="#9a3412">런타임 데몬 (큐 드레인 / 배치)</text>
+  <text x="766" y="124" class="s">run_collectors · run_normalizers · run_analyzers · run_pipeline(E2E) · run_recommend</text>
+  <text x="766" y="143" class="s">run_baseline · daily_keyword_pipeline — analyzer 서비스는 run_analyzers --loop</text>
+
+  <!-- Section label: sources -->
+  <text x="40" y="196" class="h" fill="#0f172a">① 소스 파이프라인 — 소스별 수집→정규화→(보강)→분석 (collectors · analyzers, 큐 task_type)</text>
+
+  <!-- Source columns -->
+  <!-- DART -->
+  <rect x="40" y="208" width="218" height="158" rx="8" fill="#dbeafe" stroke="#3b82f6"/>
+  <text x="52" y="228" class="h" fill="#1e40af">DART 공시</text>
+  <text x="52" y="244" class="lbl">외부: DART OpenAPI</text>
+  <line x1="52" y1="252" x2="246" y2="252" stroke="#93c5fd"/>
+  <text x="52" y="270" class="c" fill="#1e3a8a">collect_dart</text>
+  <text x="52" y="290" class="c" fill="#1e3a8a">normalize_dart</text>
+  <text x="52" y="310" class="c" fill="#1e3a8a">analyze_dart</text>
+  <text x="52" y="333" class="lbl">L1 공시 · L2 지분/내부자 · L3 임직원</text>
+  <text x="52" y="349" class="lbl">→ signal_events</text>
+
+  <!-- Report -->
+  <rect x="270" y="208" width="218" height="158" rx="8" fill="#dbeafe" stroke="#3b82f6"/>
+  <text x="282" y="228" class="h" fill="#1e40af">증권사 리포트</text>
+  <text x="282" y="244" class="lbl">외부: 리포트 PDF</text>
+  <line x1="282" y1="252" x2="476" y2="252" stroke="#93c5fd"/>
+  <text x="282" y="270" class="c" fill="#1e3a8a">collect_report</text>
+  <text x="282" y="288" class="c" fill="#1e3a8a">process_report</text>
+  <text x="282" y="306" class="c" fill="#1e3a8a">normalize_report</text>
+  <text x="282" y="324" class="c" fill="#1e3a8a">analyze_report</text>
+  <text x="282" y="346" class="lbl">Gemini PDF 파싱 → 밸류에이션</text>
+
+  <!-- DataLab -->
+  <rect x="500" y="208" width="218" height="158" rx="8" fill="#dbeafe" stroke="#3b82f6"/>
+  <text x="512" y="228" class="h" fill="#1e40af">네이버 데이터랩</text>
+  <text x="512" y="244" class="lbl">외부: DataLab API</text>
+  <line x1="512" y1="252" x2="706" y2="252" stroke="#93c5fd"/>
+  <text x="512" y="270" class="c" fill="#1e3a8a">NORMALIZE_DATALAB</text>
+  <text x="512" y="290" class="c" fill="#1e3a8a">ANALYZE_ALTERNATIVE</text>
+  <text x="512" y="333" class="lbl">키워드 트렌드 · 채용 baseline</text>
+  <text x="512" y="349" class="lbl">(run_baseline)</text>
+
+  <!-- Hiring -->
+  <rect x="730" y="208" width="218" height="158" rx="8" fill="#dbeafe" stroke="#3b82f6"/>
+  <text x="742" y="228" class="h" fill="#1e40af">채용공고</text>
+  <text x="742" y="244" class="lbl">외부: 잡코리아·사람인</text>
+  <line x1="742" y1="252" x2="936" y2="252" stroke="#93c5fd"/>
+  <text x="742" y="270" class="c" fill="#1e3a8a">NORMALIZE_HIRING</text>
+  <text x="742" y="290" class="c" fill="#7c3aed">ENRICH_HIRING</text>
+  <text x="742" y="306" class="lbl">Tesseract OCR → 기술스킬</text>
+  <text x="742" y="326" class="c" fill="#1e3a8a">ANALYZE_ALTERNATIVE</text>
+  <text x="742" y="349" class="lbl">Chromium 내장 크롤러</text>
+
+  <!-- Patent -->
+  <rect x="960" y="208" width="218" height="158" rx="8" fill="#dbeafe" stroke="#3b82f6"/>
+  <text x="972" y="228" class="h" fill="#1e40af">특허</text>
+  <text x="972" y="244" class="lbl">외부: KIPRIS</text>
+  <line x1="972" y1="252" x2="1166" y2="252" stroke="#93c5fd"/>
+  <text x="972" y="270" class="c" fill="#1e3a8a">NORMALIZE_PATENT</text>
+  <text x="972" y="290" class="c" fill="#7c3aed">ENRICH_PATENT</text>
+  <text x="972" y="306" class="lbl">Gemini 중요도 → llm_features</text>
+  <text x="972" y="326" class="c" fill="#1e3a8a">ANALYZE_ALTERNATIVE</text>
+
+  <!-- Price -->
+  <rect x="1190" y="208" width="218" height="158" rx="8" fill="#dbeafe" stroke="#3b82f6"/>
+  <text x="1202" y="228" class="h" fill="#1e40af">가격</text>
+  <text x="1202" y="244" class="lbl">외부: 키움 mockapi</text>
+  <line x1="1202" y1="252" x2="1396" y2="252" stroke="#93c5fd"/>
+  <text x="1202" y="270" class="c" fill="#1e3a8a">collect_price</text>
+  <text x="1202" y="290" class="c" fill="#1e3a8a">analyze_price</text>
+  <text x="1202" y="333" class="lbl">일봉·장중 시세 · 변동성/거래량</text>
+  <text x="1202" y="349" class="lbl">(ML 라인 피처)</text>
+
+  <!-- arrows from sources to convergence -->
+  <g stroke="#475569" stroke-width="1.4" fill="none" marker-end="url(#arr)">
+    <path d="M149,366 L149,392 L724,392 L724,408"/>
+    <path d="M379,366 L379,388 L724,388"/>
+    <path d="M609,366 L609,392 L724,392" stroke="#94a3b8"/>
+    <path d="M839,366 L839,392 L726,392" stroke="#94a3b8"/>
+    <path d="M1069,366 L1069,396 L728,396"/>
+    <path d="M1299,366 L1299,400 L730,400"/>
+  </g>
+
+  <!-- Convergence -->
+  <rect x="430" y="408" width="620" height="50" rx="8" fill="#dcfce7" stroke="#22c55e"/>
+  <text x="450" y="430" class="h" fill="#15803d">소스 분석 산출물</text>
+  <text x="450" y="448" class="c" fill="#166534">signal_events · analysis_results · agent_results  (소스 방향성/근거/신뢰도)</text>
+
+  <!-- Section label: gated tail -->
+  <text x="40" y="500" class="h" fill="#0f172a">② 결합 · 게이트 · 종합 — 게이트형 체인 (각 핸들러가 다음 stage를 enqueue)</text>
+
+  <!-- ML/DL line (feeds meta into aggregate) -->
+  <rect x="40" y="520" width="300" height="86" rx="8" fill="#ffe4e6" stroke="#f43f5e"/>
+  <text x="56" y="540" class="h" fill="#be123c">ML/DL 라인 (병렬)</text>
+  <text x="56" y="560" class="c" fill="#9f1239">ml_infer  → ml_inferences</text>
+  <text x="56" y="578" class="c" fill="#9f1239">meta_combine → meta_signals</text>
+  <text x="56" y="597" class="lbl">vol-benchmark 모델(게이트 통과)·메타러너 stacking</text>
+
+  <!-- Aggregate (gate 2) -->
+  <rect x="372" y="520" width="240" height="86" rx="8" fill="#fae8ff" stroke="#a855f7"/>
+  <text x="388" y="540" class="h" fill="#7e22ce">aggregate_signal</text>
+  <text x="388" y="558" class="s">게이트② 발행 여부 결정</text>
+  <text x="388" y="576" class="lbl">소스 일치도 + meta_signal 결합</text>
+  <text x="388" y="596" class="c" fill="#6b21a8">→ final_signals</text>
+
+  <!-- Risk veto gate -->
+  <rect x="644" y="520" width="240" height="86" rx="8" fill="#fef9c3" stroke="#ca8a04"/>
+  <text x="660" y="540" class="h" fill="#a16207">risk_veto</text>
+  <text x="660" y="558" class="s">게이트: 치명 키워드 차단</text>
+  <text x="660" y="576" class="lbl">상장폐지·감사의견거절·횡령 등</text>
+  <text x="660" y="596" class="lbl">발행 보류(is_published=FALSE)·validation_logs</text>
+
+  <!-- Synthesize (LLM) -->
+  <rect x="916" y="520" width="240" height="86" rx="8" fill="#cffafe" stroke="#06b6d4"/>
+  <text x="932" y="540" class="h" fill="#0e7490">synthesize</text>
+  <text x="932" y="558" class="s">끝단 LLM 종합 (Gemini)</text>
+  <text x="932" y="576" class="lbl">유일한 생성형 LLM · 수치 불변, 설명만</text>
+  <text x="932" y="596" class="lbl">→ RiskReport JSON</text>
+
+  <!-- Recommend -->
+  <rect x="1188" y="520" width="220" height="86" rx="8" fill="#ecfccb" stroke="#65a30d"/>
+  <text x="1204" y="540" class="h" fill="#4d7c0f">run_recommend</text>
+  <text x="1204" y="558" class="s">결정론 추천 랭킹 (배치)</text>
+  <text x="1204" y="576" class="lbl">변동성 역가중 · final+meta</text>
+  <text x="1204" y="596" class="c" fill="#3f6212">→ recommendations</text>
+
+  <!-- tail arrows -->
+  <g stroke="#a855f7" stroke-width="1.6" fill="none" marker-end="url(#arrL)">
+    <path d="M340,563 L372,563"/>
+  </g>
+  <g stroke="#475569" stroke-width="1.6" fill="none" marker-end="url(#arr)">
+    <path d="M740,458 L740,520"/>
+    <path d="M612,563 L644,563"/>
+    <path d="M884,563 L916,563"/>
+    <path d="M1156,563 L1188,563"/>
+  </g>
+  <text x="745" y="494" class="lbl">소스 산출물 → 결합</text>
+
+  <!-- Queue spine -->
+  <rect x="40" y="648" width="1368" height="92" rx="8" fill="#fff7ed" stroke="#ea580c" stroke-dasharray="5 3"/>
+  <text x="56" y="670" class="h" fill="#9a3412">③ 큐 인프라 · app/orchestrator/queue (게이트형 체인의 척추 — 위 모든 stage를 구동)</text>
+  <text x="56" y="692" class="s">processing_queue (claim/lease 원자적 점유) · task_types · handlers 레지스트리 — 각 핸들러가 성공 시 다음 stage task를 enqueue</text>
+  <text x="56" y="711" class="s">dead_letter_queue (DLQ) — 재시도 소진 task 격리 · /dead_letter · /observability 로 운영 모니터링</text>
+  <text x="56" y="730" class="lbl">메타러너 게이트: 검증 통과 모델만 ml_infer 추론에 사용 · LangSmith로 LLM(Gemini) 트레이싱</text>
+
+  <!-- DB panel -->
+  <rect x="40" y="762" width="900" height="150" rx="8" fill="#f1f5f9" stroke="#64748b"/>
+  <text x="56" y="784" class="h" fill="#334155">④ DB 적재 (PostgreSQL · public 스키마 · signal_worker 롤 DML)</text>
+  <text x="56" y="806" class="s">원천/정규화</text>
+  <text x="56" y="824" class="c" fill="#334155">raw_documents · source_documents · {dart,report,hiring,patent,datalab}_raw_details</text>
+  <text x="56" y="846" class="s">신호/분석</text>
+  <text x="56" y="864" class="c" fill="#334155">signal_events · analysis_results · agent_results · final_signals</text>
+  <text x="56" y="886" class="s">ML·추천·큐</text>
+  <text x="56" y="904" class="c" fill="#334155">ml_inferences · meta_signals · recommendations · processing_queue · dead_letter_queue · stocks</text>
+
+  <!-- Read contract / observability panel -->
+  <rect x="956" y="762" width="452" height="150" rx="8" fill="#eefbf0" stroke="#22c55e"/>
+  <text x="972" y="784" class="h" fill="#15803d">읽기 계약 &amp; 관측 (backend 분리)</text>
+  <text x="972" y="806" class="s">backend(main-server)는 worker base 테이블 직접 권한 없음.</text>
+  <text x="972" y="824" class="s">worker 산출물은 api.* 읽기전용 view로만 노출:</text>
+  <text x="972" y="843" class="c" fill="#166534">api.signals_current · api.signal_detail</text>
+  <text x="972" y="861" class="c" fill="#166534">api.stocks · api.analysis_pipeline_status</text>
+  <line x1="972" y1="872" x2="1392" y2="872" stroke="#86efac"/>
+  <text x="972" y="892" class="s">관측: app/observability — langsmith · alerting · stats · ops_daemon</text>
+
+  <!-- legend / footer -->
+  <text x="40" y="952" class="lbl">범례:  파랑=소스 파이프라인(수집/정규화/분석)   보라=결합·발행 게이트   노랑=리스크 veto 게이트   하늘=끝단 LLM(Gemini)   분홍=ML/DL 라인   회색=DB</text>
+  <text x="40" y="972" class="lbl">원칙:  Collector는 LLM 미호출 · Analyzer는 DB만 읽음 · 생성형 LLM은 끝단 synthesize 1곳 · 수치는 결정론, LLM은 설명/보강만 · 실패 시 결정론 fallback</text>
+  <text x="40" y="992" class="lbl">기준: origin/main (services/agent-worker, app/orchestrator/queue/task_types.py · handlers.py · gates/risk_veto.py)</text>
+</svg>
