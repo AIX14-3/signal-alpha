@@ -1,7 +1,7 @@
 -- Signal Alpha MVP sample data flow test.
 --
 -- Assumptions:
--- - migrations/001_extensions.sql through migrations/010_report_chunk_index.sql have been executed.
+-- - database/migrations/*.sql have all been applied.
 -- - seeds/001_seed_stocks.sql and seeds/002_seed_subscription_plans.sql have been executed.
 -- - This script uses TEST-prefixed values and is intended for development databases only.
 
@@ -125,41 +125,6 @@ report_detail AS (
         extracted_text = EXCLUDED.extracted_text,
         parsing_status = EXCLUDED.parsing_status,
         extra_payload = EXCLUDED.extra_payload
-    RETURNING raw_document_id, stock_id
-),
-chunks AS (
-    INSERT INTO report_chunks (
-        raw_document_id,
-        stock_id,
-        chunk_index,
-        chunk_text,
-        token_count,
-        embedding
-    )
-    SELECT
-        raw_document_id,
-        stock_id,
-        chunk_index,
-        chunk_text,
-        token_count,
-        NULL::VECTOR(1024)
-    FROM report_detail
-    CROSS JOIN (
-        VALUES
-            (
-                0,
-                'TEST chunk 0: Samsung Electronics benefits from AI server memory demand and HBM growth.',
-                16
-            ),
-            (
-                1,
-                'TEST chunk 1: The report raises target price based on operating margin recovery and stronger DRAM pricing.',
-                18
-            )
-    ) AS chunk_seed(chunk_index, chunk_text, token_count)
-    ON CONFLICT (raw_document_id, chunk_index) DO UPDATE SET
-        chunk_text = EXCLUDED.chunk_text,
-        token_count = EXCLUDED.token_count
     RETURNING raw_document_id, stock_id
 ),
 queue_row AS (
@@ -497,13 +462,6 @@ SELECT
     signal_events.id AS signal_event_id,
     signal_events.event_type,
     signal_events.signal_direction,
-    (
-        SELECT COUNT(*)
-        FROM report_chunks
-        JOIN raw_documents
-          ON raw_documents.id = report_chunks.raw_document_id
-        WHERE raw_documents.source_hash = 'TEST_REPORT_HASH_20260608_005930'
-    ) AS report_chunk_count,
     EXISTS (
         SELECT 1
         FROM user_signal_reads

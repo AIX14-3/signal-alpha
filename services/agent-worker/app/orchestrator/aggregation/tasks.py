@@ -18,12 +18,13 @@ from signal_alpha_data_access.repositories import (
 
 AGGREGATE_RUN_KEY = "AGGREGATED"
 AGGREGATE_VERSION = "final-agg-v1"
-SOURCE_ORDER = ("DART", "PRICE", "REPORT", "ALTERNATIVE")
-SCORING_SOURCES = {"DART", "REPORT", "ALTERNATIVE"}
+# REPORT 는 임베딩/RAG 분석 제거로 더 이상 analysis_result 를 만들지 않는다 → 채점/순서
+# 목록에서 제외(남겨두면 영구 missing_source 로 잡혀 warning_level 을 부당하게 격상시킴).
+SOURCE_ORDER = ("DART", "PRICE", "ALTERNATIVE")
+SCORING_SOURCES = {"DART", "ALTERNATIVE"}
 VALID_DIRECTIONS = {"positive", "negative", "neutral", "mixed"}
 SOURCE_ALIASES = {
     "DART": "DART",
-    "REPORT": "REPORT",
     "PRICE": "PRICE",
     "ALTERNATIVE": "ALTERNATIVE",
     "HIRING": "ALTERNATIVE",

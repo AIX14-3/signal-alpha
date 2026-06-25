@@ -35,7 +35,6 @@ ERD 다이어그램([`../erd/signal_alpha_core_erd.md`](../erd/signal_alpha_core
 | `report_raw_details` | 증권사 리포트 원본 상세(증권사·목표가·발행일·파싱 상태) |
 | `hiring_raw_details` | 채용공고 원본 상세(키워드·공고 수·증감률). `stock_id` 필수 |
 | `patent_raw_details` | 특허 원본 상세(출원번호·출원일·기술 분류). `llm_features`/`llm_status`로 LLM 보강(중요도) 캐시 보관 | 
-| `report_chunks` | 리포트 PDF에서 추출한 텍스트 청크 + pgvector 임베딩(VECTOR 1024, ivfflat). Report RAG 검색의 대상 |
 
 ## Zone C — DART 보조 (004_collection_dart.sql)
 

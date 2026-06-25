@@ -20,20 +20,20 @@ from signal_alpha_data_access.repositories import (
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
 
-# 5개 연결점 → score_breakdown 키 / signal_events.source_type 매핑.
-ALL_SOURCES = ("price", "dart", "hiring", "datalab", "report")
+# 연결점 → score_breakdown 키 / signal_events.source_type 매핑.
+# REPORT 는 임베딩/RAG 분석 제거로 점수를 산출하지 않으므로 사용자 노출 소스에서 제외
+# (집계 SOURCE_ORDER 와 일치). 리포트 원본은 수집/파싱/정규화로 DB 에는 계속 적재된다.
+ALL_SOURCES = ("price", "dart", "hiring", "datalab")
 PUBLIC_SOURCES = {"dart", "datalab"}  # 비회원 공개
 _SOURCE_TO_BREAKDOWN = {
     "price": "PRICE",
     "dart": "DART",
-    "report": "REPORT",
     "hiring": "ALTERNATIVE",
     "datalab": "ALTERNATIVE",
 }
 _SOURCE_TO_EVENT_TYPE = {
     "price": "PRICE",
     "dart": "DART",
-    "report": "REPORT",
     "hiring": "HIRING",
     "datalab": "DATALAB",
 }

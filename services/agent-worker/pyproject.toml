@@ -20,8 +20,6 @@ dependencies = [
   "pillow>=10.0.0",
   "pytesseract>=0.3.10",
   "python-dotenv>=1.0.0",
-  # report 임베딩(embed_report 태스크) — BGE-M3 in-process. torch 동반(~2-3GB).
-  "sentence-transformers>=3.0.0",  # app/embeddings/provider.py
   "selenium>=4.20.0",
   "signal-alpha-data-access",
   # vol-benchmark 변동성 모델 + DataContract (ML/DL 추론 단계, app/ml/). base는 numpy/pandas만.

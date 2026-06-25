@@ -21,10 +21,8 @@
 --    기존 dev DB는 반드시 재생성한다: docker compose down -v && up -d postgres
 -- ============================================================================
 
--- ── Extensions ──────────────────────────────────────────────────────────────
--- pgvector는 report_chunks.embedding(VECTOR)에 필요하다.
-CREATE EXTENSION IF NOT EXISTS vector;
-
+-- 확장 없음. (이전엔 report_chunks.embedding 용 pgvector 확장을 만들었으나
+-- 임베딩/벡터화 기능 제거로 더 이상 필요 없다.)
 
 -- ============================================================================
 -- Zone A — Market: 종목 마스터 + 시세 데이터
@@ -309,28 +307,7 @@ CREATE INDEX idx_patent_llm_pending
     ON patent_raw_details (application_date DESC, raw_document_id DESC)
     WHERE llm_status = 'pending';
 
--- report_chunks: 리포트 PDF 청크 + pgvector 임베딩 (RAG 검색용, canonical 스키마).
-CREATE TABLE report_chunks (
-    id BIGSERIAL PRIMARY KEY,
-    raw_document_id BIGINT NOT NULL,
-    stock_id BIGINT NOT NULL,
-    chunk_index INTEGER NOT NULL,
-    chunk_text TEXT NOT NULL,
-    token_count INTEGER,
-    embedding VECTOR(1024),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CONSTRAINT uq_chunk UNIQUE (raw_document_id, chunk_index),
-    FOREIGN KEY (raw_document_id, stock_id)
-        REFERENCES raw_documents(id, stock_id)
-        ON DELETE CASCADE
-);
-
-CREATE INDEX idx_chunks_stock
-    ON report_chunks (stock_id);
-
-CREATE INDEX idx_chunks_embedding
-    ON report_chunks USING ivfflat (embedding vector_cosine_ops)
-    WITH (lists = 100);
+-- (report_chunks 테이블 제거됨 — 리포트 PDF 임베딩/RAG 검색 기능 폐지.)
 
 
 -- ============================================================================
@@ -1292,8 +1269,8 @@ EXECUTE FUNCTION set_final_signal_current();
 --   - services/agent-worker/app/collectors/report/collector.py  (report_raw SELECT)
 --   - services/agent-worker/app/collectors/report/parsers/vector_store.py  (report_raw INSERT/백필)
 --   - services/agent-worker/app/analyzers/report/analyzer.py  (report_signal INSERT)
--- 이전 계획: report 파이프라인을 공용 스키마(raw_documents → report_raw_details →
--- report_chunks)로 이전한 뒤 이 테이블들을 DROP한다. 새 코드에서 참조 금지.
+-- 이전 계획: report 파이프라인을 공용 스키마(raw_documents → report_raw_details)로
+-- 이전한 뒤 이 테이블들을 DROP한다. 새 코드에서 참조 금지.
 
 CREATE TABLE report_raw (
     id                BIGSERIAL PRIMARY KEY,

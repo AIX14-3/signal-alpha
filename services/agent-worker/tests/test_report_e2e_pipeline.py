@@ -1,37 +1,23 @@
 import json
 import sys
 import unittest
-from datetime import date, datetime
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "packages" / "data-access"))
 
-from app.agents.base import SourceAgentOutput
-from app.embeddings.provider import EMBEDDING_DIM, set_embedding_provider
-from app.ml.inference import MlInferTaskHandler
 from app.orchestrator.queue.task_types import (
-    AGGREGATE_SIGNAL,
-    ANALYZE_REPORT,
     COLLECT_REPORT,
-    EMBED_REPORT,
-    ML_INFER,
     NORMALIZE_REPORT,
     PROCESS_REPORT,
 )
 from app.orchestrator.queue.tasks import QueueTaskRunner
 from app.orchestrator.report import tasks as report_tasks
 from app.orchestrator.report.tasks import (
-    ReportAnalyzeTaskHandler,
     ReportCollectTaskHandler,
-    ReportEmbedTaskHandler,
     ReportNormalizeTaskHandler,
     ReportProcessTaskHandler,
 )
-
-
-class FakeEmbeddingProvider:
-    async def embed(self, texts):
-        return [[0.25] * EMBEDDING_DIM for _ in texts]
 
 
 class FakeReportStorage:
@@ -49,28 +35,6 @@ class FakeReportStorage:
         return self.objects[key]
 
 
-class FakeReportAgent:
-    async def analyze(self, input_data):
-        self.received = input_data
-        return SourceAgentOutput(
-            source="REPORT",
-            stock_code=input_data.stock_code,
-            direction="neutral",
-            score=55.0,
-            summary="데이터 방향성과 근거를 확인했습니다.",
-            risk_flags=[],
-            method_detail={
-                "coverage": {"firms": ["Test Securities"]},
-                "evidence_chunks": [{"raw_document_id": 42, "chunk_index": 0}],
-            },
-            needs_review=False,
-            data_status="ok",
-            analysis_source="rules_fallback",
-            llm_model=None,
-            prompt_ver="report-rag-v1",
-        )
-
-
 class FakeReportPipelineConnection:
     def __init__(self):
         self.collector_runs = []
@@ -80,7 +44,6 @@ class FakeReportPipelineConnection:
         self.signal_events = {}
         self.signal_metrics = []
         self.validation_logs = []
-        self.report_chunks = []
         self.report_valuation_facts = {}
         self.analysis_results = {}
         self.agent_results = {}
@@ -191,8 +154,6 @@ class FakeReportPipelineConnection:
             return detail
         if "JOIN report_raw_details" in sql and "rd.source_url" in sql:
             return self._process_row(args[0])
-        if "JOIN report_raw_details" in sql and "rrd.s3_key" in sql:
-            return self._embed_row(args[0])
         if "INSERT INTO source_documents" in sql:
             source_document_id = self._take("source_document")
             row = {
@@ -369,18 +330,6 @@ class FakeReportPipelineConnection:
                 }
             )
             return "UPDATE 1"
-        if "INSERT INTO report_chunks" in sql:
-            self.report_chunks.append(
-                {
-                    "raw_document_id": args[0],
-                    "stock_id": args[1],
-                    "chunk_index": args[2],
-                    "chunk_text": args[3],
-                    "token_count": args[4],
-                    "embedding": args[5],
-                }
-            )
-            return "INSERT 0 1"
         raise AssertionError(f"unexpected execute SQL: {sql}")
 
     def _take(self, key):
@@ -459,16 +408,6 @@ class FakeReportPipelineConnection:
             "parsing_status": detail["parsing_status"],
         }
 
-    def _embed_row(self, raw_document_id):
-        raw = self.raw_documents[raw_document_id]
-        detail = self.report_raw_details[raw_document_id]
-        return {
-            "stock_id": raw["stock_id"],
-            "stock_code": "005930",
-            "s3_key": detail["s3_key"],
-            "parsing_status": detail["parsing_status"],
-        }
-
     def _report_detail_row(self, raw_document_id):
         raw = self.raw_documents[raw_document_id]
         detail = self.report_raw_details[raw_document_id]
@@ -492,40 +431,21 @@ class FakeReportPipelineConnection:
             "extracted_text": detail["extracted_text"],
         }
 
-    def _signal_event_join_row(self, signal_event_id):
-        event = dict(self.signal_events[signal_event_id])
-        source_document = self.source_documents[event["source_document_id"]]
-        event.update(
-            {
-                "source_name": source_document["source_name"],
-                "source_url": source_document["source_url"],
-                "published_at": source_document["published_at"],
-                "reliability_level": source_document["reliability_level"],
-                "is_official": source_document["is_official"],
-            }
-        )
-        return event
-
 
 class ReportE2EPipelineTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        set_embedding_provider(FakeEmbeddingProvider())
         self._orig_collect_stock = report_tasks.collect_stock
         self._orig_download = report_tasks.download_and_upload
         self._orig_process = report_tasks.process_from_s3
-        self._orig_extract = report_tasks.extract_text
 
     def tearDown(self):
-        set_embedding_provider(None)
         report_tasks.collect_stock = self._orig_collect_stock
         report_tasks.download_and_upload = self._orig_download
         report_tasks.process_from_s3 = self._orig_process
-        report_tasks.extract_text = self._orig_extract
 
-    async def test_report_queue_pipeline_preserves_canonical_links_to_ml_infer(self):
+    async def test_report_queue_pipeline_preserves_canonical_links(self):
         conn = FakeReportPipelineConnection()
         storage = FakeReportStorage()
-        agent = FakeReportAgent()
 
         report_tasks.collect_stock = lambda **kwargs: [
             {
@@ -545,7 +465,6 @@ class ReportE2EPipelineTest(unittest.IsolatedAsyncioTestCase):
             "key_rationale": "실적 데이터와 수요 지표를 근거로 추가 확인 필요",
             "raw_text": "데이터 방향성 근거 " * 20,
         }
-        report_tasks.extract_text = lambda pdf_bytes: "데이터 방향성 근거 소스 간 일치도 " * 300
 
         collect_result = await ReportCollectTaskHandler(connection=conn, settings=None)(
             {
@@ -564,28 +483,18 @@ class ReportE2EPipelineTest(unittest.IsolatedAsyncioTestCase):
         normalize_result = await ReportNormalizeTaskHandler(connection=conn)(
             conn.task("normalize_report")
         )
-        embed_result = await ReportEmbedTaskHandler(
-            connection=conn, settings=None, storage=storage
-        )(conn.task("embed_report"))
-        analyze_result = await ReportAnalyzeTaskHandler(
-            connection=conn, settings=None, analysis_agent=agent
-        )(conn.task("analyze_report"))
 
         self.assertEqual(collect_result["collected"], 1)
         self.assertEqual(process_result["status"], "success")
         self.assertEqual(normalize_result["normalized_count"], 1)
-        self.assertEqual(embed_result["status"], "success")
-        self.assertEqual(analyze_result["analysis_result_id"], 100)
+        # 파이프라인은 NORMALIZE에서 끝난다 — 임베딩/분석 단계는 제거됨.
         self.assertEqual(
             conn.task_types(),
-            ["process_report", "normalize_report", "embed_report", "analyze_report", "ml_infer"],
+            ["process_report", "normalize_report"],
         )
 
         raw_document_id = next(iter(conn.raw_documents))
         signal_event_id = normalize_result["signal_event_ids"][0]
-        analysis_result_id = analyze_result["analysis_result_id"]
-        ml_task = conn.task("ml_infer")
-        ml_context = json.loads(ml_task["task_context"])
 
         self.assertIn(raw_document_id, conn.raw_documents)
         self.assertEqual(conn.report_raw_details[raw_document_id]["parsing_status"], "success")
@@ -595,34 +504,14 @@ class ReportE2EPipelineTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(conn.source_documents)
         self.assertTrue(conn.signal_events)
-        self.assertTrue(conn.report_chunks)
-        self.assertTrue(conn.analysis_results)
-        self.assertTrue(conn.agent_results)
-        self.assertEqual(conn.report_chunks[0]["embedding"].count(",") + 1, EMBEDDING_DIM)
         self.assertEqual(conn.task("normalize_report")["source_raw_ids"], [raw_document_id])
-        self.assertEqual(conn.task("embed_report")["source_signal_event_ids"], [signal_event_id])
-        self.assertEqual(conn.task("analyze_report")["source_signal_event_ids"], [signal_event_id])
-        self.assertEqual(
-            conn.analysis_results[analysis_result_id]["source_signal_event_ids"],
-            [signal_event_id],
-        )
-        self.assertEqual(
-            next(iter(conn.agent_results.values()))["source_signal_event_ids"],
-            [signal_event_id],
-        )
-        self.assertEqual(ml_task["source_analysis_result_ids"], [analysis_result_id])
-        self.assertEqual(
-            ml_context["aggregate_ctx"]["source_analysis_result_ids"],
-            [analysis_result_id],
-        )
-        self.assertEqual(ml_context["aggregate_ctx"]["signal_date"], date(2026, 6, 24).isoformat())
-        self.assertEqual(agent.received.events[0]["id"], signal_event_id)
-        self.assertEqual(agent.received.context["report_quant"]["report_count"], 1)
+        event = conn.signal_events[signal_event_id]
+        self.assertEqual(event["source_type"], "REPORT")
+        self.assertEqual(event["event_type"], "report_published")
 
-    async def test_report_pipeline_runs_through_queue_runner_to_aggregate_enqueue(self):
+    async def test_report_pipeline_runs_through_queue_runner_to_normalize(self):
         conn = FakeReportPipelineConnection()
         storage = FakeReportStorage()
-        agent = FakeReportAgent()
 
         report_tasks.collect_stock = lambda **kwargs: [
             {
@@ -642,7 +531,6 @@ class ReportE2EPipelineTest(unittest.IsolatedAsyncioTestCase):
             "key_rationale": "실적 데이터와 수요 지표를 근거로 추가 확인 필요",
             "raw_text": "데이터 방향성 근거 " * 20,
         }
-        report_tasks.extract_text = lambda pdf_bytes: "데이터 방향성 근거 소스 간 일치도 " * 300
 
         conn.seed_task(
             task_type=COLLECT_REPORT,
@@ -662,35 +550,20 @@ class ReportE2EPipelineTest(unittest.IsolatedAsyncioTestCase):
                     connection=conn, settings=None, storage=storage
                 ),
                 NORMALIZE_REPORT: ReportNormalizeTaskHandler(connection=conn),
-                EMBED_REPORT: ReportEmbedTaskHandler(connection=conn, settings=None, storage=storage),
-                ANALYZE_REPORT: ReportAnalyzeTaskHandler(
-                    connection=conn, settings=None, analysis_agent=agent
-                ),
-                ML_INFER: MlInferTaskHandler(conn),
             },
         )
 
-        for task_type in (
-            COLLECT_REPORT,
-            PROCESS_REPORT,
-            NORMALIZE_REPORT,
-            EMBED_REPORT,
-            ANALYZE_REPORT,
-            ML_INFER,
-        ):
+        for task_type in (COLLECT_REPORT, PROCESS_REPORT, NORMALIZE_REPORT):
             result = await runner.run_task(task_type)
             self.assertEqual(result["status"], "success", task_type)
 
-        aggregate_task = conn.task(AGGREGATE_SIGNAL)
-        self.assertEqual(aggregate_task["source_analysis_result_ids"], [100])
-        self.assertEqual(json.loads(aggregate_task["task_context"])["signal_date"], "2026-06-24")
         self.assertEqual(
             [
                 task["task_type"]
                 for task in conn.processing_queue
                 if task["status"] == "success"
             ],
-            [COLLECT_REPORT, PROCESS_REPORT, NORMALIZE_REPORT, EMBED_REPORT, ANALYZE_REPORT, ML_INFER],
+            [COLLECT_REPORT, PROCESS_REPORT, NORMALIZE_REPORT],
         )
 
 

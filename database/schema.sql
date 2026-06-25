@@ -1,0 +1,5284 @@
+--
+-- PostgreSQL database dump
+--
+
+\restrict 60F2EtFMPdNqXELNW0KGf1xmB6tQHU8j5JErwhh1Oh5vYrsoaqU3jXGMiT4Cscn
+
+-- Dumped from database version 16.14 (Debian 16.14-1.pgdg13+1)
+-- Dumped by pg_dump version 16.14 (Debian 16.14-1.pgdg13+1)
+
+SET statement_timeout = 0;
+SET lock_timeout = 0;
+SET idle_in_transaction_session_timeout = 0;
+SET client_encoding = 'UTF8';
+SET standard_conforming_strings = on;
+SELECT pg_catalog.set_config('search_path', '', false);
+SET check_function_bodies = false;
+SET xmloption = content;
+SET client_min_messages = warning;
+SET row_security = off;
+
+--
+-- Name: hiring_crawler_type; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.hiring_crawler_type AS ENUM (
+    'portal_saramin',
+    'portal_jobkorea',
+    'official_api',
+    'official_selenium',
+    'recruiter_kr',
+    'simple_site'
+);
+
+
+--
+-- Name: set_final_signal_current(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.set_final_signal_current() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.is_current = TRUE THEN
+        PERFORM pg_advisory_xact_lock(
+            hashtext(NEW.stock_id::text || '|' || NEW.signal_date::text || '|' || NEW.run_key)
+        );
+
+        UPDATE final_signals
+        SET is_current = FALSE
+        WHERE stock_id = NEW.stock_id
+          AND signal_date = NEW.signal_date
+          AND run_key = NEW.run_key
+          AND is_current = TRUE
+          AND id IS DISTINCT FROM NEW.id
+          AND version IS DISTINCT FROM NEW.version;
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: update_updated_at(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.update_updated_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$;
+
+
+SET default_tablespace = '';
+
+SET default_table_access_method = heap;
+
+--
+-- Name: admin_accounts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.admin_accounts (
+    id bigint NOT NULL,
+    email character varying(255) NOT NULL,
+    password_hash text NOT NULL,
+    is_active boolean DEFAULT true NOT NULL,
+    last_login_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: admin_accounts_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.admin_accounts_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: admin_accounts_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.admin_accounts_id_seq OWNED BY public.admin_accounts.id;
+
+
+--
+-- Name: admin_sessions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.admin_sessions (
+    id bigint NOT NULL,
+    admin_id bigint NOT NULL,
+    session_token character varying(255) NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    last_activity_at timestamp with time zone,
+    ip_address inet,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: admin_sessions_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.admin_sessions_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: admin_sessions_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.admin_sessions_id_seq OWNED BY public.admin_sessions.id;
+
+
+--
+-- Name: agent_results; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.agent_results (
+    id bigint NOT NULL,
+    result_id bigint NOT NULL,
+    stock_id bigint NOT NULL,
+    debate_method character varying(5) NOT NULL,
+    source_signal_event_ids bigint[],
+    method_score numeric(5,2) NOT NULL,
+    method_signal character varying(10) NOT NULL,
+    method_detail jsonb NOT NULL,
+    reliability_score numeric(5,2),
+    evidence_quality numeric(5,2),
+    llm_model character varying(50),
+    prompt_ver character varying(20) DEFAULT '1.0'::character varying,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT agent_results_debate_method_check CHECK (((debate_method)::text = ANY ((ARRAY['D-1'::character varying, 'D-2'::character varying, 'D-3'::character varying, 'D-4'::character varying, 'D-5'::character varying])::text[]))),
+    CONSTRAINT agent_results_method_score_check CHECK (((method_score >= (0)::numeric) AND (method_score <= (100)::numeric))),
+    CONSTRAINT agent_results_method_signal_check CHECK (((method_signal)::text = ANY ((ARRAY['positive'::character varying, 'negative'::character varying, 'neutral'::character varying, 'mixed'::character varying])::text[])))
+);
+
+
+--
+-- Name: agent_results_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.agent_results_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: agent_results_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.agent_results_id_seq OWNED BY public.agent_results.id;
+
+
+--
+-- Name: ai_scores; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.ai_scores (
+    id bigint NOT NULL,
+    result_id bigint NOT NULL,
+    stock_id bigint NOT NULL,
+    dart_agent_score numeric(5,2),
+    report_agent_score numeric(5,2),
+    alt_agent_score numeric(5,2),
+    dart_confidence numeric(5,2),
+    report_confidence numeric(5,2),
+    alt_confidence numeric(5,2),
+    validation_log jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: ai_scores_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.ai_scores_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: ai_scores_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.ai_scores_id_seq OWNED BY public.ai_scores.id;
+
+
+--
+-- Name: analysis_requests; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.analysis_requests (
+    id bigint NOT NULL,
+    user_id bigint,
+    stock_id bigint NOT NULL,
+    status character varying(20) DEFAULT 'pending'::character varying NOT NULL,
+    analysis_mode character varying(20) DEFAULT 'full'::character varying NOT NULL,
+    requested_at timestamp with time zone DEFAULT now() NOT NULL,
+    completed_at timestamp with time zone,
+    error_message text,
+    ip_address inet,
+    CONSTRAINT analysis_requests_analysis_mode_check CHECK (((analysis_mode)::text = ANY ((ARRAY['full'::character varying, 'dart_only'::character varying, 'quick'::character varying])::text[]))),
+    CONSTRAINT analysis_requests_status_check CHECK (((status)::text = ANY ((ARRAY['pending'::character varying, 'running'::character varying, 'completed'::character varying, 'failed'::character varying])::text[])))
+);
+
+
+--
+-- Name: analysis_requests_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.analysis_requests_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: analysis_requests_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.analysis_requests_id_seq OWNED BY public.analysis_requests.id;
+
+
+--
+-- Name: analysis_results; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.analysis_results (
+    id bigint NOT NULL,
+    request_id bigint,
+    stock_id bigint NOT NULL,
+    analysis_date date NOT NULL,
+    run_key character varying(30) DEFAULT 'BATCH'::character varying NOT NULL,
+    source_signal_event_ids bigint[] NOT NULL,
+    base_score numeric(5,2) NOT NULL,
+    pre_xgb_score numeric(5,2),
+    xgb_adj numeric(5,2),
+    analysis_mode character varying(20) DEFAULT 'full'::character varying NOT NULL,
+    warning text,
+    disclaimer text DEFAULT '본 서비스가 제공하는 시그널은 AI 에이전트의 데이터 분석 결과일 뿐, 투자 권유가 아니며 투자 손실에 대한 책임은 사용자에게 있습니다.'::text NOT NULL,
+    version character varying(20) DEFAULT '1.0'::character varying NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT analysis_results_analysis_mode_check CHECK (((analysis_mode)::text = ANY ((ARRAY['full'::character varying, 'dart_only'::character varying, 'quick'::character varying])::text[]))),
+    CONSTRAINT analysis_results_base_score_check CHECK (((base_score >= (0)::numeric) AND (base_score <= (100)::numeric)))
+);
+
+
+--
+-- Name: analysis_results_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.analysis_results_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: analysis_results_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.analysis_results_id_seq OWNED BY public.analysis_results.id;
+
+
+--
+-- Name: backtest_results; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.backtest_results (
+    id bigint NOT NULL,
+    final_signal_id bigint NOT NULL,
+    stock_id bigint NOT NULL,
+    signal_date date NOT NULL,
+    signal_score numeric(5,2) NOT NULL,
+    signal_value character varying(10) NOT NULL,
+    price_at_signal numeric(12,2) NOT NULL,
+    price_after_5d numeric(12,2),
+    change_pct_5d numeric(6,2),
+    checked_at timestamp with time zone,
+    is_hit boolean,
+    confidence_band character varying(15),
+    source_agreement character varying(10),
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: backtest_results_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.backtest_results_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: backtest_results_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.backtest_results_id_seq OWNED BY public.backtest_results.id;
+
+
+--
+-- Name: collector_runs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.collector_runs (
+    id bigint NOT NULL,
+    collector_type character varying(20) NOT NULL,
+    run_mode character varying(20) NOT NULL,
+    status character varying(20) DEFAULT 'running'::character varying NOT NULL,
+    started_at timestamp with time zone DEFAULT now() NOT NULL,
+    finished_at timestamp with time zone,
+    collected_count integer DEFAULT 0 NOT NULL,
+    inserted_count integer DEFAULT 0 NOT NULL,
+    skipped_count integer DEFAULT 0 NOT NULL,
+    failed_count integer DEFAULT 0 NOT NULL,
+    error_message text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT collector_runs_collector_type_check CHECK (((collector_type)::text = ANY ((ARRAY['DART'::character varying, 'REPORT'::character varying, 'HIRING'::character varying, 'PATENT'::character varying, 'DATALAB'::character varying, 'PRICE'::character varying])::text[]))),
+    CONSTRAINT collector_runs_run_mode_check CHECK (((run_mode)::text = ANY ((ARRAY['batch'::character varying, 'immediate'::character varying, 'manual'::character varying])::text[]))),
+    CONSTRAINT collector_runs_status_check CHECK (((status)::text = ANY ((ARRAY['running'::character varying, 'success'::character varying, 'partial'::character varying, 'failed'::character varying])::text[])))
+);
+
+
+--
+-- Name: collector_runs_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.collector_runs_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: collector_runs_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.collector_runs_id_seq OWNED BY public.collector_runs.id;
+
+
+--
+-- Name: dart_collection_states; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.dart_collection_states (
+    stock_id bigint NOT NULL,
+    ticker character varying(10) NOT NULL,
+    last_bgn_de date NOT NULL,
+    last_end_de date NOT NULL,
+    last_receipt_no character varying(30),
+    last_collected_count integer DEFAULT 0 NOT NULL,
+    last_collector_run_id bigint,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: dart_corp_codes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.dart_corp_codes (
+    id bigint NOT NULL,
+    stock_id bigint,
+    corp_code character varying(20) NOT NULL,
+    ticker character varying(10) NOT NULL,
+    corp_name character varying(200) NOT NULL,
+    corp_name_eng character varying(200),
+    stock_name character varying(200),
+    is_active boolean DEFAULT true NOT NULL,
+    synced_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: dart_corp_codes_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.dart_corp_codes_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: dart_corp_codes_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.dart_corp_codes_id_seq OWNED BY public.dart_corp_codes.id;
+
+
+--
+-- Name: dart_employee_stats; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.dart_employee_stats (
+    id bigint NOT NULL,
+    stock_id bigint,
+    corp_code character varying(20) NOT NULL,
+    rcept_no character varying(30) NOT NULL,
+    line_seq smallint DEFAULT 0 NOT NULL,
+    bsns_year smallint NOT NULL,
+    reprt_code character varying(5) NOT NULL,
+    segment character varying(100),
+    sex character varying(10),
+    headcount integer,
+    regular_count integer,
+    contract_count integer,
+    avg_tenure_years numeric(6,2),
+    avg_salary_krw numeric(20,0),
+    salary_total_krw numeric(20,0),
+    fetched_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: dart_employee_stats_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.dart_employee_stats_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: dart_employee_stats_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.dart_employee_stats_id_seq OWNED BY public.dart_employee_stats.id;
+
+
+--
+-- Name: dart_financial_facts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.dart_financial_facts (
+    id bigint NOT NULL,
+    stock_id bigint,
+    corp_code character varying(20) NOT NULL,
+    rcept_no character varying(30) NOT NULL,
+    bsns_year smallint NOT NULL,
+    reprt_code character varying(5) NOT NULL,
+    fs_div character varying(3) NOT NULL,
+    sj_div character varying(5) NOT NULL,
+    account_id character varying(100),
+    account_nm character varying(200) NOT NULL,
+    amount_krw numeric(24,0),
+    amount_raw text,
+    currency character varying(10) DEFAULT 'KRW'::character varying NOT NULL,
+    period_label character varying(10) NOT NULL,
+    fiscal_period character varying(10),
+    fetched_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: dart_financial_facts_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.dart_financial_facts_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: dart_financial_facts_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.dart_financial_facts_id_seq OWNED BY public.dart_financial_facts.id;
+
+
+--
+-- Name: dart_ownership_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.dart_ownership_events (
+    id bigint NOT NULL,
+    stock_id bigint,
+    corp_code character varying(20) NOT NULL,
+    rcept_no character varying(30) NOT NULL,
+    line_seq smallint DEFAULT 0 NOT NULL,
+    report_date date NOT NULL,
+    holder_name character varying(200) NOT NULL,
+    holder_type character varying(20) NOT NULL,
+    shares numeric(20,0),
+    ratio numeric(8,4),
+    shares_delta numeric(20,0),
+    ratio_delta numeric(8,4),
+    report_reason character varying(100),
+    fetched_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: dart_ownership_events_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.dart_ownership_events_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: dart_ownership_events_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.dart_ownership_events_id_seq OWNED BY public.dart_ownership_events.id;
+
+
+--
+-- Name: dart_raw_details; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.dart_raw_details (
+    raw_document_id bigint NOT NULL,
+    stock_id bigint NOT NULL,
+    receipt_no character varying(30) NOT NULL,
+    corp_code character varying(20),
+    report_name text NOT NULL,
+    disclosure_type character varying(50),
+    priority character varying(10) DEFAULT 'batch'::character varying NOT NULL,
+    priority_reason character varying(200),
+    is_correction boolean DEFAULT false NOT NULL,
+    original_receipt_no character varying(30),
+    extra_payload jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT dart_raw_details_priority_check CHECK (((priority)::text = ANY ((ARRAY['immediate'::character varying, 'batch'::character varying])::text[])))
+);
+
+
+--
+-- Name: datalab_categories; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.datalab_categories (
+    id bigint NOT NULL,
+    name character varying(100) NOT NULL,
+    sector character varying(100),
+    description text,
+    is_active boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: datalab_categories_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.datalab_categories_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: datalab_categories_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.datalab_categories_id_seq OWNED BY public.datalab_categories.id;
+
+
+--
+-- Name: datalab_category_keywords; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.datalab_category_keywords (
+    category_id bigint NOT NULL,
+    keyword character varying(200) NOT NULL,
+    keyword_group character varying(100) NOT NULL,
+    source character varying(50) DEFAULT 'reviewed'::character varying NOT NULL,
+    is_active boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    polarity character varying(10) DEFAULT 'demand'::character varying NOT NULL,
+    polarity_source character varying(10) DEFAULT 'default'::character varying NOT NULL,
+    polarity_confidence numeric(4,3),
+    polarity_model character varying(50),
+    polarity_rationale text,
+    polarity_classified_at timestamp with time zone,
+    review_status character varying(10) DEFAULT 'approved'::character varying NOT NULL,
+    validation_active_days integer,
+    validation_window_days integer,
+    validation_coverage numeric(4,3),
+    validated_at timestamp with time zone,
+    CONSTRAINT chk_datalab_keyword_polarity_confidence CHECK (((polarity_confidence IS NULL) OR ((polarity_confidence >= (0)::numeric) AND (polarity_confidence <= (1)::numeric)))),
+    CONSTRAINT chk_datalab_keyword_polarity_source CHECK (((polarity_source)::text = ANY ((ARRAY['manual'::character varying, 'llm'::character varying, 'default'::character varying])::text[]))),
+    CONSTRAINT chk_datalab_keyword_review_status CHECK (((review_status)::text = ANY ((ARRAY['approved'::character varying, 'pending'::character varying, 'rejected'::character varying])::text[]))),
+    CONSTRAINT chk_datalab_keyword_validation_active_days CHECK (((validation_active_days IS NULL) OR (validation_active_days >= 0))),
+    CONSTRAINT chk_datalab_keyword_validation_coverage CHECK (((validation_coverage IS NULL) OR ((validation_coverage >= (0)::numeric) AND (validation_coverage <= (1)::numeric)))),
+    CONSTRAINT chk_datalab_keyword_validation_window_days CHECK (((validation_window_days IS NULL) OR (validation_window_days > 0))),
+    CONSTRAINT datalab_category_keywords_polarity_check CHECK (((polarity)::text = ANY ((ARRAY['demand'::character varying, 'risk'::character varying, 'neutral'::character varying])::text[])))
+);
+
+
+--
+-- Name: datalab_category_stocks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.datalab_category_stocks (
+    category_id bigint NOT NULL,
+    stock_id bigint NOT NULL,
+    weight numeric(4,2) DEFAULT 1.0 NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: datalab_raw_details; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.datalab_raw_details (
+    raw_document_id bigint NOT NULL,
+    category_id bigint NOT NULL,
+    keyword character varying(100) NOT NULL,
+    keyword_group character varying(100),
+    observed_date date NOT NULL,
+    search_index numeric(6,2) NOT NULL,
+    previous_search_index numeric(6,2),
+    change_pct numeric(8,2),
+    period_type character varying(10) DEFAULT 'daily'::character varying NOT NULL,
+    device character varying(10) DEFAULT 'all'::character varying NOT NULL,
+    gender character varying(5) DEFAULT 'all'::character varying NOT NULL,
+    age_group character varying(20) DEFAULT 'all'::character varying NOT NULL,
+    is_spike boolean DEFAULT false NOT NULL,
+    extra_payload jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT datalab_raw_details_device_check CHECK (((device)::text = ANY ((ARRAY['pc'::character varying, 'mobile'::character varying, 'all'::character varying])::text[]))),
+    CONSTRAINT datalab_raw_details_gender_check CHECK (((gender)::text = ANY ((ARRAY['m'::character varying, 'f'::character varying, 'all'::character varying])::text[]))),
+    CONSTRAINT datalab_raw_details_period_type_check CHECK (((period_type)::text = ANY ((ARRAY['daily'::character varying, 'weekly'::character varying, 'monthly'::character varying])::text[])))
+);
+
+
+--
+-- Name: datalab_raw_documents; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.datalab_raw_documents (
+    id bigint NOT NULL,
+    category_id bigint NOT NULL,
+    collector_run_id bigint,
+    source_name character varying(100) NOT NULL,
+    external_id character varying(500) NOT NULL,
+    source_hash character varying(64) NOT NULL,
+    title text NOT NULL,
+    source_url text,
+    published_at timestamp with time zone NOT NULL,
+    collect_status character varying(20) DEFAULT 'success'::character varying NOT NULL,
+    collect_error text,
+    collected_at timestamp with time zone DEFAULT now() NOT NULL,
+    collector_ver character varying(20) DEFAULT '1.0'::character varying NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT datalab_raw_documents_collect_status_check CHECK (((collect_status)::text = ANY ((ARRAY['success'::character varying, 'partial'::character varying, 'failed'::character varying])::text[])))
+);
+
+
+--
+-- Name: datalab_raw_documents_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.datalab_raw_documents_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: datalab_raw_documents_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.datalab_raw_documents_id_seq OWNED BY public.datalab_raw_documents.id;
+
+
+--
+-- Name: dead_letter; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.dead_letter (
+    id bigint NOT NULL,
+    processing_queue_id bigint NOT NULL,
+    stock_id bigint,
+    task_type character varying(50) NOT NULL,
+    priority character varying(10) DEFAULT 'batch'::character varying NOT NULL,
+    source_raw_ids bigint[],
+    source_signal_event_ids bigint[],
+    source_analysis_result_ids bigint[],
+    task_context jsonb,
+    final_error_message text,
+    final_retry_count smallint DEFAULT 0 NOT NULL,
+    archived_at timestamp with time zone DEFAULT now() NOT NULL,
+    replayed_at timestamp with time zone,
+    replayed_task_id bigint,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT dead_letter_priority_check CHECK (((priority)::text = ANY ((ARRAY['immediate'::character varying, 'batch'::character varying])::text[])))
+);
+
+
+--
+-- Name: dead_letter_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.dead_letter_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: dead_letter_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.dead_letter_id_seq OWNED BY public.dead_letter.id;
+
+
+--
+-- Name: final_signals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.final_signals (
+    id bigint NOT NULL,
+    stock_id bigint NOT NULL,
+    analysis_result_id bigint NOT NULL,
+    signal_date date NOT NULL,
+    run_key character varying(30) DEFAULT 'BATCH'::character varying NOT NULL,
+    version character varying(20) DEFAULT '1.0'::character varying NOT NULL,
+    is_current boolean DEFAULT true NOT NULL,
+    final_score numeric(5,2) NOT NULL,
+    confidence numeric(5,2) NOT NULL,
+    signal character varying(10) NOT NULL,
+    source_agreement character varying(10) NOT NULL,
+    warning_level character varying(10) DEFAULT 'NORMAL'::character varying NOT NULL,
+    score_breakdown jsonb NOT NULL,
+    summary text NOT NULL,
+    bull_point text,
+    bear_point text,
+    disclaimer text DEFAULT '본 서비스가 제공하는 시그널은 AI 에이전트의 데이터 분석 결과일 뿐, 투자 권유가 아니며 투자 손실에 대한 책임은 사용자에게 있습니다.'::text NOT NULL,
+    needs_review boolean DEFAULT false NOT NULL,
+    min_plan_required character varying(20) DEFAULT 'free'::character varying NOT NULL,
+    is_published boolean DEFAULT false NOT NULL,
+    published_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    consensus_score numeric(5,2),
+    positive_evidence jsonb,
+    caution_evidence jsonb,
+    CONSTRAINT chk_final_signal_publish_time CHECK (((is_published = false) OR (published_at IS NOT NULL))),
+    CONSTRAINT final_signals_confidence_check CHECK (((confidence >= (0)::numeric) AND (confidence <= (100)::numeric))),
+    CONSTRAINT final_signals_consensus_score_check CHECK (((consensus_score >= (0)::numeric) AND (consensus_score <= (100)::numeric))),
+    CONSTRAINT final_signals_final_score_check CHECK (((final_score >= (0)::numeric) AND (final_score <= (100)::numeric))),
+    CONSTRAINT final_signals_min_plan_required_check CHECK (((min_plan_required)::text = ANY ((ARRAY['free'::character varying, 'pro'::character varying, 'premium'::character varying])::text[]))),
+    CONSTRAINT final_signals_signal_check CHECK (((signal)::text = ANY ((ARRAY['positive'::character varying, 'negative'::character varying, 'neutral'::character varying, 'mixed'::character varying])::text[]))),
+    CONSTRAINT final_signals_source_agreement_check CHECK (((source_agreement)::text = ANY ((ARRAY['HIGH'::character varying, 'MEDIUM'::character varying, 'LOW'::character varying])::text[]))),
+    CONSTRAINT final_signals_warning_level_check CHECK (((warning_level)::text = ANY ((ARRAY['NORMAL'::character varying, 'CAUTION'::character varying, 'WARNING'::character varying])::text[])))
+);
+
+
+--
+-- Name: final_signals_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.final_signals_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: final_signals_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.final_signals_id_seq OWNED BY public.final_signals.id;
+
+
+--
+-- Name: fundamentals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fundamentals (
+    id bigint NOT NULL,
+    stock_id bigint NOT NULL,
+    fiscal_date date NOT NULL,
+    period_type character varying(10) NOT NULL,
+    revenue bigint,
+    net_income bigint,
+    operating_margin numeric(8,2),
+    eps numeric(10,2),
+    bps numeric(10,2),
+    per numeric(8,2),
+    pbr numeric(8,2),
+    roe numeric(8,2),
+    roa numeric(8,2),
+    debt_ratio numeric(8,2),
+    source character varying(50),
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT fundamentals_period_type_check CHECK (((period_type)::text = ANY ((ARRAY['annual'::character varying, 'quarter'::character varying])::text[])))
+);
+
+
+--
+-- Name: fundamentals_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.fundamentals_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: fundamentals_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.fundamentals_id_seq OWNED BY public.fundamentals.id;
+
+
+--
+-- Name: fx_rates; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fx_rates (
+    id bigint NOT NULL,
+    pair character varying(16) DEFAULT 'USD/KRW'::character varying NOT NULL,
+    trade_date date NOT NULL,
+    rate double precision,
+    mid double precision,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: fx_rates_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.fx_rates_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: fx_rates_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.fx_rates_id_seq OWNED BY public.fx_rates.id;
+
+
+--
+-- Name: hiring_baseline; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.hiring_baseline (
+    id bigint NOT NULL,
+    stock_id bigint NOT NULL,
+    avg_search_volume numeric(10,2) DEFAULT 0 NOT NULL,
+    q1_factor numeric(5,3) DEFAULT 1.0 NOT NULL,
+    q2_factor numeric(5,3) DEFAULT 1.0 NOT NULL,
+    q3_factor numeric(5,3) DEFAULT 1.0 NOT NULL,
+    q4_factor numeric(5,3) DEFAULT 1.0 NOT NULL,
+    keyword_group_name character varying(200),
+    data_start_date date,
+    data_end_date date,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: hiring_baseline_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.hiring_baseline_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: hiring_baseline_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.hiring_baseline_id_seq OWNED BY public.hiring_baseline.id;
+
+
+--
+-- Name: hiring_job_function_stocks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.hiring_job_function_stocks (
+    job_function_id bigint NOT NULL,
+    stock_id bigint NOT NULL,
+    weight numeric(4,2) DEFAULT 1.0 NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: hiring_job_functions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.hiring_job_functions (
+    id bigint NOT NULL,
+    function_key character varying(40) NOT NULL,
+    label character varying(100) NOT NULL,
+    is_active boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: hiring_job_functions_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.hiring_job_functions_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: hiring_job_functions_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.hiring_job_functions_id_seq OWNED BY public.hiring_job_functions.id;
+
+
+--
+-- Name: hiring_portal_company_ids; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.hiring_portal_company_ids (
+    id bigint NOT NULL,
+    stock_id bigint NOT NULL,
+    portal character varying(20) NOT NULL,
+    company_id character varying(40) NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: hiring_portal_company_ids_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.hiring_portal_company_ids_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: hiring_portal_company_ids_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.hiring_portal_company_ids_id_seq OWNED BY public.hiring_portal_company_ids.id;
+
+
+--
+-- Name: hiring_quarantine; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.hiring_quarantine (
+    id bigint NOT NULL,
+    collector_run_id bigint,
+    source_type character varying(20) NOT NULL,
+    source_label character varying(100),
+    company_name text,
+    violation_reason character varying(200) NOT NULL,
+    record_payload jsonb NOT NULL,
+    raw_payload text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    replayed_at timestamp with time zone,
+    replayed_run_id bigint
+);
+
+
+--
+-- Name: hiring_quarantine_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.hiring_quarantine_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: hiring_quarantine_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.hiring_quarantine_id_seq OWNED BY public.hiring_quarantine.id;
+
+
+--
+-- Name: hiring_raw_details; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.hiring_raw_details (
+    raw_document_id bigint NOT NULL,
+    stock_id bigint NOT NULL,
+    keyword character varying(100),
+    job_category character varying(100),
+    job_count integer,
+    previous_job_count integer,
+    change_pct numeric(8,2),
+    extra_payload jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    observed_date date NOT NULL,
+    ocr_skills jsonb,
+    ocr_status character varying(20) DEFAULT 'pending'::character varying NOT NULL,
+    CONSTRAINT chk_hiring_ocr_status CHECK (((ocr_status)::text = ANY ((ARRAY['pending'::character varying, 'success'::character varying, 'failed'::character varying, 'skipped'::character varying])::text[])))
+);
+
+
+--
+-- Name: hiring_search_trend; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.hiring_search_trend (
+    id bigint NOT NULL,
+    stock_id bigint NOT NULL,
+    keyword_group character varying(100) NOT NULL,
+    period_date date NOT NULL,
+    search_index numeric(10,4) NOT NULL,
+    period_type character varying(10) DEFAULT 'weekly'::character varying NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: hiring_search_trend_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.hiring_search_trend_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: hiring_search_trend_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.hiring_search_trend_id_seq OWNED BY public.hiring_search_trend.id;
+
+
+--
+-- Name: hiring_signals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.hiring_signals (
+    id bigint NOT NULL,
+    stock_id bigint NOT NULL,
+    observed_date date NOT NULL,
+    job_count integer DEFAULT 0 NOT NULL,
+    baseline numeric(10,2),
+    relative_strength numeric(8,4),
+    is_spike boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    calculation_phase character varying(1)
+);
+
+
+--
+-- Name: COLUMN hiring_signals.calculation_phase; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.hiring_signals.calculation_phase IS 'A=14일 이동평균, B=DataLab 검색량, C=기본값(1.0) — 분석 근거 추적용';
+
+
+--
+-- Name: hiring_signals_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.hiring_signals_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: hiring_signals_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.hiring_signals_id_seq OWNED BY public.hiring_signals.id;
+
+
+--
+-- Name: hiring_sources; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.hiring_sources (
+    id bigint NOT NULL,
+    stock_id bigint NOT NULL,
+    crawler_type public.hiring_crawler_type NOT NULL,
+    crawler_class character varying(100),
+    base_url character varying(500),
+    extra_config jsonb,
+    is_active boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: hiring_sources_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.hiring_sources_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: hiring_sources_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.hiring_sources_id_seq OWNED BY public.hiring_sources.id;
+
+
+--
+-- Name: meta_signals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.meta_signals (
+    id bigint NOT NULL,
+    stock_id bigint NOT NULL,
+    run_key character varying(50) DEFAULT 'ML'::character varying NOT NULL,
+    asof_date date NOT NULL,
+    horizon smallint NOT NULL,
+    combined_vol double precision,
+    confidence double precision DEFAULT 0 NOT NULL,
+    method character varying(20) DEFAULT 'stacking'::character varying NOT NULL,
+    model_count smallint DEFAULT 0 NOT NULL,
+    weight_breakdown jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT meta_signals_method_check CHECK (((method)::text = ANY ((ARRAY['stacking'::character varying, 'equal_fallback'::character varying, 'empty'::character varying])::text[])))
+);
+
+
+--
+-- Name: meta_signals_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.meta_signals_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: meta_signals_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.meta_signals_id_seq OWNED BY public.meta_signals.id;
+
+
+--
+-- Name: ml_inferences; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.ml_inferences (
+    id bigint NOT NULL,
+    stock_id bigint NOT NULL,
+    run_key character varying(50) DEFAULT 'ML'::character varying NOT NULL,
+    asof_date date NOT NULL,
+    model_name character varying(50) NOT NULL,
+    horizon smallint NOT NULL,
+    pred_value double precision,
+    device character varying(10) DEFAULT 'cpu'::character varying NOT NULL,
+    gate_passed boolean DEFAULT true NOT NULL,
+    error_message text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT ml_inferences_device_check CHECK (((device)::text = ANY ((ARRAY['cpu'::character varying, 'gpu'::character varying])::text[])))
+);
+
+
+--
+-- Name: ml_inferences_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.ml_inferences_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: ml_inferences_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.ml_inferences_id_seq OWNED BY public.ml_inferences.id;
+
+
+--
+-- Name: ml_scores; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.ml_scores (
+    id bigint NOT NULL,
+    result_id bigint NOT NULL,
+    stock_id bigint NOT NULL,
+    model_version_id bigint,
+    ml_score numeric(5,2) NOT NULL,
+    calibrated_score numeric(5,2) NOT NULL,
+    prediction_label character varying(20),
+    feature_importance jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT ml_scores_calibrated_score_check CHECK (((calibrated_score >= (0)::numeric) AND (calibrated_score <= (100)::numeric)))
+);
+
+
+--
+-- Name: ml_scores_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.ml_scores_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: ml_scores_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.ml_scores_id_seq OWNED BY public.ml_scores.id;
+
+
+--
+-- Name: ohlcv_data; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.ohlcv_data (
+    id bigint NOT NULL,
+    stock_id bigint NOT NULL,
+    trade_date date NOT NULL,
+    open numeric(12,2) NOT NULL,
+    high numeric(12,2) NOT NULL,
+    low numeric(12,2) NOT NULL,
+    close numeric(12,2) NOT NULL,
+    volume bigint NOT NULL,
+    adjusted_close numeric(12,2),
+    foreign_net bigint,
+    institution_net bigint,
+    change_pct numeric(6,2),
+    market_cap bigint,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    individual_net bigint
+);
+
+
+--
+-- Name: ohlcv_data_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.ohlcv_data_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: ohlcv_data_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.ohlcv_data_id_seq OWNED BY public.ohlcv_data.id;
+
+
+--
+-- Name: patent_raw_details; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.patent_raw_details (
+    raw_document_id bigint NOT NULL,
+    stock_id bigint NOT NULL,
+    application_no character varying(30) NOT NULL,
+    patent_title text NOT NULL,
+    applicant_name character varying(200),
+    application_date date NOT NULL,
+    tech_category character varying(50),
+    is_new_category boolean DEFAULT false NOT NULL,
+    extra_payload jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    llm_features jsonb,
+    llm_status character varying(20) DEFAULT 'pending'::character varying NOT NULL,
+    CONSTRAINT patent_raw_details_llm_status_check CHECK (((llm_status)::text = ANY ((ARRAY['pending'::character varying, 'success'::character varying, 'failed'::character varying, 'skipped'::character varying])::text[])))
+);
+
+
+--
+-- Name: portone_verifications; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.portone_verifications (
+    id bigint NOT NULL,
+    user_id bigint NOT NULL,
+    imp_uid character varying(100) NOT NULL,
+    merchant_uid character varying(100) NOT NULL,
+    verification_type character varying(20),
+    status character varying(20) NOT NULL,
+    verified_at timestamp with time zone,
+    raw_response jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT portone_verifications_verification_type_check CHECK (((verification_type)::text = ANY ((ARRAY['identity'::character varying, 'payment'::character varying])::text[])))
+);
+
+
+--
+-- Name: portone_verifications_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.portone_verifications_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: portone_verifications_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.portone_verifications_id_seq OWNED BY public.portone_verifications.id;
+
+
+--
+-- Name: price_snapshots; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.price_snapshots (
+    id bigint NOT NULL,
+    stock_id bigint NOT NULL,
+    captured_at timestamp with time zone NOT NULL,
+    trade_date date NOT NULL,
+    current_price numeric(12,2) NOT NULL,
+    open numeric(12,2),
+    high numeric(12,2),
+    low numeric(12,2),
+    volume bigint,
+    trade_value bigint,
+    market_cap bigint,
+    shares_outstanding bigint,
+    per numeric(10,2),
+    pbr numeric(10,2),
+    eps numeric(12,2),
+    bps numeric(12,2),
+    roe numeric(8,2),
+    roa numeric(8,2),
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: price_snapshots_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.price_snapshots_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: price_snapshots_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.price_snapshots_id_seq OWNED BY public.price_snapshots.id;
+
+
+--
+-- Name: processing_queue; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.processing_queue (
+    id bigint NOT NULL,
+    stock_id bigint,
+    task_type character varying(50) NOT NULL,
+    status character varying(20) DEFAULT 'pending'::character varying NOT NULL,
+    priority character varying(10) DEFAULT 'batch'::character varying NOT NULL,
+    source_raw_ids bigint[],
+    source_signal_event_ids bigint[],
+    source_analysis_result_ids bigint[],
+    task_context jsonb,
+    retry_count smallint DEFAULT 0 NOT NULL,
+    max_retry_count smallint DEFAULT 3 NOT NULL,
+    error_message text,
+    scheduled_at timestamp with time zone DEFAULT now() NOT NULL,
+    started_at timestamp with time zone,
+    finished_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT processing_queue_priority_check CHECK (((priority)::text = ANY ((ARRAY['immediate'::character varying, 'batch'::character varying])::text[]))),
+    CONSTRAINT processing_queue_status_check CHECK (((status)::text = ANY ((ARRAY['pending'::character varying, 'running'::character varying, 'success'::character varying, 'failed'::character varying, 'retrying'::character varying, 'skipped'::character varying])::text[])))
+);
+
+
+--
+-- Name: processing_queue_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.processing_queue_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: processing_queue_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.processing_queue_id_seq OWNED BY public.processing_queue.id;
+
+
+--
+-- Name: program_trading; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.program_trading (
+    id bigint NOT NULL,
+    stock_id bigint NOT NULL,
+    trade_date date NOT NULL,
+    prog_buy_qty bigint,
+    prog_sell_qty bigint,
+    prog_net_qty bigint,
+    prog_net_amt bigint,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: program_trading_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.program_trading_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: program_trading_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.program_trading_id_seq OWNED BY public.program_trading.id;
+
+
+--
+-- Name: quant_scores; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.quant_scores (
+    id bigint NOT NULL,
+    result_id bigint NOT NULL,
+    stock_id bigint NOT NULL,
+    score_breakdown jsonb NOT NULL,
+    overall_score numeric(5,2) NOT NULL,
+    available_sources text[] NOT NULL,
+    missing_sources text[],
+    source_agreement character varying(10) NOT NULL,
+    failed_agent_count smallint DEFAULT 0 NOT NULL,
+    alert_level smallint DEFAULT 0 NOT NULL,
+    score_cap_applied boolean DEFAULT false NOT NULL,
+    score_cap_reason text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT quant_scores_alert_level_check CHECK ((alert_level = ANY (ARRAY[0, 1, 2, 3]))),
+    CONSTRAINT quant_scores_source_agreement_check CHECK (((source_agreement)::text = ANY ((ARRAY['HIGH'::character varying, 'MEDIUM'::character varying, 'LOW'::character varying])::text[])))
+);
+
+
+--
+-- Name: quant_scores_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.quant_scores_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: quant_scores_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.quant_scores_id_seq OWNED BY public.quant_scores.id;
+
+
+--
+-- Name: raw_documents; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.raw_documents (
+    id bigint NOT NULL,
+    stock_id bigint NOT NULL,
+    collector_run_id bigint,
+    source_type character varying(20) NOT NULL,
+    source_name character varying(100) NOT NULL,
+    external_id character varying(200) NOT NULL,
+    source_hash character varying(64) NOT NULL,
+    title text NOT NULL,
+    source_url text,
+    published_at timestamp with time zone NOT NULL,
+    collect_status character varying(20) DEFAULT 'success'::character varying NOT NULL,
+    collect_error text,
+    collected_at timestamp with time zone DEFAULT now() NOT NULL,
+    collector_ver character varying(20) DEFAULT '1.0'::character varying NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT raw_documents_collect_status_check CHECK (((collect_status)::text = ANY ((ARRAY['success'::character varying, 'partial'::character varying, 'failed'::character varying])::text[]))),
+    CONSTRAINT raw_documents_source_type_check CHECK (((source_type)::text = ANY ((ARRAY['DART'::character varying, 'REPORT'::character varying, 'HIRING'::character varying, 'PATENT'::character varying, 'DATALAB'::character varying])::text[])))
+);
+
+
+--
+-- Name: raw_documents_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.raw_documents_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: raw_documents_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.raw_documents_id_seq OWNED BY public.raw_documents.id;
+
+
+--
+-- Name: report_issuances; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.report_issuances (
+    id bigint NOT NULL,
+    user_id bigint NOT NULL,
+    stock_id bigint NOT NULL,
+    final_signal_id bigint NOT NULL,
+    run_key character varying(30) NOT NULL,
+    issued_via character varying(20) NOT NULL,
+    issued_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT report_issuances_issued_via_check CHECK (((issued_via)::text = ANY ((ARRAY['free'::character varying, 'subscription'::character varying])::text[])))
+);
+
+
+--
+-- Name: report_issuances_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.report_issuances_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: report_issuances_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.report_issuances_id_seq OWNED BY public.report_issuances.id;
+
+
+--
+-- Name: report_raw; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.report_raw (
+    id bigint NOT NULL,
+    stock_code character varying(10) NOT NULL,
+    firm character varying(50) NOT NULL,
+    date character varying(20) NOT NULL,
+    report_type character varying(30),
+    title text,
+    pdf_url text,
+    target_price integer,
+    opinion character varying(20),
+    key_rationale text,
+    raw_text_preview text,
+    processed boolean DEFAULT false,
+    created_at timestamp with time zone DEFAULT now()
+);
+
+
+--
+-- Name: report_raw_details; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.report_raw_details (
+    raw_document_id bigint NOT NULL,
+    stock_id bigint NOT NULL,
+    securities_firm character varying(100) NOT NULL,
+    analyst_name character varying(100),
+    publish_date date NOT NULL,
+    investment_opinion character varying(20),
+    target_price integer,
+    previous_target_price integer,
+    current_price_at_publish integer,
+    upside_pct numeric(6,2),
+    has_pdf boolean DEFAULT false NOT NULL,
+    pdf_url text,
+    local_file_path text,
+    extracted_text text,
+    extracted_text_path text,
+    parsing_status character varying(20) DEFAULT 'pending'::character varying NOT NULL,
+    parsing_error text,
+    extra_payload jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    s3_key character varying(500),
+    parsed_at timestamp with time zone,
+    key_rationale text,
+    CONSTRAINT report_raw_details_parsing_status_check CHECK (((parsing_status)::text = ANY ((ARRAY['pending'::character varying, 'success'::character varying, 'failed'::character varying, 'skipped'::character varying])::text[])))
+);
+
+
+--
+-- Name: report_raw_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.report_raw_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: report_raw_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.report_raw_id_seq OWNED BY public.report_raw.id;
+
+
+--
+-- Name: report_signal; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.report_signal (
+    id bigint NOT NULL,
+    stock_code character varying(10) NOT NULL,
+    direction character varying(20),
+    score double precision,
+    avg_target double precision,
+    upside_pct double precision,
+    target_trend character varying(20),
+    conflict_detected boolean,
+    opinions jsonb,
+    risk_flags jsonb,
+    summary text,
+    data_status character varying(20),
+    analyzed_at timestamp with time zone DEFAULT now()
+);
+
+
+--
+-- Name: report_signal_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.report_signal_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: report_signal_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.report_signal_id_seq OWNED BY public.report_signal.id;
+
+
+--
+-- Name: report_valuation_facts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.report_valuation_facts (
+    raw_document_id bigint NOT NULL,
+    stock_id bigint NOT NULL,
+    ticker character varying(20) NOT NULL,
+    broker character varying(100),
+    analyst character varying(100),
+    publish_date date,
+    target_price integer,
+    forward_eps_est integer,
+    eps_fy integer,
+    methodology character varying(20) DEFAULT 'unknown'::character varying NOT NULL,
+    applied_multiple numeric(12,4),
+    implied_multiple numeric(12,4),
+    peer_group jsonb DEFAULT '[]'::jsonb NOT NULL,
+    category_tag character varying(80),
+    rerating_thesis text,
+    extraction_source character varying(30) DEFAULT 'rules'::character varying NOT NULL,
+    needs_review boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT report_valuation_facts_extraction_source_check CHECK (((extraction_source)::text = ANY ((ARRAY['rules'::character varying, 'llm'::character varying, 'rules_fallback'::character varying])::text[]))),
+    CONSTRAINT report_valuation_facts_methodology_check CHECK (((methodology)::text = ANY ((ARRAY['PER'::character varying, 'PBR'::character varying, 'EV_EBITDA'::character varying, 'SOTP'::character varying, 'DCF'::character varying, 'mixed'::character varying, 'unknown'::character varying])::text[])))
+);
+
+
+--
+-- Name: schema_migrations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.schema_migrations (
+    filename text NOT NULL,
+    checksum character(64) NOT NULL,
+    applied_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: score_history; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.score_history (
+    id bigint NOT NULL,
+    stock_id bigint NOT NULL,
+    final_signal_id bigint,
+    analysis_result_id bigint,
+    signal_date date NOT NULL,
+    scored_at timestamp with time zone DEFAULT now() NOT NULL,
+    final_score numeric(5,2) NOT NULL,
+    pre_xgb_score numeric(5,2),
+    reliability_score numeric(5,2),
+    model_version character varying(20),
+    scoring_version character varying(20),
+    reanalysis_reason character varying(50),
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT chk_score_history_reference CHECK (((final_signal_id IS NOT NULL) OR (analysis_result_id IS NOT NULL)))
+);
+
+
+--
+-- Name: score_history_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.score_history_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: score_history_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.score_history_id_seq OWNED BY public.score_history.id;
+
+
+--
+-- Name: signal_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.signal_events (
+    id bigint NOT NULL,
+    stock_id bigint NOT NULL,
+    source_document_id bigint NOT NULL,
+    event_hash character varying(64) NOT NULL,
+    source_type character varying(20) NOT NULL,
+    event_type character varying(50) NOT NULL,
+    event_date date NOT NULL,
+    signal_direction character varying(10) NOT NULL,
+    impact_level character varying(10) NOT NULL,
+    title text NOT NULL,
+    summary text,
+    evidence_text text,
+    evidence_url text,
+    needs_review boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT signal_events_impact_level_check CHECK (((impact_level)::text = ANY ((ARRAY['high'::character varying, 'medium'::character varying, 'low'::character varying])::text[]))),
+    CONSTRAINT signal_events_signal_direction_check CHECK (((signal_direction)::text = ANY ((ARRAY['positive'::character varying, 'negative'::character varying, 'neutral'::character varying, 'mixed'::character varying, 'unknown'::character varying])::text[]))),
+    CONSTRAINT signal_events_source_type_check CHECK (((source_type)::text = ANY ((ARRAY['DART'::character varying, 'REPORT'::character varying, 'HIRING'::character varying, 'PATENT'::character varying, 'DATALAB'::character varying])::text[])))
+);
+
+
+--
+-- Name: signal_events_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.signal_events_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: signal_events_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.signal_events_id_seq OWNED BY public.signal_events.id;
+
+
+--
+-- Name: signal_journals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.signal_journals (
+    id bigint NOT NULL,
+    user_id bigint NOT NULL,
+    final_signal_id bigint,
+    stock_id bigint NOT NULL,
+    user_view character varying(20) NOT NULL,
+    user_memo text,
+    decision_type character varying(20),
+    decision_reason text,
+    signal_score_at_time numeric(5,2),
+    signal_value_at_time character varying(10),
+    price_at_time numeric(12,2),
+    source_agreement_at_time character varying(10),
+    outcome_price numeric(12,2),
+    outcome_change_pct numeric(6,2),
+    outcome_checked_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    tags jsonb DEFAULT '[]'::jsonb NOT NULL,
+    CONSTRAINT signal_journals_user_view_check CHECK (((user_view)::text = ANY ((ARRAY['watch'::character varying, 'research_more'::character varying, 'not_relevant'::character varying])::text[])))
+);
+
+
+--
+-- Name: signal_journals_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.signal_journals_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: signal_journals_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.signal_journals_id_seq OWNED BY public.signal_journals.id;
+
+
+--
+-- Name: signal_metrics; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.signal_metrics (
+    id bigint NOT NULL,
+    signal_event_id bigint NOT NULL,
+    metric_name character varying(50) NOT NULL,
+    metric_value numeric(15,4) NOT NULL,
+    metric_unit character varying(20),
+    previous_value numeric(15,4),
+    change_pct numeric(8,2),
+    period_start date,
+    period_end date,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: signal_metrics_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.signal_metrics_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: signal_metrics_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.signal_metrics_id_seq OWNED BY public.signal_metrics.id;
+
+
+--
+-- Name: signal_subscriptions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.signal_subscriptions (
+    id bigint NOT NULL,
+    user_id bigint NOT NULL,
+    plan_id bigint NOT NULL,
+    status character varying(20) DEFAULT 'active'::character varying NOT NULL,
+    started_at timestamp with time zone DEFAULT now() NOT NULL,
+    expires_at timestamp with time zone,
+    cancelled_at timestamp with time zone,
+    payment_method character varying(50),
+    billing_cycle character varying(10),
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT signal_subscriptions_billing_cycle_check CHECK ((((billing_cycle)::text = ANY ((ARRAY['monthly'::character varying, 'yearly'::character varying])::text[])) OR (billing_cycle IS NULL))),
+    CONSTRAINT signal_subscriptions_status_check CHECK (((status)::text = ANY ((ARRAY['active'::character varying, 'expired'::character varying, 'cancelled'::character varying, 'trial'::character varying])::text[])))
+);
+
+
+--
+-- Name: signal_subscriptions_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.signal_subscriptions_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: signal_subscriptions_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.signal_subscriptions_id_seq OWNED BY public.signal_subscriptions.id;
+
+
+--
+-- Name: social_accounts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.social_accounts (
+    id bigint NOT NULL,
+    user_id bigint NOT NULL,
+    provider character varying(20) NOT NULL,
+    provider_user_id character varying(100) NOT NULL,
+    access_token text,
+    refresh_token text,
+    token_expires_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT social_accounts_provider_check CHECK (((provider)::text = ANY ((ARRAY['google'::character varying, 'kakao'::character varying, 'naver'::character varying])::text[])))
+);
+
+
+--
+-- Name: social_accounts_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.social_accounts_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: social_accounts_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.social_accounts_id_seq OWNED BY public.social_accounts.id;
+
+
+--
+-- Name: source_documents; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.source_documents (
+    id bigint NOT NULL,
+    raw_document_id bigint,
+    stock_id bigint NOT NULL,
+    source_type character varying(20) NOT NULL,
+    source_name character varying(100) NOT NULL,
+    title text NOT NULL,
+    source_url text,
+    published_at timestamp with time zone NOT NULL,
+    collected_at timestamp with time zone NOT NULL,
+    reliability_level character varying(10) DEFAULT 'medium'::character varying NOT NULL,
+    is_official boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    external_ref_type character varying(40),
+    external_ref_id bigint,
+    CONSTRAINT chk_source_doc_anchor CHECK ((((raw_document_id IS NOT NULL) AND (external_ref_type IS NULL) AND (external_ref_id IS NULL)) OR ((raw_document_id IS NULL) AND (external_ref_type IS NOT NULL) AND (external_ref_id IS NOT NULL)))),
+    CONSTRAINT source_documents_reliability_level_check CHECK (((reliability_level)::text = ANY ((ARRAY['high'::character varying, 'medium'::character varying, 'low'::character varying])::text[]))),
+    CONSTRAINT source_documents_source_type_check CHECK (((source_type)::text = ANY ((ARRAY['DART'::character varying, 'REPORT'::character varying, 'HIRING'::character varying, 'PATENT'::character varying, 'DATALAB'::character varying])::text[])))
+);
+
+
+--
+-- Name: source_documents_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.source_documents_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: source_documents_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.source_documents_id_seq OWNED BY public.source_documents.id;
+
+
+--
+-- Name: stocks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.stocks (
+    id bigint NOT NULL,
+    ticker character varying(10) NOT NULL,
+    name character varying(100) NOT NULL,
+    market character varying(10) NOT NULL,
+    sector character varying(100),
+    is_active boolean DEFAULT true NOT NULL,
+    is_target boolean DEFAULT false NOT NULL,
+    short_name character varying(50),
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT stocks_market_check CHECK (((market)::text = ANY ((ARRAY['KOSPI'::character varying, 'KOSDAQ'::character varying])::text[])))
+);
+
+
+--
+-- Name: stocks_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.stocks_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: stocks_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.stocks_id_seq OWNED BY public.stocks.id;
+
+
+--
+-- Name: subscription_plans; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.subscription_plans (
+    id bigint NOT NULL,
+    plan_type character varying(20) NOT NULL,
+    plan_display_name character varying(50) NOT NULL,
+    max_watchlist integer DEFAULT 3 NOT NULL,
+    signal_delay_hours integer DEFAULT 24 NOT NULL,
+    journal_max_entries integer DEFAULT 50 NOT NULL,
+    has_alt_data boolean DEFAULT false NOT NULL,
+    has_detail_report boolean DEFAULT false NOT NULL,
+    has_backtesting boolean DEFAULT false NOT NULL,
+    price_monthly integer DEFAULT 0 NOT NULL,
+    price_yearly integer DEFAULT 0 NOT NULL,
+    is_active boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: subscription_plans_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.subscription_plans_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: subscription_plans_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.subscription_plans_id_seq OWNED BY public.subscription_plans.id;
+
+
+--
+-- Name: ta_scores; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.ta_scores (
+    id bigint NOT NULL,
+    result_id bigint NOT NULL,
+    stock_id bigint NOT NULL,
+    ta_score numeric(5,2),
+    ta_detail jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: ta_scores_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.ta_scores_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: ta_scores_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.ta_scores_id_seq OWNED BY public.ta_scores.id;
+
+
+--
+-- Name: terms_agreements; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.terms_agreements (
+    id bigint NOT NULL,
+    user_id bigint NOT NULL,
+    terms_type character varying(50) NOT NULL,
+    version character varying(20) NOT NULL,
+    agreed boolean DEFAULT true NOT NULL,
+    agreed_at timestamp with time zone DEFAULT now() NOT NULL,
+    ip_address inet
+);
+
+
+--
+-- Name: terms_agreements_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.terms_agreements_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: terms_agreements_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.terms_agreements_id_seq OWNED BY public.terms_agreements.id;
+
+
+--
+-- Name: user_sessions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.user_sessions (
+    id bigint NOT NULL,
+    user_id bigint NOT NULL,
+    refresh_token_hash text NOT NULL,
+    user_agent text,
+    ip_address inet,
+    expires_at timestamp with time zone NOT NULL,
+    revoked_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: user_sessions_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.user_sessions_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: user_sessions_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.user_sessions_id_seq OWNED BY public.user_sessions.id;
+
+
+--
+-- Name: user_signal_reads; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.user_signal_reads (
+    id bigint NOT NULL,
+    user_id bigint NOT NULL,
+    final_signal_id bigint NOT NULL,
+    read_date date DEFAULT CURRENT_DATE NOT NULL,
+    read_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: user_signal_reads_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.user_signal_reads_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: user_signal_reads_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.user_signal_reads_id_seq OWNED BY public.user_signal_reads.id;
+
+
+--
+-- Name: users; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.users (
+    id bigint NOT NULL,
+    member_code character varying(20) NOT NULL,
+    email character varying(255) NOT NULL,
+    password_hash text,
+    nickname character varying(50),
+    agreed_risk boolean DEFAULT false NOT NULL,
+    is_verified boolean DEFAULT false NOT NULL,
+    email_verified_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    deleted_at timestamp with time zone,
+    phone character varying(20)
+);
+
+
+--
+-- Name: users_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.users_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: users_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.users_id_seq OWNED BY public.users.id;
+
+
+--
+-- Name: validation_logs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.validation_logs (
+    id bigint NOT NULL,
+    target_type character varying(30) NOT NULL,
+    target_id_int bigint,
+    target_id_uuid uuid,
+    validation_type character varying(50) NOT NULL,
+    passed boolean NOT NULL,
+    message text,
+    retry_count smallint DEFAULT 0 NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT chk_validation_target_id CHECK ((num_nonnulls(target_id_int, target_id_uuid) = 1)),
+    CONSTRAINT validation_logs_target_type_check CHECK (((target_type)::text = ANY ((ARRAY['signal_event'::character varying, 'signal_metric'::character varying, 'analysis_result'::character varying, 'agent_result'::character varying, 'final_signal'::character varying, 'llm_output'::character varying])::text[])))
+);
+
+
+--
+-- Name: validation_logs_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.validation_logs_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: validation_logs_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.validation_logs_id_seq OWNED BY public.validation_logs.id;
+
+
+--
+-- Name: watchlists; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.watchlists (
+    id bigint NOT NULL,
+    user_id bigint NOT NULL,
+    stock_id bigint NOT NULL,
+    notification_enabled boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: watchlists_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.watchlists_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: watchlists_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.watchlists_id_seq OWNED BY public.watchlists.id;
+
+
+--
+-- Name: xgb_model_versions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.xgb_model_versions (
+    id bigint NOT NULL,
+    model_version character varying(20) NOT NULL,
+    trained_at timestamp with time zone,
+    feature_names jsonb,
+    feature_importance jsonb,
+    validation_score numeric(5,2),
+    is_active boolean DEFAULT false NOT NULL,
+    training_samples integer,
+    notes text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: xgb_model_versions_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.xgb_model_versions_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: xgb_model_versions_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.xgb_model_versions_id_seq OWNED BY public.xgb_model_versions.id;
+
+
+--
+-- Name: admin_accounts id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.admin_accounts ALTER COLUMN id SET DEFAULT nextval('public.admin_accounts_id_seq'::regclass);
+
+
+--
+-- Name: admin_sessions id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.admin_sessions ALTER COLUMN id SET DEFAULT nextval('public.admin_sessions_id_seq'::regclass);
+
+
+--
+-- Name: agent_results id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_results ALTER COLUMN id SET DEFAULT nextval('public.agent_results_id_seq'::regclass);
+
+
+--
+-- Name: ai_scores id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ai_scores ALTER COLUMN id SET DEFAULT nextval('public.ai_scores_id_seq'::regclass);
+
+
+--
+-- Name: analysis_requests id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.analysis_requests ALTER COLUMN id SET DEFAULT nextval('public.analysis_requests_id_seq'::regclass);
+
+
+--
+-- Name: analysis_results id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.analysis_results ALTER COLUMN id SET DEFAULT nextval('public.analysis_results_id_seq'::regclass);
+
+
+--
+-- Name: backtest_results id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.backtest_results ALTER COLUMN id SET DEFAULT nextval('public.backtest_results_id_seq'::regclass);
+
+
+--
+-- Name: collector_runs id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.collector_runs ALTER COLUMN id SET DEFAULT nextval('public.collector_runs_id_seq'::regclass);
+
+
+--
+-- Name: dart_corp_codes id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dart_corp_codes ALTER COLUMN id SET DEFAULT nextval('public.dart_corp_codes_id_seq'::regclass);
+
+
+--
+-- Name: dart_employee_stats id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dart_employee_stats ALTER COLUMN id SET DEFAULT nextval('public.dart_employee_stats_id_seq'::regclass);
+
+
+--
+-- Name: dart_financial_facts id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dart_financial_facts ALTER COLUMN id SET DEFAULT nextval('public.dart_financial_facts_id_seq'::regclass);
+
+
+--
+-- Name: dart_ownership_events id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dart_ownership_events ALTER COLUMN id SET DEFAULT nextval('public.dart_ownership_events_id_seq'::regclass);
+
+
+--
+-- Name: datalab_categories id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.datalab_categories ALTER COLUMN id SET DEFAULT nextval('public.datalab_categories_id_seq'::regclass);
+
+
+--
+-- Name: datalab_raw_documents id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.datalab_raw_documents ALTER COLUMN id SET DEFAULT nextval('public.datalab_raw_documents_id_seq'::regclass);
+
+
+--
+-- Name: dead_letter id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dead_letter ALTER COLUMN id SET DEFAULT nextval('public.dead_letter_id_seq'::regclass);
+
+
+--
+-- Name: final_signals id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.final_signals ALTER COLUMN id SET DEFAULT nextval('public.final_signals_id_seq'::regclass);
+
+
+--
+-- Name: fundamentals id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fundamentals ALTER COLUMN id SET DEFAULT nextval('public.fundamentals_id_seq'::regclass);
+
+
+--
+-- Name: fx_rates id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fx_rates ALTER COLUMN id SET DEFAULT nextval('public.fx_rates_id_seq'::regclass);
+
+
+--
+-- Name: hiring_baseline id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hiring_baseline ALTER COLUMN id SET DEFAULT nextval('public.hiring_baseline_id_seq'::regclass);
+
+
+--
+-- Name: hiring_job_functions id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hiring_job_functions ALTER COLUMN id SET DEFAULT nextval('public.hiring_job_functions_id_seq'::regclass);
+
+
+--
+-- Name: hiring_portal_company_ids id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hiring_portal_company_ids ALTER COLUMN id SET DEFAULT nextval('public.hiring_portal_company_ids_id_seq'::regclass);
+
+
+--
+-- Name: hiring_quarantine id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hiring_quarantine ALTER COLUMN id SET DEFAULT nextval('public.hiring_quarantine_id_seq'::regclass);
+
+
+--
+-- Name: hiring_search_trend id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hiring_search_trend ALTER COLUMN id SET DEFAULT nextval('public.hiring_search_trend_id_seq'::regclass);
+
+
+--
+-- Name: hiring_signals id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hiring_signals ALTER COLUMN id SET DEFAULT nextval('public.hiring_signals_id_seq'::regclass);
+
+
+--
+-- Name: hiring_sources id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hiring_sources ALTER COLUMN id SET DEFAULT nextval('public.hiring_sources_id_seq'::regclass);
+
+
+--
+-- Name: meta_signals id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.meta_signals ALTER COLUMN id SET DEFAULT nextval('public.meta_signals_id_seq'::regclass);
+
+
+--
+-- Name: ml_inferences id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ml_inferences ALTER COLUMN id SET DEFAULT nextval('public.ml_inferences_id_seq'::regclass);
+
+
+--
+-- Name: ml_scores id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ml_scores ALTER COLUMN id SET DEFAULT nextval('public.ml_scores_id_seq'::regclass);
+
+
+--
+-- Name: ohlcv_data id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ohlcv_data ALTER COLUMN id SET DEFAULT nextval('public.ohlcv_data_id_seq'::regclass);
+
+
+--
+-- Name: portone_verifications id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.portone_verifications ALTER COLUMN id SET DEFAULT nextval('public.portone_verifications_id_seq'::regclass);
+
+
+--
+-- Name: price_snapshots id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.price_snapshots ALTER COLUMN id SET DEFAULT nextval('public.price_snapshots_id_seq'::regclass);
+
+
+--
+-- Name: processing_queue id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.processing_queue ALTER COLUMN id SET DEFAULT nextval('public.processing_queue_id_seq'::regclass);
+
+
+--
+-- Name: program_trading id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.program_trading ALTER COLUMN id SET DEFAULT nextval('public.program_trading_id_seq'::regclass);
+
+
+--
+-- Name: quant_scores id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.quant_scores ALTER COLUMN id SET DEFAULT nextval('public.quant_scores_id_seq'::regclass);
+
+
+--
+-- Name: raw_documents id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.raw_documents ALTER COLUMN id SET DEFAULT nextval('public.raw_documents_id_seq'::regclass);
+
+
+--
+-- Name: report_issuances id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.report_issuances ALTER COLUMN id SET DEFAULT nextval('public.report_issuances_id_seq'::regclass);
+
+
+--
+-- Name: report_raw id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.report_raw ALTER COLUMN id SET DEFAULT nextval('public.report_raw_id_seq'::regclass);
+
+
+--
+-- Name: report_signal id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.report_signal ALTER COLUMN id SET DEFAULT nextval('public.report_signal_id_seq'::regclass);
+
+
+--
+-- Name: score_history id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.score_history ALTER COLUMN id SET DEFAULT nextval('public.score_history_id_seq'::regclass);
+
+
+--
+-- Name: signal_events id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.signal_events ALTER COLUMN id SET DEFAULT nextval('public.signal_events_id_seq'::regclass);
+
+
+--
+-- Name: signal_journals id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.signal_journals ALTER COLUMN id SET DEFAULT nextval('public.signal_journals_id_seq'::regclass);
+
+
+--
+-- Name: signal_metrics id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.signal_metrics ALTER COLUMN id SET DEFAULT nextval('public.signal_metrics_id_seq'::regclass);
+
+
+--
+-- Name: signal_subscriptions id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.signal_subscriptions ALTER COLUMN id SET DEFAULT nextval('public.signal_subscriptions_id_seq'::regclass);
+
+
+--
+-- Name: social_accounts id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.social_accounts ALTER COLUMN id SET DEFAULT nextval('public.social_accounts_id_seq'::regclass);
+
+
+--
+-- Name: source_documents id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.source_documents ALTER COLUMN id SET DEFAULT nextval('public.source_documents_id_seq'::regclass);
+
+
+--
+-- Name: stocks id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.stocks ALTER COLUMN id SET DEFAULT nextval('public.stocks_id_seq'::regclass);
+
+
+--
+-- Name: subscription_plans id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.subscription_plans ALTER COLUMN id SET DEFAULT nextval('public.subscription_plans_id_seq'::regclass);
+
+
+--
+-- Name: ta_scores id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ta_scores ALTER COLUMN id SET DEFAULT nextval('public.ta_scores_id_seq'::regclass);
+
+
+--
+-- Name: terms_agreements id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.terms_agreements ALTER COLUMN id SET DEFAULT nextval('public.terms_agreements_id_seq'::regclass);
+
+
+--
+-- Name: user_sessions id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_sessions ALTER COLUMN id SET DEFAULT nextval('public.user_sessions_id_seq'::regclass);
+
+
+--
+-- Name: user_signal_reads id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_signal_reads ALTER COLUMN id SET DEFAULT nextval('public.user_signal_reads_id_seq'::regclass);
+
+
+--
+-- Name: users id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users ALTER COLUMN id SET DEFAULT nextval('public.users_id_seq'::regclass);
+
+
+--
+-- Name: validation_logs id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.validation_logs ALTER COLUMN id SET DEFAULT nextval('public.validation_logs_id_seq'::regclass);
+
+
+--
+-- Name: watchlists id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.watchlists ALTER COLUMN id SET DEFAULT nextval('public.watchlists_id_seq'::regclass);
+
+
+--
+-- Name: xgb_model_versions id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.xgb_model_versions ALTER COLUMN id SET DEFAULT nextval('public.xgb_model_versions_id_seq'::regclass);
+
+
+--
+-- Name: admin_accounts admin_accounts_email_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.admin_accounts
+    ADD CONSTRAINT admin_accounts_email_key UNIQUE (email);
+
+
+--
+-- Name: admin_accounts admin_accounts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.admin_accounts
+    ADD CONSTRAINT admin_accounts_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: admin_sessions admin_sessions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.admin_sessions
+    ADD CONSTRAINT admin_sessions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: admin_sessions admin_sessions_session_token_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.admin_sessions
+    ADD CONSTRAINT admin_sessions_session_token_key UNIQUE (session_token);
+
+
+--
+-- Name: agent_results agent_results_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_results
+    ADD CONSTRAINT agent_results_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: ai_scores ai_scores_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ai_scores
+    ADD CONSTRAINT ai_scores_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: ai_scores ai_scores_result_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ai_scores
+    ADD CONSTRAINT ai_scores_result_id_key UNIQUE (result_id);
+
+
+--
+-- Name: analysis_requests analysis_requests_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.analysis_requests
+    ADD CONSTRAINT analysis_requests_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: analysis_results analysis_results_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.analysis_results
+    ADD CONSTRAINT analysis_results_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: backtest_results backtest_results_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.backtest_results
+    ADD CONSTRAINT backtest_results_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: collector_runs collector_runs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.collector_runs
+    ADD CONSTRAINT collector_runs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: dart_collection_states dart_collection_states_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dart_collection_states
+    ADD CONSTRAINT dart_collection_states_pkey PRIMARY KEY (stock_id);
+
+
+--
+-- Name: dart_corp_codes dart_corp_codes_corp_code_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dart_corp_codes
+    ADD CONSTRAINT dart_corp_codes_corp_code_key UNIQUE (corp_code);
+
+
+--
+-- Name: dart_corp_codes dart_corp_codes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dart_corp_codes
+    ADD CONSTRAINT dart_corp_codes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: dart_employee_stats dart_employee_stats_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dart_employee_stats
+    ADD CONSTRAINT dart_employee_stats_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: dart_financial_facts dart_financial_facts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dart_financial_facts
+    ADD CONSTRAINT dart_financial_facts_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: dart_ownership_events dart_ownership_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dart_ownership_events
+    ADD CONSTRAINT dart_ownership_events_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: dart_raw_details dart_raw_details_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dart_raw_details
+    ADD CONSTRAINT dart_raw_details_pkey PRIMARY KEY (raw_document_id);
+
+
+--
+-- Name: dart_raw_details dart_raw_details_receipt_no_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dart_raw_details
+    ADD CONSTRAINT dart_raw_details_receipt_no_key UNIQUE (receipt_no);
+
+
+--
+-- Name: datalab_categories datalab_categories_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.datalab_categories
+    ADD CONSTRAINT datalab_categories_name_key UNIQUE (name);
+
+
+--
+-- Name: datalab_categories datalab_categories_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.datalab_categories
+    ADD CONSTRAINT datalab_categories_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: datalab_category_keywords datalab_category_keywords_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.datalab_category_keywords
+    ADD CONSTRAINT datalab_category_keywords_pkey PRIMARY KEY (category_id, keyword);
+
+
+--
+-- Name: datalab_category_stocks datalab_category_stocks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.datalab_category_stocks
+    ADD CONSTRAINT datalab_category_stocks_pkey PRIMARY KEY (category_id, stock_id);
+
+
+--
+-- Name: datalab_raw_details datalab_raw_details_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.datalab_raw_details
+    ADD CONSTRAINT datalab_raw_details_pkey PRIMARY KEY (raw_document_id);
+
+
+--
+-- Name: datalab_raw_documents datalab_raw_documents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.datalab_raw_documents
+    ADD CONSTRAINT datalab_raw_documents_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: datalab_raw_documents datalab_raw_documents_source_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.datalab_raw_documents
+    ADD CONSTRAINT datalab_raw_documents_source_hash_key UNIQUE (source_hash);
+
+
+--
+-- Name: dead_letter dead_letter_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dead_letter
+    ADD CONSTRAINT dead_letter_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: dead_letter dead_letter_processing_queue_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dead_letter
+    ADD CONSTRAINT dead_letter_processing_queue_id_key UNIQUE (processing_queue_id);
+
+
+--
+-- Name: final_signals final_signals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.final_signals
+    ADD CONSTRAINT final_signals_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fundamentals fundamentals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fundamentals
+    ADD CONSTRAINT fundamentals_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fx_rates fx_rates_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fx_rates
+    ADD CONSTRAINT fx_rates_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: hiring_baseline hiring_baseline_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hiring_baseline
+    ADD CONSTRAINT hiring_baseline_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: hiring_job_function_stocks hiring_job_function_stocks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hiring_job_function_stocks
+    ADD CONSTRAINT hiring_job_function_stocks_pkey PRIMARY KEY (job_function_id, stock_id);
+
+
+--
+-- Name: hiring_job_functions hiring_job_functions_function_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hiring_job_functions
+    ADD CONSTRAINT hiring_job_functions_function_key_key UNIQUE (function_key);
+
+
+--
+-- Name: hiring_job_functions hiring_job_functions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hiring_job_functions
+    ADD CONSTRAINT hiring_job_functions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: hiring_portal_company_ids hiring_portal_company_ids_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hiring_portal_company_ids
+    ADD CONSTRAINT hiring_portal_company_ids_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: hiring_quarantine hiring_quarantine_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hiring_quarantine
+    ADD CONSTRAINT hiring_quarantine_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: hiring_raw_details hiring_raw_details_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hiring_raw_details
+    ADD CONSTRAINT hiring_raw_details_pkey PRIMARY KEY (raw_document_id);
+
+
+--
+-- Name: hiring_search_trend hiring_search_trend_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hiring_search_trend
+    ADD CONSTRAINT hiring_search_trend_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: hiring_signals hiring_signals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hiring_signals
+    ADD CONSTRAINT hiring_signals_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: hiring_signals hiring_signals_stock_id_observed_date_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hiring_signals
+    ADD CONSTRAINT hiring_signals_stock_id_observed_date_key UNIQUE (stock_id, observed_date);
+
+
+--
+-- Name: hiring_sources hiring_sources_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hiring_sources
+    ADD CONSTRAINT hiring_sources_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: hiring_sources hiring_sources_stock_id_crawler_type_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hiring_sources
+    ADD CONSTRAINT hiring_sources_stock_id_crawler_type_key UNIQUE (stock_id, crawler_type);
+
+
+--
+-- Name: meta_signals meta_signals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.meta_signals
+    ADD CONSTRAINT meta_signals_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: ml_inferences ml_inferences_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ml_inferences
+    ADD CONSTRAINT ml_inferences_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: ml_scores ml_scores_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ml_scores
+    ADD CONSTRAINT ml_scores_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: ml_scores ml_scores_result_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ml_scores
+    ADD CONSTRAINT ml_scores_result_id_key UNIQUE (result_id);
+
+
+--
+-- Name: ohlcv_data ohlcv_data_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ohlcv_data
+    ADD CONSTRAINT ohlcv_data_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: patent_raw_details patent_raw_details_application_no_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.patent_raw_details
+    ADD CONSTRAINT patent_raw_details_application_no_key UNIQUE (application_no);
+
+
+--
+-- Name: patent_raw_details patent_raw_details_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.patent_raw_details
+    ADD CONSTRAINT patent_raw_details_pkey PRIMARY KEY (raw_document_id);
+
+
+--
+-- Name: portone_verifications portone_verifications_imp_uid_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.portone_verifications
+    ADD CONSTRAINT portone_verifications_imp_uid_key UNIQUE (imp_uid);
+
+
+--
+-- Name: portone_verifications portone_verifications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.portone_verifications
+    ADD CONSTRAINT portone_verifications_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: price_snapshots price_snapshots_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.price_snapshots
+    ADD CONSTRAINT price_snapshots_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: processing_queue processing_queue_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.processing_queue
+    ADD CONSTRAINT processing_queue_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: program_trading program_trading_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.program_trading
+    ADD CONSTRAINT program_trading_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: quant_scores quant_scores_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.quant_scores
+    ADD CONSTRAINT quant_scores_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: quant_scores quant_scores_result_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.quant_scores
+    ADD CONSTRAINT quant_scores_result_id_key UNIQUE (result_id);
+
+
+--
+-- Name: raw_documents raw_documents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.raw_documents
+    ADD CONSTRAINT raw_documents_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: raw_documents raw_documents_source_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.raw_documents
+    ADD CONSTRAINT raw_documents_source_hash_key UNIQUE (source_hash);
+
+
+--
+-- Name: report_issuances report_issuances_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.report_issuances
+    ADD CONSTRAINT report_issuances_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: report_raw_details report_raw_details_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.report_raw_details
+    ADD CONSTRAINT report_raw_details_pkey PRIMARY KEY (raw_document_id);
+
+
+--
+-- Name: report_raw report_raw_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.report_raw
+    ADD CONSTRAINT report_raw_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: report_signal report_signal_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.report_signal
+    ADD CONSTRAINT report_signal_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: report_valuation_facts report_valuation_facts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.report_valuation_facts
+    ADD CONSTRAINT report_valuation_facts_pkey PRIMARY KEY (raw_document_id);
+
+
+--
+-- Name: schema_migrations schema_migrations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.schema_migrations
+    ADD CONSTRAINT schema_migrations_pkey PRIMARY KEY (filename);
+
+
+--
+-- Name: score_history score_history_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.score_history
+    ADD CONSTRAINT score_history_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: signal_events signal_events_event_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.signal_events
+    ADD CONSTRAINT signal_events_event_hash_key UNIQUE (event_hash);
+
+
+--
+-- Name: signal_events signal_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.signal_events
+    ADD CONSTRAINT signal_events_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: signal_journals signal_journals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.signal_journals
+    ADD CONSTRAINT signal_journals_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: signal_metrics signal_metrics_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.signal_metrics
+    ADD CONSTRAINT signal_metrics_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: signal_subscriptions signal_subscriptions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.signal_subscriptions
+    ADD CONSTRAINT signal_subscriptions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: social_accounts social_accounts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.social_accounts
+    ADD CONSTRAINT social_accounts_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: source_documents source_documents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.source_documents
+    ADD CONSTRAINT source_documents_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: source_documents source_documents_raw_document_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.source_documents
+    ADD CONSTRAINT source_documents_raw_document_id_key UNIQUE (raw_document_id);
+
+
+--
+-- Name: stocks stocks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.stocks
+    ADD CONSTRAINT stocks_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: stocks stocks_ticker_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.stocks
+    ADD CONSTRAINT stocks_ticker_key UNIQUE (ticker);
+
+
+--
+-- Name: subscription_plans subscription_plans_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.subscription_plans
+    ADD CONSTRAINT subscription_plans_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: subscription_plans subscription_plans_plan_type_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.subscription_plans
+    ADD CONSTRAINT subscription_plans_plan_type_key UNIQUE (plan_type);
+
+
+--
+-- Name: ta_scores ta_scores_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ta_scores
+    ADD CONSTRAINT ta_scores_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: ta_scores ta_scores_result_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ta_scores
+    ADD CONSTRAINT ta_scores_result_id_key UNIQUE (result_id);
+
+
+--
+-- Name: terms_agreements terms_agreements_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.terms_agreements
+    ADD CONSTRAINT terms_agreements_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: agent_results uq_agent_result_method; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_results
+    ADD CONSTRAINT uq_agent_result_method UNIQUE (result_id, debate_method);
+
+
+--
+-- Name: analysis_results uq_analysis; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.analysis_results
+    ADD CONSTRAINT uq_analysis UNIQUE (stock_id, analysis_date, analysis_mode, run_key, version);
+
+
+--
+-- Name: dart_corp_codes uq_dart_corp_ticker; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dart_corp_codes
+    ADD CONSTRAINT uq_dart_corp_ticker UNIQUE (ticker);
+
+
+--
+-- Name: datalab_raw_details uq_datalab; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.datalab_raw_details
+    ADD CONSTRAINT uq_datalab UNIQUE (category_id, keyword, observed_date, period_type, device, gender, age_group);
+
+
+--
+-- Name: datalab_raw_documents uq_datalab_raw_doc; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.datalab_raw_documents
+    ADD CONSTRAINT uq_datalab_raw_doc UNIQUE (source_name, external_id);
+
+
+--
+-- Name: final_signals uq_final_signal_version; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.final_signals
+    ADD CONSTRAINT uq_final_signal_version UNIQUE (stock_id, signal_date, run_key, version);
+
+
+--
+-- Name: fundamentals uq_fundamentals; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fundamentals
+    ADD CONSTRAINT uq_fundamentals UNIQUE (stock_id, fiscal_date, period_type);
+
+
+--
+-- Name: fx_rates uq_fx_rates; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fx_rates
+    ADD CONSTRAINT uq_fx_rates UNIQUE (pair, trade_date);
+
+
+--
+-- Name: hiring_baseline uq_hiring_baseline_stock; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hiring_baseline
+    ADD CONSTRAINT uq_hiring_baseline_stock UNIQUE (stock_id);
+
+
+--
+-- Name: hiring_portal_company_ids uq_hiring_portal_company_ids; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hiring_portal_company_ids
+    ADD CONSTRAINT uq_hiring_portal_company_ids UNIQUE (stock_id, portal);
+
+
+--
+-- Name: hiring_search_trend uq_hiring_search_trend_stock_date; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hiring_search_trend
+    ADD CONSTRAINT uq_hiring_search_trend_stock_date UNIQUE (stock_id, period_date);
+
+
+--
+-- Name: meta_signals uq_meta_signal; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.meta_signals
+    ADD CONSTRAINT uq_meta_signal UNIQUE (stock_id, run_key, asof_date, horizon);
+
+
+--
+-- Name: ml_inferences uq_ml_inference; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ml_inferences
+    ADD CONSTRAINT uq_ml_inference UNIQUE (stock_id, run_key, asof_date, model_name, horizon);
+
+
+--
+-- Name: ohlcv_data uq_ohlcv; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ohlcv_data
+    ADD CONSTRAINT uq_ohlcv UNIQUE (stock_id, trade_date);
+
+
+--
+-- Name: dart_ownership_events uq_ownership_event; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dart_ownership_events
+    ADD CONSTRAINT uq_ownership_event UNIQUE (corp_code, rcept_no, holder_name, holder_type, line_seq);
+
+
+--
+-- Name: price_snapshots uq_price_snapshot; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.price_snapshots
+    ADD CONSTRAINT uq_price_snapshot UNIQUE (stock_id, captured_at);
+
+
+--
+-- Name: program_trading uq_program_trading; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.program_trading
+    ADD CONSTRAINT uq_program_trading UNIQUE (stock_id, trade_date);
+
+
+--
+-- Name: raw_documents uq_raw_document; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.raw_documents
+    ADD CONSTRAINT uq_raw_document UNIQUE (source_type, external_id);
+
+
+--
+-- Name: raw_documents uq_raw_document_stock; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.raw_documents
+    ADD CONSTRAINT uq_raw_document_stock UNIQUE (id, stock_id);
+
+
+--
+-- Name: user_signal_reads uq_read; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_signal_reads
+    ADD CONSTRAINT uq_read UNIQUE (user_id, final_signal_id);
+
+
+--
+-- Name: report_issuances uq_report_issuance; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.report_issuances
+    ADD CONSTRAINT uq_report_issuance UNIQUE (user_id, final_signal_id);
+
+
+--
+-- Name: report_raw uq_report_raw; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.report_raw
+    ADD CONSTRAINT uq_report_raw UNIQUE (firm, date, stock_code);
+
+
+--
+-- Name: signal_metrics uq_signal_metric; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.signal_metrics
+    ADD CONSTRAINT uq_signal_metric UNIQUE (signal_event_id, metric_name);
+
+
+--
+-- Name: social_accounts uq_social; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.social_accounts
+    ADD CONSTRAINT uq_social UNIQUE (provider, provider_user_id);
+
+
+--
+-- Name: terms_agreements uq_terms_agreement; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.terms_agreements
+    ADD CONSTRAINT uq_terms_agreement UNIQUE (user_id, terms_type, version);
+
+
+--
+-- Name: watchlists uq_watchlist; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.watchlists
+    ADD CONSTRAINT uq_watchlist UNIQUE (user_id, stock_id);
+
+
+--
+-- Name: user_sessions user_sessions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_sessions
+    ADD CONSTRAINT user_sessions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: user_sessions user_sessions_refresh_token_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_sessions
+    ADD CONSTRAINT user_sessions_refresh_token_hash_key UNIQUE (refresh_token_hash);
+
+
+--
+-- Name: user_signal_reads user_signal_reads_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_signal_reads
+    ADD CONSTRAINT user_signal_reads_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: users users_email_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_email_key UNIQUE (email);
+
+
+--
+-- Name: users users_member_code_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_member_code_key UNIQUE (member_code);
+
+
+--
+-- Name: users users_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: validation_logs validation_logs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.validation_logs
+    ADD CONSTRAINT validation_logs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: watchlists watchlists_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.watchlists
+    ADD CONSTRAINT watchlists_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: xgb_model_versions xgb_model_versions_model_version_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.xgb_model_versions
+    ADD CONSTRAINT xgb_model_versions_model_version_key UNIQUE (model_version);
+
+
+--
+-- Name: xgb_model_versions xgb_model_versions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.xgb_model_versions
+    ADD CONSTRAINT xgb_model_versions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: idx_admin_accounts_email; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_admin_accounts_email ON public.admin_accounts USING btree (email);
+
+
+--
+-- Name: idx_admin_accounts_is_active; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_admin_accounts_is_active ON public.admin_accounts USING btree (is_active);
+
+
+--
+-- Name: idx_admin_sessions_admin; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_admin_sessions_admin ON public.admin_sessions USING btree (admin_id);
+
+
+--
+-- Name: idx_admin_sessions_expires_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_admin_sessions_expires_at ON public.admin_sessions USING btree (expires_at);
+
+
+--
+-- Name: idx_admin_sessions_token; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_admin_sessions_token ON public.admin_sessions USING btree (session_token);
+
+
+--
+-- Name: idx_agent_method; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_agent_method ON public.agent_results USING btree (result_id, debate_method);
+
+
+--
+-- Name: idx_agent_result_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_agent_result_id ON public.agent_results USING btree (result_id);
+
+
+--
+-- Name: idx_agent_source_signal_event_ids; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_agent_source_signal_event_ids ON public.agent_results USING gin (source_signal_event_ids);
+
+
+--
+-- Name: idx_analysis_run_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_analysis_run_key ON public.analysis_results USING btree (stock_id, analysis_date DESC, run_key);
+
+
+--
+-- Name: idx_analysis_signal_events; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_analysis_signal_events ON public.analysis_results USING gin (source_signal_event_ids);
+
+
+--
+-- Name: idx_analysis_stock_date; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_analysis_stock_date ON public.analysis_results USING btree (stock_id, analysis_date DESC);
+
+
+--
+-- Name: idx_collector_runs_status; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_collector_runs_status ON public.collector_runs USING btree (status, started_at DESC) WHERE ((status)::text <> 'success'::text);
+
+
+--
+-- Name: idx_collector_runs_type_time; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_collector_runs_type_time ON public.collector_runs USING btree (collector_type, started_at DESC);
+
+
+--
+-- Name: idx_dart_collection_states_end_de; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_dart_collection_states_end_de ON public.dart_collection_states USING btree (last_end_de DESC);
+
+
+--
+-- Name: idx_dart_corp_codes_stock; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_dart_corp_codes_stock ON public.dart_corp_codes USING btree (stock_id) WHERE (stock_id IS NOT NULL);
+
+
+--
+-- Name: idx_dart_corp_codes_ticker; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_dart_corp_codes_ticker ON public.dart_corp_codes USING btree (ticker);
+
+
+--
+-- Name: idx_dart_employee_corp_year; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_dart_employee_corp_year ON public.dart_employee_stats USING btree (corp_code, bsns_year);
+
+
+--
+-- Name: idx_dart_employee_stock; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_dart_employee_stock ON public.dart_employee_stats USING btree (stock_id) WHERE (stock_id IS NOT NULL);
+
+
+--
+-- Name: idx_dart_fin_facts_account; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_dart_fin_facts_account ON public.dart_financial_facts USING btree (account_id);
+
+
+--
+-- Name: idx_dart_fin_facts_corp_year; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_dart_fin_facts_corp_year ON public.dart_financial_facts USING btree (corp_code, bsns_year);
+
+
+--
+-- Name: idx_dart_fin_facts_stock; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_dart_fin_facts_stock ON public.dart_financial_facts USING btree (stock_id) WHERE (stock_id IS NOT NULL);
+
+
+--
+-- Name: idx_dart_ownership_corp_date; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_dart_ownership_corp_date ON public.dart_ownership_events USING btree (corp_code, report_date);
+
+
+--
+-- Name: idx_dart_ownership_holder_type; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_dart_ownership_holder_type ON public.dart_ownership_events USING btree (holder_type);
+
+
+--
+-- Name: idx_dart_ownership_stock; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_dart_ownership_stock ON public.dart_ownership_events USING btree (stock_id) WHERE (stock_id IS NOT NULL);
+
+
+--
+-- Name: idx_dart_priority; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_dart_priority ON public.dart_raw_details USING btree (priority);
+
+
+--
+-- Name: idx_dart_stock; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_dart_stock ON public.dart_raw_details USING btree (stock_id);
+
+
+--
+-- Name: idx_dart_type; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_dart_type ON public.dart_raw_details USING btree (disclosure_type);
+
+
+--
+-- Name: idx_datalab_cat_stocks_stock; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_datalab_cat_stocks_stock ON public.datalab_category_stocks USING btree (stock_id);
+
+
+--
+-- Name: idx_datalab_categories_active; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_datalab_categories_active ON public.datalab_categories USING btree (is_active) WHERE (is_active = true);
+
+
+--
+-- Name: idx_datalab_category_date; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_datalab_category_date ON public.datalab_raw_details USING btree (category_id, observed_date DESC);
+
+
+--
+-- Name: idx_datalab_category_keywords_active; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_datalab_category_keywords_active ON public.datalab_category_keywords USING btree (category_id, is_active) WHERE (is_active = true);
+
+
+--
+-- Name: idx_datalab_category_keywords_pending; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_datalab_category_keywords_pending ON public.datalab_category_keywords USING btree (category_id) WHERE ((review_status)::text = 'pending'::text);
+
+
+--
+-- Name: idx_datalab_raw_doc_category; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_datalab_raw_doc_category ON public.datalab_raw_documents USING btree (category_id, published_at DESC);
+
+
+--
+-- Name: idx_datalab_raw_doc_run; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_datalab_raw_doc_run ON public.datalab_raw_documents USING btree (collector_run_id) WHERE (collector_run_id IS NOT NULL);
+
+
+--
+-- Name: idx_datalab_spike; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_datalab_spike ON public.datalab_raw_details USING btree (category_id, is_spike) WHERE (is_spike = true);
+
+
+--
+-- Name: idx_dead_letter_task_type; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_dead_letter_task_type ON public.dead_letter USING btree (task_type, archived_at DESC);
+
+
+--
+-- Name: idx_dead_letter_unreplayed; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_dead_letter_unreplayed ON public.dead_letter USING btree (archived_at DESC) WHERE (replayed_at IS NULL);
+
+
+--
+-- Name: idx_final_published; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_final_published ON public.final_signals USING btree (is_published, published_at DESC) WHERE (is_published = true);
+
+
+--
+-- Name: idx_final_run_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_final_run_key ON public.final_signals USING btree (stock_id, signal_date DESC, run_key);
+
+
+--
+-- Name: idx_final_stock_date; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_final_stock_date ON public.final_signals USING btree (stock_id, signal_date DESC);
+
+
+--
+-- Name: idx_fx_rates_date; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_fx_rates_date ON public.fx_rates USING btree (trade_date);
+
+
+--
+-- Name: idx_hiring_baseline_stock; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_hiring_baseline_stock ON public.hiring_baseline USING btree (stock_id);
+
+
+--
+-- Name: idx_hiring_change; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_hiring_change ON public.hiring_raw_details USING btree (stock_id, change_pct DESC);
+
+
+--
+-- Name: idx_hiring_function_stocks_stock; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_hiring_function_stocks_stock ON public.hiring_job_function_stocks USING btree (stock_id);
+
+
+--
+-- Name: idx_hiring_observed; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_hiring_observed ON public.hiring_raw_details USING btree (stock_id, observed_date DESC);
+
+
+--
+-- Name: idx_hiring_ocr_pending; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_hiring_ocr_pending ON public.hiring_raw_details USING btree (raw_document_id DESC) WHERE ((ocr_status)::text = 'pending'::text);
+
+
+--
+-- Name: idx_hiring_quarantine_label; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_hiring_quarantine_label ON public.hiring_quarantine USING btree (source_label, created_at DESC);
+
+
+--
+-- Name: idx_hiring_quarantine_unreplayed; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_hiring_quarantine_unreplayed ON public.hiring_quarantine USING btree (created_at DESC) WHERE (replayed_at IS NULL);
+
+
+--
+-- Name: idx_hiring_signals_spike; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_hiring_signals_spike ON public.hiring_signals USING btree (observed_date DESC) WHERE (is_spike = true);
+
+
+--
+-- Name: idx_hiring_signals_stock_date; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_hiring_signals_stock_date ON public.hiring_signals USING btree (stock_id, observed_date DESC);
+
+
+--
+-- Name: idx_hiring_sources_active; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_hiring_sources_active ON public.hiring_sources USING btree (stock_id) WHERE (is_active = true);
+
+
+--
+-- Name: idx_hiring_stock_keyword; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_hiring_stock_keyword ON public.hiring_raw_details USING btree (stock_id, keyword);
+
+
+--
+-- Name: idx_meta_signals_stock_asof; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_meta_signals_stock_asof ON public.meta_signals USING btree (stock_id, asof_date DESC);
+
+
+--
+-- Name: idx_ml_inferences_stock_asof; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_ml_inferences_stock_asof ON public.ml_inferences USING btree (stock_id, asof_date DESC);
+
+
+--
+-- Name: idx_ohlcv_stock_date; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_ohlcv_stock_date ON public.ohlcv_data USING btree (stock_id, trade_date DESC);
+
+
+--
+-- Name: idx_patent_llm_pending; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_patent_llm_pending ON public.patent_raw_details USING btree (application_date DESC, raw_document_id DESC) WHERE ((llm_status)::text = 'pending'::text);
+
+
+--
+-- Name: idx_patent_new_category; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_patent_new_category ON public.patent_raw_details USING btree (stock_id, is_new_category) WHERE (is_new_category = true);
+
+
+--
+-- Name: idx_patent_stock_date; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_patent_stock_date ON public.patent_raw_details USING btree (stock_id, application_date DESC);
+
+
+--
+-- Name: idx_patent_stock_tech; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_patent_stock_tech ON public.patent_raw_details USING btree (stock_id, tech_category);
+
+
+--
+-- Name: idx_portone_verifications_merchant_uid; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_portone_verifications_merchant_uid ON public.portone_verifications USING btree (merchant_uid);
+
+
+--
+-- Name: idx_portone_verifications_user_created; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_portone_verifications_user_created ON public.portone_verifications USING btree (user_id, created_at DESC);
+
+
+--
+-- Name: idx_price_snapshots_stock_time; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_price_snapshots_stock_time ON public.price_snapshots USING btree (stock_id, captured_at DESC);
+
+
+--
+-- Name: idx_price_snapshots_trade_date; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_price_snapshots_trade_date ON public.price_snapshots USING btree (trade_date);
+
+
+--
+-- Name: idx_program_trading_stock_date; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_program_trading_stock_date ON public.program_trading USING btree (stock_id, trade_date);
+
+
+--
+-- Name: idx_queue_analysis_result_ids; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_queue_analysis_result_ids ON public.processing_queue USING gin (source_analysis_result_ids);
+
+
+--
+-- Name: idx_queue_immediate; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_queue_immediate ON public.processing_queue USING btree (stock_id, scheduled_at) WHERE (((priority)::text = 'immediate'::text) AND ((status)::text = 'pending'::text));
+
+
+--
+-- Name: idx_queue_pending; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_queue_pending ON public.processing_queue USING btree (task_type, priority, scheduled_at) WHERE ((status)::text = ANY ((ARRAY['pending'::character varying, 'retrying'::character varying])::text[]));
+
+
+--
+-- Name: idx_queue_raw_ids; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_queue_raw_ids ON public.processing_queue USING gin (source_raw_ids);
+
+
+--
+-- Name: idx_queue_signal_event_ids; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_queue_signal_event_ids ON public.processing_queue USING gin (source_signal_event_ids);
+
+
+--
+-- Name: idx_queue_type_status; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_queue_type_status ON public.processing_queue USING btree (task_type, status);
+
+
+--
+-- Name: idx_raw_doc_collect_fail; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_raw_doc_collect_fail ON public.raw_documents USING btree (collect_status, created_at DESC) WHERE ((collect_status)::text <> 'success'::text);
+
+
+--
+-- Name: idx_raw_doc_run; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_raw_doc_run ON public.raw_documents USING btree (collector_run_id) WHERE (collector_run_id IS NOT NULL);
+
+
+--
+-- Name: idx_raw_doc_stock_source; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_raw_doc_stock_source ON public.raw_documents USING btree (stock_id, source_type, published_at DESC);
+
+
+--
+-- Name: idx_report_detail_firm; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_report_detail_firm ON public.report_raw_details USING btree (securities_firm, stock_id);
+
+
+--
+-- Name: idx_report_detail_stock; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_report_detail_stock ON public.report_raw_details USING btree (stock_id, publish_date DESC);
+
+
+--
+-- Name: idx_report_issuances_user; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_report_issuances_user ON public.report_issuances USING btree (user_id, issued_at DESC);
+
+
+--
+-- Name: idx_report_issuances_user_stock; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_report_issuances_user_stock ON public.report_issuances USING btree (user_id, stock_id, issued_at DESC);
+
+
+--
+-- Name: idx_report_issuances_user_via; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_report_issuances_user_via ON public.report_issuances USING btree (user_id, issued_via);
+
+
+--
+-- Name: idx_report_raw_stock; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_report_raw_stock ON public.report_raw USING btree (stock_code);
+
+
+--
+-- Name: idx_report_signal_stock; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_report_signal_stock ON public.report_signal USING btree (stock_code);
+
+
+--
+-- Name: idx_report_valuation_methodology; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_report_valuation_methodology ON public.report_valuation_facts USING btree (methodology, stock_id);
+
+
+--
+-- Name: idx_report_valuation_needs_review; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_report_valuation_needs_review ON public.report_valuation_facts USING btree (needs_review, stock_id) WHERE (needs_review = true);
+
+
+--
+-- Name: idx_report_valuation_stock_publish; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_report_valuation_stock_publish ON public.report_valuation_facts USING btree (stock_id, publish_date DESC);
+
+
+--
+-- Name: idx_score_history_final_signal; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_score_history_final_signal ON public.score_history USING btree (final_signal_id) WHERE (final_signal_id IS NOT NULL);
+
+
+--
+-- Name: idx_score_history_stock; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_score_history_stock ON public.score_history USING btree (stock_id, signal_date DESC, scored_at DESC);
+
+
+--
+-- Name: idx_signal_journals_final_signal; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_signal_journals_final_signal ON public.signal_journals USING btree (final_signal_id) WHERE (final_signal_id IS NOT NULL);
+
+
+--
+-- Name: idx_signal_journals_stock_created; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_signal_journals_stock_created ON public.signal_journals USING btree (stock_id, created_at DESC);
+
+
+--
+-- Name: idx_signal_journals_user_created; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_signal_journals_user_created ON public.signal_journals USING btree (user_id, created_at DESC);
+
+
+--
+-- Name: idx_social_accounts_user; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_social_accounts_user ON public.social_accounts USING btree (user_id);
+
+
+--
+-- Name: idx_source_doc_stock; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_source_doc_stock ON public.source_documents USING btree (stock_id, source_type, published_at DESC);
+
+
+--
+-- Name: idx_stocks_is_target; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_stocks_is_target ON public.stocks USING btree (is_target) WHERE (is_target = true);
+
+
+--
+-- Name: idx_subscription_active; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_subscription_active ON public.signal_subscriptions USING btree (user_id) WHERE ((status)::text = 'active'::text);
+
+
+--
+-- Name: idx_terms_agreements_user_agreed_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_terms_agreements_user_agreed_at ON public.terms_agreements USING btree (user_id, agreed_at DESC);
+
+
+--
+-- Name: idx_user_sessions_expires_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_user_sessions_expires_at ON public.user_sessions USING btree (expires_at);
+
+
+--
+-- Name: idx_user_sessions_user; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_user_sessions_user ON public.user_sessions USING btree (user_id, created_at DESC);
+
+
+--
+-- Name: idx_user_signal_reads_final_signal; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_user_signal_reads_final_signal ON public.user_signal_reads USING btree (final_signal_id);
+
+
+--
+-- Name: idx_user_signal_reads_user_read_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_user_signal_reads_user_read_at ON public.user_signal_reads USING btree (user_id, read_at DESC);
+
+
+--
+-- Name: idx_watchlists_stock; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_watchlists_stock ON public.watchlists USING btree (stock_id);
+
+
+--
+-- Name: idx_watchlists_user; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_watchlists_user ON public.watchlists USING btree (user_id);
+
+
+--
+-- Name: idx_xgb_active; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_xgb_active ON public.xgb_model_versions USING btree (is_active) WHERE (is_active = true);
+
+
+--
+-- Name: uq_dart_collection_states_ticker; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_dart_collection_states_ticker ON public.dart_collection_states USING btree (ticker);
+
+
+--
+-- Name: uq_dart_fin_fact; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_dart_fin_fact ON public.dart_financial_facts USING btree (corp_code, bsns_year, reprt_code, fs_div, sj_div, COALESCE(account_id, account_nm));
+
+
+--
+-- Name: uq_employee_stats; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_employee_stats ON public.dart_employee_stats USING btree (corp_code, bsns_year, reprt_code, COALESCE(segment, ''::character varying), COALESCE(sex, ''::character varying), line_seq);
+
+
+--
+-- Name: uq_final_signal_current; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_final_signal_current ON public.final_signals USING btree (stock_id, signal_date, run_key) WHERE (is_current = true);
+
+
+--
+-- Name: uq_source_doc_external; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_source_doc_external ON public.source_documents USING btree (external_ref_type, external_ref_id, stock_id) WHERE (external_ref_type IS NOT NULL);
+
+
+--
+-- Name: uq_users_phone_active; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_users_phone_active ON public.users USING btree (phone) WHERE ((phone IS NOT NULL) AND (deleted_at IS NULL));
+
+
+--
+-- Name: dart_collection_states trg_dart_collection_states_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_dart_collection_states_updated_at BEFORE UPDATE ON public.dart_collection_states FOR EACH ROW EXECUTE FUNCTION public.update_updated_at();
+
+
+--
+-- Name: dart_corp_codes trg_dart_corp_codes_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_dart_corp_codes_updated_at BEFORE UPDATE ON public.dart_corp_codes FOR EACH ROW EXECUTE FUNCTION public.update_updated_at();
+
+
+--
+-- Name: datalab_categories trg_datalab_categories_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_datalab_categories_updated_at BEFORE UPDATE ON public.datalab_categories FOR EACH ROW EXECUTE FUNCTION public.update_updated_at();
+
+
+--
+-- Name: datalab_category_keywords trg_datalab_category_keywords_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_datalab_category_keywords_updated_at BEFORE UPDATE ON public.datalab_category_keywords FOR EACH ROW EXECUTE FUNCTION public.update_updated_at();
+
+
+--
+-- Name: final_signals trg_final_signal_current; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_final_signal_current BEFORE INSERT OR UPDATE OF is_current, stock_id, signal_date, run_key ON public.final_signals FOR EACH ROW EXECUTE FUNCTION public.set_final_signal_current();
+
+
+--
+-- Name: hiring_baseline trg_hiring_baseline_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_hiring_baseline_updated_at BEFORE UPDATE ON public.hiring_baseline FOR EACH ROW EXECUTE FUNCTION public.update_updated_at();
+
+
+--
+-- Name: hiring_job_functions trg_hiring_job_functions_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_hiring_job_functions_updated_at BEFORE UPDATE ON public.hiring_job_functions FOR EACH ROW EXECUTE FUNCTION public.update_updated_at();
+
+
+--
+-- Name: processing_queue trg_processing_queue_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_processing_queue_updated_at BEFORE UPDATE ON public.processing_queue FOR EACH ROW EXECUTE FUNCTION public.update_updated_at();
+
+
+--
+-- Name: report_valuation_facts trg_report_valuation_facts_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_report_valuation_facts_updated_at BEFORE UPDATE ON public.report_valuation_facts FOR EACH ROW EXECUTE FUNCTION public.update_updated_at();
+
+
+--
+-- Name: signal_journals trg_signal_journals_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_signal_journals_updated_at BEFORE UPDATE ON public.signal_journals FOR EACH ROW EXECUTE FUNCTION public.update_updated_at();
+
+
+--
+-- Name: signal_subscriptions trg_signal_subscriptions_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_signal_subscriptions_updated_at BEFORE UPDATE ON public.signal_subscriptions FOR EACH ROW EXECUTE FUNCTION public.update_updated_at();
+
+
+--
+-- Name: stocks trg_stocks_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_stocks_updated_at BEFORE UPDATE ON public.stocks FOR EACH ROW EXECUTE FUNCTION public.update_updated_at();
+
+
+--
+-- Name: admin_sessions admin_sessions_admin_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.admin_sessions
+    ADD CONSTRAINT admin_sessions_admin_id_fkey FOREIGN KEY (admin_id) REFERENCES public.admin_accounts(id);
+
+
+--
+-- Name: agent_results agent_results_result_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_results
+    ADD CONSTRAINT agent_results_result_id_fkey FOREIGN KEY (result_id) REFERENCES public.analysis_results(id);
+
+
+--
+-- Name: agent_results agent_results_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_results
+    ADD CONSTRAINT agent_results_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
+
+
+--
+-- Name: ai_scores ai_scores_result_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ai_scores
+    ADD CONSTRAINT ai_scores_result_id_fkey FOREIGN KEY (result_id) REFERENCES public.analysis_results(id);
+
+
+--
+-- Name: ai_scores ai_scores_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ai_scores
+    ADD CONSTRAINT ai_scores_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
+
+
+--
+-- Name: analysis_requests analysis_requests_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.analysis_requests
+    ADD CONSTRAINT analysis_requests_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
+
+
+--
+-- Name: analysis_requests analysis_requests_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.analysis_requests
+    ADD CONSTRAINT analysis_requests_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id);
+
+
+--
+-- Name: analysis_results analysis_results_request_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.analysis_results
+    ADD CONSTRAINT analysis_results_request_id_fkey FOREIGN KEY (request_id) REFERENCES public.analysis_requests(id);
+
+
+--
+-- Name: analysis_results analysis_results_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.analysis_results
+    ADD CONSTRAINT analysis_results_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
+
+
+--
+-- Name: backtest_results backtest_results_final_signal_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.backtest_results
+    ADD CONSTRAINT backtest_results_final_signal_id_fkey FOREIGN KEY (final_signal_id) REFERENCES public.final_signals(id);
+
+
+--
+-- Name: backtest_results backtest_results_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.backtest_results
+    ADD CONSTRAINT backtest_results_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
+
+
+--
+-- Name: dart_collection_states dart_collection_states_last_collector_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dart_collection_states
+    ADD CONSTRAINT dart_collection_states_last_collector_run_id_fkey FOREIGN KEY (last_collector_run_id) REFERENCES public.collector_runs(id);
+
+
+--
+-- Name: dart_collection_states dart_collection_states_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dart_collection_states
+    ADD CONSTRAINT dart_collection_states_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id) ON DELETE CASCADE;
+
+
+--
+-- Name: dart_corp_codes dart_corp_codes_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dart_corp_codes
+    ADD CONSTRAINT dart_corp_codes_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
+
+
+--
+-- Name: dart_employee_stats dart_employee_stats_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dart_employee_stats
+    ADD CONSTRAINT dart_employee_stats_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
+
+
+--
+-- Name: dart_financial_facts dart_financial_facts_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dart_financial_facts
+    ADD CONSTRAINT dart_financial_facts_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
+
+
+--
+-- Name: dart_ownership_events dart_ownership_events_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dart_ownership_events
+    ADD CONSTRAINT dart_ownership_events_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
+
+
+--
+-- Name: dart_raw_details dart_raw_details_raw_document_id_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dart_raw_details
+    ADD CONSTRAINT dart_raw_details_raw_document_id_stock_id_fkey FOREIGN KEY (raw_document_id, stock_id) REFERENCES public.raw_documents(id, stock_id) ON DELETE CASCADE;
+
+
+--
+-- Name: datalab_category_keywords datalab_category_keywords_category_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.datalab_category_keywords
+    ADD CONSTRAINT datalab_category_keywords_category_id_fkey FOREIGN KEY (category_id) REFERENCES public.datalab_categories(id) ON DELETE CASCADE;
+
+
+--
+-- Name: datalab_category_stocks datalab_category_stocks_category_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.datalab_category_stocks
+    ADD CONSTRAINT datalab_category_stocks_category_id_fkey FOREIGN KEY (category_id) REFERENCES public.datalab_categories(id) ON DELETE CASCADE;
+
+
+--
+-- Name: datalab_category_stocks datalab_category_stocks_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.datalab_category_stocks
+    ADD CONSTRAINT datalab_category_stocks_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
+
+
+--
+-- Name: datalab_raw_details datalab_raw_details_category_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.datalab_raw_details
+    ADD CONSTRAINT datalab_raw_details_category_id_fkey FOREIGN KEY (category_id) REFERENCES public.datalab_categories(id);
+
+
+--
+-- Name: datalab_raw_details datalab_raw_details_raw_document_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.datalab_raw_details
+    ADD CONSTRAINT datalab_raw_details_raw_document_id_fkey FOREIGN KEY (raw_document_id) REFERENCES public.datalab_raw_documents(id) ON DELETE CASCADE;
+
+
+--
+-- Name: datalab_raw_documents datalab_raw_documents_category_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.datalab_raw_documents
+    ADD CONSTRAINT datalab_raw_documents_category_id_fkey FOREIGN KEY (category_id) REFERENCES public.datalab_categories(id);
+
+
+--
+-- Name: datalab_raw_documents datalab_raw_documents_collector_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.datalab_raw_documents
+    ADD CONSTRAINT datalab_raw_documents_collector_run_id_fkey FOREIGN KEY (collector_run_id) REFERENCES public.collector_runs(id);
+
+
+--
+-- Name: dead_letter dead_letter_processing_queue_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dead_letter
+    ADD CONSTRAINT dead_letter_processing_queue_id_fkey FOREIGN KEY (processing_queue_id) REFERENCES public.processing_queue(id);
+
+
+--
+-- Name: dead_letter dead_letter_replayed_task_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dead_letter
+    ADD CONSTRAINT dead_letter_replayed_task_id_fkey FOREIGN KEY (replayed_task_id) REFERENCES public.processing_queue(id);
+
+
+--
+-- Name: dead_letter dead_letter_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dead_letter
+    ADD CONSTRAINT dead_letter_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
+
+
+--
+-- Name: final_signals final_signals_analysis_result_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.final_signals
+    ADD CONSTRAINT final_signals_analysis_result_id_fkey FOREIGN KEY (analysis_result_id) REFERENCES public.analysis_results(id);
+
+
+--
+-- Name: final_signals final_signals_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.final_signals
+    ADD CONSTRAINT final_signals_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
+
+
+--
+-- Name: fundamentals fundamentals_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fundamentals
+    ADD CONSTRAINT fundamentals_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
+
+
+--
+-- Name: hiring_baseline hiring_baseline_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hiring_baseline
+    ADD CONSTRAINT hiring_baseline_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id) ON DELETE CASCADE;
+
+
+--
+-- Name: hiring_job_function_stocks hiring_job_function_stocks_job_function_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hiring_job_function_stocks
+    ADD CONSTRAINT hiring_job_function_stocks_job_function_id_fkey FOREIGN KEY (job_function_id) REFERENCES public.hiring_job_functions(id) ON DELETE CASCADE;
+
+
+--
+-- Name: hiring_job_function_stocks hiring_job_function_stocks_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hiring_job_function_stocks
+    ADD CONSTRAINT hiring_job_function_stocks_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
+
+
+--
+-- Name: hiring_portal_company_ids hiring_portal_company_ids_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hiring_portal_company_ids
+    ADD CONSTRAINT hiring_portal_company_ids_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
+
+
+--
+-- Name: hiring_quarantine hiring_quarantine_collector_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hiring_quarantine
+    ADD CONSTRAINT hiring_quarantine_collector_run_id_fkey FOREIGN KEY (collector_run_id) REFERENCES public.collector_runs(id);
+
+
+--
+-- Name: hiring_quarantine hiring_quarantine_replayed_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hiring_quarantine
+    ADD CONSTRAINT hiring_quarantine_replayed_run_id_fkey FOREIGN KEY (replayed_run_id) REFERENCES public.collector_runs(id);
+
+
+--
+-- Name: hiring_raw_details hiring_raw_details_raw_document_id_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hiring_raw_details
+    ADD CONSTRAINT hiring_raw_details_raw_document_id_stock_id_fkey FOREIGN KEY (raw_document_id, stock_id) REFERENCES public.raw_documents(id, stock_id) ON DELETE CASCADE;
+
+
+--
+-- Name: hiring_search_trend hiring_search_trend_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hiring_search_trend
+    ADD CONSTRAINT hiring_search_trend_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
+
+
+--
+-- Name: hiring_signals hiring_signals_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hiring_signals
+    ADD CONSTRAINT hiring_signals_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
+
+
+--
+-- Name: hiring_sources hiring_sources_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hiring_sources
+    ADD CONSTRAINT hiring_sources_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
+
+
+--
+-- Name: meta_signals meta_signals_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.meta_signals
+    ADD CONSTRAINT meta_signals_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
+
+
+--
+-- Name: ml_inferences ml_inferences_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ml_inferences
+    ADD CONSTRAINT ml_inferences_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
+
+
+--
+-- Name: ml_scores ml_scores_model_version_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ml_scores
+    ADD CONSTRAINT ml_scores_model_version_id_fkey FOREIGN KEY (model_version_id) REFERENCES public.xgb_model_versions(id);
+
+
+--
+-- Name: ml_scores ml_scores_result_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ml_scores
+    ADD CONSTRAINT ml_scores_result_id_fkey FOREIGN KEY (result_id) REFERENCES public.analysis_results(id);
+
+
+--
+-- Name: ml_scores ml_scores_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ml_scores
+    ADD CONSTRAINT ml_scores_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
+
+
+--
+-- Name: ohlcv_data ohlcv_data_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ohlcv_data
+    ADD CONSTRAINT ohlcv_data_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
+
+
+--
+-- Name: patent_raw_details patent_raw_details_raw_document_id_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.patent_raw_details
+    ADD CONSTRAINT patent_raw_details_raw_document_id_stock_id_fkey FOREIGN KEY (raw_document_id, stock_id) REFERENCES public.raw_documents(id, stock_id) ON DELETE CASCADE;
+
+
+--
+-- Name: portone_verifications portone_verifications_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.portone_verifications
+    ADD CONSTRAINT portone_verifications_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id);
+
+
+--
+-- Name: price_snapshots price_snapshots_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.price_snapshots
+    ADD CONSTRAINT price_snapshots_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
+
+
+--
+-- Name: processing_queue processing_queue_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.processing_queue
+    ADD CONSTRAINT processing_queue_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
+
+
+--
+-- Name: program_trading program_trading_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.program_trading
+    ADD CONSTRAINT program_trading_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
+
+
+--
+-- Name: quant_scores quant_scores_result_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.quant_scores
+    ADD CONSTRAINT quant_scores_result_id_fkey FOREIGN KEY (result_id) REFERENCES public.analysis_results(id);
+
+
+--
+-- Name: quant_scores quant_scores_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.quant_scores
+    ADD CONSTRAINT quant_scores_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
+
+
+--
+-- Name: raw_documents raw_documents_collector_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.raw_documents
+    ADD CONSTRAINT raw_documents_collector_run_id_fkey FOREIGN KEY (collector_run_id) REFERENCES public.collector_runs(id);
+
+
+--
+-- Name: raw_documents raw_documents_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.raw_documents
+    ADD CONSTRAINT raw_documents_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
+
+
+--
+-- Name: report_issuances report_issuances_final_signal_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.report_issuances
+    ADD CONSTRAINT report_issuances_final_signal_id_fkey FOREIGN KEY (final_signal_id) REFERENCES public.final_signals(id);
+
+
+--
+-- Name: report_issuances report_issuances_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.report_issuances
+    ADD CONSTRAINT report_issuances_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
+
+
+--
+-- Name: report_issuances report_issuances_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.report_issuances
+    ADD CONSTRAINT report_issuances_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+
+
+--
+-- Name: report_raw_details report_raw_details_raw_document_id_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.report_raw_details
+    ADD CONSTRAINT report_raw_details_raw_document_id_stock_id_fkey FOREIGN KEY (raw_document_id, stock_id) REFERENCES public.raw_documents(id, stock_id) ON DELETE CASCADE;
+
+
+--
+-- Name: report_valuation_facts report_valuation_facts_raw_document_id_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.report_valuation_facts
+    ADD CONSTRAINT report_valuation_facts_raw_document_id_stock_id_fkey FOREIGN KEY (raw_document_id, stock_id) REFERENCES public.raw_documents(id, stock_id) ON DELETE CASCADE;
+
+
+--
+-- Name: score_history score_history_analysis_result_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.score_history
+    ADD CONSTRAINT score_history_analysis_result_id_fkey FOREIGN KEY (analysis_result_id) REFERENCES public.analysis_results(id);
+
+
+--
+-- Name: score_history score_history_final_signal_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.score_history
+    ADD CONSTRAINT score_history_final_signal_id_fkey FOREIGN KEY (final_signal_id) REFERENCES public.final_signals(id);
+
+
+--
+-- Name: score_history score_history_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.score_history
+    ADD CONSTRAINT score_history_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
+
+
+--
+-- Name: signal_events signal_events_source_document_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.signal_events
+    ADD CONSTRAINT signal_events_source_document_id_fkey FOREIGN KEY (source_document_id) REFERENCES public.source_documents(id);
+
+
+--
+-- Name: signal_events signal_events_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.signal_events
+    ADD CONSTRAINT signal_events_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
+
+
+--
+-- Name: signal_journals signal_journals_final_signal_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.signal_journals
+    ADD CONSTRAINT signal_journals_final_signal_id_fkey FOREIGN KEY (final_signal_id) REFERENCES public.final_signals(id);
+
+
+--
+-- Name: signal_journals signal_journals_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.signal_journals
+    ADD CONSTRAINT signal_journals_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
+
+
+--
+-- Name: signal_journals signal_journals_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.signal_journals
+    ADD CONSTRAINT signal_journals_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id);
+
+
+--
+-- Name: signal_metrics signal_metrics_signal_event_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.signal_metrics
+    ADD CONSTRAINT signal_metrics_signal_event_id_fkey FOREIGN KEY (signal_event_id) REFERENCES public.signal_events(id) ON DELETE CASCADE;
+
+
+--
+-- Name: signal_subscriptions signal_subscriptions_plan_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.signal_subscriptions
+    ADD CONSTRAINT signal_subscriptions_plan_id_fkey FOREIGN KEY (plan_id) REFERENCES public.subscription_plans(id);
+
+
+--
+-- Name: signal_subscriptions signal_subscriptions_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.signal_subscriptions
+    ADD CONSTRAINT signal_subscriptions_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id);
+
+
+--
+-- Name: social_accounts social_accounts_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.social_accounts
+    ADD CONSTRAINT social_accounts_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+
+
+--
+-- Name: source_documents source_documents_raw_document_id_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.source_documents
+    ADD CONSTRAINT source_documents_raw_document_id_stock_id_fkey FOREIGN KEY (raw_document_id, stock_id) REFERENCES public.raw_documents(id, stock_id) ON DELETE CASCADE;
+
+
+--
+-- Name: ta_scores ta_scores_result_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ta_scores
+    ADD CONSTRAINT ta_scores_result_id_fkey FOREIGN KEY (result_id) REFERENCES public.analysis_results(id);
+
+
+--
+-- Name: ta_scores ta_scores_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ta_scores
+    ADD CONSTRAINT ta_scores_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
+
+
+--
+-- Name: terms_agreements terms_agreements_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.terms_agreements
+    ADD CONSTRAINT terms_agreements_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id);
+
+
+--
+-- Name: user_sessions user_sessions_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_sessions
+    ADD CONSTRAINT user_sessions_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+
+
+--
+-- Name: user_signal_reads user_signal_reads_final_signal_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_signal_reads
+    ADD CONSTRAINT user_signal_reads_final_signal_id_fkey FOREIGN KEY (final_signal_id) REFERENCES public.final_signals(id);
+
+
+--
+-- Name: user_signal_reads user_signal_reads_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_signal_reads
+    ADD CONSTRAINT user_signal_reads_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id);
+
+
+--
+-- Name: watchlists watchlists_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.watchlists
+    ADD CONSTRAINT watchlists_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
+
+
+--
+-- Name: watchlists watchlists_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.watchlists
+    ADD CONSTRAINT watchlists_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id);
+
+
+--
+-- PostgreSQL database dump complete
+--
+
+\unrestrict 60F2EtFMPdNqXELNW0KGf1xmB6tQHU8j5JErwhh1Oh5vYrsoaqU3jXGMiT4Cscn
+

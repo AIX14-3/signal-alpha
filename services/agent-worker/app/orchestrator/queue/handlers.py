@@ -7,11 +7,8 @@ from app.orchestrator.queue.task_types import (
     AGGREGATE_SIGNAL,
     ANALYZE_ALTERNATIVE,
     ANALYZE_DART,
-    ANALYZE_REPORT,
     COLLECT_DART,
     COLLECT_REPORT,
-    EMBED_DART,
-    EMBED_REPORT,
     ENRICH_HIRING,
     ENRICH_PATENT,
     META_COMBINE,
@@ -40,7 +37,6 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
     from app.orchestrator.dart.tasks import (
         DartAnalyzeTaskHandler,
         DartCollectionTaskHandler,
-        DartEmbedTaskHandler,
         DartNormalizeTaskHandler,
     )
     from app.orchestrator.aggregation.tasks import AggregateSignalTaskHandler
@@ -55,15 +51,10 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
     # 보존하되 와이어링하지 않는다 — 끝단 SYNTHESIZE만이 유일한 생성형 LLM이다.
     llm_analyzer = None
     from app.orchestrator.report.tasks import (
-        ReportAnalyzeTaskHandler,
         ReportCollectTaskHandler,
-        ReportEmbedTaskHandler,
         ReportNormalizeTaskHandler,
         ReportProcessTaskHandler,
     )
-    from app.orchestrator.report.llm_wiring import build_report_llm_config
-
-    report_llm_config = build_report_llm_config(settings)
 
     return {
         COLLECT_DART: DartCollectionTaskHandler(
@@ -71,7 +62,6 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
             settings=settings,
         ),
         NORMALIZE_DART: DartNormalizeTaskHandler(connection),
-        EMBED_DART: DartEmbedTaskHandler(connection),
         ANALYZE_DART: DartAnalyzeTaskHandler(
             connection,
             llm_analyzer=llm_analyzer,
@@ -85,16 +75,6 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
         COLLECT_REPORT: ReportCollectTaskHandler(connection=connection, settings=settings),
         PROCESS_REPORT: ReportProcessTaskHandler(connection=connection, settings=settings),
         NORMALIZE_REPORT: ReportNormalizeTaskHandler(connection=connection),
-        EMBED_REPORT: ReportEmbedTaskHandler(connection=connection, settings=settings),
-        ANALYZE_REPORT: ReportAnalyzeTaskHandler(
-            connection=connection,
-            settings=settings,
-            llm_client=report_llm_config.client if report_llm_config else None,
-            llm_model=report_llm_config.model if report_llm_config else None,
-            llm_timeout_seconds=(
-                report_llm_config.timeout_seconds if report_llm_config else settings.report_llm_timeout_seconds
-            ),
-        ),
         # Alternative sources (hiring/patent/datalab) — converged onto the queue.
         NORMALIZE_HIRING: HiringNormalizeTaskHandler(connection),
         NORMALIZE_PATENT: PatentNormalizeTaskHandler(connection),

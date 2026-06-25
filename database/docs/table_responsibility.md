@@ -3,9 +3,8 @@
 | 역할 | 사용하는 테이블 | 규칙 |
 | --- | --- | --- |
 | DART Collector | `collector_runs`, `raw_documents`, `dart_raw_details`, `processing_queue` | LLM 호출 없음 |
-| Report Collector | `collector_runs`, `raw_documents`, `report_raw_details`, `report_chunks`, `processing_queue` | PDF 다운로드 또는 로컬 경로 저장<br>PDF 텍스트 추출<br>`report_chunks.chunk_text` 저장<br>LLM 호출 없음 |
-| Embedding Worker | `report_chunks` | `embedding IS NULL`인 chunk 조회<br>BGE-M3 등 embedding 모델로 벡터 생성<br>`report_chunks.embedding` 업데이트 |
-| Report Analyst | `report_chunks`, `signal_events`, `signal_metrics`, `analysis_results`, `agent_results` | pgvector similarity search 수행<br>검색된 chunk를 근거로 LLM 분석<br>`signal_events`, `signal_metrics`, `analysis_results`, `agent_results` 저장 |
+| Report Collector | `collector_runs`, `raw_documents`, `report_raw_details`, `processing_queue` | PDF 다운로드 또는 로컬 경로 저장<br>PDF 텍스트 추출(`report_raw_details.extracted_text`)<br>LLM 호출 없음 |
+| Report Normalizer | `source_documents`, `signal_events`, `signal_metrics`, `validation_logs` | 파싱 리포트를 canonical 이벤트/메트릭으로 승격 (임베딩/RAG 분석 제거됨) |
 | Hiring Collector | `collector_runs`, `raw_documents`, `hiring_raw_details`, `processing_queue` | `stock_id` 필수 저장 |
 | Patent Collector | `collector_runs`, `raw_documents`, `patent_raw_details`, `processing_queue` | `stock_id` 필수 저장 |
 | DataLab Collector | `collector_runs`, `raw_documents`, `datalab_raw_details`, `processing_queue` | `period_type`, `device`, `gender`, `age_group` 기본값 필수 |
