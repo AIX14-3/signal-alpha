@@ -104,6 +104,12 @@ Modes:
 Useful local variations:
 
 ```powershell
+# Print planned calls without contacting the worker
+.\ops\run_agent_pipeline_schedule.ps1 -Mode All -DryRun
+
+# Check worker health first, then drain queues
+.\ops\run_agent_pipeline_schedule.ps1 -Mode Drain -HealthCheck -MaxRuns 20
+
 # Drain only, useful after manually enqueueing tasks
 .\ops\run_agent_pipeline_schedule.ps1 -Mode Drain -MaxRuns 50
 
@@ -114,7 +120,70 @@ Useful local variations:
 .\ops\run_agent_pipeline_schedule.ps1 -Mode All -SkipDart -ReportDaysBack 14 -ReportMaxPages 50
 ```
 
-## 6. Docker Compose Manual Execution
+## 6. Local Smoke Test
+
+Use this order before adding an OS scheduler.
+
+1. Confirm the script plan without hitting the worker:
+
+```powershell
+cd services/agent-worker
+.\ops\run_agent_pipeline_schedule.ps1 -Mode All -DryRun -MaxRuns 5
+```
+
+Expected:
+
+- Output includes `DRY-RUN POST /internal/schedules/dart/collect`.
+- Output includes `DRY-RUN POST /internal/schedules/report/collect`.
+- Output includes queue calls from `collect_dart` through `risk_veto`.
+
+2. Start local services:
+
+```powershell
+docker compose up -d postgres agent-worker
+```
+
+3. Run a worker health check:
+
+```powershell
+cd services/agent-worker
+.\ops\run_agent_pipeline_schedule.ps1 -Mode Drain -HealthCheck -DryRun
+.\ops\run_agent_pipeline_schedule.ps1 -Mode Drain -HealthCheck -MaxRuns 1
+```
+
+Expected:
+
+- Dry-run prints `DRY-RUN GET /health`.
+- Real run reaches `/health` and exits without a request error.
+- Empty queues are valid and should show `run_count=0`.
+
+4. Run a small collection pass:
+
+```powershell
+.\ops\run_agent_pipeline_schedule.ps1 `
+  -Mode Collect `
+  -DartLimit 5 `
+  -ReportLimit 5 `
+  -ReportDaysBack 3 `
+  -ReportMaxPages 3
+```
+
+5. Run a bounded drain pass:
+
+```powershell
+.\ops\run_agent_pipeline_schedule.ps1 -Mode Drain -MaxRuns 5
+```
+
+6. Inspect queue health:
+
+```powershell
+Invoke-RestMethod -Method Get -Uri "http://localhost:8011/internal/stats/queue"
+Invoke-RestMethod -Method Get -Uri "http://localhost:8011/internal/queue/tasks?status=failed&limit=20"
+```
+
+If this smoke test is stable, increase limits and then add Windows Task Scheduler, cron, or a managed scheduler.
+
+## 7. Docker Compose Manual Execution
 
 Start local services:
 
@@ -193,7 +262,7 @@ Check recent DART analysis:
 Invoke-RestMethod -Method Get -Uri "http://localhost:8011/internal/dart/analysis-results?stock_code=005930&limit=5"
 ```
 
-## 7. Windows Task Scheduler
+## 8. Windows Task Scheduler
 
 Use this for a local or classroom PC that may not run all day.
 
@@ -228,7 +297,7 @@ For separate collection and drain tasks:
 -File ...\run_agent_pipeline_schedule.ps1 -Mode Drain -MaxRuns 50
 ```
 
-## 8. Linux Cron Example
+## 9. Linux Cron Example
 
 Use internal network URLs. Do not expose `/internal/*` endpoints publicly without an authentication or network control layer.
 
@@ -268,7 +337,7 @@ Cron sketch:
 15 8,17 * * * curl -fsS -X POST http://127.0.0.1:8011/internal/schedules/report/collect -H 'Content-Type: application/json' -d '{"limit":100,"days_back":7,"max_pages":20,"priority":"batch"}'
 ```
 
-## 9. Managed Scheduler Example
+## 10. Managed Scheduler Example
 
 For Cloud Scheduler, Railway Cron, GitHub Actions, or another managed scheduler:
 
@@ -280,7 +349,7 @@ For Cloud Scheduler, Railway Cron, GitHub Actions, or another managed scheduler:
 
 Do not call `agent-worker` internal endpoints from a public GitHub Actions runner unless the URL is protected by VPN, private networking, a token-checking proxy, or equivalent access control.
 
-## 10. Failure Handling
+## 11. Failure Handling
 
 Expected behavior:
 
@@ -299,7 +368,7 @@ Invoke-RestMethod -Method Get -Uri "http://localhost:8011/internal/queue/dead-le
 
 If failures are caused by missing API keys, fix environment variables and restart `agent-worker`.
 
-## 11. Initial Rollout Recommendation
+## 12. Initial Rollout Recommendation
 
 Start with this order:
 

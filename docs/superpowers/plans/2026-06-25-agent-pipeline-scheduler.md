@@ -34,6 +34,19 @@
 
 **Commands:**
 - `powershell -NoProfile -ExecutionPolicy Bypass -Command "$tokens=$null;$errors=$null;$null=[System.Management.Automation.Language.Parser]::ParseFile('services/agent-worker/ops/run_agent_pipeline_schedule.ps1',[ref]$tokens,[ref]$errors); if($errors.Count){$errors | ForEach-Object { Write-Error $_ }; exit 1 }"`
+- `cd services/agent-worker && uv run pytest tests/test_agent_pipeline_schedule_script.py -q`
 - `git diff --check`
 
 **Expected:** PowerShell parser returns no syntax errors, and `git diff --check` reports no whitespace errors.
+
+### Task 4: Smoke-Test Friendly Runner Options
+
+**Files:**
+- Modify: `services/agent-worker/ops/run_agent_pipeline_schedule.ps1`
+- Create: `services/agent-worker/tests/test_agent_pipeline_schedule_script.py`
+- Modify: `docs/runbooks/agent-pipeline-schedule.md`
+
+- [x] Add `-DryRun` so local users can print planned schedule and queue calls without a running worker.
+- [x] Add `-HealthCheck` so local users can verify worker reachability before scheduling or draining.
+- [x] Test dry-run output for schedule endpoints, queue order, and source skip flags.
+- [x] Document the local smoke-test sequence before OS or managed scheduler setup.
