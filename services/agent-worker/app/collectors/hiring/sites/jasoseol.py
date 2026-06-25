@@ -325,6 +325,62 @@ def iter_backfill_details(
         yield pid, detail
 
 
+# ── 기간 열거 backfill (calendar_list) ───────────────────────────────────────
+# id-scan(개별 상세 6~7만건)보다 훨씬 가벼운 경로: 채용 캘린더 목록 엔드포인트는
+#   POST /employment/calendar_list.json  {"start_time","end_time"}
+# 로 **해당 기간의 공고 목록을 한 번에** 반환한다(2020~ 과거 포함). 목록이라 포스터
+# content 는 없고(image_file_name=로고/배너), 타깃 매칭분만 _fetch_detail 로 포스터를 보강한다.
+_CALENDAR_API = "https://jasoseol.com/employment/calendar_list.json"
+
+
+def _fetch_calendar(start_iso: str, end_iso: str) -> list[dict]:
+    """calendar_list.json POST → 기간 내 공고 목록(employment). 실패/형식이상 시 []."""
+    try:
+        from ..http import post as http_post
+    except ImportError:
+        from app.collectors.hiring.sites.http import post as http_post  # type: ignore
+    try:
+        data = http_post(
+            _CALENDAR_API, json={"start_time": start_iso, "end_time": end_iso}, headers=_HEADERS
+        ).json()
+    except Exception as exc:
+        logger.warning("자소설닷컴 캘린더 fetch 실패(%s~%s): %s", start_iso[:10], end_iso[:10], exc)
+        return []
+    emp = data.get("employment") if isinstance(data, dict) else None
+    return emp if isinstance(emp, list) else []
+
+
+def _month_windows(since_date: str, until_date: str):
+    """[since, until] 을 월 단위 [월초, 다음월초) 윈도우(UTC ISO 'Z')로 yield. 인접·비오버랩."""
+    y, m = int(since_date[:4]), int(since_date[5:7])
+    end_y, end_m = int(until_date[:4]), int(until_date[5:7])
+    while (y, m) <= (end_y, end_m):
+        ny, nm = (y + 1, 1) if m == 12 else (y, m + 1)
+        yield f"{y:04d}-{m:02d}-01T00:00:00.000Z", f"{ny:04d}-{nm:02d}-01T00:00:00.000Z"
+        y, m = ny, nm
+
+
+def iter_calendar_postings(
+    since_date: str, until_date: str, *, pause_sec: float = 0.2
+):
+    """since~until 을 월별로 열거해 공고 목록 posting 을 yield(id 로 전역 dedup).
+
+    - 목록 데이터(포스터 content 없음). 호출부가 타깃 필터 후 _fetch_detail 로 포스터 보강.
+    - 월 경계는 [월초, 다음월초) 정확 분할이라 오버랩 불필요. 경계상 동일 공고 재등장은 id dedup 이 흡수.
+    """
+    seen: set = set()
+    for start_iso, end_iso in _month_windows(since_date, until_date):
+        batch = _fetch_calendar(start_iso, end_iso)
+        for posting in batch:
+            pid = posting.get("id") if isinstance(posting, dict) else None
+            if pid is None or pid in seen:
+                continue
+            seen.add(pid)
+            yield posting
+        if pause_sec:
+            time.sleep(pause_sec)
+
+
 def _norm(name: str) -> str:
     """회사명 정규화: 소문자·공백/괄호/법인접미사 제거 → 느슨한 매칭용."""
     s = (name or "").lower()

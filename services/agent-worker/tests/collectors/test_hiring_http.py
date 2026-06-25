@@ -158,5 +158,38 @@ class HiringHttpBlockSensorTest(unittest.TestCase):
         self.assertEqual(http.block_signal_snapshot(), {"403": 0, "429": 0})
 
 
+class HiringHttpPostTest(unittest.TestCase):
+    """post() 헬퍼: session.post 위임 + json 본문 전달 + retry 머신 공유."""
+
+    def setUp(self):
+        self._sleep = mock.patch.object(http.time, "sleep").start()
+        mock.patch.object(http.random, "uniform", return_value=0.0).start()
+        self.addCleanup(mock.patch.stopall)
+
+    def test_post_passes_json_body(self):
+        ok = _ok_response()
+        session = mock.Mock()
+        session.post.side_effect = [ok]
+        with mock.patch.object(http, "_get_session", return_value=session):
+            result = http.post(
+                "https://x.test", json={"a": 1}, settings=_FakeSettings(retries=0)
+            )
+        self.assertIs(result, ok)
+        session.post.assert_called_once()
+        self.assertEqual(session.post.call_args.kwargs["json"], {"a": 1})
+        session.get.assert_not_called()
+
+    def test_post_retries_on_5xx(self):
+        bad = _ok_response()
+        bad.raise_for_status.side_effect = _http_error(503)
+        good = _ok_response()
+        session = mock.Mock()
+        session.post.side_effect = [bad, good]
+        with mock.patch.object(http, "_get_session", return_value=session):
+            result = http.post("https://x.test", json={}, settings=_FakeSettings(retries=2))
+        self.assertIs(result, good)
+        self.assertEqual(session.post.call_count, 2)
+
+
 if __name__ == "__main__":
     unittest.main()
