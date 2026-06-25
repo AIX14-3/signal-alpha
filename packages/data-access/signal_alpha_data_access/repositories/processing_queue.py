@@ -21,6 +21,32 @@ class ProcessingQueueRepository:
         scheduled_at: Any | None = None,
         dedupe: bool = False,
     ) -> int:
+        result = await self.enqueue_with_status(
+            stock_id=stock_id,
+            task_type=task_type,
+            priority=priority,
+            source_raw_ids=source_raw_ids,
+            source_signal_event_ids=source_signal_event_ids,
+            source_analysis_result_ids=source_analysis_result_ids,
+            task_context=task_context,
+            scheduled_at=scheduled_at,
+            dedupe=dedupe,
+        )
+        return int(result["task_id"])
+
+    async def enqueue_with_status(
+        self,
+        *,
+        stock_id: int,
+        task_type: str,
+        priority: str = "batch",
+        source_raw_ids: list[int] | None = None,
+        source_signal_event_ids: list[int] | None = None,
+        source_analysis_result_ids: list[int] | None = None,
+        task_context: Any | None = None,
+        scheduled_at: Any | None = None,
+        dedupe: bool = False,
+    ) -> dict[str, Any]:
         serialized_task_context = _jsonb(task_context)
         if dedupe:
             existing_task_id = await self._connection.fetchval(
@@ -45,9 +71,9 @@ class ProcessingQueueRepository:
                 source_analysis_result_ids,
             )
             if existing_task_id is not None:
-                return existing_task_id
+                return {"task_id": existing_task_id, "reused": True}
 
-        return await self._connection.fetchval(
+        task_id = await self._connection.fetchval(
             """
             INSERT INTO processing_queue (
                 stock_id,
@@ -71,6 +97,7 @@ class ProcessingQueueRepository:
             serialized_task_context,
             scheduled_at,
         )
+        return {"task_id": task_id, "reused": False}
 
     async def has_open_or_successful_task(
         self,

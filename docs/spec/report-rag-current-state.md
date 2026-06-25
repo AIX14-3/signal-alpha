@@ -477,9 +477,17 @@ Invoke-RestMethod `
   -Body '{"max_runs":100}'
 ```
 
+응답 필드:
+
+- `candidate_count`: backfill 후보 raw 문서 수
+- `scheduled_count`: backfill 대상 후보 중 task id가 확보된 수
+- `enqueued_count`: 새로 `processing_queue`에 등록된 `normalize_report` 작업 수
+- `reused_count`: 이미 pending/running/retrying 상태라 dedupe로 재사용한 작업 수
+
 주의:
 
 - 후보 조건은 `parsing_status = 'success'`이고 `source_documents(source_type='REPORT')`가 아직 없는 raw 문서입니다.
 - enqueue 컨텍스트는 `process_report`가 자동 등록하는 `normalize_report`와 동일하게 유지해 pending/running/retrying 작업 dedupe가 동작하게 합니다.
+- `reused_count`가 0보다 크면 새 작업을 중복 생성하지 않고 기존 열린 작업 ID를 재사용한 것입니다.
 - 이 backfill은 사용자-facing 데이터 방향성, 근거, 소스 간 일치도 계산의 원천 후보를 canonical 경로로 승격하는 작업이며, 매수/매도/보유 추천을 생성하지 않습니다.
 

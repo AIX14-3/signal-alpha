@@ -68,6 +68,39 @@ class ProcessingQueueRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("status IN ('pending', 'running', 'retrying')", connection.calls[0][1])
         self.assertEqual(len(connection.calls), 1)
 
+    async def test_enqueue_with_status_reports_reused_existing_task(self):
+        connection = FakeDuplicateConnection()
+        repository = ProcessingQueueRepository(connection)
+
+        result = await repository.enqueue_with_status(
+            stock_id=1,
+            task_type="normalize_report",
+            source_raw_ids=[20],
+            priority="batch",
+            task_context={"raw_document_id": 20, "source_type": "REPORT"},
+            dedupe=True,
+        )
+
+        self.assertEqual(result, {"task_id": 49, "reused": True})
+        self.assertIn("status IN ('pending', 'running', 'retrying')", connection.calls[0][1])
+        self.assertEqual(len(connection.calls), 1)
+
+    async def test_enqueue_with_status_reports_inserted_task(self):
+        connection = FakeConnection()
+        repository = ProcessingQueueRepository(connection)
+
+        result = await repository.enqueue_with_status(
+            stock_id=1,
+            task_type="normalize_report",
+            source_raw_ids=[20],
+            priority="batch",
+            task_context={"raw_document_id": 20, "source_type": "REPORT"},
+            dedupe=False,
+        )
+
+        self.assertEqual(result, {"task_id": 50, "reused": False})
+        self.assertIn("INSERT INTO processing_queue", connection.calls[0][1])
+
     async def test_enqueue_dedupe_compares_source_id_arrays(self):
         connection = FakeDuplicateConnection()
         repository = ProcessingQueueRepository(connection)

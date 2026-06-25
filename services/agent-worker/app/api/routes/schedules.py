@@ -93,6 +93,8 @@ async def schedule_report_normalize_backfill(
                     "dry_run": request.dry_run,
                     "candidate_count": 0,
                     "scheduled_count": 0,
+                    "enqueued_count": 0,
+                    "reused_count": 0,
                     "task_ids": [],
                     "candidates": [],
                 }
@@ -107,12 +109,14 @@ async def schedule_report_normalize_backfill(
         ]
 
         task_ids: list[int] = []
+        enqueued_count = 0
+        reused_count = 0
         if not request.dry_run:
             queue_repository = ProcessingQueueRepository(connection)
             for candidate in candidates:
                 raw_document_id = int(candidate["raw_document_id"])
                 stock_code = str(candidate.get("stock_code") or request.stock_code or "").strip()
-                task_id = await queue_repository.enqueue(
+                enqueue_result = await queue_repository.enqueue_with_status(
                     stock_id=int(candidate["stock_id"]),
                     task_type=NORMALIZE_REPORT,
                     priority=request.priority,
@@ -124,12 +128,19 @@ async def schedule_report_normalize_backfill(
                     },
                     dedupe=True,
                 )
+                task_id = int(enqueue_result["task_id"])
                 task_ids.append(task_id)
+                if enqueue_result["reused"]:
+                    reused_count += 1
+                else:
+                    enqueued_count += 1
 
         return {
             "dry_run": request.dry_run,
             "candidate_count": len(candidates),
             "scheduled_count": len(task_ids),
+            "enqueued_count": enqueued_count,
+            "reused_count": reused_count,
             "task_ids": task_ids,
             "candidates": candidates,
         }
