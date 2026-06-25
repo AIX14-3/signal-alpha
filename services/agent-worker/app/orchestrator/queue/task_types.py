@@ -22,6 +22,7 @@ SYNTHESIZE = "synthesize"
 COLLECT_REPORT = "collect_report"
 PROCESS_REPORT = "process_report"
 NORMALIZE_REPORT = "normalize_report"
+ANALYZE_REPORT = "analyze_report"
 
 # Alternative sources (hiring/patent/datalab). The values MUST match the strings
 # the collectors enqueue verbatim: BaseCollector / DataLabCollector / PatentCollector

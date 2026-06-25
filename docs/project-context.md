@@ -382,7 +382,7 @@ DART 공시 수집, 유형 분류, 주요 공시 분석, 실적 기반 신호 �
 
 현재 구현은 증권사 리포트 목록 수집, PDF 다운로드/파싱, 목표가·투자의견·EPS·적용 배수·피어 그룹 등 밸류에이션 fact 구조화, `source_documents`/`signal_events`/`signal_metrics` 정규화까지이다.
 
-`report_chunks` 기반 벡터 검색, Report 전용 `analysis_results`/`agent_results` 저장, Report Agent 합성은 현재 queue 런타임에 연결되어 있지 않으며 후속 복구 후보로 둔다.
+`report_chunks` 기반 벡터 검색과 Report Agent 합성은 현재 queue 런타임에 연결되어 있지 않으며 후속 복구 후보로 둔다. deterministic `analyze_report`는 Report valuation payload를 `analysis_results`/`agent_results`에 저장한다.
 
 ### 수집 방법
 
@@ -1009,7 +1009,7 @@ LLM 프롬프트에는 반드시 다음 원칙을 넣는다.
    - PDF 저장/파싱
    - valuation fact 저장
    - `source_documents`/`signal_events`/`signal_metrics` 정규화
-   - RAG/Report Agent 복구 시 청킹, embedding, pgvector 검색, 분석 결과 저장 추가
+   - RAG/Report Agent 복구 시 청킹, embedding, pgvector 검색, RAG 근거 결과 추가
 3. PRICE 수집 데이터 분석 연결
    - 과거 OHLCV backfill
    - PRICE analyzer 결과 저장

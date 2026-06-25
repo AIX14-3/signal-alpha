@@ -12,10 +12,12 @@ from app.collectors.report.parsers.run_parser import process_from_s3
 from app.collectors.report.pdf_downloader import download_and_upload, make_report_storage_key
 from app.collectors.report.storage import ReportStorageClient, get_report_storage_client
 from app.orchestrator.queue.task_types import (
+    ANALYZE_REPORT,
     NORMALIZE_REPORT,
     PROCESS_REPORT,
 )
 from signal_alpha_data_access.repositories import (
+    AnalysisRepository,
     CollectionRepository,
     NormalizationRepository,
     ProcessingQueueRepository,
@@ -318,6 +320,7 @@ class ReportNormalizeTaskHandler:
     def __init__(self, *, connection: Any) -> None:
         self._raw_detail_repository = RawDetailRepository(connection)
         self._normalization_repository = NormalizationRepository(connection)
+        self._queue_repository = ProcessingQueueRepository(connection)
 
     async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
         task_context = _task_context(task.get("task_context"))
@@ -374,10 +377,152 @@ class ReportNormalizeTaskHandler:
                 message=f"Normalized from raw_document_id={raw_document_id}",
             )
 
+        analyze_task_id = None
+        if signal_event_ids:
+            analyze_task_id = await self._queue_repository.enqueue(
+                stock_id=int(rows[0]["stock_id"]),
+                task_type=ANALYZE_REPORT,
+                priority="batch",
+                source_signal_event_ids=signal_event_ids,
+                task_context={
+                    "stock_code": task_context.get("stock_code"),
+                    "source_type": self.SOURCE_TYPE,
+                    "run_key": "REPORT",
+                },
+                dedupe=True,
+            )
+
         return {
             "normalized_count": len(rows),
             "signal_event_ids": signal_event_ids,
+            "analyze_task_id": analyze_task_id,
         }
+
+
+class ReportAnalyzeTaskHandler:
+    """Persist deterministic Report valuation analysis from canonical events."""
+
+    PROMPT_VER = "report-valuation-v1"
+
+    def __init__(self, *, connection: Any) -> None:
+        self._connection = connection
+        self._analysis_repository = AnalysisRepository(connection)
+
+    async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
+        stock_id = int(task["stock_id"])
+        task_context = _task_context(task.get("task_context"))
+        signal_event_ids = _source_signal_event_ids(task.get("source_signal_event_ids"))
+        if not signal_event_ids:
+            return {
+                "analyzed_count": 0,
+                "analysis_result_id": None,
+                "agent_result_id": None,
+                "skipped_reason": "source_signal_event_ids_required",
+            }
+
+        rows = await self._list_report_valuation_events(signal_event_ids)
+        events = [dict(row) for row in rows]
+        if not events:
+            return {
+                "analyzed_count": 0,
+                "analysis_result_id": None,
+                "agent_result_id": None,
+                "skipped_reason": "report_events_not_found",
+            }
+
+        event_ids = [int(event["id"]) for event in events]
+        analysis_date = _report_analysis_date(events, task_context)
+        run_key = str(task_context.get("run_key") or "REPORT").strip() or "REPORT"
+        direction = _report_analysis_direction(events)
+        source_score = _report_source_score(events, direction)
+        needs_review = any(bool(event.get("needs_review") or event.get("fact_needs_review")) for event in events)
+        risk_flags = _report_risk_flags(events, needs_review)
+
+        analysis_result = await self._analysis_repository.upsert_analysis_result(
+            stock_id=stock_id,
+            analysis_date=analysis_date,
+            run_key=run_key,
+            source_signal_event_ids=event_ids,
+            base_score=_score_to_100(source_score),
+            analysis_mode="full",
+            warning="; ".join(risk_flags) or None,
+            version=self.PROMPT_VER,
+        )
+        method_detail = {
+            "source": "REPORT",
+            "source_score": source_score,
+            "summary": _report_analysis_summary(events, direction),
+            "risk_flags": risk_flags,
+            "needs_review": needs_review,
+            "stock_code": task_context.get("stock_code") or _first_non_empty(events, "ticker"),
+            "analysis_source": "rules",
+            "report_quant": {
+                "valuation": _report_valuation_payload(events),
+            },
+        }
+        agent_result = await self._analysis_repository.upsert_agent_result(
+            result_id=int(analysis_result["id"]),
+            stock_id=stock_id,
+            debate_method="D-1",
+            source_signal_event_ids=event_ids,
+            method_score=_score_to_100(source_score),
+            method_signal=direction,
+            method_detail=method_detail,
+            reliability_score=65 if needs_review else 80,
+            evidence_quality=_report_evidence_quality(events),
+            llm_model=None,
+            prompt_ver=self.PROMPT_VER,
+        )
+
+        return {
+            "analysis_result_id": analysis_result["id"],
+            "agent_result_id": agent_result["id"],
+            "analyzed_count": len(events),
+            "direction": direction,
+            "score": source_score,
+            "needs_review": needs_review,
+            "analysis_source": "rules",
+        }
+
+    async def _list_report_valuation_events(self, signal_event_ids: list[int]) -> list[Any]:
+        return list(await self._connection.fetch(
+            """
+            SELECT
+                signal_events.id,
+                signal_events.stock_id,
+                signal_events.event_date,
+                signal_events.signal_direction,
+                signal_events.impact_level,
+                signal_events.title,
+                signal_events.summary,
+                signal_events.evidence_url,
+                signal_events.needs_review,
+                source_documents.raw_document_id,
+                report_valuation_facts.ticker,
+                report_valuation_facts.broker,
+                report_valuation_facts.publish_date,
+                report_valuation_facts.target_price,
+                report_valuation_facts.forward_eps_est,
+                report_valuation_facts.eps_fy,
+                report_valuation_facts.methodology,
+                report_valuation_facts.applied_multiple,
+                report_valuation_facts.implied_multiple,
+                report_valuation_facts.peer_group,
+                report_valuation_facts.category_tag,
+                report_valuation_facts.rerating_thesis,
+                report_valuation_facts.extraction_source,
+                report_valuation_facts.needs_review AS fact_needs_review
+            FROM signal_events
+            INNER JOIN source_documents
+                ON source_documents.id = signal_events.source_document_id
+            LEFT JOIN report_valuation_facts
+                ON report_valuation_facts.raw_document_id = source_documents.raw_document_id
+            WHERE signal_events.id = ANY($1::BIGINT[])
+              AND signal_events.source_type = 'REPORT'
+            ORDER BY signal_events.event_date DESC, signal_events.id DESC
+            """,
+            signal_event_ids,
+        ))
 
 
 def _report_event_hash(raw_document_id: int) -> str:
@@ -590,6 +735,10 @@ def _source_raw_ids(value: Any) -> list[int]:
     return _int_list(value)
 
 
+def _source_signal_event_ids(value: Any) -> list[int]:
+    return _int_list(value)
+
+
 def _int_list(value: Any) -> list[int]:
     if value is None:
         return []
@@ -619,3 +768,139 @@ def _extra_payload(value: Any) -> dict[str, Any]:
     if isinstance(value, str):
         return json.loads(value) if value else {}
     return dict(value)
+
+
+def _report_analysis_date(events: list[dict[str, Any]], task_context: dict[str, Any]) -> date:
+    value = task_context.get("analysis_date") or task_context.get("event_date")
+    if value:
+        return _to_date(value)
+    dates = [_to_date(event["event_date"]) for event in events if event.get("event_date")]
+    return max(dates) if dates else date.today()
+
+
+def _report_analysis_direction(events: list[dict[str, Any]]) -> str:
+    weights = {"positive": 0, "negative": 0, "neutral": 0}
+    for event in events:
+        direction = str(event.get("signal_direction") or "unknown")
+        if direction in weights:
+            weights[direction] += 1
+    if weights["positive"] > weights["negative"] and weights["positive"] >= weights["neutral"]:
+        return "positive"
+    if weights["negative"] > weights["positive"] and weights["negative"] >= weights["neutral"]:
+        return "negative"
+    if weights["positive"] and weights["negative"]:
+        return "mixed"
+    return "neutral"
+
+
+def _report_source_score(events: list[dict[str, Any]], direction: str) -> float:
+    base = {
+        "positive": 0.35,
+        "negative": -0.35,
+        "mixed": 0.0,
+        "neutral": 0.0,
+    }.get(direction, 0.0)
+    complete_facts = sum(1 for event in events if event.get("target_price") is not None and event.get("implied_multiple") is not None)
+    completeness_bonus = min(0.15, complete_facts * 0.05)
+    review_penalty = 0.15 if any(bool(event.get("needs_review") or event.get("fact_needs_review")) for event in events) else 0.0
+    if base < 0:
+        return round(max(-1.0, base - completeness_bonus + review_penalty), 4)
+    return round(max(-1.0, min(1.0, base + completeness_bonus - review_penalty)), 4)
+
+
+def _report_risk_flags(events: list[dict[str, Any]], needs_review: bool) -> list[str]:
+    flags: list[str] = []
+    if needs_review:
+        flags.append("valuation_review_required")
+    if any(event.get("target_price") is None for event in events):
+        flags.append("target_price_missing")
+    if any(event.get("implied_multiple") is None for event in events):
+        flags.append("implied_multiple_missing")
+    return flags
+
+
+def _report_analysis_summary(events: list[dict[str, Any]], direction: str) -> str:
+    brokers = sorted({str(event.get("broker") or "").strip() for event in events if event.get("broker")})
+    broker_text = ", ".join(brokers[:3]) if brokers else "증권사 리포트"
+    direction_text = {
+        "positive": "긍정 방향",
+        "negative": "주의 방향",
+        "mixed": "혼재",
+        "neutral": "중립",
+    }.get(direction, "추가 확인 필요")
+    return f"{broker_text} 자료의 밸류에이션 fact 기준 데이터 방향성은 {direction_text}입니다. 소스 간 일치도와 원문 근거 확인이 필요합니다."
+
+
+def _report_valuation_payload(events: list[dict[str, Any]]) -> dict[str, Any]:
+    latest = events[0]
+    implied_values = [_float_or_none(event.get("implied_multiple")) for event in events]
+    implied_values = [value for value in implied_values if value is not None]
+    return {
+        "target_price": _json_ready(latest.get("target_price")),
+        "forward_eps_est": _json_ready(latest.get("forward_eps_est")),
+        "eps_fy": _json_ready(latest.get("eps_fy")),
+        "methodology": latest.get("methodology") or "unknown",
+        "applied_multiple": _json_ready(latest.get("applied_multiple")),
+        "implied_multiple": _json_ready(latest.get("implied_multiple")),
+        "implied_multiple_avg": round(sum(implied_values) / len(implied_values), 4) if implied_values else None,
+        "peer_group": _json_ready(_peer_group(latest.get("peer_group"))),
+        "category_tag": latest.get("category_tag"),
+        "rerating_thesis": latest.get("rerating_thesis"),
+        "extraction_source": latest.get("extraction_source") or "rules",
+        "needs_review": bool(latest.get("needs_review") or latest.get("fact_needs_review")),
+        "event_count": len(events),
+    }
+
+
+def _report_evidence_quality(events: list[dict[str, Any]]) -> int:
+    if not events:
+        return 0
+    fact_count = sum(1 for event in events if event.get("raw_document_id") is not None)
+    return round((fact_count / len(events)) * 100)
+
+
+def _score_to_100(score: float) -> float:
+    return round(max(0.0, min(100.0, (score + 1.0) * 50.0)), 2)
+
+
+def _first_non_empty(events: list[dict[str, Any]], key: str) -> Any:
+    for event in events:
+        value = event.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _peer_group(value: Any) -> list[Any]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return [value]
+        return parsed if isinstance(parsed, list) else [parsed]
+    if isinstance(value, list):
+        return value
+    if isinstance(value, tuple):
+        return list(value)
+    return [value]
+
+
+def _float_or_none(value: Any) -> float | None:
+    if value is None:
+        return None
+    return float(value)
+
+
+def _json_ready(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _json_ready(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_ready(item) for item in value]
+    if isinstance(value, tuple):
+        return [_json_ready(item) for item in value]
+    if hasattr(value, "as_tuple"):
+        number = float(value)
+        return int(number) if number.is_integer() else number
+    return value
