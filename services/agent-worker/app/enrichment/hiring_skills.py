@@ -7,7 +7,7 @@ canonical comparison key — is unit-tested without any I/O.
 
 This module is the **canonical home of the skill dictionary**; the research
 benchmark harness (``scripts/research/ocr_harness.py``) imports from here so the
-two never drift. Selection rationale (Tesseract): ``docs/research/375-ocr-model-comparison.md``.
+two never drift. Selection rationale (Tesseract): ``docs/archive/research/375-ocr-model-comparison.md``.
 
 Cached skills (``hiring_raw_details.ocr_skills``, see migration 028) let the Hiring
 analyzer weight postings by concrete tech demand instead of raw counts. Each

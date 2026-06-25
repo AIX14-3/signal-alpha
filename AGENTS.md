@@ -9,10 +9,10 @@ Signal Alpha는 데이터 방향성과 근거를 교차검증하는 모노레포
 1. 현재 브랜치의 실제 구현 코드와 테스트
 2. DB 스키마는 `database/migrations/`
 3. `README.md`, 서비스 README, 패키지 README
-4. `docs/project-context.md`
-5. `docs/planning/*` 기획 문서
+4. `docs/`의 현행 문서 (진입점은 `docs/README.md`; 개요 `docs/overview.md`, 아키텍처 `docs/architecture.md`, 데이터 흐름 `docs/data-pipeline.md`)
+5. `docs/spec/*` 기술 스펙
 
-기획 문서는 목표 방향을 설명하지만 일부 내용은 구현보다 앞서 있습니다. 코드와 테스트가 뒷받침하지 않는 동작을 구현 완료로 취급하지 마세요.
+과거 기획·리서치 사료는 `docs/archive/`에 보존되어 있으며 현행 기준이 아닙니다. 기획 문서는 목표 방향을 설명하지만 일부 내용은 구현보다 앞서 있습니다. 코드와 테스트가 뒷받침하지 않는 동작을 구현 완료로 취급하지 마세요.
 
 ## 제품 문구 원칙
 

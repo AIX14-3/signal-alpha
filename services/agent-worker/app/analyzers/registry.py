@@ -79,7 +79,7 @@ def build_registry(
     datalab_config = datalab_config or DataLabRuleConfig.from_env()
 
     # DataLab 생성형 cause agent는 판정 경로에서 영구 비활성(결정론 전처리 원칙 —
-    # docs/design/worker-redesign.md). lead_lag 결정론 prelabel이 최종 라벨이고, 검색
+    # docs/archive/design/worker-redesign.md). lead_lag 결정론 prelabel이 최종 라벨이고, 검색
     # 시계열은 통계지표(indicators/rules)로만 피처화한다. cause agent 모듈
     # (app/agents/datalab/*)은 보존하되 와이어링하지 않으므로 agent_factory를 두지 않는다.
     return [

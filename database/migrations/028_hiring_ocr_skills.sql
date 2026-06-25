@@ -4,7 +4,7 @@
 -- 배경: 한국 공채 자격요건/우대사항은 대부분 포스터 이미지로 게시돼 content 텍스트가 거의
 --   없다(#375). ENRICH_HIRING 도구가 extra_payload.image_urls 의 포스터를 Tesseract(kor+eng)
 --   로 읽어 기술키워드 집합을 뽑아 여기 캐시하고, Hiring analyzer 는 캐시를 read 만 한다.
---   엔진 선정 근거: docs/research/375-ocr-model-comparison.md §4(Tesseract — 최고 F1·최속).
+--   엔진 선정 근거: docs/archive/research/375-ocr-model-comparison.md §4(Tesseract — 최고 F1·최속).
 --
 --   patent_raw_details.llm_features/llm_status(019) 와 동형 패턴이다(별도 enrichment 도구가
 --   채우는 보강 캐시 + pending 부분 인덱스 worklist). 적용된 기존 파일은 수정하지 않는다.

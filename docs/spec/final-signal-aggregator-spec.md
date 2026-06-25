@@ -4,8 +4,8 @@
 > Created: 2026-06-19  
 > Target: `services/agent-worker/app/orchestrator`  
 > Related docs:
-> - `docs/planning/06_통합단계_Aggregator.md`
-> - `docs/planning/09_DB설계.md`
+> - `docs/archive/planning/06_통합단계_Aggregator.md`
+> - `docs/archive/planning/09_DB설계.md`
 > - `docs/spec/dart-collector-analyzer-spec.md`
 > - `docs/spec/source-agent-contract.md`
 > - `docs/spec/hiring-cutover-and-final-signals-naming.md`

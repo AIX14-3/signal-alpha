@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 # tolerance absorbs float rounding so a legitimate ±1.0 is never rejected.
 _SCORE_TOLERANCE = 1e-6
 
-# docs/project-context.md §10: separate "긍정 근거" (facts pointing one way) from
+# docs/archive/project-context.md §10: separate "긍정 근거" (facts pointing one way) from
 # "주의 근거" (conflicts, sparse/stale samples). Plain strings a downstream
 # judge/LLM can read as grounded evidence rather than a bare number.
 _FLAG_CAUTIONS = {

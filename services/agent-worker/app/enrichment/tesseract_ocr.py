@@ -1,6 +1,6 @@
 """Tesseract OCR processor for hiring poster images (the ENRICH_HIRING engine).
 
-Selected over PaddleOCR/Surya in ``docs/research/375-ocr-model-comparison.md`` §4
+Selected over PaddleOCR/Surya in ``docs/archive/research/375-ocr-model-comparison.md`` §4
 (highest F1, ~37x faster on CPU). Downloads the poster image(s) referenced by
 ``hiring_raw_details.extra_payload.image_urls`` and runs Tesseract (kor+eng).
 

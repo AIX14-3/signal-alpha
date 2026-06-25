@@ -1,0 +1,73 @@
+# Signal α — 데이터 파이프라인
+
+소스 데이터가 어떻게 수집되어 사용자에게 보여줄 최종 시그널이 되는지를 설명합니다.
+깊은 레이어 정의는 `spec/data-foundations-and-l1-l10-workflow.md`,
+`spec/data-layers-l2-l10-spec.md`, 스키마 기준은 `database/migrations/`(+`spec/db-schema-spec.md`)입니다.
+
+## 처리 모델: collect → normalize → analyze → aggregate
+
+각 단계는 `processing_queue` 기반 **독립 작업**으로 분리됩니다. Collector는 원본을 수집/저장하고 후속
+작업을 큐에 등록하며, Analyzer는 DB의 정규화/승인 데이터만 읽습니다(외부 API 직접 호출 금지).
+
+```text
+collect   원본 수집 → raw_documents (+ 소스별 raw_details)         → 다음 단계 enqueue
+normalize 표준 문서/이벤트/지표 생성 → source_documents, signal_events, signal_metrics
+analyze   소스별 규칙/LLM 분석 → analysis_results, agent_results
+aggregate 소스 결과 통합 → final_signals (소스 방향성 일치도·근거 정리)
+```
+
+## 소스별 경로
+
+| 소스 | 수집 | 주요 처리 |
+|---|---|---|
+| **DART** | OpenDART corp_code/list/document.xml | `raw_documents` + `dart_raw_details` → 정규화 → 규칙 기반 분석, 고임팩트 공시는 선택적 LLM |
+| **Report** | 네이버 리포트 목록 + 선별 PDF | `report_raw_details` → `report_chunks`(pgvector) → RAG 분석. 원문 PDF 미노출, 요약·근거·링크 중심 |
+| **PRICE** | 키움 REST (agent-worker 내장 데몬) | `price_snapshots`, `ohlcv_data` 저장 → PRICE analyzer는 **DB만** 읽어 분석 |
+| **Alternative** | 채용 / 특허(KIPRIS) / 네이버 DataLab / SEC | 소스별 collector→analyzer. DataLab은 카테고리 기반 키워드 검색량 |
+
+소스별 collector/analyzer는 `agent-worker/app/collectors/{dart,report,price,datalab,hiring,patent,sec}` 및
+`analyzers/{dart,report,price,datalab,hiring,patent}` 아래에 있습니다.
+
+## 핵심 DB 테이블 흐름 (MVP)
+
+```text
+stocks
+  └─ raw_documents
+       ├─ dart_raw_details / report_raw_details
+       │     └─ report_chunks (pgvector)
+       └─ source_documents
+            └─ signal_events
+                 └─ signal_metrics
+                      └─ analysis_results
+                           └─ agent_results
+                                └─ final_signals   → 사용자에게 노출
+```
+
+- 운영/상태: `processing_queue`, `collector_runs`, `dart_collection_states`, `validation_logs`
+- 가격: `price_snapshots`, `ohlcv_data`
+- DataLab 수집 경로: `datalab_raw_documents → datalab_raw_details → processing_queue(stock_id=NULL)`
+
+> 위는 빠른 이해용 요약입니다. 컬럼·제약·인덱스의 **유일한 기준은 `database/migrations/`**.
+
+## 현재 구현 상태 (요약)
+
+> 정확한 최신 상태는 `AGENTS.md`와 코드를 확인하세요. 기획 문서를 구현 완료로 취급하지 않습니다.
+
+- **구현됨**: DART 큐 핸들러 `collect_dart` / `normalize_dart` / `analyze_dart`.
+- **구현됨**: 가격 수집은 `agent-worker` lifespan 백그라운드 데몬으로 동작, `price_snapshots`/`ohlcv_data` 적재.
+  PRICE analyzer는 DB만 읽음(키움 API 직접 호출 금지).
+- **구현됨**: DataLab 카테고리 기반 수집 경로.
+- **계획/진행 중**: Aggregator/Debate 흐름은 스키마는 있으나 운영 핸들러 미완.
+  Report는 canonical schema(`raw_documents → report_raw_details → report_chunks`) 이전이 진행 중인 기술 부채
+  (legacy `report_raw`, `report_signal`은 과거 경로용으로만 유지).
+
+## LLM·분석 규칙
+
+- 수치 값은 원천 데이터/DB row에서 가져오며 LLM이 생성하지 않습니다.
+- LLM 출력은 저장·노출 전에 JSON Schema/Pydantic으로 검증합니다.
+- LLM timeout·잘못된 JSON·금지 표현 감지 시 결정적 규칙 기반 fallback을 제공합니다.
+
+관련 스펙: `spec/dart-collector-analyzer-spec.md`, `spec/analyzer-raw-access-conformance.md`,
+`spec/report-rag-current-state.md`, `spec/kiwoom-rest-spec.md`, `spec/cross-layer-orchestration-and-risks.md`,
+`spec/final-signal-aggregator-spec.md`. DataLab 키워드는 [datalab-keyword-validation.md](./datalab-keyword-validation.md),
+[datalab-keyword-lifecycle.md](./datalab-keyword-lifecycle.md) 참고.
