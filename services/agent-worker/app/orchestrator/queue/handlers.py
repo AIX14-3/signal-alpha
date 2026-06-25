@@ -47,7 +47,7 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
     from app.synthesis.tasks import SynthesizeTaskHandler
 
     settings = get_settings()
-    # 소스별 생성형 LLM은 판정 경로에서 제거됨(결정론 전처리 원칙 — docs/design/worker-redesign.md).
+    # 소스별 생성형 LLM은 판정 경로에서 제거됨(결정론 전처리 원칙 — docs/archive/design/worker-redesign.md).
     # DART 분석기는 규칙추출(+공시 임베딩)만 사용한다. LLM 모듈(analyzers/dart/llm.py)은
     # 보존하되 와이어링하지 않는다 — 끝단 SYNTHESIZE만이 유일한 생성형 LLM이다.
     llm_analyzer = None

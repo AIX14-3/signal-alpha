@@ -12,8 +12,11 @@ services/
 packages/
   signal-core/          # Shared schemas, enums, and domain types
   data-access/          # Shared database access helpers
-docs/                   # Project documentation
+docs/                   # Project documentation (index: docs/README.md)
 ```
+
+See [`docs/README.md`](docs/README.md) for the documentation index (overview, architecture,
+data pipeline, development guide, glossary, and specs).
 
 ## Python Development
 

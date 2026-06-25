@@ -31,7 +31,7 @@ class AlternativeSignal:
     risk_flags: list[str] = field(default_factory=list)
     summary: str = ""
     per_source: dict[str, SourceResult] = field(default_factory=dict)
-    # docs/project-context.md §10: separate 긍정/주의 근거, avoid the word "confidence".
+    # docs/archive/project-context.md §10: separate 긍정/주의 근거, avoid the word "confidence".
     consensus_score: float = 0.0  # [0..100] alignment/coverage strength (NOT investment confidence)
     positive_evidence: list[str] = field(default_factory=list)
     caution_evidence: list[str] = field(default_factory=list)
