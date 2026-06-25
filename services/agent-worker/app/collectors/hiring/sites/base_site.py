@@ -137,8 +137,13 @@ class BaseSiteCrawler(ABC):
         job_description: str | None = None,
         closing_date: str | None = None,
         tech_stack: list[str] | None = None,
+        posting_date: str | None = None,
     ) -> dict:
-        """표준 레코드 dict 생성 헬퍼."""
+        """표준 레코드 dict 생성 헬퍼.
+
+        ``posting_date`` 를 주면(소스가 실제 게시일을 파싱한 경우, 예: 잡코리아 '등록' 텍스트)
+        그 값을, 없으면 수집 시각(now_iso)을 쓴다 — 기존 거동 유지(하위호환).
+        """
         return {
             "source_type":     self.source_label,
             "company_name":    company_name,
@@ -153,7 +158,7 @@ class BaseSiteCrawler(ABC):
             ),
             "story":           None,
             "signal_strength": None,
-            "posting_date":    self.now_iso(),
+            "posting_date":    posting_date or self.now_iso(),
         }
 
     # ── Selenium 편의 메서드 ────────────────────────────────────────────────────

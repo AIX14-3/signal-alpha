@@ -13,13 +13,49 @@ from __future__ import annotations
 import logging
 import re
 import time
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from .base_site import BaseSiteCrawler
 
 logger = logging.getLogger(__name__)
 
+_KST = ZoneInfo("Asia/Seoul")  # 게시일 stamp 기준(base_site/base_collector와 일치, #120)
+
 _BASE = "https://www.jobkorea.co.kr"
 _SEARCH = f"{_BASE}/Search/"
+
+# 게시일('등록')에 묶인 날짜만 파싱 — 같은 카드의 마감일('~07/08(수)')과 혼동 방지.
+#   상대형: "21시간 전 등록" / "3일 전 등록" / "방금 등록"
+#   절대형: "06/16(화)등록"
+_REG_REL_DAYS = re.compile(r"(\d+)\s*일\s*전\s*등록")
+_REG_REL_HM = re.compile(r"(?:\d+\s*(?:시간|분)|방금)\s*전?\s*등록")
+_REG_ABS = re.compile(r"(\d{1,2})/(\d{1,2})\s*(?:\([월화수목금토일]\))?\s*등록")
+
+
+def parse_posting_date(text: str | None, anchor: datetime | None = None) -> str | None:
+    """잡코리아 목록의 '등록' 텍스트 → 게시일 ``YYYY-MM-DD``. 못 찾으면 None.
+
+    None 이면 호출부(_make_record)가 수집 시각으로 폴백한다. '등록'에 묶인 날짜만 보므로
+    같은 카드의 마감일('~07/08(수)')을 게시일로 오인하지 않는다. 상대형('N일 전 등록' /
+    'N시간·분 전 등록' / '방금 등록')은 anchor(기본 KST now) 기준, 절대형('06/16(화)등록')은
+    연도 추론(등록월 > 수집월이면 작년 — 연말 등록을 연초 수집).
+    """
+    if not text:
+        return None
+    anchor = anchor or datetime.now(_KST)
+    if m := _REG_REL_DAYS.search(text):
+        return (anchor - timedelta(days=int(m.group(1)))).date().isoformat()
+    if _REG_REL_HM.search(text):
+        return anchor.date().isoformat()   # 24시간 내 → 오늘(KST)
+    if m := _REG_ABS.search(text):
+        month, day = int(m.group(1)), int(m.group(2))
+        year = anchor.year - 1 if month > anchor.month else anchor.year
+        try:
+            return datetime(year, month, day).date().isoformat()
+        except ValueError:
+            return None  # 02/30 같은 비정상 날짜
+    return None
 
 # 공고 상세 링크: /Recruit/GI_Read/<숫자ID>  — 검색결과 레이아웃이 바뀌어도 유지되는 식별자
 _JOB_ID = re.compile(r"/Recruit/GI_Read/(\d+)")
@@ -100,9 +136,13 @@ class JobkoreaCrawler(BaseSiteCrawler):
                 # 쿼리스트링을 제거한 정규 상세 URL (external_id 안정화)
                 job_url = f"{_BASE}/Recruit/GI_Read/{job_id}"
 
+                # 게시일: 카드 텍스트의 '등록'에 묶인 날짜(상대/절대). 없으면 수집시각 폴백.
+                posting_date = parse_posting_date(card.get_text(" ", strip=True))
+
                 jobs.append(self._make_record(
                     corp, title, job_url,
                     closing_date=deadline,
+                    posting_date=posting_date,
                 ))
             except Exception as exc:
                 logger.debug("잡코리아 파싱 오류: %s", exc)
@@ -167,9 +207,12 @@ class JobkoreaCrawler(BaseSiteCrawler):
             day_el = card.select_one("dd.func span.day") or card.select_one("span.day")
             deadline = day_el.get_text(strip=True) if day_el else None
 
+            posting_date = parse_posting_date(card.get_text(" ", strip=True))
+
             job_url = f"{_BASE}/Recruit/GI_Read/{job_id}"
             jobs.append(self._make_record(
                 company_name, title_text, job_url, closing_date=deadline,
+                posting_date=posting_date,
             ))
 
         if not jobs and declared:
