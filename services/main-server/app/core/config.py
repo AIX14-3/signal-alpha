@@ -6,6 +6,8 @@ class Settings:
     def __init__(self) -> None:
         self.service_name = getenv("SERVICE_NAME", "main-server")
         self.version = getenv("SERVICE_VERSION", "0.1.0")
+        # 배포 환경. production 일 때만 아래 _validate_production 가드가 켜진다(로컬/CI=development).
+        self.app_env = getenv("APP_ENV", "development").lower()
         self.database_url = getenv("DATABASE_URL")
         self.auth_secret_key = getenv("AUTH_SECRET_KEY", "dev-main-server-secret-change-me")
         self.access_token_expire_minutes = int(getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
@@ -66,6 +68,30 @@ class Settings:
             }
             for provider in ("naver", "google", "kakao")
         }
+
+        # 프로덕션 배포 안전장치(G5/G6). APP_ENV=production 일 때만 검증 — 잘못 배포되면
+        # 부팅 시점에 즉시 실패(토큰 위조·CORS·쿠키 오설정으로 조용히 깨지는 것 방지).
+        self._validate_production()
+
+    def _validate_production(self) -> None:
+        if self.app_env != "production":
+            return
+        problems: list[str] = []
+        # G5: dev 기본 시크릿으로 프로덕션 토큰 서명 금지(위조 위험).
+        if not self.auth_secret_key or self.auth_secret_key.startswith("dev-"):
+            problems.append("AUTH_SECRET_KEY must be a strong, non-default secret")
+        # G6: credentials=True 인 CORS 는 와일드카드 불가 + 명시 오리진 필수.
+        if not self.cors_allow_origins:
+            problems.append("CORS_ALLOW_ORIGINS must list the frontend origin(s)")
+        if "*" in self.cors_allow_origins:
+            problems.append("CORS_ALLOW_ORIGINS must not contain '*' (invalid with credentials)")
+        # G6: 교차도메인 쿠키(SameSite=None)는 Secure 가 없으면 브라우저가 거부.
+        if self.cookie_samesite == "none" and not self.cookie_secure:
+            problems.append("COOKIE_SECURE must be true when COOKIE_SAMESITE=none")
+        if problems:
+            raise ValueError(
+                "Invalid production configuration (APP_ENV=production): " + "; ".join(problems)
+            )
 
     @property
     def portone_dev_mode(self) -> bool:
