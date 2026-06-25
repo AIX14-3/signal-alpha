@@ -80,6 +80,7 @@ class ReportAnalysisAgent:
                 chunks=[],
                 quant=quant,
                 data_status="failed",
+                risk_flags=["evidence_required"],
             )
 
         # 1) 다중 질의 검색 → 합집합 → (raw_document_id, chunk_index) 기준 중복제거
@@ -97,6 +98,7 @@ class ReportAnalysisAgent:
                 chunks=[],
                 quant=quant,
                 data_status="failed",
+                risk_flags=["evidence_required"],
             )
 
         # 2) LLM 종합. 미설정이면 보수적 fallback(근거는 회수됐으나 종합 불가).
@@ -163,6 +165,7 @@ class ReportAnalysisAgent:
         quant: dict[str, Any],
         data_status: SourceAgentStatus,
         llm_error: str | None = None,
+        risk_flags: list[str] | None = None,
     ) -> SourceAgentOutput:
         # 표본 작음 + 종합 불가 → 점수 중립, needs_review로 사람 검토 유도(결정 B).
         return SourceAgentOutput(
@@ -171,7 +174,7 @@ class ReportAnalysisAgent:
             direction="unknown",
             score=50.0,
             summary=summary,
-            risk_flags=[],
+            risk_flags=risk_flags or [],
             method_detail={
                 "coverage": COVERAGE,
                 "report_quant": quant,
@@ -201,14 +204,19 @@ def _dedupe_chunks(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _evidence_refs(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [
-        {
+    refs: list[dict[str, Any]] = []
+    for c in chunks:
+        ref: dict[str, Any] = {
             "raw_document_id": c.get("raw_document_id"),
             "chunk_index": c.get("chunk_index"),
             "similarity": round(float(c.get("similarity", 0.0)), 4),
         }
-        for c in chunks
-    ]
+        for key in ("title", "source_url", "securities_firm", "publish_date"):
+            value = c.get(key)
+            if value is not None:
+                ref[key] = str(value)
+        refs.append(ref)
+    return refs
 
 
 def _build_prompt(
@@ -219,12 +227,7 @@ def _build_prompt(
         "coverage": COVERAGE,
         "report_quant": quant,
         "evidence_chunks": [
-            {
-                "raw_document_id": c.get("raw_document_id"),
-                "chunk_index": c.get("chunk_index"),
-                "similarity": round(float(c.get("similarity", 0.0)), 4),
-                "text": str(c.get("chunk_text") or "")[:1200],
-            }
+            _prompt_evidence_chunk(c)
             for c in chunks
         ],
     }
@@ -245,6 +248,20 @@ def _build_prompt(
         "입력:\n"
     )
     return instructions + json.dumps(payload, ensure_ascii=False, default=str)
+
+
+def _prompt_evidence_chunk(chunk: dict[str, Any]) -> dict[str, Any]:
+    item = {
+        "raw_document_id": chunk.get("raw_document_id"),
+        "chunk_index": chunk.get("chunk_index"),
+        "similarity": round(float(chunk.get("similarity", 0.0)), 4),
+        "text": str(chunk.get("chunk_text") or "")[:1200],
+    }
+    for key in ("title", "source_url", "securities_firm", "publish_date"):
+        value = chunk.get(key)
+        if value is not None:
+            item[key] = str(value)
+    return item
 
 
 def parse_report_llm_response(response_text: str) -> dict[str, Any]:

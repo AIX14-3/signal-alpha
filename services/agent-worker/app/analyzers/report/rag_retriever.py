@@ -23,21 +23,32 @@ async def retrieve(
 ) -> list[dict[str, Any]]:
     """`stock_id` 로 격리된 청크에서 query와 가장 가까운 Top-K를 돌려준다.
 
-    반환: [{chunk_text, raw_document_id, chunk_index, similarity}, ...] (similarity DESC)
+    반환: [{chunk_text, raw_document_id, chunk_index, similarity, title, source_url, ...}, ...]
+    (similarity DESC)
     """
     provider = provider or get_embedding_provider()
     query_embedding = (await provider.embed([query]))[0]
 
     rows = await connection.fetch(
         """
-        SELECT chunk_text,
-               raw_document_id,
-               chunk_index,
-               1 - (embedding <=> $1::vector) AS similarity
-        FROM report_chunks
-        WHERE stock_id = $2
-          AND embedding IS NOT NULL
-        ORDER BY embedding <=> $1::vector
+        SELECT rc.chunk_text,
+               rc.raw_document_id,
+               rc.chunk_index,
+               1 - (rc.embedding <=> $1::vector) AS similarity,
+               rd.title,
+               rd.source_url,
+               rrd.securities_firm,
+               rrd.publish_date
+        FROM report_chunks rc
+        JOIN raw_documents rd
+          ON rd.id = rc.raw_document_id
+         AND rd.stock_id = rc.stock_id
+        JOIN report_raw_details rrd
+          ON rrd.raw_document_id = rc.raw_document_id
+         AND rrd.stock_id = rc.stock_id
+        WHERE rc.stock_id = $2
+          AND rc.embedding IS NOT NULL
+        ORDER BY rc.embedding <=> $1::vector
         LIMIT $3
         """,
         to_pgvector(query_embedding),
