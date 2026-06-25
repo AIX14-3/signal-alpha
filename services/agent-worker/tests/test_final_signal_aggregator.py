@@ -196,6 +196,14 @@ class AggregateSignalTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
             "usable_multiple_count": 2,
             "implied_multiple_avg": 17.5,
             "peer_gap_avg": 0.0,
+            "scenario_band": {
+                "low_multiple": 15.0,
+                "base_multiple": 17.5,
+                "high_multiple": 20.0,
+                "dispersion_level": "medium",
+                "confidence_note": "multiple_dispersion_medium",
+                "needs_review": True,
+            },
         }
         connection = FakeConnection(
             rows=[

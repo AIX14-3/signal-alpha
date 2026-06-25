@@ -147,4 +147,7 @@ LangGraph는 아래 요구가 생길 때 검토합니다.
 4. LLM 분류/패러프레이즈 보강 연결 - 구현 완료
 5. valuation analyzer에서 배수 분산과 peer gap 산출 - MVP 구현 완료
 6. Report Agent와 Aggregator에 valuation fact를 보조 근거로 연결 - 구현 완료
-7. 백테스트 fixture에 성공/실패 사례를 함께 추가
+7. 데이터 시나리오 밴드 MVP 생성 - 구현 완료
+   - `report_quant.valuation.scenario_band`에 `low_multiple`, `base_multiple`, `high_multiple`, `dispersion_level`, `confidence_note`, `needs_review`를 저장합니다.
+   - 수치는 내재 배수 중앙값과 분산 기반 범위로 계산하며, 투자 행동 제안으로 노출하지 않습니다.
+8. 백테스트 fixture에 성공/실패 사례를 함께 추가

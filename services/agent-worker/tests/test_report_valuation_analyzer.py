@@ -43,6 +43,14 @@ def test_build_valuation_summary_calculates_multiple_distribution_and_gap():
     assert summary["peer_gap_avg"] == 0.0
     assert summary["needs_review_ratio"] == 0.3333
     assert summary["data_status"] == "ok"
+    assert summary["scenario_band"] == {
+        "low_multiple": 15.0,
+        "base_multiple": 17.5,
+        "high_multiple": 20.0,
+        "dispersion_level": "medium",
+        "confidence_note": "multiple_dispersion_medium",
+        "needs_review": False,
+    }
     assert summary["methodology_mix"] == [
         {"methodology": "DCF", "count": 1},
         {"methodology": "PER", "count": 2},
@@ -63,6 +71,7 @@ def test_build_valuation_summary_marks_partial_when_review_ratio_is_high():
     assert summary["data_status"] == "partial"
     assert summary["needs_review"] is True
     assert "valuation_review_required" in summary["risk_flags"]
+    assert summary["scenario_band"]["needs_review"] is True
 
 
 def test_build_valuation_summary_is_partial_without_rows():
@@ -72,3 +81,11 @@ def test_build_valuation_summary_is_partial_without_rows():
     assert summary["usable_multiple_count"] == 0
     assert summary["data_status"] == "partial"
     assert summary["needs_review"] is True
+    assert summary["scenario_band"] == {
+        "low_multiple": None,
+        "base_multiple": None,
+        "high_multiple": None,
+        "dispersion_level": "unknown",
+        "confidence_note": "valuation_data_required",
+        "needs_review": True,
+    }

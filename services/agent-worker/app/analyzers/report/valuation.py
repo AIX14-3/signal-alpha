@@ -17,21 +17,28 @@ def build_valuation_summary(rows: Iterable[Mapping[str, Any]]) -> dict[str, Any]
     needs_review_count = sum(1 for row in facts if bool(row.get("needs_review")))
     needs_review_ratio = round(needs_review_count / valuation_count, 4) if valuation_count else 1.0
     data_status = "partial" if valuation_count == 0 or needs_review_ratio >= 0.5 else "ok"
+    implied_multiple_variance = _variance(implied_multiples)
     risk_flags = []
     if data_status == "partial":
         risk_flags.append("valuation_review_required")
+    scenario_band = _scenario_band(
+        implied_multiples,
+        variance=implied_multiple_variance,
+        needs_review=data_status == "partial",
+    )
 
     return {
         "valuation_count": valuation_count,
         "usable_multiple_count": len(implied_multiples),
         "implied_multiple_avg": _rounded(_avg(implied_multiples)),
         "implied_multiple_median": _rounded(median(implied_multiples)) if implied_multiples else None,
-        "implied_multiple_variance": _rounded(_variance(implied_multiples)),
+        "implied_multiple_variance": _rounded(implied_multiple_variance),
         "peer_gap_avg": _rounded(_avg(peer_gaps)),
         "needs_review_ratio": needs_review_ratio,
         "needs_review": data_status == "partial",
         "data_status": data_status,
         "risk_flags": risk_flags,
+        "scenario_band": scenario_band,
         "methodology_mix": _methodology_items(row.get("methodology") for row in facts),
         "peer_group": _peer_items(_peer_names(facts)),
         "latest_facts": _latest_facts(facts),
@@ -57,6 +64,45 @@ def _variance(values: list[float]) -> float | None:
         return None
     average = sum(values) / len(values)
     return sum((value - average) ** 2 for value in values) / len(values)
+
+
+def _scenario_band(
+    implied_multiples: list[float],
+    *,
+    variance: float | None,
+    needs_review: bool,
+) -> dict[str, Any]:
+    if not implied_multiples:
+        return {
+            "low_multiple": None,
+            "base_multiple": None,
+            "high_multiple": None,
+            "dispersion_level": "unknown",
+            "confidence_note": "valuation_data_required",
+            "needs_review": True,
+        }
+
+    base = float(median(implied_multiples))
+    spread = (variance or 0.0) ** 0.5
+    dispersion_level = _dispersion_level(variance)
+    return {
+        "low_multiple": _rounded(max(0.0, base - spread)),
+        "base_multiple": _rounded(base),
+        "high_multiple": _rounded(base + spread),
+        "dispersion_level": dispersion_level,
+        "confidence_note": f"multiple_dispersion_{dispersion_level}",
+        "needs_review": needs_review,
+    }
+
+
+def _dispersion_level(variance: float | None) -> str:
+    if variance is None:
+        return "unknown"
+    if variance < 4:
+        return "low"
+    if variance < 16:
+        return "medium"
+    return "high"
 
 
 def _rounded(value: float | None) -> float | None:

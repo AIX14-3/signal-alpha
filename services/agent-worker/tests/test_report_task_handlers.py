@@ -469,6 +469,8 @@ class ReportAnalyzeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(quant["valuation"]["valuation_count"], 2)
         self.assertEqual(quant["valuation"]["implied_multiple_avg"], 17.5)
         self.assertEqual(quant["valuation"]["peer_gap_avg"], 0.0)
+        self.assertEqual(quant["valuation"]["scenario_band"]["base_multiple"], 17.5)
+        self.assertEqual(quant["valuation"]["scenario_band"]["dispersion_level"], "medium")
         # method_signal은 허용값(positive). agent에 정량이 context로 주입됐는지
         self.assertEqual(conn.method_signal, "positive")
         self.assertEqual(agent.received.context["report_quant"]["avg_target"], 95000)
