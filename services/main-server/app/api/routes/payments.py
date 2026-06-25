@@ -17,7 +17,7 @@ from app.core.config import Settings, get_settings
 from app.core.database import get_database_pool
 from app.core.email import EmailSender, get_email_sender
 from app.core.portone import PortOneClient, PortOneError, get_portone_client, normalize_phone
-from signal_alpha_data_access.repositories import UserBillingRepository
+from signal_alpha_data_access.backend import UserBillingRepository
 
 logger = logging.getLogger(__name__)
 

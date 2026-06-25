@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends
 
 from app.api.routes.auth import NOTICE
 from app.core.database import get_database_pool
-from signal_alpha_data_access.repositories import ProcessingQueueRepository
+from signal_alpha_data_access.backend import ProcessingQueueRepository
 
 
 analytics_router = APIRouter(prefix="/api/analytics", tags=["analytics"])

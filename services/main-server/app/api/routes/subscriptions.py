@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends
 from app.api.routes.auth import NOTICE, get_current_user
 from app.core.config import Settings, get_settings
 from app.core.database import get_database_pool
-from signal_alpha_data_access.repositories import UserBillingRepository
+from signal_alpha_data_access.backend import UserBillingRepository
 
 
 # 구독 생성/취소는 결제 검증을 거치는 /api/payments/* 에서 처리한다(여기서는 조회만).

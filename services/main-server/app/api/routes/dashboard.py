@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends
 
 from app.api.routes.auth import NOTICE, get_current_user
 from app.core.database import get_database_pool
-from signal_alpha_data_access.repositories import SignalRepository, UserSignalRepository
+from signal_alpha_data_access.backend import SignalRepository, UserSignalRepository
 
 
 SOURCE_ORDER = ("DART", "PRICE", "REPORT", "ALTERNATIVE")

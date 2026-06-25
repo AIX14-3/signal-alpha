@@ -64,9 +64,9 @@ class FakeConnection:
     async def fetchrow(self, sql, *args):
         if "FROM users" in sql and "WHERE id = $1" in sql:
             return self.users_by_id.get(args[0])
-        if "FROM stocks" in sql and "WHERE ticker = $1" in sql:
+        if "FROM api.stocks" in sql and "WHERE ticker = $1" in sql:
             return self.stocks_by_ticker.get(args[0])
-        if "final_signals.id = $1" in sql:
+        if "api.signal_detail" in sql:
             return self.signal if args[0] == self.signal["id"] else None
         if "INSERT INTO signal_journals" in sql:
             stock = next(

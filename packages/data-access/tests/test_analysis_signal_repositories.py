@@ -180,8 +180,9 @@ class AnalysisAndSignalRepositoryTest(unittest.IsolatedAsyncioTestCase):
         row = await repository.get_current_by_ticker("005930")
 
         self.assertEqual(row["id"], 7)
-        self.assertIn("final_signals.is_current = TRUE", connection.calls[0][1])
-        self.assertIn("final_signals.is_published = TRUE", connection.calls[0][1])
+        # 읽기 계약: is_current/is_published 필터와 조인은 api.signals_current view 에 내장.
+        self.assertIn("FROM api.signals_current", connection.calls[0][1])
+        self.assertIn("ticker = $1", connection.calls[0][1])
         self.assertEqual(connection.calls[0][2], ("005930",))
 
     async def test_list_current_by_stock_ids_filters_to_current_published_signals(self):
@@ -192,9 +193,9 @@ class AnalysisAndSignalRepositoryTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(rows[0]["id"], 7)
         sql = connection.calls[0][1]
-        self.assertIn("final_signals.stock_id = ANY", sql)
-        self.assertIn("final_signals.is_current = TRUE", sql)
-        self.assertIn("final_signals.is_published = TRUE", sql)
+        # 읽기 계약: is_current/is_published 필터는 api.signals_current view 에 내장.
+        self.assertIn("FROM api.signals_current", sql)
+        self.assertIn("stock_id = ANY", sql)
         self.assertEqual(connection.calls[0][2], ([1, 2],))
 
     async def test_get_detail_by_id_joins_stock_analysis_agent_results_and_events(self):
@@ -205,13 +206,7 @@ class AnalysisAndSignalRepositoryTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(row["id"], 7)
         sql = connection.calls[0][1]
-        self.assertIn("FROM final_signals", sql)
-        self.assertIn("INNER JOIN stocks", sql)
-        self.assertIn("INNER JOIN analysis_results", sql)
-        self.assertIn("FROM agent_results", sql)
-        self.assertIn("FROM signal_events", sql)
-        self.assertIn("LEFT JOIN source_documents", sql)
-        self.assertIn("final_signals.id = $1", sql)
-        self.assertIn("final_signals.is_current = TRUE", sql)
-        self.assertIn("final_signals.is_published = TRUE", sql)
+        # 읽기 계약: 조인/JSONB 집계/필터는 api.signal_detail view 에 내장.
+        self.assertIn("FROM api.signal_detail", sql)
+        self.assertIn("id = $1", sql)
         self.assertEqual(connection.calls[0][2], (200,))

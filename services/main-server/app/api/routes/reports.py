@@ -13,7 +13,7 @@ from app.api.routes.auth import (
 )
 from app.core.config import Settings, get_settings
 from app.core.database import get_database_pool
-from signal_alpha_data_access.repositories import (
+from signal_alpha_data_access.backend import (
     ReportIssuanceRepository,
     SignalRepository,
 )

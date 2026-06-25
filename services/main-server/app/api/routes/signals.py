@@ -26,7 +26,7 @@ router = APIRouter(tags=["signals"])
 
 @router.get("/signals/{ticker}")
 async def get_current_signal(ticker: str, pool: Any = Depends(get_database_pool)) -> dict[str, Any]:
-    from signal_alpha_data_access.repositories import SignalRepository
+    from signal_alpha_data_access.backend import SignalRepository
 
     async with pool.acquire() as connection:
         row = await SignalRepository(connection).get_current_by_ticker(ticker)
@@ -43,7 +43,7 @@ async def get_signal_by_stock(
     current_user: dict[str, Any] = Depends(get_current_user),
     pool: Any = Depends(get_database_pool),
 ) -> dict[str, Any]:
-    from signal_alpha_data_access.repositories import SignalRepository
+    from signal_alpha_data_access.backend import SignalRepository
 
     async with pool.acquire() as connection:
         row = await SignalRepository(connection).get_current_by_ticker(stock_code)
@@ -60,7 +60,7 @@ async def get_signal_detail(
     current_user: dict[str, Any] = Depends(get_current_user),
     pool: Any = Depends(get_database_pool),
 ) -> dict[str, Any]:
-    from signal_alpha_data_access.repositories import SignalRepository
+    from signal_alpha_data_access.backend import SignalRepository
 
     async with pool.acquire() as connection:
         row = await SignalRepository(connection).get_detail_by_id(signal_id)
@@ -77,7 +77,7 @@ async def mark_signal_read(
     current_user: dict[str, Any] = Depends(get_current_user),
     pool: Any = Depends(get_database_pool),
 ) -> dict[str, Any]:
-    from signal_alpha_data_access.repositories import SignalRepository, UserSignalRepository
+    from signal_alpha_data_access.backend import SignalRepository, UserSignalRepository
 
     async with pool.acquire() as connection:
         signal = await SignalRepository(connection).get_detail_by_id(signal_id)
@@ -108,7 +108,7 @@ async def list_signals(
     DB는 소스별(run_key HIRING/PATENT/DATALAB) 다중 행(모델 B)으로 적재되지만, 본
     엔드포인트가 stock_id로 묶어 종목당 1개로 응집한다(스키마 변경 없음).
     """
-    from signal_alpha_data_access.repositories import SignalRepository
+    from signal_alpha_data_access.backend import SignalRepository
 
     parsed: list[int] = []
     if stock_ids is not None:

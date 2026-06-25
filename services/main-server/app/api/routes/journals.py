@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 from app.api.routes.auth import NOTICE, get_current_user
 from app.core.database import get_database_pool
-from signal_alpha_data_access.repositories import SignalRepository, StockRepository, UserSignalRepository
+from signal_alpha_data_access.backend import SignalRepository, StockRepository, UserSignalRepository
 
 
 ALLOWED_USER_VIEWS = {"watch", "research_more", "not_relevant"}

@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from app.api.routes.auth import NOTICE, get_current_user
 from app.core.database import get_database_pool
-from signal_alpha_data_access.repositories import StockRepository, UserSignalRepository
+from signal_alpha_data_access.backend import StockRepository, UserSignalRepository
 
 
 # 신규 기획: 관심종목은 회원/유료 무관 무제한. 한도 검사를 두지 않는다.

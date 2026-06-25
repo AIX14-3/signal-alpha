@@ -35,7 +35,7 @@ class FakeConnection:
         raise AssertionError(f"Unexpected fetchrow SQL: {sql}")
 
     async def fetch(self, sql, *args):
-        if "FROM watchlists" in sql and "INNER JOIN stocks" in sql:
+        if "FROM watchlists" in sql and "INNER JOIN api.stocks" in sql:
             return [
                 {
                     "id": 101,
@@ -49,7 +49,7 @@ class FakeConnection:
                     "created_at": datetime(2026, 6, 18, tzinfo=UTC),
                 }
             ]
-        if "FROM final_signals" in sql:
+        if "FROM api.signals_current" in sql:
             if not self.with_signal:
                 return []
             return [

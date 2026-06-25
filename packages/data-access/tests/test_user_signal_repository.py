@@ -40,7 +40,7 @@ class UserSignalRepositoryTest(unittest.IsolatedAsyncioTestCase):
 
         await repository.list_watchlist(user_id=1)
 
-        self.assertIn("INNER JOIN stocks", connection.calls[0][1])
+        self.assertIn("INNER JOIN api.stocks", connection.calls[0][1])
 
     async def test_count_watchlist_counts_user_rows(self):
         connection = FakeConnection()
@@ -58,7 +58,7 @@ class UserSignalRepositoryTest(unittest.IsolatedAsyncioTestCase):
 
         await repository.get_watchlist_item(user_id=1, stock_id=10)
 
-        self.assertIn("INNER JOIN stocks", connection.calls[0][1])
+        self.assertIn("INNER JOIN api.stocks", connection.calls[0][1])
         self.assertEqual(connection.calls[0][2], (1, 10))
 
     async def test_mark_signal_read_uses_read_unique_key(self):
@@ -109,7 +109,7 @@ class UserSignalRepositoryTest(unittest.IsolatedAsyncioTestCase):
 
         sql = connection.calls[0][1]
         self.assertIn("FROM signal_journals", sql)
-        self.assertIn("INNER JOIN stocks", sql)
+        self.assertIn("INNER JOIN api.stocks", sql)
         self.assertIn("stocks.ticker = $2", sql)
         self.assertEqual(connection.calls[0][2], (1, "005930", 20))
 

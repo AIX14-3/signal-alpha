@@ -29,7 +29,7 @@ class FakeConnection:
         self.tasks = tasks
 
     async def fetch(self, sql, *args):
-        if "FROM processing_queue" in sql:
+        if "FROM api.analysis_pipeline_status" in sql:
             # list_tasks는 created_at DESC 정렬을 가정.
             return sorted(self.tasks, key=lambda t: t["created_at"], reverse=True)
         raise AssertionError(f"Unexpected fetch SQL: {sql}")
