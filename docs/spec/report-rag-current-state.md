@@ -203,6 +203,9 @@ ReportAnalyzeTaskHandler
   - 의견 값이 여러 종류일 때 단순 충돌 여부
 - `ReportAnalysisAgent`를 호출합니다.
 - RAG 검색은 `stock_id`로 격리하며, embedding이 있는 `report_chunks`만 조회합니다.
+- RAG 검색 결과는 `chunk_text`, `raw_document_id`, `chunk_index`, `similarity`와 함께 `title`, `source_url`, `securities_firm`, `publish_date`를 포함합니다.
+- Report Agent는 이 값을 `method_detail.evidence_chunks`와 LLM prompt payload에 보존해 분석 결과에서 원천 리포트 근거를 추적할 수 있게 합니다.
+- RAG 검색 결과가 0건이면 `risk_flags`에 `evidence_required`를 남기고 보수적 fallback을 사용합니다.
 - `source_signal_event_ids`가 있으면 이벤트를 `SourceAgentInput.events`로 넘깁니다.
 - 분석 결과를 `analysis_results`, `agent_results`에 저장하며, 두 테이블 모두 `source_signal_event_ids`를 보존합니다.
 - Report 분석 결과는 DB 제약에 맞춰 `analysis_mode='quick'`으로 저장합니다.

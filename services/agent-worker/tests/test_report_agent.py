@@ -92,6 +92,66 @@ class ReportAnalysisAgentTest(unittest.IsolatedAsyncioTestCase):
         out = await agent.analyze(_input())
         self.assertEqual(out.data_status, "failed")
         self.assertTrue(out.needs_review)
+        self.assertIn("evidence_required", out.risk_flags)
+
+    async def test_evidence_chunks_keep_traceable_report_metadata(self):
+        chunks = [
+            {
+                "chunk_text": "target price raised",
+                "raw_document_id": 11,
+                "chunk_index": 0,
+                "similarity": 0.91234,
+                "title": "Samsung report",
+                "source_url": "https://example.com/report.pdf",
+                "securities_firm": "Test Securities",
+                "publish_date": "2026-06-24",
+            }
+        ]
+        agent = ReportAnalysisAgent(
+            retriever=FakeRetriever(chunks=chunks), llm_client=None, llm_model=None
+        )
+
+        out = await agent.analyze(_input())
+
+        self.assertEqual(
+            out.method_detail["evidence_chunks"],
+            [
+                {
+                    "raw_document_id": 11,
+                    "chunk_index": 0,
+                    "similarity": 0.9123,
+                    "title": "Samsung report",
+                    "source_url": "https://example.com/report.pdf",
+                    "securities_firm": "Test Securities",
+                    "publish_date": "2026-06-24",
+                }
+            ],
+        )
+
+    async def test_llm_prompt_contains_traceable_report_metadata(self):
+        chunks = [
+            {
+                "chunk_text": "target price raised",
+                "raw_document_id": 11,
+                "chunk_index": 0,
+                "similarity": 0.91,
+                "title": "Samsung report",
+                "source_url": "https://example.com/report.pdf",
+                "securities_firm": "Test Securities",
+                "publish_date": "2026-06-24",
+            }
+        ]
+        llm = FakeLlm(_GOOD_JSON)
+        agent = ReportAnalysisAgent(
+            retriever=FakeRetriever(chunks=chunks), llm_client=llm, llm_model="x"
+        )
+
+        await agent.analyze(_input())
+
+        self.assertIn('"title": "Samsung report"', llm.prompts[0])
+        self.assertIn('"source_url": "https://example.com/report.pdf"', llm.prompts[0])
+        self.assertIn('"securities_firm": "Test Securities"', llm.prompts[0])
+        self.assertIn('"publish_date": "2026-06-24"', llm.prompts[0])
 
     async def test_missing_stock_id_is_failed(self):
         agent = ReportAnalysisAgent(
