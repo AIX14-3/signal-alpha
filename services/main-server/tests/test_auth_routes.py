@@ -104,13 +104,44 @@ class FakeConnection:
             return {**session, **{f"user_{key}": value for key, value in user.items()}}
         raise AssertionError(f"Unexpected fetchrow SQL: {sql}")
 
+    def transaction(self):
+        return _FakeTransaction()
+
     async def execute(self, sql, *args):
         if "UPDATE user_sessions" in sql:
             session = self.sessions_by_hash.get(args[0])
             if session:
                 session["revoked_at"] = "now"
             return "UPDATE 1"
+        if "UPDATE analysis_requests" in sql and "user_id = NULL" in sql:
+            return "UPDATE 0"
+        if sql.strip().startswith("DELETE FROM") and "WHERE user_id = $1" in sql:
+            # hard_delete_user: 회원 소유 자식 행 정리.
+            if "user_sessions" in sql:
+                self.sessions_by_hash = {
+                    h: s for h, s in self.sessions_by_hash.items() if s["user_id"] != args[0]
+                }
+            return "DELETE 0"
+        if "DELETE FROM users" in sql and "WHERE id = $1" in sql:
+            user = self.users_by_id.pop(args[0], None)
+            if user is None:
+                return "DELETE 0"
+            self.users_by_phone.pop(user.get("phone"), None)
+            self.users_by_email.pop(user.get("email"), None)
+            # CASCADE: user_sessions 동반 삭제.
+            self.sessions_by_hash = {
+                h: s for h, s in self.sessions_by_hash.items() if s["user_id"] != args[0]
+            }
+            return "DELETE 1"
         raise AssertionError(f"Unexpected execute SQL: {sql}")
+
+
+class _FakeTransaction:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        return False
 
 
 class FakeAcquire:
@@ -210,6 +241,25 @@ class AuthRoutesTest(unittest.TestCase):
         logout_response = self.client.post("/api/auth/logout")
         self.assertEqual(logout_response.status_code, 200)
         self.assertEqual(logout_response.json(), {"status": "ok"})
+
+    def test_withdraw_hard_deletes_user(self):
+        signup = self.client.post(
+            "/api/auth/signup",
+            json={"identity_verification_id": "imp_AAA", "email": "user@example.com", "nickname": "사용자", "agreed_risk": True},
+        ).json()
+        user_id = signup["user"]["id"]
+        self.assertIn(user_id, self.connection.users_by_id)
+
+        delete_response = self.client.delete(
+            "/api/users/me",
+            headers={"Authorization": f"Bearer {signup['access_token']}"},
+        )
+        self.assertEqual(delete_response.status_code, 200, delete_response.text)
+        self.assertEqual(delete_response.json(), {"status": "deleted"})
+        # DB 에서 회원 행과 세션이 실제로 사라졌는지 확인(soft-delete 가 아님).
+        self.assertNotIn(user_id, self.connection.users_by_id)
+        self.assertEqual(self.connection.users_by_email, {})
+        self.assertEqual(self.connection.sessions_by_hash, {})
 
     def test_login_rejects_unknown_user(self):
         response = self.client.post("/api/auth/login", json={"identity_verification_id": "imp_NEVER"})

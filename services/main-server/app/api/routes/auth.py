@@ -291,11 +291,9 @@ async def delete_me(
     pool: Any = Depends(get_database_pool),
 ) -> dict[str, str]:
     async with pool.acquire() as connection:
-        repository = UserBillingRepository(connection)
-        # 연동 소셜 토큰도 함께 제거(이후 소셜 로그인 차단).
-        for provider in PROVIDERS:
-            await repository.delete_social_account(user_id=int(current_user["id"]), provider=provider)
-        await repository.soft_delete_user(user_id=int(current_user["id"]))
+        # 회원 소유 데이터까지 DB 에서 완전 삭제(social_accounts 는 CASCADE 로 함께 제거되어
+        # 이후 소셜 로그인 차단). analysis_requests 의 공용 시그널은 user_id 분리로 보존된다.
+        await UserBillingRepository(connection).hard_delete_user(user_id=int(current_user["id"]))
     return {"status": "deleted"}
 
 

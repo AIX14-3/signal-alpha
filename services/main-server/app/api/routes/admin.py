@@ -170,9 +170,15 @@ async def delete_user(
     _admin: dict[str, Any] = Depends(get_current_admin),
     pool: Any = Depends(get_database_pool),
 ) -> dict[str, Any]:
-    """회원 삭제(soft delete). 동일 휴대폰/이메일 재가입을 막지 않도록 deleted_at 만 기록."""
+    """회원 완전 삭제(hard delete). 회원 소유 자식 행까지 DB 에서 제거한다.
+
+    analysis_requests 는 공용 시그널 보존을 위해 user_id 만 분리되고, 나머지 회원 데이터는
+    삭제된다(report_issuances/social_accounts/user_sessions 는 CASCADE). 동일 휴대폰/이메일 재가입 가능.
+    """
     async with pool.acquire() as connection:
-        await UserBillingRepository(connection).soft_delete_user(user_id=user_id)
+        deleted = await UserBillingRepository(connection).hard_delete_user(user_id=user_id)
+    if deleted == 0:
+        raise admin_error(404, "USER_NOT_FOUND", "회원을 찾을 수 없습니다.")
     return {"status": "deleted", "user_id": user_id}
 
 
