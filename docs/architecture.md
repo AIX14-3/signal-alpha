@@ -25,15 +25,20 @@ signal-alpha/
 ## 서비스 경계
 
 ```text
-[Next.js web]  ──HTTP──▶  [main-server]  ──내부 API──▶  [agent-worker]  ──▶  PostgreSQL
-                              (사용자 경계)               (수집/분석 경계)
+[Next.js web] ──HTTP──▶ [main-server] ───────▶  PostgreSQL  ◀─────── [agent-worker]
+  (프론트엔드)            (백엔드)        api.* 읽기 view   base DML   (워커: 수집/분석)
 ```
+
+> 배포는 **db / worker / backend / frontend 4유닛**으로 분리합니다. backend와 worker는 런타임에
+> 직접 호출하지 않고 DB의 `api.*` 읽기 계약으로만 연결됩니다. 토폴로지·DB 소유권 경계 상세는
+> [architecture-diagram.md](./architecture-diagram.md) 참고.
 
 - **`web`** 은 `main-server` 만 호출합니다.
 - **`main-server`** 는 사용자-facing API 경계: 헬스체크, 시그널 조회, 관심종목, 저널, 대시보드,
   인증, 결제/구독, 리포트, 관리자/분석 등. 현재 라우트 그룹:
   `health, signals, watchlists, journals, dashboard, reports, auth, admin, admin_auth, analytics, payments, subscriptions`.
-  수집/분석 로직은 직접 들고 있지 않고 `agent-worker` 또는 DB 결과를 사용합니다.
+  수집/분석 로직은 직접 들고 있지 않으며, **`agent-worker`를 직접 호출하지 않고** worker 산출물을
+  DB의 `api.*` 읽기전용 view(읽기 계약)로만 읽습니다(backend/worker 런타임 분리 → 독립 배포).
 - **`agent-worker`** 는 수집·정규화·분석·큐·선택적 LLM·키움 가격 수집 데몬을 담당합니다. 현재 라우트 그룹:
   `health, tasks, queue, dart, price, schedules, dead_letter, observability`.
 - **`packages/data-access`** 는 재사용 가능한 repository 계층입니다. SQL을 여러 서비스에 흩뿌리지 말고
