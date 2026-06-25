@@ -17,7 +17,7 @@ Signal Alpha는 투자 추천 서비스가 아닙니다. 증권사 리포트 데
 - 큐 핸들러: `services/agent-worker/app/orchestrator/report/tasks.py`
 - 현재 Report 큐 작업: `collect_report`, `process_report`, `normalize_report`, `analyze_report`
 - 현재 제외/미구현 범위: `embed_report`, RAG retriever, Report Agent
-- 현재 남은 연결 작업: Aggregator의 `REPORT` 소스 수용
+- 현재 남은 연결 작업: 실제 운영 DB row 기반 backfill/runbook 검증과 UI/API 노출 정책 점검
 - 밸류에이션 재해석 전략: `docs/spec/report-valuation-reinterpretation-strategy.md`
 - 과거 담당자 인수인계 문서: `docs/spec/eunjinspec.md`
 
@@ -32,7 +32,7 @@ Signal Alpha는 투자 추천 서비스가 아닙니다. 증권사 리포트 데
 - `report_valuation_facts`와 valuation summary/scenario band helper, 백테스트 fixture는 구현되어 있습니다.
 - `embed_report`, RAG retriever, Report Agent는 현재 코드에 없습니다.
 - Report 분석 결과 ID는 `aggregate_ctx.source_analysis_result_ids`를 통해 ML/Aggregator queue 입력으로 전달됩니다.
-- Aggregator는 Report valuation payload를 읽을 수 있는 방어 로직을 갖고 있지만, 현재 `SOURCE_ORDER`/`SOURCE_ALIASES`가 `REPORT`를 수용하지 않아 최종 `score_breakdown.REPORT`에는 아직 반영되지 않습니다.
+- Aggregator는 `REPORT`를 최종 `score_breakdown` 근거 소스로 수용하고, Report valuation payload를 `score_breakdown.REPORT.valuation`에 보존합니다. Report는 현재 점수 산정 소스에는 포함하지 않습니다.
 
 ## 현재 canonical 흐름
 
@@ -177,11 +177,11 @@ ReportAnalyzeTaskHandler
 - `analysis_results`에 Report 분석 대표 row를 저장합니다.
 - `agent_results.method_detail.report_quant.valuation`에 목표가, EPS, 적용 배수, 내재 배수, 피어 그룹, extraction source, needs_review를 저장합니다.
 - `ML_INFER` 작업을 등록하고 `aggregate_ctx.source_analysis_result_ids`에 Report `analysis_result_id`를 담아 후속 ML/Aggregator queue 체인으로 넘깁니다.
-- 사용자-facing 최종 발행은 하지 않습니다.
+- 사용자-facing 최종 발행은 직접 하지 않고, 후속 Aggregator/gate 경로에 맡깁니다.
 
 현재 빈틈:
 
-- Aggregator가 아직 `REPORT`를 지원 소스로 수용하지 않습니다.
+- Report 단독 또는 다른 소스와의 동시 운영 시 같은 날짜/스케줄에서 어떤 기준으로 함께 묶을지 운영 정책을 더 정리해야 합니다.
 - Report Agent 합성이나 RAG Top-K 근거 검색은 제품 범위에서 제외되어 있습니다.
 
 ### 6. 제외된 범위: RAG/Report Agent 런타임
@@ -204,7 +204,7 @@ Report RAG는 복구 계획이 없습니다. 신규 개발은 `report_valuation_
 - `process_report`는 밸류에이션 재해석 전략의 `forward_eps_est`, `applied_multiple`, `implied_multiple`, `peer_group`를 규칙 기반으로 구조화하고, LLM 설정이 활성화된 경우 `category_tag`, `rerating_thesis`, `methodology`를 보강합니다.
 - valuation helper는 `report_valuation_facts`를 읽어 내재 배수 평균·중앙값·분산, 적용 배수 대비 gap, 피어 그룹 빈도, `needs_review` 비율, `scenario_band`를 계산할 수 있습니다.
 - 현재 `analyze_report`는 valuation payload를 `agent_results.method_detail.report_quant.valuation`에 저장합니다.
-- Aggregator는 Report `method_detail.report_quant.valuation`이 들어오면 `score_breakdown.REPORT.valuation`과 caution evidence로 전달할 수 있지만, 현재 `REPORT`를 지원 소스로 수용하지 않아 실제 최종 결과에는 아직 반영되지 않습니다.
+- Aggregator는 Report `method_detail.report_quant.valuation`이 들어오면 `score_breakdown.REPORT.valuation`과 caution evidence로 전달합니다. Report score는 breakdown에 보존하지만 현재 최종 점수 산정에는 포함하지 않습니다.
 - `scenario_band`는 내재 배수 중앙값을 base로 두고 분산의 제곱근 범위를 low/high로 계산하는 내부 구조화 값입니다. 투자 행동 제안으로 노출하지 않습니다.
 - LLM 설정이 비활성화되었거나 model/key/provider가 불완전하면 `process_report`의 PDF 파싱 보강은 규칙 기반 fallback을 사용합니다.
   - 수치 값은 규칙 기반 추출 또는 DB row만 사용합니다.
@@ -337,7 +337,7 @@ Invoke-RestMethod `
 
 0. 밸류에이션 재해석 확장
    - `report_valuation_facts` 스키마, extractor MVP, LLM 기반 methodology/category/thesis 보강, valuation analyzer MVP, scenario band MVP, Aggregator 전달, 백테스트 fixture 확인/미확인 사례, 수집 파이프라인 형태 샘플 변환은 구현되었습니다.
-   - 현재 남은 주요 작업은 Aggregator가 Report valuation payload를 최종 `score_breakdown.REPORT`에 수용하도록 연결하는 것입니다.
+   - Aggregator는 Report valuation payload를 최종 `score_breakdown.REPORT`에 수용합니다. 남은 작업은 실제 운영 DB row 기반 backfill 검증과 API/UI 노출 정책 점검입니다.
    - 실제 운영 DB row에서 fixture 후보를 추출하고, normalize/analyze backfill 결과와 비교하는 작업은 계속 유효합니다.
    - PDF 원문과 긴 청크를 사용자에게 노출하지 않고, valuation 전략용 결과는 구조화 fact 중심으로 저장합니다.
 1. 저장 backend
@@ -345,11 +345,11 @@ Invoke-RestMethod `
 2. 정규화 경로
    - Report는 `normalize_report`에서 `source_documents`, `signal_events`, `signal_metrics`를 만듭니다. 후속 작업은 기존 데이터 backfill과 운영 runbook 정리입니다.
 3. LLM 연결
-   - `REPORT_USE_LLM`, provider, model, timeout, API key 설정은 PDF 파싱 보강에 연결되어 있습니다. 현재 `ReportAnalyzeTaskHandler`는 없습니다.
+   - `REPORT_USE_LLM`, provider, model, timeout, API key 설정은 PDF 파싱 보강에 연결되어 있습니다. `ReportAnalyzeTaskHandler`는 LLM을 호출하지 않고 정규화된 DB 데이터만 읽습니다.
    - 운영 환경에서 provider/model/key 값을 확정하고 parser fallback 품질을 점검합니다.
 4. Aggregator 통합
-   - 현재 Report 런타임은 `agent_results` 또는 `analysis_results`를 만들지 않습니다.
-   - Report 소스는 `AGGREGATE_SIGNAL` 입력 queue까지 합류하지만, Aggregator가 아직 `REPORT`를 지원 소스로 수용하지 않습니다.
+   - Report 런타임은 `analysis_results`, `agent_results`를 만들고 `AGGREGATE_SIGNAL` 입력 queue까지 합류합니다.
+   - Aggregator는 `REPORT`를 지원 소스로 수용하고 `score_breakdown.REPORT.valuation`을 보존합니다.
    - 후속 작업은 DART, PRICE, ALTERNATIVE와 같은 날짜/스케줄에서 어떻게 함께 묶을지 운영 정책을 정하는 것입니다.
 5. 레거시 정리
    - `/agents/report`, `ReportAnalyzer`, `ReportCollector`, `vector_store.py` 런타임 경로는 제거되었습니다.

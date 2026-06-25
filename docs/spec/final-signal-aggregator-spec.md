@@ -42,9 +42,13 @@ Collector
 - DART 분석 결과는 `analysis_results`, `agent_results`에 저장된다.
 - DART 분석 성공 시 `aggregate_signal`이 enqueue되고, Aggregator가 DART 단일 source 기반
   `final_signals`를 생성한다.
+- Report는 `analyze_report`가 deterministic 분석 결과를 `analysis_results`, `agent_results`에 저장하고
+  Aggregator 입력 queue까지 연결한다.
+- Aggregator는 `REPORT`를 최종 `score_breakdown` 근거 소스로 수용하고
+  `method_detail.report_quant.valuation`을 `score_breakdown.REPORT.valuation`에 보존한다.
 - Main Server 대시보드는 `final_signals`를 기준으로 최신 시그널을 조회한다.
 - `final_signals`를 실제로 쓰는 기존 구현은 Alternative 계열 persistence가 있다.
-- 전체 DART/PRICE/REPORT/ALTERNATIVE 통합 Aggregator는 아직 구현되어 있지 않다.
+- 전체 통합 Aggregator는 DART/REPORT/ALTERNATIVE 결과를 수용할 수 있으며, PRICE는 아직 점수 산정 소스로 확정되지 않았다.
 
 기존 `AlternativeSignalPersistence`는 현재 동작을 유지한다. 다만 신규 전체 통합 경로에서는
 source analyzer가 `final_signals`를 직접 쓰지 않고 Aggregator를 통해 쓰는 것을 원칙으로 한다.
@@ -218,10 +222,9 @@ ALTERNATIVE
 MVP에서는 하나 이상의 source result가 있으면 final signal을 생성할 수 있다.
 없는 source는 `score_breakdown`에서 `data_status="missing"`으로 표현한다.
 
-PRICE는 canonical source set에는 포함하지만, multi-source scoring에 합류하기 전까지는
-검증/오버레이 source로 취급한다. PRICE를 `aggregate_score`에 넣을지 여부는
-`feat/final-signal-multi-source-aggregation` 전에 결정해야 한다. MVP DART-only Aggregator는
-DART source만 scoring source로 사용한다.
+PRICE와 REPORT는 canonical source set에는 포함하지만, 현재 `aggregate_score` 산정에는 넣지 않는다.
+PRICE는 검증/오버레이 source로 취급하고, REPORT는 밸류에이션 근거 source로 취급한다.
+현재 scoring source는 DART와 ALTERNATIVE이며, PRICE/REPORT의 점수 산정 참여 여부는 별도 정책으로 결정한다.
 
 ### Score
 
@@ -406,14 +409,22 @@ MVP에서는 aggregate task가 새 `analysis_results` row를 `analysis_mode="ful
     "risk_flags": ["missing_source"]
   },
   "REPORT": {
-    "direction": "unknown",
-    "score": null,
-    "score_100": null,
-    "data_status": "missing",
-    "needs_review": true,
-    "analysis_result_id": null,
-    "agent_result_id": null,
-    "risk_flags": ["missing_source"]
+    "direction": "positive",
+    "score": 0.4,
+    "score_100": 70.0,
+    "data_status": "ok",
+    "needs_review": false,
+    "analysis_result_id": 102,
+    "agent_result_id": 202,
+    "risk_flags": [],
+    "valuation": {
+      "target_price": 90000,
+      "forward_eps_est": 6000,
+      "methodology": "PER",
+      "applied_multiple": 14.0,
+      "implied_multiple": 15.0,
+      "needs_review": false
+    }
   },
   "ALTERNATIVE": {
     "direction": "unknown",
@@ -430,6 +441,7 @@ MVP에서는 aggregate task가 새 `analysis_results` row를 `analysis_mode="ful
 
 Main Server는 `score_breakdown[source].score`를 source signed score로 사용할 수 있다.
 화면에서 0~100 표시가 필요하면 `score_100` 또는 `final_score`를 사용한다.
+다만 REPORT의 score는 현재 최종 점수 산정에는 포함하지 않고, 밸류에이션 근거와 검토 필요 여부를 전달하는 보조 값으로 취급한다.
 
 ---
 

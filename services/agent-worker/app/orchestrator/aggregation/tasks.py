@@ -18,14 +18,14 @@ from signal_alpha_data_access.repositories import (
 
 AGGREGATE_RUN_KEY = "AGGREGATED"
 AGGREGATE_VERSION = "final-agg-v1"
-# REPORT 는 deterministic analysis_result 를 만들지만 아직 Aggregator 지원 소스로 수용하지 않는다.
-# SOURCE_ORDER 에 남겨두면 영구 missing_source 로 잡혀 warning_level 을 부당하게 격상시킴.
-SOURCE_ORDER = ("DART", "PRICE", "ALTERNATIVE")
+# REPORT 는 deterministic valuation 근거 소스로 수용하지만 점수 산정에는 넣지 않는다.
+SOURCE_ORDER = ("DART", "PRICE", "REPORT", "ALTERNATIVE")
 SCORING_SOURCES = {"DART", "ALTERNATIVE"}
 VALID_DIRECTIONS = {"positive", "negative", "neutral", "mixed"}
 SOURCE_ALIASES = {
     "DART": "DART",
     "PRICE": "PRICE",
+    "REPORT": "REPORT",
     "ALTERNATIVE": "ALTERNATIVE",
     "HIRING": "ALTERNATIVE",
     "PATENT": "ALTERNATIVE",
