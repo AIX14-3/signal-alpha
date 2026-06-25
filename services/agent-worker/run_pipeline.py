@@ -21,6 +21,7 @@ import asyncio
 import csv
 import json
 import sys
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -39,12 +40,22 @@ from app.orchestrator.queue.task_types import (  # noqa: E402
     RISK_VETO,
     SYNTHESIZE,
 )
+from app.ml.model_registry import resolve_models  # noqa: E402
 from app.orchestrator.queue.tasks import QueueTaskRunner  # noqa: E402
 from app.synthesis.tasks import synthesis_llm_enabled  # noqa: E402
 
 # MVP 드레인 대상 — worker-redesign 의 ML→결합→게이트2→종합→veto 선형 체인.
 MVP_TASK_TYPES = (ML_INFER, META_COMBINE, AGGREGATE_SIGNAL, SYNTHESIZE, RISK_VETO)
-MODEL_ORDER = ("ewma", "har_rv", "garch", "lightgbm")
+
+
+@lru_cache(maxsize=1)
+def _model_order() -> tuple[str, ...]:
+    """배치/리포트의 모델 컬럼 순서를 '실제로 돌 모델'에서 파생한다 — 백테스트 게이트
+    (``ML_GATE_PASSED_MODELS``) ∩ 가용성 게이트(``HAVE_*``). 하드코딩 상수가 게이트와
+    어긋나 모델이 누락되거나(예: tcn 추가 후 누락) 미설치 모델이 죽은 컬럼으로 잔존
+    (예: degated lightgbm)하는 것을 원천 차단. ``lru_cache`` 로 프로세스 내 모든
+    호출이 동일 순서를 보장(컬럼·행·DB preds 정합)."""
+    return tuple(spec.name for spec in resolve_models())
 
 
 def _build_handlers(conn: Any, settings: Any) -> dict[str, Any]:
@@ -183,7 +194,7 @@ async def _read_ml_result(conn: Any, stock_id: int) -> dict[str, Any]:
                 "pred_vol": _f(preds[name]["pred_value"]) if name in preds else None,
                 "error": preds[name]["error_message"] if name in preds else "not_run",
             }
-            for name in MODEL_ORDER
+            for name in _model_order()
         },
         "combined_vol": _f(meta["combined_vol"]) if meta else None,
         "confidence": _f(meta["confidence"]) if meta else None,
@@ -275,7 +286,7 @@ async def run_batch(args: argparse.Namespace) -> None:
 
         print("PIPELINE (batch)")
         print("=" * 64)
-        print(f"targets={len(targets)} models={list(MODEL_ORDER)}")
+        print(f"targets={len(targets)} models={list(_model_order())}")
         await _drain(pool, settings)
 
         rows: list[dict[str, Any]] = []
@@ -287,7 +298,7 @@ async def run_batch(args: argparse.Namespace) -> None:
                     "name": target["name"],
                     "asof_date": ml["asof_date"],
                     "horizon": ml["horizon"],
-                    **{m: ml["models"][m]["pred_vol"] for m in MODEL_ORDER},
+                    **{m: ml["models"][m]["pred_vol"] for m in _model_order()},
                     "combined_vol": ml["combined_vol"],
                     "confidence": ml["confidence"],
                     "method": ml["method"],
@@ -298,7 +309,7 @@ async def run_batch(args: argparse.Namespace) -> None:
         _print_batch_table(rows)
         csv_path = Path(args.csv) if args.csv else Path("data") / f"mvp_baseline_{rows[0]['asof_date']}.csv"
         csv_path.parent.mkdir(parents=True, exist_ok=True)
-        fieldnames = ["ticker", "name", "asof_date", "horizon", *MODEL_ORDER,
+        fieldnames = ["ticker", "name", "asof_date", "horizon", *_model_order(),
                       "combined_vol", "confidence", "method", "model_count"]
         with csv_path.open("w", newline="", encoding="utf-8-sig") as fh:
             writer = csv.DictWriter(fh, fieldnames=fieldnames)
@@ -313,7 +324,7 @@ async def run_batch(args: argparse.Namespace) -> None:
 def _print_single_summary(report: dict[str, Any]) -> None:
     ml = report["ml_dl_line"]
     print(f"\nML/DL line (asof={ml['asof_date']} h={ml['horizon']}):")
-    for name in MODEL_ORDER:
+    for name in _model_order():
         cell = ml["models"][name]
         val = f"{cell['pred_vol']:.4f}" if cell["pred_vol"] is not None else f"FAIL({cell['error']})"
         print(f"  {name:<9} pred_vol={val}")
@@ -331,12 +342,12 @@ def _print_single_summary(report: dict[str, Any]) -> None:
 
 
 def _print_batch_table(rows: list[dict[str, Any]]) -> None:
-    header = f"{'ticker':<8}{'  '.join(f'{m:>9}' for m in MODEL_ORDER)}{'combined':>11}{'conf':>7}{'method':>16}"
+    header = f"{'ticker':<8}{'  '.join(f'{m:>9}' for m in _model_order())}{'combined':>11}{'conf':>7}{'method':>16}"
     print("\n" + header)
     print("-" * len(header))
     for r in rows:
         cells = "  ".join(
-            f"{r[m]:>9.4f}" if r[m] is not None else f"{'—':>9}" for m in MODEL_ORDER
+            f"{r[m]:>9.4f}" if r[m] is not None else f"{'—':>9}" for m in _model_order()
         )
         comb = f"{r['combined_vol']:>11.4f}" if r["combined_vol"] is not None else f"{'—':>11}"
         conf = f"{r['confidence']:>7.2f}" if r["confidence"] is not None else f"{'—':>7}"

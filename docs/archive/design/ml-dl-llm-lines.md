@@ -12,15 +12,15 @@ MVP에서 **확정된 모델**과, 합성 OHLCV로 끝까지 돌려 얻은 **첫
 
 | 라인 | 단계(task_type) | 확정 모델 | 입력 → 출력 | MVP 실행 |
 |---|---|---|---|---|
-| **ML** | `ml_infer` → `meta_combine` | EWMA · HAR-RV · GARCH(1,1) · LightGBM | `ohlcv_data` → `ml_inferences.pred_value` → `meta_signals.combined_vol` | ✅ CPU |
-| **DL** | `ml_infer`(가용성 게이트) | Kronos · Chronos-2 | 동일 `DataContract` → `ml_inferences.pred_value` | ⛔ 설계만(GPU 미실행) |
+| **ML** | `ml_infer` → `meta_combine` | EWMA · HAR-RV · GARCH(1,1) **3종** (LightGBM 은 무거워 기본 제외/opt-in) | `ohlcv_data` → `ml_inferences.pred_value` → `meta_signals.combined_vol` | ✅ CPU |
+| **DL** | `ml_infer`(가용성 게이트) | **TCN(경량, CPU)** · Kronos · Chronos-2(GPU) | 동일 `DataContract` → `ml_inferences.pred_value` | ✅ CPU(TCN, torch[dl]) / ⛔ GPU 2종 미실행 |
 | **LLM** | `synthesize` | Gemini 3.x (`gemini-3.1-pro-preview`) | `final_signals`+`meta_signals`+근거 → 내러티브 | ✅ 키 주입 시 |
 
 ---
 
-## ML 라인 (확정, MVP 실행)
+## ML 라인 (확정, MVP 실행) — 3종
 
-벤더링된 vol-benchmark 모델(`packages/vol-models`)로 **h일 변동성**을 예측한다. 4종 모두 실구현이며
+벤더링된 vol-benchmark 모델(`packages/vol-models`)로 **h일 변동성**을 예측한다. 기본 셋은 3종이며
 `run_inference`(`app/ml/inference.py`)가 모델별 독립 실패를 격리해 `ml_inferences` 에 멱등 적재한다.
 
 | 모델 | 구현 | 백엔드 | 성격 |
@@ -28,14 +28,14 @@ MVP에서 **확정된 모델**과, 합성 OHLCV로 끝까지 돌려 얻은 **첫
 | `ewma` | `vol_models/models/cpu_ewma.py` | numpy(순수) | RiskMetrics λ=0.94 기준선(항상 가용) |
 | `har_rv` | `cpu_harrv.py` | numpy(순수) | Corsi(2009) 일/주(5)/월(22) 회귀 |
 | `garch` | `cpu_garch.py` | `arch>=6.0` | GARCH(1,1) 조건부 분산 |
-| `lightgbm` | `cpu_lgbm.py` | `lightgbm>=4.0`(+`scikit-learn`) | 트리, 가격 lag 피처 (alt-data 융합은 TODO) |
+| ~~`lightgbm`~~ | `cpu_lgbm.py` | `lightgbm>=4.0`(+`scikit-learn`) | **기본 제외**(scikit-learn 의존으로 무거움). vendored candidate 로 남아 `ML_GATE_PASSED_MODELS` 에 추가 시 opt-in |
 
 - **입력**: `ohlcv_data` 최신 `ML_LOOKBACK_SESSIONS`(400) 세션 → `contract_adapter.build_contract` →
   point-in-time-safe `DataContract`(date,ticker,OHLCV,ret,rv_d). look-ahead 없음.
 - **출력**: 모델×asof×horizon 당 `ml_inferences.pred_value`(실패 시 NULL+`error_message`).
 - **파라미터(env)**: `ML_HORIZON=10` · `ML_LOOKBACK_SESSIONS=400` · `ML_SEED=42` · `ML_RUN_KEY=ML`.
-- **게이트**: ① 백테스트 게이트 `ML_GATE_PASSED_MODELS`(기본 4종) ② 가용성 게이트(`HAVE_*` import 플래그).
-  `model_registry.resolve_models()` 가 교집합만 추론.
+- **게이트**: ① 백테스트 게이트 `ML_GATE_PASSED_MODELS`(기본 = ML 3종 + DL `tcn`) ② 가용성 게이트
+  (`HAVE_*` import 플래그). `model_registry.resolve_models()` 가 교집합만 추론.
 
 ### 결합 — 메타러너 (`meta_combine` → `meta_signals`)
 - `app/ml/meta_learner.combine` 이 게이트 통과 `pred_value` 들을 **stacking** 으로 1개 `combined_vol`
@@ -45,19 +45,22 @@ MVP에서 **확정된 모델**과, 합성 OHLCV로 끝까지 돌려 얻은 **첫
 
 ---
 
-## DL 라인 (설계 확정, MVP 미실행)
+## DL 라인 — 경량 TCN(CPU, 실행) + GPU 2종(설계 확정, 미실행)
 
-GPU 생성형/파운데이션 모델. ML 라인과 **동일한 `DataContract` 인터페이스**(`predict(contract, asof_idx,
-horizon, cfg, rng) -> float`)라 추가 와이어링 없이 화이트리스트 편입만으로 합류한다.
+ML 라인과 **동일한 `DataContract` 인터페이스**(`predict(contract, asof_idx, horizon, cfg, rng) -> float`)라
+추가 와이어링 없이 화이트리스트 편입만으로 합류한다. DL 이 곧 GPU 는 아니다 — 무게급으로 나뉜다.
 
-| 모델 | 구현 | 백엔드 | 비고 |
-|---|---|---|---|
-| `kronos` | `vol_models/models/gpu_kronos.py` | `torch>=2.2` + Kronos | OHLCV→경로 샘플(n_samples=100) |
-| `chronos2` | `gpu_chronos2.py` | `torch>=2.2` + chronos-forecasting | Amazon Chronos-2 |
+| 모델 | 구현 | 백엔드 | 무게급 | MVP |
+|---|---|---|---|---|
+| `tcn` | `vol_models/models/cpu_tcn.py` | `torch>=2.2`(CPU 휠, `vol-models[dl]`) | **경량 DL** | ✅ CPU 실행(기본 게이트 포함) |
+| `kronos` | `vol_models/models/gpu_kronos.py` | `torch>=2.2` + Kronos repo | 대형(GPU) | ⛔ GPU 미실행 |
+| `chronos2` | `gpu_chronos2.py` | `torch>=2.2` + chronos-forecasting | 대형(GPU) | ⛔ GPU 미실행 |
 
-- **MVP 처리**: CPU 호스트에서 가용성 게이트가 자동 제외 → `ml_inferences` 미생성(정상). 설계도엔
-  점선/회색으로 "설계만" 표기.
-- **편입 절차(후속)**: vast.ai GPU에서 실행 검증 → vol-benchmark `comparison.csv`(DM<0 & p<0.05)
+- **TCN(경량 DL, 확정·실행)**: dilated causal conv(자체 `torch.nn` 구현, 외부 TCN 라이브러리 무의존).
+  point-in-time 윈도우로 학습→asof 시점 h일 변동성 예측. torch[dl](CPU) 설치 시 가용, 미설치면
+  가용성 게이트(`HAVE_TORCH`)가 자동 제외. ML 3종과 동급으로 `ml_inferences` 에 적재.
+- **GPU 2종 처리**: CPU 호스트에서 가용성 게이트가 자동 제외 → `ml_inferences` 미생성(정상).
+- **GPU 편입 절차(후속)**: vast.ai GPU에서 실행 검증 → vol-benchmark `comparison.csv`(DM<0 & p<0.05)
   통과 시 `ML_GATE_PASSED_MODELS` 에 추가.
 
 ---

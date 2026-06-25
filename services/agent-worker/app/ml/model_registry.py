@@ -9,8 +9,9 @@ Two independent gates decide which vendored vol-benchmark models actually run:
      kept as a reference model.
   2. **Availability gate** (``is_available``): a whitelisted model is still
      skipped if its backend is not importable on this host — ``arch`` for GARCH,
-     ``lightgbm`` for LightGBM, torch + the model repo for the GPU models. This
-     is what lets GPU models (Kronos/Chronos-2) auto-exclude on CPU-only hosts.
+     ``lightgbm`` for LightGBM, ``torch`` for the CPU TCN, torch + the model repo
+     for the GPU models. This is what lets the TCN auto-exclude where torch is not
+     installed and the GPU models (Kronos/Chronos-2) auto-exclude on CPU-only hosts.
 
 Heavy model modules are imported lazily (only when a model is both whitelisted
 and being resolved), so resolving the default CPU set never imports torch.
@@ -27,7 +28,7 @@ from typing import Any
 # Per-host availability is read from these module-level flags (set by each model
 # module's top-level ``try: import backend``). A module without any of these flags
 # is pure numpy/pandas and therefore always available.
-_AVAILABILITY_FLAGS = ("HAVE_ARCH", "HAVE_LGBM", "HAVE_LIB")
+_AVAILABILITY_FLAGS = ("HAVE_ARCH", "HAVE_LGBM", "HAVE_TORCH", "HAVE_LIB")
 
 PredictFn = Callable[..., float]
 
@@ -65,14 +66,18 @@ _CANDIDATES: tuple[ModelSpec, ...] = (
     ModelSpec("har_rv", "vol_models.models.cpu_harrv", "cpu"),
     ModelSpec("garch", "vol_models.models.cpu_garch", "cpu"),
     ModelSpec("lightgbm", "vol_models.models.cpu_lgbm", "cpu"),
+    ModelSpec("tcn", "vol_models.models.cpu_tcn", "cpu", {"window": 48, "epochs": 150, "hidden": 16}),
     ModelSpec("kronos", "vol_models.models.gpu_kronos", "gpu", {"n_samples": 100, "context_len": 400}),
     ModelSpec("chronos2", "vol_models.models.gpu_chronos2", "gpu", {"context_len": 512}),
 )
 _BY_NAME = {spec.name: spec for spec in _CANDIDATES}
 
 # Backtest-accepted whitelist. Override with ML_GATE_PASSED_MODELS="ewma,har_rv,..".
-# Default = price-only CPU set (GPU models off until validated on a GPU host).
-DEFAULT_GATE_PASSED = ("ewma", "har_rv", "garch", "lightgbm")
+# Default = ML 3종(ewma/har_rv/garch) + lightweight TCN DL line (torch-gated;
+# auto-skips where torch is not installed). LightGBM stays a vendored candidate
+# but is OFF by default (heavy: pulls scikit-learn) — re-enable via the env
+# override. GPU models stay off until validated on a GPU host.
+DEFAULT_GATE_PASSED = ("ewma", "har_rv", "garch", "tcn")
 
 
 def all_specs() -> tuple[ModelSpec, ...]:

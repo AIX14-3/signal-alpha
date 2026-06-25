@@ -22,8 +22,13 @@ dependencies = [
   "python-dotenv>=1.0.0",
   "selenium>=4.20.0",
   "signal-alpha-data-access",
-  # vol-benchmark 변동성 모델 + DataContract (ML/DL 추론 단계, app/ml/). base는 numpy/pandas만.
-  "signal-alpha-vol-models",
+  # vol-benchmark 변동성 모델 + DataContract (ML/DL 추론 단계, app/ml/).
+  # ML 3종: ewma/har_rv(numpy, base) + garch(arch extra).
+  # lightgbm 은 scikit-learn 까지 끌어와 이미지가 무거워져 제외(필요 시 [garch,lgbm]).
+  # DL: tcn(경량)은 torch CPU 휠(~200MB+)이 무거워 기본 이미지에서 opt-in — 켜려면 [garch,dl].
+  #     미포함 시 HAVE_TORCH=False 로 게이트에서 자동 skip(코드/게이트엔 이미 편입).
+  # GPU 모델(kronos/chronos2)은 gpu extra 미포함 → 게이트에서 제외(CPU 호스트).
+  "signal-alpha-vol-models[garch]",
   "sqlalchemy>=2.0.0",
   "webdriver-manager>=4.0.0",
   "tzdata>=2024.1",
