@@ -115,7 +115,6 @@ class CollectionPersistenceTest(unittest.IsolatedAsyncioTestCase):
         raw_insert = next(call for call in connection.calls if "INSERT INTO raw_documents" in call[1])
         self.assertIsInstance(raw_insert[2][8], datetime)
         self.assertTrue(any("INSERT INTO report_raw_details" in call[1] for call in connection.calls))
-        self.assertTrue(any(call[0] == "executemany" for call in connection.calls))
         self.assertTrue(any("INSERT INTO processing_queue" in call[1] for call in connection.calls))
 
     async def test_save_dart_evidence_enqueues_normalize_task_with_dedupe_identity(self):

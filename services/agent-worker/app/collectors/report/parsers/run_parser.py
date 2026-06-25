@@ -9,6 +9,7 @@ import argparse
 import json
 import re
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -236,13 +237,60 @@ def _clean_line(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
 
 
+@dataclass(frozen=True)
+class _ReportLlmConfig:
+    client: object
+    model: str
+    timeout_seconds: float
+
+
 def _build_llm_config(settings: object | None) -> object | None:
+    """리포트 PDF 파싱 LLM 보강용 클라이언트 구성(목표가/의견 추출).
+
+    report_use_llm=True이고 provider 키가 갖춰졌을 때만 클라이언트를 만든다.
+    그 외에는 None을 반환해 규칙 기반 파싱만 사용한다.
+    """
     if settings is None:
         return None
+    if not bool(getattr(settings, "report_use_llm", False)):
+        return None
 
-    from app.orchestrator.report.llm_wiring import build_report_llm_config
+    model = str(getattr(settings, "report_llm_model", "") or "").strip()
+    if not model:
+        return None
 
-    return build_report_llm_config(settings)
+    provider = str(getattr(settings, "report_llm_provider", "gemini") or "gemini").strip().lower()
+    timeout_seconds = float(getattr(settings, "report_llm_timeout_seconds", 20.0) or 20.0)
+
+    from app.analyzers.dart.llm import GeminiGenerateContentClient, OpenAiChatClient
+    from app.observability.langsmith import maybe_trace
+
+    if provider == "gemini":
+        api_key = str(getattr(settings, "gemini_api_key", "") or "").strip()
+        if not api_key:
+            return None
+        base_url = str(getattr(settings, "gemini_base_url", "") or "").strip()
+        client = GeminiGenerateContentClient(
+            api_key=api_key,
+            **({"base_url": base_url} if base_url else {}),
+        )
+    elif provider == "openai":
+        api_key = str(getattr(settings, "openai_api_key", "") or "").strip()
+        if not api_key:
+            return None
+        base_url = str(getattr(settings, "openai_base_url", "") or "").strip()
+        client = OpenAiChatClient(
+            api_key=api_key,
+            **({"base_url": base_url} if base_url else {}),
+        )
+    else:
+        return None
+
+    return _ReportLlmConfig(
+        client=maybe_trace(client, name="report_llm"),
+        model=model,
+        timeout_seconds=timeout_seconds,
+    )
 
 
 def run(extract_only: bool = False, incremental: bool = False) -> list[dict]:

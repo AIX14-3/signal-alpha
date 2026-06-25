@@ -1,8 +1,14 @@
 # Local development compose file.
-# Production should use a managed PostgreSQL/pgvector database instead of this postgres service.
+# Production should use a managed PostgreSQL database instead of this postgres service
+# (GCP Cloud SQL for PostgreSQL — pgvector 확장은 Cloud SQL 에서 지원됨).
 
 services:
   postgres:
+    # 임베딩/pgvector 기능은 제거됐다(최종 스키마는 vector 타입/확장 없음). 다만
+    # 과거 마이그레이션(001/021)이 CREATE EXTENSION vector 를 거친 뒤 새 마이그레이션
+    # (20260625_drop_embeddings_pgvector)이 확장을 드롭하므로, fresh DB 에 마이그레이션을
+    # 적용하려면 vector 확장이 "설치 가능"해야 한다 → 로컬은 pgvector 이미지를 유지한다.
+    # (Cloud SQL 은 pgvector 를 기본 지원하므로 배포에는 문제 없음.)
     image: pgvector/pgvector:pg16
     container_name: signal-alpha-postgres
     environment:

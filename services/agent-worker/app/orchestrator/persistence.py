@@ -147,11 +147,6 @@ class CollectionPersistence:
                 parsing_status=item.metadata.get("parsing_status", "success"),
                 extra_payload=dict(item.metadata),
             )
-            await self._collection_repository.replace_report_chunks(
-                raw_document_id=raw_document_id,
-                stock_id=stock_id,
-                chunks=[item.content],
-            )
         elif item.source == "DART":
             await self._raw_detail_repository.upsert_dart_detail(
                 raw_document_id=raw_document_id,

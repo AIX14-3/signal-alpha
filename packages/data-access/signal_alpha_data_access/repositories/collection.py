@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Iterable
+from typing import Any
 
 
 class CollectionRepository:
@@ -196,45 +196,6 @@ class CollectionRepository:
             parsing_status,
             parsing_error,
             _jsonb(extra_payload),
-        )
-
-    async def replace_report_chunks(
-        self,
-        *,
-        raw_document_id: int,
-        stock_id: int,
-        chunks: Iterable[str],
-        token_counts: Iterable[int | None] | None = None,
-    ) -> None:
-        await self._connection.execute(
-            """
-            DELETE FROM report_chunks
-            WHERE raw_document_id = $1
-            """,
-            raw_document_id,
-        )
-
-        chunk_list = list(chunks)
-        token_count_list = list(token_counts) if token_counts is not None else [None] * len(chunk_list)
-        rows = [
-            (raw_document_id, stock_id, index, chunk_text, token_count_list[index])
-            for index, chunk_text in enumerate(chunk_list)
-        ]
-        if not rows:
-            return
-
-        await self._connection.executemany(
-            """
-            INSERT INTO report_chunks (
-                raw_document_id,
-                stock_id,
-                chunk_index,
-                chunk_text,
-                token_count
-            )
-            VALUES ($1, $2, $3, $4, $5)
-            """,
-            rows,
         )
 
     async def delete_dart_test_data(

@@ -104,18 +104,6 @@ class ReportScheduleRouteTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 422)
 
-    def test_report_analyze_single_stock(self):
-        app.dependency_overrides[get_database_pool] = lambda: FakePool()
-        client = TestClient(app)
-
-        response = client.post(
-            "/internal/schedules/report/analyze",
-            json={"stock_code": "005930"},
-        )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["scheduled_count"], 1)
-
     def test_report_normalize_backfill_dry_run_only_lists_candidates(self):
         pool = FakePool()
         app.dependency_overrides[get_database_pool] = lambda: pool

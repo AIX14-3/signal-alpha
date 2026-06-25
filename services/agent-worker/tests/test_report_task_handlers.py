@@ -1,4 +1,3 @@
-import json
 import sys
 import unittest
 from datetime import datetime
@@ -6,21 +5,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "packages" / "data-access"))
 
-from app.agents.base import SourceAgentOutput
-from app.embeddings.provider import EMBEDDING_DIM, set_embedding_provider
 from app.orchestrator.report import tasks as report_tasks
 from app.orchestrator.report.tasks import (
-    ReportAnalyzeTaskHandler,
     ReportCollectTaskHandler,
-    ReportEmbedTaskHandler,
     ReportNormalizeTaskHandler,
     ReportProcessTaskHandler,
 )
-
-
-class FakeProvider:
-    async def embed(self, texts):
-        return [[0.5] * EMBEDDING_DIM for _ in texts]
 
 
 class FakeStorage:
@@ -40,109 +30,6 @@ class FakeStorage:
     def download_pdf(self, key):
         self.downloaded_keys.append(key)
         return self.pdf_bytes
-
-
-# ── embed_report ────────────────────────────────────────────────
-class EmbedHandlerConn:
-    def __init__(self, parsing_status="success", s3_key="reports/005930/x.pdf"):
-        self._status = parsing_status
-        self._s3_key = s3_key
-        self.inserts = []
-        self.fetchvals = []
-
-    async def fetchrow(self, sql, *args):
-        return {
-            "stock_id": 1,
-            "stock_code": "005930",
-            "s3_key": self._s3_key,
-            "parsing_status": self._status,
-        }
-
-    async def execute(self, sql, *args):
-        if "INSERT INTO report_chunks" in sql:
-            self.inserts.append(args)
-
-    async def fetchval(self, sql, *args):
-        self.fetchvals.append((sql, args))
-        if "SELECT id" in sql:
-            return None
-        return 701
-
-
-class ReportEmbedTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
-    def setUp(self):
-        set_embedding_provider(FakeProvider())
-        self._orig_extract = report_tasks.extract_text
-        report_tasks.extract_text = lambda b: ("문단입니다. " * 250)
-
-    def tearDown(self):
-        set_embedding_provider(None)
-        report_tasks.extract_text = self._orig_extract
-
-    async def test_embeds_full_text_and_inserts_chunks(self):
-        conn = EmbedHandlerConn()
-        handler = ReportEmbedTaskHandler(
-            connection=conn,
-            settings=None,
-            storage=FakeStorage(pdf_bytes=b"%PDF-fake"),
-        )
-
-        result = await handler({"task_context": {"raw_document_id": 42}})
-
-        self.assertEqual(result["status"], "success")
-        self.assertEqual(len(conn.inserts), result["chunks"])
-        # 마지막 인자(embedding)는 1024차원 pgvector 문자열
-        emb = conn.inserts[0][-1]
-        self.assertTrue(isinstance(emb, str) and emb.startswith("["))
-        self.assertEqual(emb.count(",") + 1, EMBEDDING_DIM)
-        # chunk_index 순차
-        self.assertEqual([a[2] for a in conn.inserts], list(range(len(conn.inserts))))
-
-    async def test_not_ready_when_parsing_incomplete(self):
-        conn = EmbedHandlerConn(parsing_status="pending", s3_key=None)
-        handler = ReportEmbedTaskHandler(
-            connection=conn,
-            settings=None,
-            storage=FakeStorage(),
-        )
-        result = await handler({"task_context": {"raw_document_id": 7}})
-        self.assertEqual(result["status"], "not_ready")
-        self.assertEqual(conn.inserts, [])
-
-    async def test_uses_injected_storage_client(self):
-        conn = EmbedHandlerConn()
-        storage = FakeStorage(pdf_bytes=b"%PDF-from-storage")
-        handler = ReportEmbedTaskHandler(connection=conn, settings=None, storage=storage)
-
-        result = await handler({"task_context": {"raw_document_id": 42}})
-
-        self.assertEqual(result["status"], "success")
-        self.assertEqual(storage.downloaded_keys, ["reports/005930/x.pdf"])
-
-    async def test_enqueues_report_analysis_with_signal_event_ids_after_embedding(self):
-        conn = EmbedHandlerConn()
-        handler = ReportEmbedTaskHandler(
-            connection=conn,
-            settings=None,
-            storage=FakeStorage(pdf_bytes=b"%PDF-fake"),
-        )
-
-        result = await handler(
-            {
-                "source_signal_event_ids": [801],
-                "task_context": {
-                    "raw_document_id": 42,
-                    "stock_code": "005930",
-                    "run_key": "REPORT_EVENT_801",
-                },
-            }
-        )
-
-        self.assertEqual(result["analyze_task_id"], 701)
-        enqueue = conn.fetchvals[-1][1]
-        self.assertEqual(enqueue[1], "analyze_report")
-        self.assertEqual(enqueue[4], [801])
-        self.assertIn('"run_key": "REPORT_EVENT_801"', enqueue[6])
 
 
 # ── process_report ───────────────────────────────────────────────
@@ -196,7 +83,6 @@ class ReportProcessTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         report_tasks.get_report_storage_client = _fail_if_called
         try:
             ReportProcessTaskHandler(connection=ProcessHandlerConn(), settings=object())
-            ReportEmbedTaskHandler(connection=EmbedHandlerConn(), settings=object())
         finally:
             report_tasks.get_report_storage_client = orig_factory
 
@@ -294,7 +180,7 @@ class NormalizeHandlerConn:
 
 
 class ReportNormalizeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
-    async def test_normalizes_report_and_enqueues_embedding_with_event_id(self):
+    async def test_normalizes_report_to_canonical_event_without_downstream_enqueue(self):
         conn = NormalizeHandlerConn()
         handler = ReportNormalizeTaskHandler(connection=conn)
 
@@ -308,6 +194,7 @@ class ReportNormalizeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result["normalized_count"], 1)
         self.assertEqual(result["signal_event_ids"], [801])
+        self.assertNotIn("embed_task_ids", result)
         self.assertTrue(conn._inserts("source_documents"))
         event_call = conn._inserts("signal_events")[0]
         self.assertEqual(event_call[2][3], "REPORT")
@@ -316,137 +203,12 @@ class ReportNormalizeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         metric_names = [call[2][1] for call in conn._inserts("signal_metrics")]
         self.assertIn("report_target_price", metric_names)
         self.assertIn("report_upside_pct", metric_names)
-        enqueue = conn._enqueue_inserts()[0][2]
-        self.assertEqual(enqueue[1], "embed_report")
-        self.assertEqual(enqueue[4], [801])
-        self.assertIn('"raw_document_id": 42', enqueue[6])
-
-
-# ── analyze_report ──────────────────────────────────────────────
-class AnalyzeHandlerConn:
-    def __init__(self):
-        self.upserts = []
-        self.method_signal = None
-        self.analysis_args = None
-        self.agent_args = None
-        self.fetchvals = []
-
-    async def fetch(self, sql, *args):
-        if "report_raw_details" in sql:
-            return [
-                {"investment_opinion": "Buy", "target_price": 90000},
-                {"investment_opinion": "Buy", "target_price": 100000},
-                {"investment_opinion": "Hold", "target_price": None},
-            ]
-        if "FROM signal_events" in sql:
-            return [
-                {
-                    "id": 801,
-                    "stock_id": 1,
-                    "event_date": datetime(2026, 6, 24).date(),
-                    "title": "삼성전자 실적 점검",
-                    "summary": "데이터 방향성 확인",
-                }
-            ]
-        return []
-
-    async def fetchrow(self, sql, *args):
-        if "INSERT INTO analysis_results" in sql:
-            self.upserts.append("analysis_results")
-            self.analysis_args = args
-            return {"id": 100}
-        if "INSERT INTO agent_results" in sql:
-            self.upserts.append("agent_results")
-            # upsert_agent_result: $1 result_id, $2 stock_id, $3 debate_method,
-            # $4 source_signal_event_ids, $5 method_score, $6 method_signal
-            self.method_signal = args[5]
-            self.agent_args = args
-            return {"id": 200}
-        return None
-
-    async def fetchval(self, sql, *args):
-        self.fetchvals.append((sql, args))
-        if "SELECT id" in sql:
-            return None
-        return 601
-
-
-class FakeAgent:
-    def __init__(self, direction="positive"):
-        self._direction = direction
-
-    async def analyze(self, input_data):
-        self.received = input_data
-        return SourceAgentOutput(
-            source="REPORT",
-            stock_code=input_data.stock_code,
-            direction=self._direction,
-            score=68.0,
-            summary="OK",
-            risk_flags=["risk1"],
-            method_detail={"coverage": {"firms": ["a", "b", "c"]}, "evidence_chunks": [{"raw_document_id": 1}]},
-            needs_review=False,
-            data_status="ok",
-            analysis_source="llm",
-            llm_model="m",
-            prompt_ver="report-rag-v1",
-        )
-
-
-class ReportAnalyzeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
-    async def test_builds_quant_and_persists_analysis_and_agent_results(self):
-        conn = AnalyzeHandlerConn()
-        agent = FakeAgent()
-        handler = ReportAnalyzeTaskHandler(connection=conn, settings=None, analysis_agent=agent)
-
-        result = await handler(
-            {
-                "stock_id": 1,
-                "source_signal_event_ids": [801],
-                "task_context": {"stock_code": "005930", "run_key": "REPORT_EVENT_801"},
-            }
-        )
-
-        self.assertEqual(result["analysis_result_id"], 100)
-        self.assertEqual(result["agent_result_id"], 200)
-        self.assertEqual(result["direction"], "positive")
-        # 저장 순서: analysis_results → agent_results
-        self.assertEqual(conn.upserts, ["analysis_results", "agent_results"])
-        self.assertEqual(conn.analysis_args[4], [801])
-        self.assertEqual(conn.analysis_args[8], "quick")
-        self.assertEqual(conn.agent_args[3], [801])
-        # 정량 집계: 평균 목표주가, 의견 충돌 감지
-        quant = result["report_quant"]
-        self.assertEqual(quant["report_count"], 3)
-        self.assertEqual(quant["avg_target"], 95000)
-        self.assertTrue(quant["conflict_detected"])
-        # method_signal은 허용값(positive). agent에 정량이 context로 주입됐는지
-        self.assertEqual(conn.method_signal, "positive")
-        self.assertEqual(agent.received.context["report_quant"]["avg_target"], 95000)
-        self.assertEqual(agent.received.events[0]["id"], 801)
-        self.assertEqual(result["ml_infer_task_id"], 601)
-        ml_enqueue = next(call for call in conn.fetchvals if "INSERT INTO processing_queue" in call[0])
-        self.assertEqual(ml_enqueue[1][1], "ml_infer")
-        self.assertEqual(ml_enqueue[1][5], [100])
-        ml_context = json.loads(ml_enqueue[1][6])
-        self.assertEqual(ml_context["run_key"], "ML")
-        self.assertEqual(
-            ml_context["aggregate_ctx"]["aggregation_key"],
-            "AGGREGATED:1:2026-06-24:final-agg-v1",
-        )
-        self.assertEqual(ml_context["aggregate_ctx"]["source_analysis_result_ids"], [100])
-
-    async def test_unknown_direction_is_mapped_to_neutral_for_method_signal(self):
-        # agent_results.method_signal CHECK는 unknown 불가 → neutral로 매핑돼야 함
-        conn = AnalyzeHandlerConn()
-        handler = ReportAnalyzeTaskHandler(
-            connection=conn, settings=None, analysis_agent=FakeAgent(direction="unknown")
-        )
-        result = await handler(
-            {"stock_id": 1, "task_context": {"stock_code": "005930"}}
-        )
-        self.assertEqual(conn.method_signal, "neutral")
-        self.assertEqual(result["direction"], "unknown")  # method_detail/반환은 원본 유지
+        # NORMALIZE는 더 이상 임베딩/분석 태스크를 인큐하지 않는다.
+        enqueue_task_types = [
+            call[2][1] for call in conn._enqueue_inserts() if len(call[2]) > 1
+        ]
+        self.assertNotIn("embed_report", enqueue_task_types)
+        self.assertNotIn("analyze_report", enqueue_task_types)
 
 
 # ── collect_report ───────────────────────────────────────────────

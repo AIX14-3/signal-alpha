@@ -42,26 +42,6 @@ class ScheduleReportCollectionRequest(BaseModel):
         return value
 
 
-class ScheduleReportAnalysisRequest(BaseModel):
-    # 특정 종목만 분석. 없으면 active 종목 전체.
-    stock_code: str | None = None
-    analysis_date: str | None = None
-    run_key: str = "REPORT"
-    limit: int = Field(default=100, ge=1, le=1000)
-    priority: Literal["batch", "immediate"] = "batch"
-
-    @field_validator("analysis_date")
-    @classmethod
-    def _validate_iso_date(cls, value: str | None) -> str | None:
-        if value is None:
-            return value
-        try:
-            date.fromisoformat(value)
-        except ValueError as exc:
-            raise ValueError("YYYY-MM-DD 형식이어야 합니다") from exc
-        return value
-
-
 class ScheduleReportNormalizeBackfillRequest(BaseModel):
     stock_code: str | None = None
     limit: int = Field(default=100, ge=1, le=1000)
@@ -89,46 +69,6 @@ async def schedule_report_collection(
             max_pages=request.max_pages,
             priority=request.priority,
         )
-
-
-@router.post("/report/analyze")
-async def schedule_report_analysis(
-    request: ScheduleReportAnalysisRequest,
-    pool: Any = Depends(get_database_pool),
-) -> dict[str, Any]:
-    from signal_alpha_data_access.repositories import ProcessingQueueRepository, StockRepository
-
-    from app.orchestrator.queue.task_types import ANALYZE_REPORT
-
-    async with pool.acquire() as connection:
-        stock_repository = StockRepository(connection)
-        queue_repository = ProcessingQueueRepository(connection)
-
-        if request.stock_code:
-            stock = await stock_repository.get_by_ticker(request.stock_code)
-            stocks = [stock] if stock else []
-        else:
-            stocks = await stock_repository.list_active(limit=request.limit)
-
-        task_context_base: dict[str, Any] = {"run_key": request.run_key}
-        if request.analysis_date:
-            task_context_base["analysis_date"] = request.analysis_date
-
-        task_ids: list[int] = []
-        for stock in stocks:
-            task_id = await queue_repository.enqueue(
-                stock_id=int(stock["id"]),
-                task_type=ANALYZE_REPORT,
-                priority=request.priority,
-                task_context={
-                    **task_context_base,
-                    "stock_code": str(stock["ticker"]).strip(),
-                },
-                dedupe=True,
-            )
-            task_ids.append(task_id)
-
-        return {"scheduled_count": len(task_ids), "task_ids": task_ids}
 
 
 @router.post("/report/normalize-backfill")
