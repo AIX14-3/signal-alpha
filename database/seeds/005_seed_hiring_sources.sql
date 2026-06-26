@@ -1,4 +1,6 @@
 -- 005_seed_hiring_sources.sql
+-- target: collection
+-- (hiring_sources 는 COLLECTION 전용 — 수집 DB 만 시드)
 -- 15개 핵심 기업 공식 채용 사이트 크롤러 설정 (ticker 기준).
 -- 구 016_hiring_sources.sql 마이그레이션에 인라인이던 시드를 컨벤션대로 분리.
 -- ticker가 Single Source of Truth: 기업 추가/변경은 이 시드 INSERT/UPDATE로 처리.

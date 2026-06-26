@@ -1,4 +1,6 @@
 -- 007_seed_jobkorea_company_ids.sql
+-- target: collection
+-- (hiring_portal_company_ids 는 COLLECTION 전용 — 수집 DB 만 시드)
 --
 -- Seeds hiring_portal_company_ids (이슈 #313): 종목 ↔ 잡코리아 회원번호.
 -- 회원번호 = 잡코리아 내부 식별자(사업자번호 아님). 라이브 발굴로 확정한 것만 적재

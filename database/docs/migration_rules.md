@@ -4,6 +4,12 @@
 충돌 없이 협업하기 위한 **운영 규칙 + PR 규칙**을 정의한다.
 스키마 정의의 유일한 기준은 항상 `database/migrations/`이다.
 
+> **2-인스턴스 분리(#531) 업데이트**: 이제 모든 마이그/시드는 `-- target: {collection|backend|all}`
+> 을 **단독 라인으로 명시**해야 한다(미선언 금지 — 백엔드 마이그가 수집 DB 로 샘). 타깃 분류·baseline
+> 구성·재생성(rebaseline.py)은 [migration_seed_targets.md](./migration_seed_targets.md), 부트스트랩은
+> [db-2-instance-bootstrap 런북](../../docs/runbooks/db-2-instance-bootstrap.md). 가드:
+> `python database/tools/check_targets.py`. 아래 §1 의 "단일 baseline" 서술은 레거시(아카이브됨).
+
 ---
 
 ## 1. 무엇을 바꿨나 (베이스라인 통합)

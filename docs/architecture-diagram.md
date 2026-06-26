@@ -2,9 +2,11 @@
 
 > 현재 GitHub 구조(`origin/main`) 기준 배포 토폴로지와 DB 소유권 경계를 그린 설계도입니다.
 > 텍스트 개요는 [architecture.md](./architecture.md), DB 스키마 기준은 `database/migrations/` 입니다.
-> 배포는 **db / worker / backend / frontend 4유닛**으로 분리하며, backend와 worker는 런타임에
-> 직접 호출하지 않고 **DB의 `api.*` 읽기 계약**으로만 연결됩니다(PR #474, Model A: 단일 Postgres +
-> 소유권 경계).
+> 배포는 **db / worker / backend / frontend 4유닛**으로 분리하며, DB 는 **물리적으로 분리된 Postgres
+> 인스턴스 2개**(수집 DB / 백엔드 DB)입니다. backend와 worker는 런타임에 직접 호출하지 않고, 워커가
+> 산출물을 백엔드 DB 로 **앱레벨 발행(publish)** 하면 backend 는 백엔드 DB 의 `api.*` 읽기 계약으로
+> 읽습니다(#531 2-인스턴스 분리. cross-DB FK 불가 → publisher 가 정합성 담당).
+> 마이그/시드 타깃 규칙: [database/docs/migration_seed_targets.md](../database/docs/migration_seed_targets.md).
 
 ## 1. 배포 토폴로지 & DB 소유권 경계
 
@@ -23,26 +25,31 @@ flowchart LR
         an["analyzer<br/>분석 루프 데몬"]
     end
 
-    subgraph DBU["DB 유닛 — PostgreSQL (단일 인스턴스)"]
+    subgraph CDB["수집 DB — Postgres 인스턴스 ①"]
         direction TB
-        subgraph PUB["public 스키마"]
-            wt["worker 적재 테이블<br/>final_signals · stocks · analysis_results ·<br/>processing_queue · agent_results · signal_events · ..."]
-            bt["backend 소유 13 테이블<br/>users · user_sessions · social_accounts ·<br/>watchlists · signal_journals · user_signal_reads ·<br/>signal_subscriptions · report_issuances · admin_* · ..."]
-        end
-        subgraph API["api 스키마 — 읽기 계약 (읽기전용 view)"]
-            v["signals_current · signal_detail ·<br/>stocks · analysis_pipeline_status"]
-        end
-        v -. "view = owner 권한으로 base 조회" .-> wt
+        cwt["COLLECTION + PUBLISHED 테이블<br/>final_signals · stocks · analysis_results ·<br/>processing_queue · agent_results · signal_events ·<br/>dart_* · datalab_* · hiring_* · ml_inferences · ..."]
+        cv["api.* view (수집 DB)"]
+        cv -. "owner 권한 base 조회" .-> cwt
     end
 
-    mig["db-migrate<br/>일회성 잡 (owner 롤)"]
+    subgraph BDB["백엔드 DB — Postgres 인스턴스 ②"]
+        direction TB
+        bt["BACKEND 15 테이블<br/>users · sessions · subscriptions · payments ·<br/>watchlists · journals · admin_* · report_issuances · ..."]
+        bpub["PUBLISHED 발행 사본<br/>final_signals · stocks · analysis_results · ..."]
+        bv["api.signals_current · signal_detail"]
+        bv -. "owner 권한 base 조회" .-> bpub
+    end
+
+    mig["db-migrate<br/>--target collection / backend (owner 롤)"]
 
     web -- HTTP --> ms
-    ms -- "SELECT · signal_backend" --> v
+    ms -- "SELECT · signal_backend" --> bv
     ms -- "DML · signal_backend" --> bt
-    aw -- "DML · signal_worker" --> wt
-    an -- "DML · signal_worker" --> wt
-    mig -- "DDL + 롤/grant · owner" --> DBU
+    aw -- "DML · signal_worker" --> cwt
+    an -- "DML · signal_worker" --> cwt
+    aw -- "publish(PUBLISH_SIGNALS) · BACKEND_DATABASE_URL" --> bpub
+    mig -- "DDL + 롤/grant" --> CDB
+    mig -- "DDL + 롤/grant" --> BDB
 
     classDef fe fill:#eef6ff,stroke:#3b82f6;
     classDef be fill:#eefbf0,stroke:#22c55e;
@@ -51,7 +58,7 @@ flowchart LR
     class web fe;
     class ms be;
     class aw,an wk;
-    class wt,bt,v db;
+    class cwt,cv,bt,bpub,bv db;
 ```
 
 > 다이어그램에 **없는 화살표가 곧 경계**입니다: `main-server`는 `agent-worker`를 런타임에 직접
@@ -61,15 +68,19 @@ flowchart LR
 
 **권한 롤 (DB 소유권 경계)**
 
-| 롤 | 권한 | 사용 서비스 |
+| 롤 | 권한 | 사용 서비스 (DB) |
 |---|---|---|
-| `signal_worker` | `public` 전체 DML (수집·분석·시그널 적재) | agent-worker, analyzer |
-| `signal_backend` | `api.*` SELECT + 소유 13 테이블 DML. worker base 테이블 직접 권한 없음 | main-server |
-| owner (`signal_alpha`) | DDL · 롤/grant · view 소유 | db-migrate |
+| `signal_worker` | `public` 전체 DML (수집·분석·시그널 적재) | agent-worker, analyzer (수집 DB) |
+| `signal_backend` | `api.*` SELECT + 소유 15 테이블 DML. PUBLISHED base 직접 권한 없음 | main-server (백엔드 DB) |
+| owner | DDL · 롤/grant · view 소유 (`--target collection`/`backend` 각각) | db-migrate (양 DB) |
 
-> **컷오버 주의**: 롤은 비밀번호 없이 생성됩니다. `WORKER_/BACKEND_DATABASE_URL` 미설정 시 compose가
-> owner로 폴백하므로, 운영 배포 시 out-of-band로 비밀번호를 부여하고 두 URL을 해당 롤로 교체해야
-> 권한 격리가 실제로 발효됩니다(`.env.example` 참고).
+> 롤은 양 인스턴스에 동일하게 생성되며(0001_infra_roles, target all), grant 는 DB 별로 부여됩니다
+> (0006 수집 / 0007 백엔드). 마이그/시드 타깃 분류는
+> [database/docs/migration_seed_targets.md](../database/docs/migration_seed_targets.md),
+> 부트스트랩·리셋 절차는 [db-2-instance-bootstrap 런북](./runbooks/db-2-instance-bootstrap.md) 참고.
+
+> **컷오버 주의**: 롤은 비밀번호 없이 생성됩니다. 운영 배포 시 out-of-band로 비밀번호를 부여하고
+> `WORKER_/BACKEND_DATABASE_URL` 을 해당 롤로 교체해야 권한 격리가 발효됩니다(`.env.example` 참고).
 
 ## 2. 레포 → 배포 유닛 매핑
 

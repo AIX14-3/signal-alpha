@@ -1,3 +1,5 @@
+-- target: collection
+-- (dart_corp_codes 는 COLLECTION 전용 — 수집 DB 만 시드)
 INSERT INTO dart_corp_codes (
     stock_id,
     corp_code,

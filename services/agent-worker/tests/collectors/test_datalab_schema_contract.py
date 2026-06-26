@@ -62,8 +62,10 @@ def _table_columns(create_body: str) -> set[str]:
 
 def _extract_create_table(sql: str, table: str) -> str | None:
     """Return the parenthesised body of `CREATE TABLE ... <table> ( ... )`."""
+    # 재베이스라인 baseline 은 pg_dump 형식이라 'public.' 스키마 프리픽스가 붙는다
+    # (CREATE TABLE public.<table> ( ... )). 프리픽스를 선택적으로 허용한다.
     pattern = re.compile(
-        rf"CREATE TABLE(?:\s+IF NOT EXISTS)?\s+{re.escape(table)}\s*\(",
+        rf"CREATE TABLE(?:\s+IF NOT EXISTS)?\s+(?:public\.)?{re.escape(table)}\s*\(",
         re.IGNORECASE,
     )
     match = pattern.search(sql)
