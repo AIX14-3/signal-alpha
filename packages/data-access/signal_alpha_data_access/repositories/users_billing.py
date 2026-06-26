@@ -44,6 +44,40 @@ class UserBillingRepository:
             email_verified_at,
         )
 
+    async def insert_member(
+        self,
+        *,
+        member_code: str,
+        email: str,
+        password_hash: str | None = None,
+        nickname: str | None = None,
+        phone: str | None = None,
+        agreed_risk: bool = True,
+        is_verified: bool = False,
+    ) -> Any:
+        """관리자 회원 생성 전용 평문 INSERT(충돌 시 UniqueViolation).
+
+        create_user 의 ON CONFLICT(member_code) DO UPDATE 는 기존 계정을 덮어쓰므로
+        신규 생성에는 쓰지 않는다. 호출부가 member_code 충돌 시 재시도한다.
+        """
+        return await self._connection.fetchrow(
+            """
+            INSERT INTO users (
+                member_code, email, password_hash, nickname, phone,
+                agreed_risk, is_verified
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            RETURNING *
+            """,
+            member_code,
+            email,
+            password_hash,
+            nickname,
+            phone,
+            agreed_risk,
+            is_verified,
+        )
+
     async def get_user_by_email(self, email: str) -> Any:
         return await self._connection.fetchrow(
             """
@@ -139,15 +173,33 @@ class UserBillingRepository:
         )
 
     async def soft_delete_user(self, *, user_id: int) -> None:
-        """회원탈퇴(soft delete). 활성 phone 유니크가 해제되어 동일 번호 재가입 가능."""
+        """회원탈퇴(soft delete). 활성 phone 유니크가 해제되어 동일 번호 재가입 가능.
+
+        deleted_at(탈퇴 시각)과 status='deleted'(회원 상태)를 함께 기록한다.
+        """
         await self._connection.execute(
             """
             UPDATE users
-            SET deleted_at = NOW()
+            SET deleted_at = NOW(),
+                status = 'deleted'
             WHERE id = $1
               AND deleted_at IS NULL
             """,
             user_id,
+        )
+
+    async def set_user_status(self, *, user_id: int, status: str) -> Any:
+        """회원 상태 변경(active/suspended). 탈퇴(deleted)는 soft_delete_user 사용."""
+        return await self._connection.fetchrow(
+            """
+            UPDATE users
+            SET status = $2
+            WHERE id = $1
+              AND deleted_at IS NULL
+            RETURNING *
+            """,
+            user_id,
+            status,
         )
 
     async def upsert_subscription_plan(
@@ -206,24 +258,58 @@ class UserBillingRepository:
         user_id: int,
         plan_id: int,
         status: str = "active",
+        started_at: Any | None = None,
         expires_at: Any | None = None,
+        next_billing_at: Any | None = None,
+        auto_renew: bool = False,
         payment_method: str | None = None,
         billing_cycle: str | None = None,
     ) -> Any:
+        """구독 생성. started_at 미지정 시 컬럼 기본값(NOW())을 사용한다."""
         return await self._connection.fetchrow(
             """
             INSERT INTO signal_subscriptions (
-                user_id, plan_id, status, expires_at, payment_method, billing_cycle
+                user_id, plan_id, status, started_at, expires_at,
+                next_billing_at, auto_renew, payment_method, billing_cycle
             )
-            VALUES ($1, $2, $3, $4, $5, $6)
+            VALUES ($1, $2, $3, COALESCE($4, NOW()), $5, $6, $7, $8, $9)
             RETURNING *
             """,
             user_id,
             plan_id,
             status,
+            started_at,
             expires_at,
+            next_billing_at,
+            auto_renew,
             payment_method,
             billing_cycle,
+        )
+
+    async def update_subscription_dates(
+        self,
+        *,
+        user_id: int,
+        expires_at: Any | None = None,
+        next_billing_at: Any | None = None,
+        auto_renew: bool | None = None,
+    ) -> Any:
+        """활성 구독의 만료일/다음 결제일/자동갱신을 부분 수정(None 은 기존 값 유지)."""
+        return await self._connection.fetchrow(
+            """
+            UPDATE signal_subscriptions
+            SET expires_at = COALESCE($2, expires_at),
+                next_billing_at = COALESCE($3, next_billing_at),
+                auto_renew = COALESCE($4, auto_renew),
+                updated_at = NOW()
+            WHERE user_id = $1
+              AND status = 'active'
+            RETURNING *
+            """,
+            user_id,
+            expires_at,
+            next_billing_at,
+            auto_renew,
         )
 
     async def get_active_subscription(self, *, user_id: int) -> Any:
@@ -484,6 +570,109 @@ class UserBillingRepository:
             status,
             verified_at,
             raw_response,
+        )
+
+    async def record_payment(
+        self,
+        *,
+        user_id: int,
+        imp_uid: str,
+        merchant_uid: str,
+        amount: int,
+        status: str = "paid",
+        currency: str = "KRW",
+        subscription_id: int | None = None,
+        paid_at: Any | None = None,
+        raw_response: Any | None = None,
+    ) -> Any:
+        """결제 성공 1건을 payments 이력에 append(덮어쓰지 않음)."""
+        return await self._connection.fetchrow(
+            """
+            INSERT INTO payments (
+                user_id, subscription_id, imp_uid, merchant_uid, amount,
+                currency, status, paid_at, raw_response
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, NOW()), $9)
+            RETURNING *
+            """,
+            user_id,
+            subscription_id,
+            imp_uid,
+            merchant_uid,
+            amount,
+            currency,
+            status,
+            paid_at,
+            raw_response,
+        )
+
+    async def record_refund(
+        self,
+        *,
+        user_id: int,
+        imp_uid: str,
+        merchant_uid: str,
+        amount: int,
+        refund_amount: int,
+        cancel_reason: str | None = None,
+        currency: str = "KRW",
+        subscription_id: int | None = None,
+        cancelled_at: Any | None = None,
+        raw_response: Any | None = None,
+    ) -> Any:
+        """환불 1건을 payments 이력에 append. 전액=cancelled, 부분=partial_cancelled.
+
+        원 결제행을 갱신하지 않고 별도 행을 추가해 '결제→환불' 이력을 보존한다.
+        """
+        status = "cancelled" if refund_amount >= amount else "partial_cancelled"
+        return await self._connection.fetchrow(
+            """
+            INSERT INTO payments (
+                user_id, subscription_id, imp_uid, merchant_uid, amount,
+                currency, status, cancelled_at, refund_amount, cancel_reason, raw_response
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, NOW()), $9, $10, $11)
+            RETURNING *
+            """,
+            user_id,
+            subscription_id,
+            imp_uid,
+            merchant_uid,
+            amount,
+            currency,
+            status,
+            cancelled_at,
+            refund_amount,
+            cancel_reason,
+            raw_response,
+        )
+
+    async def list_payments(self, *, user_id: int, limit: int = 50) -> list[Any]:
+        """결제/환불 전체 이력(최신순). 환불 행도 포함한다."""
+        return await self._connection.fetch(
+            """
+            SELECT *
+            FROM payments
+            WHERE user_id = $1
+            ORDER BY created_at DESC, id DESC
+            LIMIT $2
+            """,
+            user_id,
+            limit,
+        )
+
+    async def get_latest_paid_payment(self, *, user_id: int) -> Any:
+        """환불 기준이 되는 가장 최근 '성공(paid)' 결제 1건."""
+        return await self._connection.fetchrow(
+            """
+            SELECT *
+            FROM payments
+            WHERE user_id = $1
+              AND status = 'paid'
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+            """,
+            user_id,
         )
 
     async def record_terms_agreement(

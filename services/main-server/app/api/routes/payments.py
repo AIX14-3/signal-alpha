@@ -186,16 +186,16 @@ async def refund(
         active = await repository.get_active_subscription(user_id=user_id)
         if active is None:
             raise _api_error(404, "SUBSCRIPTION_NOT_FOUND", "활성 구독이 없습니다.")
-        paid = await repository.list_payment_verifications(user_id=user_id, limit=1)
-        if not paid:
+        latest_row = await repository.get_latest_paid_payment(user_id=user_id)
+        if latest_row is None:
             raise _api_error(409, "NO_REFUNDABLE_PAYMENT", "환불 가능한 결제 내역이 없습니다.")
-        latest = dict(paid[0])
+        latest = dict(latest_row)
 
         now = datetime.now(UTC)
         # 환불 기준 금액은 실제 결제 주기로 결정한다(연간이면 연 상품가). 월가 고정 시
         # 연간 구독이 전액·일할 모두 9,900 기준으로 잘못 계산되던 문제를 바로잡는다.
         price = _cycle_price(active.get("billing_cycle"), settings)
-        paid_at = latest.get("verified_at") or latest.get("created_at")
+        paid_at = latest.get("paid_at") or latest.get("created_at")
         within_full = (
             paid_at is not None
             and (now - paid_at).total_seconds() <= settings.refund_full_window_days * 86400
@@ -218,14 +218,17 @@ async def refund(
             # 실제 PortOne 오류를 응답에 노출해 원인 파악이 가능하게 한다(취소 사유는 민감정보 아님).
             raise _api_error(502, "REFUND_FAILED", f"환불 처리에 실패했습니다: {exc}") from None
 
-        await repository.record_portone_verification(
+        # payments 이력에 환불 행 append(원 결제행 보존). 멱등 매핑용 portone_verifications 는 별도.
+        await repository.record_refund(
             user_id=user_id,
             imp_uid=str(latest["imp_uid"]),
             merchant_uid=str(latest.get("merchant_uid") or latest["imp_uid"]),
-            status="refunded",
-            verification_type="payment",
-            verified_at=now,
-            raw_response=json.dumps({"refund_amount": refund_amount, "kind": kind}),
+            amount=int(latest["amount"]),
+            refund_amount=refund_amount,
+            cancel_reason="user_refund",
+            subscription_id=latest.get("subscription_id"),
+            cancelled_at=now,
+            raw_response=json.dumps({"kind": kind}),
         )
         await repository.cancel_subscription(user_id=user_id)
 
@@ -248,12 +251,10 @@ async def history(
     pool: Any = Depends(get_database_pool),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
-    """결제 내역(성공 건) 조회. 금액·상품명은 결제 레코드의 실제 결제액으로 표기."""
+    """결제/환불 내역 조회. 환불 행도 포함하며 금액·상품명은 실제 결제액으로 표기."""
     user_id = int(current_user["id"])
     async with pool.acquire() as connection:
-        rows = await UserBillingRepository(connection).list_payment_verifications(
-            user_id=user_id, limit=50
-        )
+        rows = await UserBillingRepository(connection).list_payments(user_id=user_id, limit=50)
     return {"items": [_payment_item(dict(row), settings) for row in rows]}
 
 
@@ -363,15 +364,28 @@ async def _grant_or_extend(
     )
     days, billing_cycle = _cycle_for_amount(int(payment.amount), settings)
     await repository.cancel_subscription(user_id=user_id)
+    expires_at = base + timedelta(days=days)
     subscription = dict(
         await repository.create_subscription(
             user_id=user_id,
             plan_id=int(plan["id"]),
             status="active",
-            expires_at=base + timedelta(days=days),
+            expires_at=expires_at,
+            next_billing_at=expires_at,
             payment_method="portone",
             billing_cycle=billing_cycle,
         )
+    )
+    # 결제 성공 이력 append(환불 시 원 결제행 보존). portone_verifications 는 멱등 매핑용으로 유지.
+    await repository.record_payment(
+        user_id=user_id,
+        subscription_id=int(subscription["id"]),
+        imp_uid=payment_id,
+        merchant_uid=payment_id,
+        amount=int(payment.amount),
+        status="paid",
+        paid_at=now,
+        raw_response=json.dumps(payment.raw),
     )
     return {**subscription, **plan}
 
@@ -431,13 +445,17 @@ def _prorated_refund(active: Any, price: int, now: datetime) -> int:
 
 
 def _payment_item(row: dict[str, Any], settings: Settings) -> dict[str, Any]:
-    amount = _paid_amount(row, settings)
+    """payments 행을 프론트 결제내역 항목으로 변환(결제·환불 공통)."""
+    amount = int(row.get("amount") or 0)
     return {
         "payment_id": row.get("imp_uid"),
         "status": row.get("status"),
         "amount": amount,
+        "refund_amount": int(row.get("refund_amount") or 0),
         "order_name": _order_name(amount, settings),
-        "paid_at": _timestamp(row.get("verified_at") or row.get("created_at")),
+        "paid_at": _timestamp(row.get("paid_at") or row.get("created_at")),
+        "cancelled_at": _timestamp(row.get("cancelled_at")),
+        "cancel_reason": row.get("cancel_reason"),
     }
 
 
