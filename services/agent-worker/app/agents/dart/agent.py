@@ -24,11 +24,12 @@ class DartAnalysisAgent:
     def __init__(
         self,
         *,
-        llm_analyzer: object | None = None,  # Phase 0: 무시(호환용).
-        llm_high_impact_only: bool = True,  # Phase 0: 무시(호환용).
+        llm_analyzer: object | None = None,  # Phase 0: 무시(graph/tasks 호출 호환용).
+        llm_high_impact_only: bool = True,  # Phase 0: 무시(graph/tasks 호출 호환용).
     ) -> None:
-        self._llm_analyzer = llm_analyzer
-        self._llm_high_impact_only = llm_high_impact_only
+        # Phase 0(#546): LLM 판정 경로 제거. 두 인자는 상위 호출 시그니처 호환을 위해 받되
+        # 저장/사용하지 않는다(죽은 상태 방지) — analyze 는 build_dart_analysis_result 만 쓴다.
+        pass
 
     async def analyze(self, input_data: SourceAgentInput) -> SourceAgentOutput:
         result = build_dart_analysis_result(input_data.events)

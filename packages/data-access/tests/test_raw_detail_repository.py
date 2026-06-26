@@ -110,6 +110,20 @@ class RawDetailRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("INNER JOIN raw_documents", connection.calls[0][1])
         self.assertEqual(connection.calls[0][2], ([3],))
 
+    async def test_list_dart_ownership_events_recovers_null_stock_id_via_corp_code(self):
+        # dart_ownership_events.stock_id 는 nullable 이라 stock_id 직접 매칭만 하면 미해결
+        # 이벤트가 누락된다. corp_code 매핑(dart_corp_codes)으로도 매칭해 복구해야 한다(#546 리뷰).
+        connection = FakeConnection()
+        repository = RawDetailRepository(connection)
+
+        await repository.list_dart_ownership_events_by_stock(stock_id=7, since_date=None)
+
+        sql = connection.calls[0][1]
+        self.assertIn("FROM dart_ownership_events", sql)
+        self.assertIn("e.stock_id = $1", sql)
+        self.assertIn("dart_corp_codes WHERE stock_id = $1", sql)
+        self.assertEqual(connection.calls[0][2], (7, None))
+
     async def test_list_report_details_by_raw_ids_joins_raw_documents(self):
         connection = FakeConnection()
         repository = RawDetailRepository(connection)

@@ -55,11 +55,25 @@ def test_empty_rows_return_zero_indicators():
         recent_net_shares_delta=None,
         pledge_loan_count=0,
         pledge_loan_flag=0.0,
-        bullish_reason_count=0,
-        bearish_reason_count=0,
         latest_report_date=None,
         days_since_latest=None,
     )
+
+
+def test_all_zero_shares_delta_is_net_zero_not_missing():
+    # shares_delta 가 전부 0.0(예: 담보 이벤트로 보유수 불변)이어도 net 은 0.0(정의됨),
+    # 결측(None)이 아니어야 한다 — net_ratio_delta/recent 형제와 일관(presence 카운트).
+    asof = date(2026, 6, 1)
+    rows = [
+        _evt("2026-05-20", shares_delta=0, ratio_delta=0),
+        _evt("2026-05-25", shares_delta=0, ratio_delta=0),
+    ]
+    ind = compute_indicators(rows, as_of=asof, lookback_days=30)
+    assert ind.net_shares_delta == 0.0
+    assert ind.net_ratio_delta == 0.0
+    assert ind.accumulation_count == 0
+    assert ind.disposal_count == 0
+    assert ind.accumulation_ratio is None  # 방향 이벤트 0 → 비율 미정의
 
 
 def test_accumulation_and_holder_counts():

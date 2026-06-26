@@ -51,11 +51,11 @@ class DartIndicators:
     disposal_count: int  # shares_delta < 0
     accumulation_ratio: float | None  # acc / (acc + disp)
     recent_net_shares_delta: float | None  # 최근 절반 윈도우만
-    # report_reason 보조 플래그.
+    # report_reason 보조 플래그 — 담보/대차/차입(유동성 리스크)만 피처로. 매수/매도 방향은
+    # report_reason 표현이 미확인(majorstock=report_tp, elestock=직위/관계)이라 노이즈 우려가
+    # 커 shares_delta 부호에 일임하고 피처화하지 않는다(확인 후 활성, plan §9).
     pledge_loan_count: int
     pledge_loan_flag: float  # 0/1 — 담보/대차/차입 존재
-    bullish_reason_count: int
-    bearish_reason_count: int
     latest_report_date: str | None
     days_since_latest: int | None
 
@@ -83,8 +83,6 @@ def compute_indicators(
             recent_net_shares_delta=None,
             pledge_loan_count=0,
             pledge_loan_flag=0.0,
-            bullish_reason_count=0,
-            bearish_reason_count=0,
             latest_report_date=None,
             days_since_latest=None,
         )
@@ -93,12 +91,13 @@ def compute_indicators(
     recent_observations = 0
     major = executive = main_shareholder = 0
     shares_delta_sum = 0.0
+    shares_delta_n = 0
     ratio_delta_sum = 0.0
     ratio_delta_n = 0
     accumulation = disposal = 0
     recent_shares_delta_sum = 0.0
     recent_shares_delta_n = 0
-    pledge_loan = bullish_reason = bearish_reason = 0
+    pledge_loan = 0
     latest: date | None = None
 
     for row in rows:
@@ -120,6 +119,7 @@ def compute_indicators(
         shares_delta = _as_float(row.get("shares_delta"))
         if shares_delta is not None:
             shares_delta_sum += shares_delta
+            shares_delta_n += 1
             if shares_delta > 0:
                 accumulation += 1
             elif shares_delta < 0:
@@ -133,13 +133,8 @@ def compute_indicators(
             ratio_delta_sum += ratio_delta
             ratio_delta_n += 1
 
-        category = categorize_reason(row.get("report_reason"))
-        if category == "pledge_loan":
+        if categorize_reason(row.get("report_reason")) == "pledge_loan":
             pledge_loan += 1
-        elif category == "bullish":
-            bullish_reason += 1
-        elif category == "bearish":
-            bearish_reason += 1
 
     directional = accumulation + disposal
     return DartIndicators(
@@ -148,7 +143,7 @@ def compute_indicators(
         major_holder_count=major,
         executive_count=executive,
         main_shareholder_count=main_shareholder,
-        net_shares_delta=shares_delta_sum if (accumulation or disposal) else None,
+        net_shares_delta=shares_delta_sum if shares_delta_n else None,
         net_ratio_delta=ratio_delta_sum if ratio_delta_n else None,
         avg_ratio_delta=(ratio_delta_sum / ratio_delta_n) if ratio_delta_n else None,
         accumulation_count=accumulation,
@@ -157,8 +152,6 @@ def compute_indicators(
         recent_net_shares_delta=recent_shares_delta_sum if recent_shares_delta_n else None,
         pledge_loan_count=pledge_loan,
         pledge_loan_flag=1.0 if pledge_loan else 0.0,
-        bullish_reason_count=bullish_reason,
-        bearish_reason_count=bearish_reason,
         latest_report_date=latest.isoformat() if latest else None,
         days_since_latest=(as_of - latest).days if latest else None,
     )
