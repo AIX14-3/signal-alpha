@@ -211,20 +211,24 @@ def apply_seeds(conn, dry_run: bool) -> None:
 
 
 def cmd_status(conn, target: str = "all") -> None:
-    files = filter_by_target(list_sql_files(MIGRATIONS_DIR), target)
+    # 무결성(checksum·missing)은 항상 전체 파일 기준. target 은 표시 범위만 좁힌다.
+    all_files = list_sql_files(MIGRATIONS_DIR)
     applied = fetch_ledger(conn)
-    pending = verify_applied(applied, files)
+    pending_all = set(verify_applied(applied, all_files))
+    files = filter_by_target(all_files, target)
+    pending = [path for path in files if path in pending_all]
     for path in files:
-        marker = "pending" if path in pending else "applied"
+        marker = "pending" if path in pending_all else "applied"
         print(f"  [{marker}] {path.name}  ({parse_target(path)})")
     scope = "전체" if target == "all" else f"target={target}"
     print(f"\n적용 {len(files) - len(pending)} / {scope} {len(files)} (미적용 {len(pending)})")
 
 
 def cmd_apply(conn, dry_run: bool, seeds: bool, target: str = "all") -> None:
-    files = filter_by_target(list_sql_files(MIGRATIONS_DIR), target)
+    # 무결성 검증은 전체 파일 기준(원장 ⊆ 전체). 적용 대상만 target 으로 필터.
+    all_files = list_sql_files(MIGRATIONS_DIR)
     applied = fetch_ledger(conn)
-    pending = verify_applied(applied, files)
+    pending = filter_by_target(verify_applied(applied, all_files), target)
     apply_migrations(conn, pending, dry_run)
     if seeds:
         apply_seeds(conn, dry_run)
