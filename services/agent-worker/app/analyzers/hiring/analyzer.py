@@ -11,7 +11,6 @@ from datetime import date
 
 from app.analyzers.config import HiringRuleConfig
 from app.analyzers.hiring.indicators import compute_indicators
-from app.analyzers.hiring.rules import evaluate_indicators
 from app.schemas.evidence import RawEvidence
 from app.schemas.source_result import EvidenceItem, SourceResult
 
@@ -47,17 +46,16 @@ class HiringAnalyzer:
             lookback_days=self._config.lookback_days,
             sector_demand=metadata.get("sector_demand"),
         )
-        assessment = evaluate_indicators(indicators, self._config)
-
-        risk_flags = list(assessment.risk_flags)
-        data_status = "ok"
-        if "insufficient_history" in risk_flags or "stale_data" in risk_flags:
-            data_status = "partial"
-
+        # Phase 0 (#525): 결정론 판정/스코어 제거 — 피처 산출만. 방향/점수 verdict 없음
+        # (학습형 메타러너 return 채널이 산출). data_status="no_signal"+direction="unknown" 으로
+        # AGGREGATE 점수·방향 집계에서 빠진다. 피처는 별도 PIT 경로(assemble_features)가 DB 에서 읽는다.
         latest = indicators.latest_observed_date or as_of.isoformat()
+        momentum = indicators.momentum_pct
         summary = (
-            f"{latest} 기준 최근 {self._config.lookback_days}일 채용 공고 {indicators.observations}건 분석: "
-            f"방향 {assessment.direction}, 점수 {assessment.score:+.3f}."
+            f"{latest} 기준 최근 {self._config.lookback_days}일 채용 공고 {indicators.observations}건 "
+            f"피처 산출"
+            + (f"(모멘텀 {momentum:+.3f})" if momentum is not None else "")
+            + ". 판정은 학습형 메타러너가 수행."
         )
 
         # Descriptive keyword/tech surfacing — what the hiring is FOR. Purely
@@ -82,25 +80,16 @@ class HiringAnalyzer:
                     source_name="HIRING",
                 )
             )
-        evidence_items.extend(
-            EvidenceItem(
-                title=highlight,
-                summary=f"{latest} 기준 채용 공고 지표 산출 결과",
-                published_at=latest,
-                source_name="HIRING",
-            )
-            for highlight in assessment.highlights
-        )
 
         return SourceResult(
             source="HIRING",
             stock_code=stock_code,
-            direction=assessment.direction,
-            score=assessment.score,
+            direction="unknown",
+            score=0.0,
             summary=summary,
             evidence_items=evidence_items,
-            risk_flags=risk_flags,
-            data_status=data_status,
+            risk_flags=[],
+            data_status="no_signal",
         )
 
 

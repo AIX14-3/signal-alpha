@@ -325,23 +325,27 @@ class ReportAnalyzeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["analysis_result_id"], 901)
         self.assertEqual(result["agent_result_id"], 902)
         self.assertEqual(result["ml_infer_task_id"], 701)
-        self.assertEqual(result["direction"], "positive")
+        # Phase 0 (#525): 판정 제거 — 피처만. 방향 unknown, 점수 중립(50), AGGREGATE 제외.
+        self.assertEqual(result["direction"], "unknown")
+        self.assertEqual(result["analysis_source"], "features")
         self.assertFalse(result["needs_review"])
 
         analysis_call = conn._insert("analysis_results")
         self.assertEqual(analysis_call[2][2], date(2026, 6, 24))
         self.assertEqual(analysis_call[2][3], "REPORT_EVENT_801")
         self.assertEqual(analysis_call[2][4], [801])
-        self.assertGreater(analysis_call[2][5], 50.0)
+        self.assertEqual(analysis_call[2][5], 50.0)  # _score_to_100(0.0) = 중립
         self.assertEqual(analysis_call[2][8], "full")
 
         agent_call = conn._insert("agent_results")
         self.assertEqual(agent_call[2][2], "D-1")
         self.assertEqual(agent_call[2][3], [801])
-        self.assertEqual(agent_call[2][5], "positive")
+        self.assertEqual(agent_call[2][5], "unknown")
         self.assertEqual(agent_call[2][10], "report-valuation-v1")
         method_detail = json.loads(agent_call[2][6])
         self.assertEqual(method_detail["source"], "REPORT")
+        self.assertEqual(method_detail["data_status"], "no_signal")
+        # 밸류에이션 피처는 보존된다(메타러너 입력, D1).
         self.assertEqual(method_detail["report_quant"]["valuation"]["target_price"], 90000)
         self.assertEqual(method_detail["report_quant"]["valuation"]["implied_multiple"], 15.0)
         self.assertEqual(method_detail["report_quant"]["valuation"]["needs_review"], False)

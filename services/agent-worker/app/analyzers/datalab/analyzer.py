@@ -10,7 +10,6 @@ from datetime import date
 
 from app.analyzers.config import DataLabRuleConfig
 from app.analyzers.datalab.indicators import compute_indicators
-from app.analyzers.datalab.rules import evaluate_indicators
 from app.schemas.evidence import RawEvidence
 from app.schemas.source_result import EvidenceItem, SourceResult
 
@@ -45,42 +44,43 @@ class DataLabAnalyzer:
             as_of=as_of,
             lookback_days=self._config.lookback_days,
         )
-        assessment = evaluate_indicators(indicators, self._config)
 
-        risk_flags = list(assessment.risk_flags)
-        data_status = "ok"
-        if "insufficient_history" in risk_flags or "stale_data" in risk_flags:
-            data_status = "partial"
-
-        # Provenance (Scope A): the rule score above is unchanged. We only surface
-        # whether an LLM classified any of these keywords' polarity, so persistence
-        # can record agent_results.llm_model and the summary can disclose it.
+        # Phase 0 (#525): 결정론 판정/스코어 제거 — 피처 산출만. 방향/점수 verdict 는 내지 않는다
+        # (학습형 메타러너의 return 채널이 산출). data_status="no_signal" 로 AGGREGATE 점수 평균에서
+        # 제외되고, direction="unknown" 으로 방향 합의에서도 빠진다(소스는 커버리지로만 노출).
+        # 피처는 별도 PIT 경로(app/ml/source_features.assemble_features)가 DB 에서 직접 읽는다.
         llm_model, llm_count = _llm_polarity_provenance(rows)
 
         latest = indicators.latest_observed_date or as_of.isoformat()
+        momentum = indicators.momentum_pct
         summary = (
-            f"{latest} 기준 최근 {self._config.lookback_days}일 검색 트렌드 {indicators.observations}건 분석: "
-            f"방향 {assessment.direction}, 점수 {assessment.score:+.3f}."
+            f"{latest} 기준 최근 {self._config.lookback_days}일 검색 트렌드 {indicators.observations}건 "
+            f"피처 산출(모멘텀 {momentum:+.3f}, 스파이크 {indicators.spike_ratio:.2f}). "
+            f"판정은 학습형 메타러너가 수행."
+            if momentum is not None
+            else (
+                f"{latest} 기준 최근 {self._config.lookback_days}일 검색 트렌드 "
+                f"{indicators.observations}건 피처 산출. 판정은 학습형 메타러너가 수행."
+            )
         )
         if llm_count:
-            summary += f" (LLM 분류 키워드 {llm_count}건 반영)"
+            summary += f" (LLM 분류 키워드 {llm_count}건)"
         return SourceResult(
             source="DATALAB",
             stock_code=stock_code,
-            direction=assessment.direction,
-            score=assessment.score,
+            direction="unknown",
+            score=0.0,
             summary=summary,
             evidence_items=[
                 EvidenceItem(
-                    title=highlight,
-                    summary=f"{latest} 기준 검색 트렌드 지표 산출 결과",
+                    title=f"검색 트렌드 피처 {indicators.observations}건",
+                    summary=f"{latest} 기준 검색 트렌드 지표(피처) 산출 결과",
                     published_at=latest,
                     source_name="NAVER_DATALAB",
                 )
-                for highlight in assessment.highlights
             ],
-            risk_flags=risk_flags,
-            data_status=data_status,
+            risk_flags=[],
+            data_status="no_signal",
             llm_model=llm_model,
         )
 
