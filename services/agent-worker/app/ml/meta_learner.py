@@ -25,11 +25,30 @@ DEFAULT_ARTIFACT_PATH = Path(__file__).resolve().parent / "artifacts" / "meta_le
 METHOD_STACKING = "stacking"
 METHOD_EQUAL = "equal_fallback"
 METHOD_EMPTY = "empty"
+# return 채널 학습형 결합(부호 있는 선형 stacker). vol 의 비음수 가중 평균과 구분.
+METHOD_LINEAR = "linear_stacking"
+
+# return 채널 학습 산출물 기본 경로. 없으면 base 예측 균등 평균 폴백.
+DEFAULT_RETURN_ARTIFACT_PATH = (
+    Path(__file__).resolve().parent / "artifacts" / "meta_learner_return.json"
+)
 
 
 @dataclass(frozen=True)
 class MetaResult:
     combined_vol: float | None
+    confidence: float
+    method: str
+    model_count: int
+    weight_breakdown: dict[str, float]
+
+
+@dataclass(frozen=True)
+class ReturnMetaResult:
+    """return 채널 결합 결과 (#525 D4 신규 채널). vol 채널(MetaResult)과 병행."""
+
+    final_score: float | None
+    direction: str  # positive | negative | neutral | unknown
     confidence: float
     method: str
     model_count: int
@@ -103,6 +122,128 @@ def combine(
         model_count=len(contributing),
         weight_breakdown={name: round(w, 6) for name, w in normalized.items()},
     )
+
+
+# ── return 채널 (#525 WS-C) ────────────────────────────────────────────────
+# vol 채널과 분리: 입력 = 소스 base 예측(src_*, forward return) + 저빈도 Report 피처(D1).
+# 학습형 결합은 **부호 있는 선형 stacker**(coef 음수 가능 — 리스크 피처는 수익률에 음의 기여).
+# 따라서 vol 의 ``load_weights``(비음수 share, >0 필터)를 재사용하지 않고 별도 로더를 둔다.
+
+REPORT_FEATURE_PREFIX = "report__"
+
+
+def load_return_model(path: str | Path | None = None) -> dict | None:
+    """return 채널 선형 stacker 산출물 로드. 없으면 None(base 예측 균등 폴백 신호).
+
+    포맷: ``{"intercept": 0.001, "coef": {"src_datalab": 0.4, "report__peer_gap_avg": -0.2, ...}}``.
+    비유한 coef 는 제외. 환경변수 ``ML_META_LEARNER_RETURN_ARTIFACT`` 로 경로 오버라이드.
+    """
+    resolved = Path(
+        path or os.getenv("ML_META_LEARNER_RETURN_ARTIFACT") or DEFAULT_RETURN_ARTIFACT_PATH
+    )
+    if not resolved.is_file():
+        return None
+    try:
+        payload = json.loads(resolved.read_text(encoding="utf-8"))
+        raw_coef = payload.get("coef", {})
+        coef = {
+            str(name): float(value)
+            for name, value in raw_coef.items()
+            if math.isfinite(float(value))
+        }
+        intercept = float(payload.get("intercept", 0.0))
+        if not math.isfinite(intercept):
+            intercept = 0.0
+    except (ValueError, AttributeError, TypeError):
+        return None
+    if not coef:
+        return None
+    return {"intercept": intercept, "coef": coef}
+
+
+def combine_return(
+    base_predictions: Mapping[str, float],
+    *,
+    report_features: Mapping[str, float | None] | None = None,
+    model: Mapping | None = None,
+    neutral_band: float = 0.0,
+) -> ReturnMetaResult:
+    """소스 base forward-return 예측(+Report 피처)을 return 채널로 결합.
+
+    - 학습 모델 있음 → 부호 있는 **선형 stacker**: ``final = intercept + Σ coef[k]·input[k]``
+      (가용 입력만; src_* base 예측 ∪ ``report__*`` 피처). 결측 입력은 항을 빼서 자연 강등.
+    - 학습 모델 없음 → **base 예측 균등 평균** 폴백(Report 피처는 수익률 스케일이 아니라 제외).
+    direction 은 ``final`` 부호(±neutral_band 중립대), confidence 는 base 예측의 방향 합의.
+    """
+    preds = {
+        name: float(v) for name, v in base_predictions.items() if v is not None and math.isfinite(float(v))
+    }
+    if not preds:
+        return ReturnMetaResult(None, "unknown", 0.0, METHOD_EMPTY, 0, {})
+
+    inputs: dict[str, float] = dict(preds)
+    if report_features:
+        for name, value in report_features.items():
+            if value is not None and math.isfinite(float(value)):
+                key = name if str(name).startswith(REPORT_FEATURE_PREFIX) else f"{REPORT_FEATURE_PREFIX}{name}"
+                inputs[key] = float(value)
+
+    coef = dict(model.get("coef", {})) if model else {}
+    applicable = {k: coef[k] for k in inputs if k in coef}
+    if applicable:
+        final = float(model.get("intercept", 0.0)) + sum(
+            applicable[k] * inputs[k] for k in applicable
+        )
+        method = METHOD_LINEAR
+        breakdown = {k: round(applicable[k], 6) for k in applicable}
+        # 기여 base 예측(부호 합의용)·모델 수: 선형식에 들어간 src_* 만(Report 피처는 모델 아님).
+        contributing = {k: preds[k] for k in preds if k in applicable}
+    else:
+        final = sum(preds.values()) / len(preds)
+        method = METHOD_EQUAL
+        breakdown = {name: round(1.0 / len(preds), 6) for name in preds}
+        contributing = preds
+
+    return ReturnMetaResult(
+        final_score=round(final, 10),
+        direction=_direction(final, neutral_band),
+        confidence=_return_confidence(contributing, final),
+        method=method,
+        model_count=len(contributing),
+        weight_breakdown=breakdown,
+    )
+
+
+def _direction(final_score: float, neutral_band: float) -> str:
+    if final_score > neutral_band:
+        return "positive"
+    if final_score < -neutral_band:
+        return "negative"
+    return "neutral"
+
+
+def _return_confidence(base_preds: Mapping[str, float], final_score: float) -> float:
+    """base 예측의 방향 합의도 [0,1]. 부호가 final 과 일치하는 비율.
+
+    단일 base 예측은 합의를 말할 수 없어 0.5(과신 방지, vol _confidence 관례와 동일).
+    final 이 중립(0)이면 방향 합의가 없으므로 0.
+    """
+    values = list(base_preds.values())
+    if len(values) <= 1:
+        return 0.5
+    target = _sign(final_score)
+    if target == 0:
+        return 0.0
+    agree = sum(1 for v in values if _sign(v) == target)
+    return round(agree / len(values), 4)
+
+
+def _sign(value: float) -> int:
+    if value > 0:
+        return 1
+    if value < 0:
+        return -1
+    return 0
 
 
 def _confidence(preds: Mapping[str, float]) -> float:
