@@ -22,6 +22,7 @@ from dataclasses import asdict
 from datetime import date
 from typing import Any, Mapping, Sequence
 
+from app.analyzers.dart.indicators import compute_indicators as dart_indicators
 from app.analyzers.datalab.indicators import compute_indicators as datalab_indicators
 from app.analyzers.hiring.indicators import compute_indicators as hiring_indicators
 from app.analyzers.report.valuation import build_valuation_summary
@@ -31,6 +32,7 @@ KNOWN_AT: dict[str, str] = {
     "datalab": "observed_date",  # 검색일
     "hiring": "observed_date",  # 공고 관측일
     "report": "publish_date",  # 리포트 발행일
+    "dart": "report_date",  # DART 이벤트 공시 접수일(=rcept_dt)
 }
 
 DEFAULT_LOOKBACK_DAYS = 30
@@ -85,6 +87,7 @@ def assemble_features(
     datalab_rows: Sequence[Mapping[str, Any]] = (),
     hiring_rows: Sequence[Mapping[str, Any]] = (),
     report_facts: Sequence[Mapping[str, Any]] = (),
+    dart_rows: Sequence[Mapping[str, Any]] = (),
     lookback_days: int = DEFAULT_LOOKBACK_DAYS,
     sector_demand: dict | None = None,
 ) -> dict[str, dict[str, float | None]]:
@@ -108,9 +111,15 @@ def assemble_features(
     report = build_valuation_summary(
         pit_rows(report_facts, asof, date_key=KNOWN_AT["report"])
     )
+    dart = dart_indicators(
+        pit_rows(dart_rows, asof, date_key=KNOWN_AT["dart"]),
+        as_of=asof,
+        lookback_days=lookback_days,
+    )
 
     return {
         "datalab": _numeric(asdict(datalab)),
         "hiring": _numeric(asdict(hiring)),
         "report": _numeric(report),
+        "dart": _numeric(asdict(dart)),
     }

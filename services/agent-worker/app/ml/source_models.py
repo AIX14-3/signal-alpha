@@ -34,10 +34,13 @@ except ModuleNotFoundError:  # pragma: no cover - 호스트에 백엔드 없을 
 # src_* base 예측 적재용 run_key. 기존 vol 결합(run_key=ML)과 분리해 vol 채널 불변(D4).
 SOURCE_RUN_KEY = "SRC"
 
-# base 모델 대상 소스(고빈도) → assemble_features 키. Report 제외(D1: 메타러너 피처 직접).
+# base 모델 대상 소스(고빈도/이벤트) → assemble_features 키. Report 제외(D1: 메타러너 피처 직접).
+# src_dart = DART 임원·주요주주 지분변동(event-study) base 모델. 저빈도 재무·임직원은 base 없이
+# 메타러너 피처(D1)라 여기 없음.
 SOURCE_MODELS: dict[str, str] = {
     "src_datalab": "datalab",
     "src_hiring": "hiring",
+    "src_dart": "dart",
 }
 
 # 피처 순서 파생용 기준일(0행 indicator 호출 → 데이터와 무관하게 동일 키셋이 나온다).
@@ -105,6 +108,7 @@ def predict_sources(
     models: Sequence[SourceModel],
     datalab_rows: Sequence[Mapping[str, Any]] = (),
     hiring_rows: Sequence[Mapping[str, Any]] = (),
+    dart_rows: Sequence[Mapping[str, Any]] = (),
     lookback_days: int | None = None,
     sector_demand: dict | None = None,
 ) -> dict[str, float | None]:
@@ -115,6 +119,7 @@ def predict_sources(
     kwargs: dict[str, Any] = {
         "datalab_rows": datalab_rows,
         "hiring_rows": hiring_rows,
+        "dart_rows": dart_rows,
         "sector_demand": sector_demand,
     }
     if lookback_days is not None:

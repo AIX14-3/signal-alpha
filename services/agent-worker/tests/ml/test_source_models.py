@@ -43,9 +43,17 @@ def test_unloaded_model_predicts_none():
 
 
 def test_predict_sources_returns_none_when_unloaded():
-    models = [SourceModel("src_datalab"), SourceModel("src_hiring")]
+    models = [SourceModel("src_datalab"), SourceModel("src_hiring"), SourceModel("src_dart")]
     preds = predict_sources(date(2026, 6, 1), models=models)
-    assert preds == {"src_datalab": None, "src_hiring": None}
+    assert preds == {"src_datalab": None, "src_hiring": None, "src_dart": None}
+
+
+def test_predict_sources_accepts_dart_rows():
+    # src_dart 모델이 dart_rows 를 받아 (미적재라) None 을 돌려준다 — 배선 자체 검증.
+    models = [SourceModel("src_dart")]
+    dart_rows = [{"report_date": "2026-05-20", "holder_type": "major", "shares_delta": 1000}]
+    preds = predict_sources(date(2026, 6, 1), models=models, dart_rows=dart_rows)
+    assert preds == {"src_dart": None}
 
 
 def test_build_panel_drops_unlabeled_and_vectorizes():
