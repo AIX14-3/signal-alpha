@@ -127,7 +127,9 @@ class Settings:
         # currently issued key is a paper-trading key (expires 2026-09-06).
         # Switch to https://api.kiwoom.com once a production key is issued.
         self.kiwoom_app_key = getenv("KIWOOM_APP_KEY", "")
-        self.kiwoom_app_secret = getenv("KIWOOM_APP_SECRET", "")
+        # .env 는 KIWOOM_SECRET_KEY 를 쓰므로 두 이름 모두 허용(이름 불일치로 데몬이 토큰 발급에
+        # 실패하던 버그 수정 — KIWOOM_APP_SECRET 우선, 없으면 KIWOOM_SECRET_KEY).
+        self.kiwoom_app_secret = getenv("KIWOOM_APP_SECRET") or getenv("KIWOOM_SECRET_KEY", "")
         self.kiwoom_api_base = getenv("KIWOOM_API_BASE", "https://mockapi.kiwoom.com").rstrip("/")
         self.kiwoom_timeout_seconds = float(getenv("KIWOOM_TIMEOUT_SECONDS", "10"))
         # Kiwoom enforces request-rate limits; keep a minimum gap between calls.
