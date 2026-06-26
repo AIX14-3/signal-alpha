@@ -22,6 +22,12 @@ META_COMBINE = "meta_combine"
 # 9 chars (task_type VARCHAR(50)).
 SRC_INFER = "src_infer"
 
+# 메타러너 return 채널 결합 (#525 WS-C) — ml_inferences(run_key=SRC, src_*) + Report 피처를
+# combine_return 으로 결합해 meta_signals(run_key=SRC) return 컬럼(final_score/direction/
+# confidence) 적재. SRC_INFER 가 성공 예측이 있을 때 enqueue. vol 채널 불변(D4).
+# 14 chars (task_type VARCHAR(50)).
+RETURN_COMBINE = "return_combine"
+
 # 리스크 veto — 치명 키워드(상장폐지/감사의견거절 등) 탐지 시 final_signal 발행 보류.
 # AGGREGATE_SIGNAL이 발행 신호에 대해 enqueue. 9 chars (task_type VARCHAR(50)).
 RISK_VETO = "risk_veto"

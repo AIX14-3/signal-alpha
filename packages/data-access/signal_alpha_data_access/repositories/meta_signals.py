@@ -26,14 +26,19 @@ class MetaSignalRepository:
         method: str,
         model_count: int,
         weight_breakdown: dict[str, float] | None = None,
+        final_score: float | None = None,
+        direction: str | None = None,
     ) -> Any:
+        # final_score/direction 은 return 채널(#525 WS-C) 전용 — vol 경로는 미지정(NULL)이라
+        # 기존 거동 불변(D4). return 행은 run_key='SRC' 로 combined_vol NULL + 이 컬럼만 채운다.
         return await self._connection.fetchrow(
             """
             INSERT INTO meta_signals (
                 stock_id, run_key, asof_date, horizon,
-                combined_vol, confidence, method, model_count, weight_breakdown
+                combined_vol, confidence, method, model_count, weight_breakdown,
+                final_score, direction
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             ON CONFLICT (stock_id, run_key, asof_date, horizon)
             DO UPDATE SET
                 combined_vol = EXCLUDED.combined_vol,
@@ -41,6 +46,8 @@ class MetaSignalRepository:
                 method = EXCLUDED.method,
                 model_count = EXCLUDED.model_count,
                 weight_breakdown = EXCLUDED.weight_breakdown,
+                final_score = EXCLUDED.final_score,
+                direction = EXCLUDED.direction,
                 created_at = NOW()
             RETURNING *
             """,
@@ -53,6 +60,8 @@ class MetaSignalRepository:
             method,
             model_count,
             json.dumps(weight_breakdown or {}),
+            final_score,
+            direction,
         )
 
     async def get(

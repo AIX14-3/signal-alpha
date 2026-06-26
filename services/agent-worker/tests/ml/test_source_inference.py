@@ -42,6 +42,15 @@ class _FakeInferences:
         self.calls.append(kwargs)
 
 
+class _FakeQueue:
+    def __init__(self):
+        self.enqueued = []
+
+    async def enqueue(self, **kwargs):
+        self.enqueued.append(kwargs)
+        return len(self.enqueued)
+
+
 def _dl_row(observed: str, index: float) -> dict:
     return {
         "observed_date": observed,
@@ -63,6 +72,7 @@ def test_src_infer_persists_predictions_under_src_run_key():
         sector_demand={"momentum_pct": 0.2, "coverage": 0.5},
     )
     inferences = _FakeInferences()
+    queue = _FakeQueue()
     # datalab 모델만 적재(고정 예측), hiring 모델은 미적재(아티팩트 부재 시뮬레이션).
     models = [
         SourceModel("src_datalab").attach(_FakeBooster(0.0123)),
@@ -74,6 +84,7 @@ def test_src_infer_persists_predictions_under_src_run_key():
         datalab_loader=datalab_loader,
         hiring_loader=hiring_loader,
         inferences=inferences,
+        queue=queue,
         models=models,
     )
 
@@ -89,6 +100,14 @@ def test_src_infer_persists_predictions_under_src_run_key():
     assert result["run_key"] == SOURCE_RUN_KEY == "SRC"
     assert result["succeeded"] == ["src_datalab"]
     assert result["persisted"] == 2
+
+    # 성공 예측이 있으니 return 채널 결합(RETURN_COMBINE)을 인큐.
+    assert len(queue.enqueued) == 1
+    enq = queue.enqueued[0]
+    assert enq["task_type"] == "return_combine"
+    assert enq["task_context"]["run_key"] == "SRC"
+    assert enq["task_context"]["as_of"] == "2026-06-01"
+    assert result["return_combine_task_id"] == 1
 
     by_model = {c["model_name"]: c for c in inferences.calls}
     assert set(by_model) == {"src_datalab", "src_hiring"}
@@ -108,11 +127,13 @@ def test_src_infer_persists_predictions_under_src_run_key():
 
 def test_src_infer_handles_no_models_loaded():
     inferences = _FakeInferences()
+    queue = _FakeQueue()
     handler = SrcInferTaskHandler(
         connection=object(),
         datalab_loader=_FakeLoader([]),
         hiring_loader=_FakeLoader([]),
         inferences=inferences,
+        queue=queue,
         models=[SourceModel("src_datalab"), SourceModel("src_hiring")],
     )
 
@@ -121,3 +142,6 @@ def test_src_infer_handles_no_models_loaded():
     assert result["succeeded"] == []
     assert all(c["pred_value"] is None for c in inferences.calls)
     assert all(c["run_key"] == "SRC" for c in inferences.calls)
+    # 성공 예측이 없으면 return 채널 결합을 인큐하지 않는다.
+    assert queue.enqueued == []
+    assert result["return_combine_task_id"] is None

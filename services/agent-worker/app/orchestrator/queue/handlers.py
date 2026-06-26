@@ -21,6 +21,7 @@ from app.orchestrator.queue.task_types import (
     NORMALIZE_PATENT,
     NORMALIZE_REPORT,
     PROCESS_REPORT,
+    RETURN_COMBINE,
     RISK_VETO,
     SRC_INFER,
     SYNTHESIZE,
@@ -46,6 +47,7 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
     from app.orchestrator.price.tasks import PriceAnalyzeTaskHandler
     from app.ml.inference import MlInferTaskHandler
     from app.ml.meta_combine import MetaCombineTaskHandler
+    from app.ml.return_combine import ReturnCombineTaskHandler
     from app.ml.source_inference import SrcInferTaskHandler
     from app.gates.risk_veto import RiskVetoTaskHandler
     from app.synthesis.tasks import SynthesizeTaskHandler
@@ -77,9 +79,11 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
         AGGREGATE_SIGNAL: AggregateSignalTaskHandler(connection),
         ML_INFER: MlInferTaskHandler(connection),
         META_COMBINE: MetaCombineTaskHandler(connection),
-        # 소스별 base 모델 추론(#525 Phase 3). run_key=SRC 로 분리 적재(D4). return 채널
-        # 결합 트리거는 WS-C 에서 배선(현재는 dispatch 가능하되 파이프라인 자동 인큐는 미배선).
+        # 소스별 base 모델 추론(#525 Phase 3). run_key=SRC 로 분리 적재(D4). 성공 예측이
+        # 있으면 RETURN_COMBINE 을 인큐해 return 채널을 결합한다.
         SRC_INFER: SrcInferTaskHandler(connection),
+        # 메타러너 return 채널 결합(#525 WS-C) — src_* + Report 피처 → meta_signals return 컬럼.
+        RETURN_COMBINE: ReturnCombineTaskHandler(connection),
         RISK_VETO: RiskVetoTaskHandler(connection, settings=settings),
         SYNTHESIZE: SynthesizeTaskHandler(connection, settings=settings),
         COLLECT_REPORT: ReportCollectTaskHandler(connection=connection, settings=settings),

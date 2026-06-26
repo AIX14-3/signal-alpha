@@ -26,6 +26,7 @@ from typing import Any
 from app.ml.source_features import DEFAULT_LOOKBACK_DAYS
 from app.ml.source_models import SOURCE_MODELS, SOURCE_RUN_KEY, SourceModel, predict_sources
 from app.orchestrator.queue.context import parse_task_context
+from app.orchestrator.queue.task_types import RETURN_COMBINE
 
 # return base 모델의 공통 타깃 호라이즌(L6 abnormal_return_20d 와 정렬).
 DEFAULT_HORIZON = 20
@@ -59,6 +60,7 @@ class SrcInferTaskHandler:
         hiring_loader: Any | None = None,
         models: list[SourceModel] | None = None,
         inferences: Any | None = None,
+        queue: Any | None = None,
         loader_lookback_days: int | None = None,
         feature_lookback_days: int | None = None,
         run_key: str = SOURCE_RUN_KEY,
@@ -80,9 +82,10 @@ class SrcInferTaskHandler:
         )
 
         # 로더/리포지토리: 주입 없으면 실제 RawDetailRepository 기반으로 구성.
-        if datalab_loader is None or hiring_loader is None or inferences is None:
+        if datalab_loader is None or hiring_loader is None or inferences is None or queue is None:
             from signal_alpha_data_access.repositories import (
                 MlInferenceRepository,
+                ProcessingQueueRepository,
                 RawDetailRepository,
             )
 
@@ -97,10 +100,13 @@ class SrcInferTaskHandler:
                 hiring_loader = HiringEvidenceLoader(repo, lookback_days=loader_lookback)
             if inferences is None:
                 inferences = MlInferenceRepository(connection)
+            if queue is None:
+                queue = ProcessingQueueRepository(connection)
 
         self._datalab_loader = datalab_loader
         self._hiring_loader = hiring_loader
         self._inferences = inferences
+        self._queue = queue
         self._models = (
             models
             if models is not None
@@ -141,7 +147,22 @@ class SrcInferTaskHandler:
             )
 
         succeeded = [name for name, value in predictions.items() if value is not None]
-        # 적재만 한다 — return 채널 결합(run_key=SRC)은 WS-C 가 인큐(D4: vol 채널 불변).
+        # 성공 예측이 있으면 return 채널 결합(RETURN_COMBINE)을 인큐 — run_key=SRC 의 src_*
+        # 예측 + Report 피처를 결합해 meta_signals return 컬럼에 적재한다(vol 채널 불변, D4).
+        return_combine_task_id: int | None = None
+        if succeeded:
+            return_combine_task_id = await self._queue.enqueue(
+                stock_id=stock_id,
+                task_type=RETURN_COMBINE,
+                priority=str(ctx.get("priority") or "batch"),
+                task_context={
+                    "stock_code": stock_code,
+                    "run_key": self._run_key,
+                    "as_of": as_of.isoformat(),
+                    "horizon": self._horizon,
+                },
+                dedupe=True,
+            )
         return {
             "stock_id": stock_id,
             "as_of": as_of.isoformat(),
@@ -150,6 +171,7 @@ class SrcInferTaskHandler:
             "predictions": dict(predictions),
             "persisted": len(predictions),
             "succeeded": succeeded,
+            "return_combine_task_id": return_combine_task_id,
         }
 
     async def _rows(self, loader: Any, stock_id: int, stock_code: str, as_of: date) -> list[dict]:
