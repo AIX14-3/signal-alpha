@@ -92,16 +92,29 @@ def _load_env_file(path: Path) -> dict[str, str]:
     return values
 
 
-def resolve_database_url(cli_url: str | None) -> str:
+def resolve_database_url(cli_url: str | None, target: str = "all") -> str:
+    """대상 DB(target)에 맞는 DSN을 해석한다.
+
+    - ``--target backend``: ``BACKEND_MIGRATE_DATABASE_URL`` → ``BACKEND_DATABASE_URL`` 순.
+    - 그 외(collection/all): ``DATABASE_URL`` (기존 동작 유지).
+    우선순위: ``--database-url`` > 환경변수 > 루트 ``.env`` 파일.
+    """
     if cli_url:
         return cli_url
-    if os.environ.get("DATABASE_URL"):
-        return os.environ["DATABASE_URL"]
+    candidates = (
+        ["BACKEND_MIGRATE_DATABASE_URL", "BACKEND_DATABASE_URL"]
+        if target == "backend"
+        else ["DATABASE_URL"]
+    )
+    for name in candidates:
+        if os.environ.get(name):
+            return os.environ[name]
     env = _load_env_file(ROOT_DIR / ".env")
-    if env.get("DATABASE_URL"):
-        return env["DATABASE_URL"]
+    for name in candidates:
+        if env.get(name):
+            return env[name]
     raise SystemExit(
-        "DATABASE_URL을 찾을 수 없습니다. --database-url 옵션, "
+        f"{' / '.join(candidates)} 을(를) 찾을 수 없습니다. --database-url 옵션, "
         "환경변수, 또는 루트 .env 파일로 지정하세요."
     )
 
@@ -267,7 +280,7 @@ def main() -> None:
         cmd_new(args.name, target="collection" if args.target == "all" else args.target)
         return
 
-    database_url = resolve_database_url(args.database_url)
+    database_url = resolve_database_url(args.database_url, target=args.target)
     conn = psycopg2.connect(database_url)
     try:
         if args.command == "status":
