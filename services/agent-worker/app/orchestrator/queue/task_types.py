@@ -28,6 +28,11 @@ SRC_INFER = "src_infer"
 # 14 chars (task_type VARCHAR(50)).
 RETURN_COMBINE = "return_combine"
 
+# 발행 — 종목 발행 산출물(PUBLISHED 테이블)을 백엔드 DB 로 복사 (#11 물리 2-DB).
+# AGGREGATE 가 final_signal 발행 + BACKEND_DATABASE_URL 설정 시 인큐. 미설정이면 핸들러 no-op.
+# 15 chars (task_type VARCHAR(50)).
+PUBLISH_SIGNALS = "publish_signals"
+
 # 리스크 veto — 치명 키워드(상장폐지/감사의견거절 등) 탐지 시 final_signal 발행 보류.
 # AGGREGATE_SIGNAL이 발행 신호에 대해 enqueue. 9 chars (task_type VARCHAR(50)).
 RISK_VETO = "risk_veto"
