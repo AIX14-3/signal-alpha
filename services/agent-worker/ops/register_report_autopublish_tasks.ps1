@@ -130,7 +130,7 @@ $forever = New-TimeSpan -Days 3650
 # (A) DART 수집 + drain — 30분마다(무기한 반복)
 $trigA = New-ScheduledTaskTrigger -Once -At (Get-Date) `
   -RepetitionInterval (New-TimeSpan -Minutes 30) -RepetitionDuration $forever
-$actA = New-RunnerAction -ExtraArgs "-Mode All -SkipReport -DartLimit 100 -MaxRuns 30"
+$actA = New-RunnerAction -ExtraArgs "-Mode All -SkipReport -DartLimit 10 -MaxRuns 30"
 Register-ScheduledTask -TaskName "DartCollectDrain" -TaskPath "\$folder\" `
   -Action $actA -Trigger $trigA -Settings $settings @regExtra `
   -Description "Signal Alpha: DART 수집 + 큐 drain (30분)" -Force | Out-Null
