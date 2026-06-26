@@ -1,3 +1,5 @@
+-- target: backend
+-- (subscription_plans 는 BACKEND 전용 — 백엔드 DB 만 시드)
 -- 구독 플랜 시드 (신규 기획: 비구독 free + 단일 구독 monthly_9900)
 -- 주의: migrate.py 는 migrations 적용 후 seeds 를 실행한다. 따라서 fresh DB 에서는
 --   021_subscription_single_product.sql 의 UPDATE(free/pro/premium)가 빈 테이블을 만나 no-op 이 되고,

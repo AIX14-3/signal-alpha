@@ -1,4 +1,6 @@
 -- 001_seed_stocks.sql
+-- target: all
+-- (stocks 는 PUBLISHED — 수집·백엔드 양쪽 DB 에 시드)
 -- 27개 핵심 기업 기본 정보 + 수집 대상(is_target)/약칭(short_name) 설정.
 -- 재실행 안전(idempotent): ON CONFLICT 기반.
 -- universe 확장(15→27): jasoseol 커버리지 ≥15 기준 Tier-1 12종목 추가(2026-06-25, A 결정).

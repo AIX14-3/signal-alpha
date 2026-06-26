@@ -1,4 +1,6 @@
 -- 006_seed_hiring_job_functions.sql
+-- target: collection
+-- (hiring_* 는 COLLECTION 전용 — 수집 DB 만 시드)
 --
 -- Seeds hiring_job_functions and hiring_job_function_stocks (이슈 #299).
 -- 신규 analyzer의 sector_demand(섹터 직무 수요) 신호를 활성화한다: peer 종목의

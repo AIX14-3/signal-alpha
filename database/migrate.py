@@ -190,8 +190,10 @@ def apply_migrations(conn, pending: list[Path], dry_run: bool) -> None:
         print(f"적용 완료: {path.name}")
 
 
-def apply_seeds(conn, dry_run: bool) -> None:
-    seed_files = list_sql_files(SEEDS_DIR)
+def apply_seeds(conn, dry_run: bool, target: str = "all") -> None:
+    # 시드도 마이그레이션과 동일한 ``-- target:`` 지시자로 대상 DB를 가린다(#531 2-DB 분리).
+    # ``--target backend`` 면 backend/all 시드만, ``--target collection`` 이면 collection/all 만 적용.
+    seed_files = filter_by_target(list_sql_files(SEEDS_DIR), target)
     if not seed_files:
         print("시드 파일이 없습니다.")
         return
@@ -231,7 +233,7 @@ def cmd_apply(conn, dry_run: bool, seeds: bool, target: str = "all") -> None:
     pending = filter_by_target(verify_applied(applied, all_files), target)
     apply_migrations(conn, pending, dry_run)
     if seeds:
-        apply_seeds(conn, dry_run)
+        apply_seeds(conn, dry_run, target)
 
 
 def _slugify(name: str) -> str:

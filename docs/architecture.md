@@ -25,13 +25,15 @@ signal-alpha/
 ## 서비스 경계
 
 ```text
-[Next.js web] ──HTTP──▶ [main-server] ───────▶  PostgreSQL  ◀─────── [agent-worker]
-  (프론트엔드)            (백엔드)        api.* 읽기 view   base DML   (워커: 수집/분석)
+[Next.js web] ─HTTP▶ [main-server] ─SELECT▶  백엔드 DB  ◀─publish─ [agent-worker] ─DML▶  수집 DB
+  (프론트엔드)         (백엔드)      api.* 읽기·발행 사본              (워커: 수집/분석)   base 테이블
 ```
 
-> 배포는 **db / worker / backend / frontend 4유닛**으로 분리합니다. backend와 worker는 런타임에
-> 직접 호출하지 않고 DB의 `api.*` 읽기 계약으로만 연결됩니다. 토폴로지·DB 소유권 경계 상세는
-> [architecture-diagram.md](./architecture-diagram.md) 참고.
+> 배포는 **db / worker / backend / frontend 4유닛**으로 분리하고, DB 는 **물리 인스턴스 2개**(수집/백엔드)
+> 입니다. backend와 worker는 런타임에 직접 호출하지 않고, 워커가 백엔드 DB 로 산출물을 **발행(publish)**
+> 하면 backend 는 백엔드 DB 의 `api.*` 읽기 계약으로 읽습니다. 토폴로지·DB 소유권 경계·마이그 타깃 규칙은
+> [architecture-diagram.md](./architecture-diagram.md),
+> [database/docs/migration_seed_targets.md](../database/docs/migration_seed_targets.md) 참고.
 
 - **`web`** 은 `main-server` 만 호출합니다.
 - **`main-server`** 는 사용자-facing API 경계: 헬스체크, 시그널 조회, 관심종목, 저널, 대시보드,

@@ -1,4 +1,6 @@
 -- 004_seed_datalab_categories.sql
+-- target: collection
+-- (datalab_* 는 COLLECTION 전용 — 수집 DB 만 시드)
 --
 -- Seeds datalab_categories and datalab_category_stocks.
 -- Source of truth: .claude/skills/signal-alpha-collector/references/category-registry.md
