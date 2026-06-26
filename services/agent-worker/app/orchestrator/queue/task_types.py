@@ -16,6 +16,12 @@ ML_INFER = "ml_infer"
 # ML_INFER가 성공 추론이 있을 때 enqueue. 12 chars (task_type VARCHAR(50)).
 META_COMBINE = "meta_combine"
 
+# 소스별 base 모델 추론 (#525 Phase 3) — DataLab/Hiring 정형 피처를 forward-return base
+# 모델로 추론해 ml_inferences(model_name=src_*, run_key=SRC) 적재. 타깃이 return 이라
+# 기존 vol 결합(run_key=ML)과 run_key 로 분리(D4). return 채널 결합은 WS-C 가 인큐.
+# 9 chars (task_type VARCHAR(50)).
+SRC_INFER = "src_infer"
+
 # 리스크 veto — 치명 키워드(상장폐지/감사의견거절 등) 탐지 시 final_signal 발행 보류.
 # AGGREGATE_SIGNAL이 발행 신호에 대해 enqueue. 9 chars (task_type VARCHAR(50)).
 RISK_VETO = "risk_veto"
