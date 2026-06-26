@@ -7,6 +7,7 @@ from signal_alpha_data_access.repositories.dead_letter import DeadLetterReposito
 from signal_alpha_data_access.repositories.dart_financials import DartFinancialFactsRepository
 from signal_alpha_data_access.repositories.dart_ownership import DartOwnershipRepository
 from signal_alpha_data_access.repositories.dart_employee import DartEmployeeStatsRepository
+from signal_alpha_data_access.repositories.event_study import EventStudyRepository
 from signal_alpha_data_access.repositories.market_data import MarketDataRepository
 from signal_alpha_data_access.repositories.ml_inferences import MlInferenceRepository
 from signal_alpha_data_access.repositories.meta_signals import MetaSignalRepository
@@ -33,6 +34,7 @@ __all__ = [
     "DartFinancialFactsRepository",
     "DartOwnershipRepository",
     "DartEmployeeStatsRepository",
+    "EventStudyRepository",
     "MarketDataRepository",
     "MlInferenceRepository",
     "MetaSignalRepository",
