@@ -637,6 +637,41 @@ class RawDetailRepository:
             stock_id,
         )
 
+    async def list_dart_ownership_events_by_stock(
+        self,
+        *,
+        stock_id: int,
+        since_date: Any | None = None,
+    ) -> list[Any]:
+        """DART 임원·주요주주 지분변동 이벤트 행(종목 기준, 윈도우 내, 최신순).
+
+        ``dart_ownership_events`` 는 자체 ``report_date``(=rcept_dt, known_at) 컬럼을 가져
+        조인이 필요 없다. src_dart base 모델 피처(#546 Phase 1)의 PIT 게이트는 호출측
+        ``assemble_features`` 가 ``report_date <= asof`` 로 강제한다.
+        """
+        return await self._connection.fetch(
+            """
+            SELECT
+                stock_id,
+                corp_code,
+                rcept_no,
+                report_date,
+                holder_name,
+                holder_type,
+                shares,
+                ratio,
+                shares_delta,
+                ratio_delta,
+                report_reason
+            FROM dart_ownership_events
+            WHERE stock_id = $1
+              AND ($2::date IS NULL OR report_date >= $2)
+            ORDER BY report_date DESC, id DESC
+            """,
+            stock_id,
+            since_date,
+        )
+
     async def list_datalab_details_by_category(
         self,
         *,

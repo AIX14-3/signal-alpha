@@ -83,6 +83,7 @@ def test_src_infer_persists_predictions_under_src_run_key():
         connection=object(),
         datalab_loader=datalab_loader,
         hiring_loader=hiring_loader,
+        dart_loader=_FakeLoader([]),
         inferences=inferences,
         queue=queue,
         models=models,
@@ -132,6 +133,7 @@ def test_src_infer_handles_no_models_loaded():
         connection=object(),
         datalab_loader=_FakeLoader([]),
         hiring_loader=_FakeLoader([]),
+        dart_loader=_FakeLoader([]),
         inferences=inferences,
         queue=queue,
         models=[SourceModel("src_datalab"), SourceModel("src_hiring")],
@@ -145,3 +147,50 @@ def test_src_infer_handles_no_models_loaded():
     # 성공 예측이 없으면 return 채널 결합을 인큐하지 않는다.
     assert queue.enqueued == []
     assert result["return_combine_task_id"] is None
+
+
+def _dart_row(report_date: str, holder_type: str, shares_delta: float) -> dict:
+    return {
+        "report_date": report_date,
+        "holder_type": holder_type,
+        "shares": None,
+        "ratio": None,
+        "shares_delta": shares_delta,
+        "ratio_delta": None,
+        "report_reason": "장내매수",
+    }
+
+
+def test_src_infer_persists_dart_prediction_under_src_run_key():
+    # src_dart base 모델이 DART 이벤트 행으로 예측 → ml_inferences(run_key=SRC) 적재.
+    dart_loader = _FakeLoader(
+        [
+            _dart_row("2026-05-20", "major", 1000.0),
+            _dart_row("2026-06-10", "major", 99999.0),  # 미래행 — PIT 로 제외
+        ]
+    )
+    inferences = _FakeInferences()
+    queue = _FakeQueue()
+    handler = SrcInferTaskHandler(
+        connection=object(),
+        datalab_loader=_FakeLoader([]),
+        hiring_loader=_FakeLoader([]),
+        dart_loader=dart_loader,
+        inferences=inferences,
+        queue=queue,
+        models=[SourceModel("src_dart").attach(_FakeBooster(0.0234))],
+    )
+
+    result = asyncio.run(
+        handler({"stock_id": 9, "task_context": {"stock_code": "005930", "as_of": "2026-06-01"}})
+    )
+
+    assert result["succeeded"] == ["src_dart"]
+    by_model = {c["model_name"]: c for c in inferences.calls}
+    assert set(by_model) == {"src_dart"}
+    assert by_model["src_dart"]["run_key"] == "SRC"
+    assert by_model["src_dart"]["pred_value"] == 0.0234
+    assert by_model["src_dart"]["gate_passed"] is True
+    # 성공 예측 → RETURN_COMBINE 인큐.
+    assert len(queue.enqueued) == 1
+    assert queue.enqueued[0]["task_type"] == "return_combine"
