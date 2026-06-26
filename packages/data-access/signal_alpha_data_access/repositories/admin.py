@@ -236,6 +236,55 @@ class AdminRepository:
             """
         )
 
+    async def record_audit_log(
+        self,
+        *,
+        actor_admin_id: int | None,
+        action: str,
+        target_type: str,
+        target_id: int | None = None,
+        before: Any | None = None,
+        after: Any | None = None,
+    ) -> Any:
+        """관리자 변경 1건을 admin_audit_log 에 기록(before/after JSONB 스냅샷)."""
+        return await self._connection.fetchrow(
+            """
+            INSERT INTO admin_audit_log (
+                actor_admin_id, action, target_type, target_id, before, after
+            )
+            VALUES ($1, $2, $3, $4, $5, $6)
+            RETURNING *
+            """,
+            actor_admin_id,
+            action,
+            target_type,
+            target_id,
+            before,
+            after,
+        )
+
+    async def list_audit_logs(
+        self,
+        *,
+        target_type: str | None = None,
+        target_id: int | None = None,
+        limit: int = 100,
+    ) -> list[Any]:
+        """감사 로그 최신순 조회. target_type/target_id 로 대상별 필터(선택)."""
+        return await self._connection.fetch(
+            """
+            SELECT *
+            FROM admin_audit_log
+            WHERE ($1::VARCHAR IS NULL OR target_type = $1)
+              AND ($2::BIGINT IS NULL OR target_id = $2)
+            ORDER BY created_at DESC, id DESC
+            LIMIT $3
+            """,
+            target_type,
+            target_id,
+            limit,
+        )
+
     async def subscription_counts_by_plan(self) -> list[Any]:
         return await self._connection.fetch(
             """

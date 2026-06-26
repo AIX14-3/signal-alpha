@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import re
+import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -18,7 +20,7 @@ from app.api.routes.admin_auth import (
 from app.core.config import Settings, get_settings
 from app.core.database import get_database_pool
 from app.core.portone import PortOneClient, PortOneError, get_portone_client
-from app.core.security import create_refresh_token, verify_password
+from app.core.security import create_refresh_token, hash_password, verify_password
 from signal_alpha_data_access.backend import AdminRepository, UserBillingRepository
 
 
@@ -30,10 +32,19 @@ class AdminLoginRequest(BaseModel):
     password: str
 
 
+class CreateUserRequest(BaseModel):
+    email: str
+    nickname: str | None = None
+    password: str | None = None
+    phone: str | None = None
+
+
 class UpdateSubscriptionRequest(BaseModel):
     plan_type: str
     status: str | None = None
     expires_at: str | None = None
+    next_billing_at: str | None = None
+    auto_renew: bool | None = None
 
 
 class UpdateUserRequest(BaseModel):
@@ -41,7 +52,30 @@ class UpdateUserRequest(BaseModel):
     email: str | None = None
 
 
+# member_code = 영문 대문자 4 + 숫자 4 (혼동 문자 I/O/0/1 제외). auth._new_member_code 와 동일 규칙.
+_CODE_LETTERS = "ABCDEFGHJKLMNPQRSTUVWXYZ"
+_CODE_DIGITS = "23456789"
+_MEMBER_CODE_RETRIES = 6
 _EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _new_member_code() -> str:
+    letters = "".join(secrets.choice(_CODE_LETTERS) for _ in range(4))
+    digits = "".join(secrets.choice(_CODE_DIGITS) for _ in range(4))
+    return f"{letters}{digits}"
+
+
+def _audit_json(row: dict[str, Any] | None) -> str | None:
+    """행 스냅샷을 감사로그 JSONB 로 직렬화(datetime 등은 문자열로)."""
+    if row is None:
+        return None
+    serializable = {
+        key: (value.isoformat() if hasattr(value, "isoformat") else value)
+        for key, value in row.items()
+        # 비밀번호 해시 등 민감/대용량 필드는 스냅샷에서 제외.
+        if key not in ("password_hash", "raw_response")
+    }
+    return json.dumps(serializable, ensure_ascii=False, default=str)
 
 
 def _admin_email(value: str) -> str:
@@ -126,6 +160,53 @@ async def list_users(
     }
 
 
+@admin_router.post("/users", status_code=201)
+async def create_user(
+    payload: CreateUserRequest,
+    admin: dict[str, Any] = Depends(get_current_admin),
+    pool: Any = Depends(get_database_pool),
+) -> dict[str, Any]:
+    """관리자 회원 생성. 비밀번호 미지정 시 password_hash=NULL(소셜/본인인증 가입과 동일).
+
+    member_code 는 자동 생성(충돌 시 재시도). 이메일 중복 시 409.
+    """
+    email = _admin_email(payload.email)
+    nickname = payload.nickname.strip() if payload.nickname else None
+    phone = payload.phone.strip() if payload.phone else None
+    password_hash = hash_password(payload.password) if payload.password else None
+    async with pool.acquire() as connection:
+        billing = UserBillingRepository(connection)
+        created: dict[str, Any] | None = None
+        for _ in range(_MEMBER_CODE_RETRIES):
+            try:
+                row = await billing.insert_member(
+                    member_code=_new_member_code(),
+                    email=email,
+                    password_hash=password_hash,
+                    nickname=nickname,
+                    phone=phone,
+                )
+                created = dict(row)
+                break
+            except UniqueViolationError as exc:
+                constraint = getattr(exc, "constraint_name", "") or ""
+                if "email" in constraint:
+                    raise admin_error(409, "EMAIL_EXISTS", "이미 사용 중인 이메일입니다.") from None
+                if "phone" in constraint:
+                    raise admin_error(409, "PHONE_EXISTS", "이미 사용 중인 휴대폰번호입니다.") from None
+                continue  # member_code 충돌 → 재시도
+        if created is None:
+            raise admin_error(500, "MEMBER_CODE_GENERATION_FAILED", "회원 식별번호 생성에 실패했습니다.")
+        await AdminRepository(connection).record_audit_log(
+            actor_admin_id=int(admin["admin_id"]),
+            action="user.create",
+            target_type="user",
+            target_id=int(created["id"]),
+            after=_audit_json(created),
+        )
+    return _user_row(created)
+
+
 @admin_router.get("/users/{user_id}")
 async def get_user_detail(
     user_id: int,
@@ -143,7 +224,7 @@ async def get_user_detail(
 async def update_user(
     user_id: int,
     payload: UpdateUserRequest,
-    _admin: dict[str, Any] = Depends(get_current_admin),
+    admin: dict[str, Any] = Depends(get_current_admin),
     pool: Any = Depends(get_database_pool),
 ) -> dict[str, Any]:
     """회원 닉네임/이메일 수정(보낸 필드만 변경). 이메일 중복 시 409."""
@@ -153,26 +234,46 @@ async def update_user(
         raise admin_error(400, "NOTHING_TO_UPDATE", "수정할 내용이 없습니다.")
     async with pool.acquire() as connection:
         billing = UserBillingRepository(connection)
+        admin_repo = AdminRepository(connection)
+        before = await admin_repo.get_user_details(user_id=user_id)
         try:
             updated = await billing.update_user_profile(
                 user_id=user_id, nickname=nickname, email=email
             )
         except UniqueViolationError:
             raise admin_error(409, "EMAIL_EXISTS", "이미 사용 중인 이메일입니다.") from None
-    if updated is None:
-        raise admin_error(404, "USER_NOT_FOUND", "회원을 찾을 수 없습니다.")
-    return _user_row(dict(updated))
+        if updated is None:
+            raise admin_error(404, "USER_NOT_FOUND", "회원을 찾을 수 없습니다.")
+        updated = dict(updated)
+        await admin_repo.record_audit_log(
+            actor_admin_id=int(admin["admin_id"]),
+            action="user.update",
+            target_type="user",
+            target_id=user_id,
+            before=_audit_json(dict(before) if before is not None else None),
+            after=_audit_json(updated),
+        )
+    return _user_row(updated)
 
 
 @admin_router.delete("/users/{user_id}")
 async def delete_user(
     user_id: int,
-    _admin: dict[str, Any] = Depends(get_current_admin),
+    admin: dict[str, Any] = Depends(get_current_admin),
     pool: Any = Depends(get_database_pool),
 ) -> dict[str, Any]:
-    """회원 삭제(soft delete). 동일 휴대폰/이메일 재가입을 막지 않도록 deleted_at 만 기록."""
+    """회원 삭제(soft delete). 동일 휴대폰/이메일 재가입을 막지 않도록 deleted_at/status 만 기록."""
     async with pool.acquire() as connection:
+        admin_repo = AdminRepository(connection)
+        before = await admin_repo.get_user_details(user_id=user_id)
         await UserBillingRepository(connection).soft_delete_user(user_id=user_id)
+        await admin_repo.record_audit_log(
+            actor_admin_id=int(admin["admin_id"]),
+            action="user.delete",
+            target_type="user",
+            target_id=user_id,
+            before=_audit_json(dict(before) if before is not None else None),
+        )
     return {"status": "deleted", "user_id": user_id}
 
 
@@ -181,25 +282,47 @@ async def delete_user(
 async def set_user_subscription(
     user_id: int,
     payload: UpdateSubscriptionRequest,
-    _admin: dict[str, Any] = Depends(get_current_admin),
+    admin: dict[str, Any] = Depends(get_current_admin),
     pool: Any = Depends(get_database_pool),
 ) -> dict[str, Any]:
     async with pool.acquire() as connection:
         billing = UserBillingRepository(connection)
+        admin_repo = AdminRepository(connection)
+        before = await billing.get_subscription_by_user(user_id=user_id)
         # 기존 활성 구독 해제(부분 유니크 인덱스 회피).
         await billing.cancel_subscription(user_id=user_id)
         if payload.plan_type == "free":
+            await admin_repo.record_audit_log(
+                actor_admin_id=int(admin["admin_id"]),
+                action="subscription.set",
+                target_type="subscription",
+                target_id=user_id,
+                before=_audit_json(dict(before) if before is not None else None),
+                after=_audit_json({"plan_type": "free"}),
+            )
             return {"status": "updated", "user_id": user_id, "plan_type": "free"}
         plan_row = await billing.get_plan_by_type(payload.plan_type)
         if plan_row is None:
             raise admin_error(404, "PLAN_NOT_FOUND", "요금제를 찾을 수 없습니다.")
         plan = dict(plan_row)
-        await billing.create_subscription(
-            user_id=user_id,
-            plan_id=int(plan["id"]),
-            status=payload.status or "active",
-            expires_at=_parse_expires(payload.expires_at),
-            payment_method="admin",
+        created = dict(
+            await billing.create_subscription(
+                user_id=user_id,
+                plan_id=int(plan["id"]),
+                status=payload.status or "active",
+                expires_at=_parse_dt(payload.expires_at, "expires_at"),
+                next_billing_at=_parse_dt(payload.next_billing_at, "next_billing_at"),
+                auto_renew=bool(payload.auto_renew),
+                payment_method="admin",
+            )
+        )
+        await admin_repo.record_audit_log(
+            actor_admin_id=int(admin["admin_id"]),
+            action="subscription.set",
+            target_type="subscription",
+            target_id=user_id,
+            before=_audit_json(dict(before) if before is not None else None),
+            after=_audit_json(created),
         )
     return {"status": "updated", "user_id": user_id, "plan_type": payload.plan_type}
 
@@ -207,42 +330,66 @@ async def set_user_subscription(
 @admin_router.delete("/users/{user_id}/subscription")
 async def cancel_user_subscription(
     user_id: int,
-    _admin: dict[str, Any] = Depends(get_current_admin),
+    admin: dict[str, Any] = Depends(get_current_admin),
     pool: Any = Depends(get_database_pool),
 ) -> dict[str, Any]:
     async with pool.acquire() as connection:
-        await UserBillingRepository(connection).cancel_subscription(user_id=user_id)
+        billing = UserBillingRepository(connection)
+        cancelled = await billing.cancel_subscription(user_id=user_id)
+        await AdminRepository(connection).record_audit_log(
+            actor_admin_id=int(admin["admin_id"]),
+            action="subscription.cancel",
+            target_type="subscription",
+            target_id=user_id,
+            before=_audit_json(dict(cancelled) if cancelled is not None else None),
+        )
     return {"status": "cancelled", "user_id": user_id}
 
 
 @admin_router.post("/users/{user_id}/refund")
 async def refund_user(
     user_id: int,
-    _admin: dict[str, Any] = Depends(get_current_admin),
+    admin: dict[str, Any] = Depends(get_current_admin),
     pool: Any = Depends(get_database_pool),
     portone: PortOneClient = Depends(get_portone_client),
 ) -> dict[str, Any]:
-    """관리자 전액 환불 + 즉시 해지(최근 성공 결제 기준)."""
+    """관리자 전액 환불 + 즉시 해지(최근 성공 결제 기준).
+
+    payments 이력에 환불 행을 append 하고(원 결제행 보존), 구독을 즉시 해지한다.
+    """
     async with pool.acquire() as connection:
         repository = UserBillingRepository(connection)
-        paid = await repository.list_payment_verifications(user_id=user_id, limit=1)
-        if not paid:
+        admin_repo = AdminRepository(connection)
+        latest_row = await repository.get_latest_paid_payment(user_id=user_id)
+        if latest_row is None:
             raise admin_error(404, "NO_REFUNDABLE_PAYMENT", "환불 가능한 결제 내역이 없습니다.")
-        latest = dict(paid[0])
+        latest = dict(latest_row)
+        amount = int(latest["amount"])
         try:
             await portone.cancel_payment(str(latest["imp_uid"]), reason="admin_refund")
         except PortOneError as exc:
             raise admin_error(502, "REFUND_FAILED", f"환불 처리에 실패했습니다: {exc}") from None
-        await repository.record_portone_verification(
-            user_id=user_id,
-            imp_uid=str(latest["imp_uid"]),
-            merchant_uid=str(latest.get("merchant_uid") or latest["imp_uid"]),
-            status="refunded",
-            verification_type="payment",
-            verified_at=datetime.now(UTC),
+        refund_row = dict(
+            await repository.record_refund(
+                user_id=user_id,
+                imp_uid=str(latest["imp_uid"]),
+                merchant_uid=str(latest.get("merchant_uid") or latest["imp_uid"]),
+                amount=amount,
+                refund_amount=amount,
+                cancel_reason="admin_refund",
+                subscription_id=latest.get("subscription_id"),
+            )
         )
         await repository.cancel_subscription(user_id=user_id)
-    return {"status": "refunded", "user_id": user_id}
+        await admin_repo.record_audit_log(
+            actor_admin_id=int(admin["admin_id"]),
+            action="payment.refund",
+            target_type="payment",
+            target_id=int(refund_row["id"]),
+            before=_audit_json(latest),
+            after=_audit_json(refund_row),
+        )
+    return {"status": "refunded", "user_id": user_id, "amount": amount}
 
 
 @admin_router.get("/stats")
@@ -298,13 +445,15 @@ def _subscription_brief(row: dict[str, Any]) -> dict[str, Any] | None:
     return {"plan_type": plan_type, "status": row.get("subscription_status")}
 
 
-def _parse_expires(value: str | None) -> datetime | None:
+def _parse_dt(value: str | None, field: str) -> datetime | None:
     if not value:
         return None
     try:
         return datetime.fromisoformat(value)
     except ValueError:
-        raise admin_error(400, "INVALID_EXPIRES_AT", "expires_at 형식이 올바르지 않습니다.") from None
+        raise admin_error(
+            400, "INVALID_DATETIME", f"{field} 형식이 올바르지 않습니다."
+        ) from None
 
 
 def _timestamp(value: Any) -> str | None:

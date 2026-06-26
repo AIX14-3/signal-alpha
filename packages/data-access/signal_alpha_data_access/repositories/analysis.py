@@ -565,6 +565,35 @@ class AnalysisRepository:
             bear_point,
         )
 
+    async def update_final_signal_return_channel(
+        self,
+        *,
+        stock_id: int,
+        ml_final_score: float | None,
+        ml_direction: str | None,
+        ml_confidence: float | None,
+    ) -> Any:
+        """메타러너 return 채널(#525 WS-C)을 종목의 현재 신호에 오버레이.
+
+        결정론 집계 점수(final_score/signal/confidence)는 건드리지 않고 ml_* 컬럼만 갱신(D4).
+        현재 발행 신호(is_current)가 아직 없으면(체인 순서) no-op — 다음 사이클에 채워진다.
+        """
+        return await self._connection.fetchrow(
+            """
+            UPDATE final_signals
+            SET
+                ml_final_score = $2,
+                ml_direction = $3,
+                ml_confidence = $4
+            WHERE stock_id = $1 AND is_current = TRUE
+            RETURNING *
+            """,
+            stock_id,
+            ml_final_score,
+            ml_direction,
+            ml_confidence,
+        )
+
 
 def _jsonb(value: Any) -> str | None:
     if value is None:

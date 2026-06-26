@@ -55,6 +55,15 @@ class FakeConnection:
         self.payments = []  # portone_verifications(payment)
 
     async def fetchrow(self, sql, *args):
+        if "INSERT INTO admin_audit_log" in sql:
+            return {"id": 1}
+        if "INSERT INTO payments" in sql:
+            # record_payment / record_refund — append-only 이력
+            return {"id": 1, "imp_uid": args[2], "amount": args[4]}
+        if "FROM payments" in sql and "status = 'paid'" in sql:
+            # get_latest_paid_payment
+            paid = [p for p in self.payments if p.get("status") == "paid"]
+            return paid[-1] if paid else None
         if "INSERT INTO portone_verifications" in sql:
             return {"id": 1, "imp_uid": args[1]}
         if "UPDATE signal_subscriptions" in sql:
@@ -213,11 +222,20 @@ class AdminRoutesTest(unittest.TestCase):
     def test_refund_user(self):
         headers = self.login()
         self.connection.payments = [
-            {"imp_uid": "pay-x", "merchant_uid": "pay-x", "status": "paid", "user_id": 1}
+            {
+                "id": 1,
+                "imp_uid": "pay-x",
+                "merchant_uid": "pay-x",
+                "status": "paid",
+                "user_id": 1,
+                "amount": 9900,
+                "subscription_id": None,
+            }
         ]
         response = self.client.post("/api/admin/users/1/refund", headers=headers)
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["status"], "refunded")
+        self.assertEqual(response.json()["amount"], 9900)
 
     def test_refund_user_without_payment_returns_404(self):
         response = self.client.post("/api/admin/users/1/refund", headers=self.login())

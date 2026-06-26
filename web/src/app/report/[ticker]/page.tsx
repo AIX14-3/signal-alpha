@@ -103,6 +103,20 @@ export default function ReportPage() {
             </div>
             <div className="flex-1 min-w-[240px]">
               <span className={`pill ${tone(dir.tone)}`} style={{ padding: "5px 11px" }}>{dir.label}</span>
+              {report.ml_return?.direction ? (
+                <span className="ml-2 inline-flex items-center gap-1 text-[12px] text-muted">
+                  <span>ML 수익률</span>
+                  <span
+                    className={`pill ${tone(directionLabel(report.ml_return.direction).tone)}`}
+                    style={{ padding: "3px 9px" }}
+                  >
+                    {directionLabel(report.ml_return.direction).label}
+                  </span>
+                  {report.ml_return.confidence != null ? (
+                    <span>신뢰도 {Math.round(report.ml_return.confidence * 100)}%</span>
+                  ) : null}
+                </span>
+              ) : null}
               <p className="mt-3 text-navy-soft">{report.summary ?? "요약이 없습니다."}</p>
             </div>
           </>

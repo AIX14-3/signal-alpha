@@ -16,6 +16,8 @@ logger = logging.getLogger(__name__)
 async def lifespan_with_database(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     app.state.database_pool = None
+    # 백엔드(서비스) DB 발행용 풀 (#531). BACKEND_DATABASE_URL 미설정이면 None(단일 DB 모드).
+    app.state.backend_database_pool = None
     app.state.price_collector_task = None
     app.state.ops_daemon_task = None
 
@@ -24,6 +26,13 @@ async def lifespan_with_database(app: FastAPI) -> AsyncIterator[None]:
 
         app.state.database_pool = await create_pool(
             DatabaseSettings(database_url=settings.database_url)
+        )
+
+    if settings.backend_database_url:
+        from signal_alpha_data_access import DatabaseSettings, create_pool
+
+        app.state.backend_database_pool = await create_pool(
+            DatabaseSettings(database_url=settings.backend_database_url)
         )
 
     if settings.price_collector_enabled:
@@ -74,9 +83,10 @@ async def lifespan_with_database(app: FastAPI) -> AsyncIterator[None]:
                     await task
                 except asyncio.CancelledError:
                     pass
-        pool = getattr(app.state, "database_pool", None)
-        if pool is not None:
-            await pool.close()
+        for attr in ("database_pool", "backend_database_pool"):
+            pool = getattr(app.state, attr, None)
+            if pool is not None:
+                await pool.close()
 
 
 def get_database_pool(request: Request) -> Any:
@@ -84,3 +94,8 @@ def get_database_pool(request: Request) -> Any:
     if pool is None:
         raise HTTPException(status_code=503, detail="Database pool is not configured.")
     return pool
+
+
+def get_backend_database_pool(request: Request) -> Any:
+    """백엔드 DB 발행용 풀. BACKEND_DATABASE_URL 미설정이면 None(단일 DB 모드)."""
+    return getattr(request.app.state, "backend_database_pool", None)

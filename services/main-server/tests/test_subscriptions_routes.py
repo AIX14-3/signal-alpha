@@ -74,6 +74,7 @@ class FakeConnection:
         self.active_subscription = None
         self.created = []
         self.verifications = {}  # imp_uid -> record
+        self.payments = []  # payments 이력(결제/환불 append-only) — Group A
 
     async def fetchrow(self, sql, *args):
         if "FROM users" in sql and "WHERE id = $1" in sql:
@@ -114,21 +115,65 @@ class FakeConnection:
             self.verifications[args[1]] = record  # upsert(imp_uid 유니크)
             return record
         if "INSERT INTO signal_subscriptions" in sql:
-            user_id, plan_id, status, expires_at, payment_method, billing_cycle = args
+            # Group A: started_at/next_billing_at/auto_renew 추가 → 9개 인자.
+            (
+                user_id,
+                plan_id,
+                status,
+                started_at,
+                expires_at,
+                next_billing_at,
+                auto_renew,
+                payment_method,
+                billing_cycle,
+            ) = args
             plan = next(p for p in self.plans.values() if p["id"] == plan_id)
             row = {
                 "id": 99,
                 "user_id": user_id,
                 "plan_id": plan_id,
                 "status": status,
-                "started_at": datetime(2026, 6, 24, tzinfo=UTC),
+                "started_at": started_at or datetime(2026, 6, 24, tzinfo=UTC),
                 "expires_at": expires_at,
+                "next_billing_at": next_billing_at,
+                "auto_renew": auto_renew,
                 "billing_cycle": billing_cycle,
                 "plan_type": plan["plan_type"],
             }
             self.active_subscription = {**row, **plan}
             self.created.append(row)
             return row
+        if "INSERT INTO payments" in sql:
+            # record_payment(9개) / record_refund(11개, refund_amount 포함)를 payments 이력에 append.
+            if "refund_amount" in sql:
+                (uid, sub_id, imp_uid, merchant_uid, amount, currency, status,
+                 cancelled_at, refund_amount, cancel_reason, raw_response) = args
+                row = {"paid_at": None, "cancelled_at": cancelled_at,
+                       "refund_amount": refund_amount, "cancel_reason": cancel_reason}
+            else:
+                (uid, sub_id, imp_uid, merchant_uid, amount, currency, status,
+                 paid_at, raw_response) = args
+                row = {"paid_at": paid_at, "cancelled_at": None,
+                       "refund_amount": None, "cancel_reason": None}
+            row = {
+                "id": len(self.payments) + 1,
+                "user_id": uid,
+                "subscription_id": sub_id,
+                "imp_uid": imp_uid,
+                "merchant_uid": merchant_uid,
+                "amount": amount,
+                "currency": currency,
+                "status": status,
+                "raw_response": raw_response,
+                "created_at": datetime(2026, 6, 25, tzinfo=UTC),
+                **row,
+            }
+            self.payments.append(row)
+            return row
+        if "FROM payments" in sql and "status = 'paid'" in sql:
+            # get_latest_paid_payment: 최신 'paid' 1건.
+            paid = [p for p in self.payments if p["user_id"] == args[0] and p["status"] == "paid"]
+            return paid[-1] if paid else None
         if "FROM subscription_plans" in sql and "WHERE plan_type = $1" in sql:
             return self.plans.get(args[0])
         raise AssertionError(f"Unexpected fetchrow SQL: {sql}")
@@ -142,6 +187,9 @@ class FakeConnection:
                 for v in self.verifications.values()
                 if v["verification_type"] == "payment" and v["status"] == "paid"
             ]
+        if "FROM payments" in sql:
+            # list_payments: 사용자 결제/환불 이력(최신순).
+            return list(reversed([p for p in self.payments if p["user_id"] == args[0]]))
         raise AssertionError(f"Unexpected fetch SQL: {sql}")
 
 
@@ -344,6 +392,23 @@ class SubscriptionRoutesTest(unittest.TestCase):
             "verified_at": paid_at,
             "created_at": paid_at,
         }
+        # Group A: 환불 흐름은 payments 이력(get_latest_paid_payment)을 읽는다.
+        self.connection.payments.append({
+            "id": len(self.connection.payments) + 1,
+            "user_id": 1,
+            "subscription_id": 5,
+            "imp_uid": imp_uid,
+            "merchant_uid": imp_uid,
+            "amount": 9900,
+            "currency": "KRW",
+            "status": "paid",
+            "paid_at": paid_at,
+            "cancelled_at": None,
+            "refund_amount": None,
+            "cancel_reason": None,
+            "raw_response": {"amount": {"total": 9900}},
+            "created_at": paid_at,
+        })
 
     def test_me_includes_expiring_soon(self):
         self._seed_active(datetime.now(UTC) + timedelta(days=3))
