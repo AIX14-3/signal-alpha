@@ -1,0 +1,94 @@
+"""2-DB 물리 분리 테이블 분류 (#525/#531 WS-A).
+
+수집(워커) DB / 백엔드(서비스) DB 로 물리 분리할 때 각 테이블의 소속을 정한다.
+
+세 버킷:
+- **BACKEND**   : 백엔드(서비스) 소유. 회원·세션·구독·결제·관리자·약관·유저 콘텐츠. 백엔드 DB 에만.
+- **PUBLISHED** : 워커가 생산하지만 백엔드/프론트가 읽는 발행 산출물(최종/소스 리포트).
+                  **양쪽 DB 에 존재** — 수집 DB(워커가 기록) + 백엔드 DB(발행 사본, api.* view 대체).
+- COLLECTION    : 그 외 전부(수집 raw + 워커 파이프라인 내부). 수집 DB 에만.
+
+설계 메모:
+- COLLECTION 은 **명시 열거하지 않는다**: 부트스트랩이 실제 DB 를 introspect 해
+  ``actual_tables - BACKEND - PUBLISHED`` 로 도출 → 테이블 추가 시 분류 드리프트가 없다.
+- PUBLISHED 집합은 백엔드 read-model(api.signals_current / api.signal_detail)이 JOIN 하는
+  테이블과 일치한다: final_signals(+stocks/analysis_results) + agent_results + signal_events.
+- 백엔드 DB 가 보유할 테이블 = BACKEND ∪ PUBLISHED. 이들 간 FK 는 유지되고, 이들에서
+  COLLECTION 으로 향하는 cross-DB FK 는 부트스트랩의 DROP ... CASCADE 가 제거한다.
+"""
+
+from __future__ import annotations
+
+# 백엔드(서비스) 소유 — 백엔드 DB 에만 존재.
+BACKEND_TABLES: frozenset[str] = frozenset(
+    {
+        # 회원·인증
+        "users",
+        "user_sessions",
+        "social_accounts",
+        # 구독·결제
+        "subscription_plans",
+        "signal_subscriptions",
+        "portone_verifications",
+        "payments",
+        # 관리자·감사
+        "admin_accounts",
+        "admin_sessions",
+        "admin_audit_log",
+        # 약관
+        "terms_agreements",
+        # 유저 콘텐츠 / 발행 이력
+        "watchlists",
+        "signal_journals",
+        "user_signal_reads",
+        "report_issuances",
+    }
+)
+
+# 워커 생산 + 백엔드/프론트 소비 — 양쪽 DB 에 존재(백엔드는 발행 사본).
+# 백엔드 read-model(api.signals_current / api.signal_detail)이 JOIN 하는 테이블과 일치.
+PUBLISHED_TABLES: frozenset[str] = frozenset(
+    {
+        "stocks",
+        "final_signals",
+        "analysis_results",
+        "agent_results",
+        "signal_events",
+        # 이벤트 출처 메타(source_name/url/is_official) — signal_events 가 FK 참조하고
+        # api.signal_detail 이 JOIN 한다. 빠지면 상세 뷰가 self-contained 하지 않다.
+        "source_documents",
+    }
+)
+
+# 부트스트랩/마이그레이션 원장 — 각 DB 가 자체 보유(분류 대상 아님).
+LEDGER_TABLE = "schema_migrations"
+
+
+def backend_keep() -> frozenset[str]:
+    """백엔드 DB 가 보유할 테이블 = BACKEND ∪ PUBLISHED."""
+    return BACKEND_TABLES | PUBLISHED_TABLES
+
+
+def collection_only(all_tables: frozenset[str] | set[str]) -> set[str]:
+    """실제 테이블 집합에서 백엔드 보유분·원장을 뺀 수집 전용 테이블.
+
+    부트스트랩이 백엔드 DB 에서 DROP 할 대상이다(수집 DB 에만 남김).
+    """
+    return set(all_tables) - backend_keep() - {LEDGER_TABLE}
+
+
+def validate(all_tables: frozenset[str] | set[str]) -> list[str]:
+    """분류 정합성 점검. 문제 메시지 목록 반환(빈 리스트=정상).
+
+    - BACKEND ∩ PUBLISHED 는 공집합이어야 한다.
+    - 선언된 BACKEND/PUBLISHED 가 실제 테이블에 존재해야 한다(오타·삭제 감지).
+    """
+    issues: list[str] = []
+    overlap = BACKEND_TABLES & PUBLISHED_TABLES
+    if overlap:
+        issues.append(f"BACKEND/PUBLISHED 중복 분류: {sorted(overlap)}")
+    actual = set(all_tables)
+    missing = (BACKEND_TABLES | PUBLISHED_TABLES) - actual
+    if missing:
+        issues.append(f"분류됐지만 실제 DB 에 없는 테이블: {sorted(missing)}")
+    return issues
