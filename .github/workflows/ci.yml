@@ -59,6 +59,10 @@ jobs:
         run: uv run pytest
         working-directory: packages/market-data
 
+      # database/ 는 워크스페이스 패키지가 아니라 루트에서 경로 지정으로 실행(모듈 충돌 없음).
+      - name: Pytest - database
+        run: uv run pytest database/tests
+
   web:
     name: Web typecheck, build & test
     runs-on: ubuntu-latest

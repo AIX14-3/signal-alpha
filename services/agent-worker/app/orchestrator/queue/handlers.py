@@ -21,6 +21,7 @@ from app.orchestrator.queue.task_types import (
     NORMALIZE_PATENT,
     NORMALIZE_REPORT,
     PROCESS_REPORT,
+    PUBLISH_SIGNALS,
     RETURN_COMBINE,
     RISK_VETO,
     SRC_INFER,
@@ -49,6 +50,7 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
     from app.ml.meta_combine import MetaCombineTaskHandler
     from app.ml.return_combine import ReturnCombineTaskHandler
     from app.ml.source_inference import SrcInferTaskHandler
+    from app.publish.publish_task import PublishSignalsTaskHandler
     from app.gates.risk_veto import RiskVetoTaskHandler
     from app.synthesis.tasks import SynthesizeTaskHandler
 
@@ -84,6 +86,8 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
         SRC_INFER: SrcInferTaskHandler(connection),
         # 메타러너 return 채널 결합(#525 WS-C) — src_* + Report 피처 → meta_signals return 컬럼.
         RETURN_COMBINE: ReturnCombineTaskHandler(connection),
+        # 발행(#11) — 종목 PUBLISHED 테이블을 백엔드 DB 로 복사. BACKEND_DATABASE_URL 없으면 no-op.
+        PUBLISH_SIGNALS: PublishSignalsTaskHandler(connection, settings=settings),
         RISK_VETO: RiskVetoTaskHandler(connection, settings=settings),
         SYNTHESIZE: SynthesizeTaskHandler(connection, settings=settings),
         COLLECT_REPORT: ReportCollectTaskHandler(connection=connection, settings=settings),

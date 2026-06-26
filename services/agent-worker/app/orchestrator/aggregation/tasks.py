@@ -8,7 +8,8 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
-from app.orchestrator.queue.task_types import SYNTHESIZE
+from app.core.config import get_settings
+from app.orchestrator.queue.task_types import PUBLISH_SIGNALS, SYNTHESIZE
 from signal_alpha_data_access.repositories import (
     AnalysisRepository,
     NormalizationRepository,
@@ -172,6 +173,18 @@ class AggregateSignalTaskHandler:
                 dedupe=True,
             )
 
+        # 물리 2-DB 발행(#11): 발행분에 한해 백엔드 DB로 산출물 복사를 인큐. BACKEND_DATABASE_URL
+        # 미설정(단일 DB)이면 인큐하지 않는다(핸들러도 no-op). 멱등 — 다음 사이클에 최신 반영.
+        publish_task_id: int | None = None
+        if aggregate["is_published"] and getattr(get_settings(), "backend_database_url", None):
+            publish_task_id = await self._queue_repository.enqueue(
+                stock_id=stock_id,
+                task_type=PUBLISH_SIGNALS,
+                priority=priority,
+                task_context={"stock_code": stock_code},
+                dedupe=True,
+            )
+
         return {
             "analysis_result_id": analysis_result["id"],
             "final_signal_id": final_signal["id"],
@@ -184,6 +197,7 @@ class AggregateSignalTaskHandler:
             "needs_review": aggregate["needs_review"],
             "is_published": aggregate["is_published"],
             "synthesize_task_id": synthesize_task_id,
+            "publish_task_id": publish_task_id,
         }
 
 
