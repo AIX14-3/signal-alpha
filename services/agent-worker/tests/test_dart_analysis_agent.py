@@ -3,30 +3,6 @@ from datetime import date
 
 from app.agents import SourceAgentInput
 from app.agents.dart.agent import DartAnalysisAgent
-from app.analyzers.dart.llm import DartLlmAnalysis
-
-
-class FakeLlmAnalyzer:
-    model = "test-llm"
-    prompt_version = "dart-llm-v1"
-
-    def __init__(self, *, fail=False):
-        self.fail = fail
-        self.calls = []
-
-    async def analyze(self, *, events, rule_result, stock_code):
-        self.calls.append({"events": events, "rule_result": rule_result, "stock_code": stock_code})
-        if self.fail:
-            raise RuntimeError("LLM timeout")
-        return DartLlmAnalysis(
-            direction="positive",
-            score=0.73,
-            summary="LLM reviewed the disclosure and found improving performance.",
-            key_facts=["Revenue improved", "Operating profit improved"],
-            risk_flags=[],
-            needs_review=False,
-            confidence=82,
-        )
 
 
 def periodic_report_event():
@@ -46,7 +22,9 @@ def periodic_report_event():
 
 
 class DartAnalysisAgentTest(unittest.IsolatedAsyncioTestCase):
-    async def test_agent_returns_rule_result_when_llm_is_not_configured(self):
+    """Phase 0(#546): 피처 전용 — 판정/LLM 경로 제거."""
+
+    async def test_agent_returns_features_only(self):
         agent = DartAnalysisAgent()
 
         result = await agent.analyze(
@@ -55,41 +33,28 @@ class DartAnalysisAgentTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result.source, "DART")
         self.assertEqual(result.stock_code, "005930")
-        self.assertEqual(result.direction, "neutral")
+        self.assertEqual(result.direction, "unknown")
         self.assertEqual(result.score, 0.0)
-        self.assertEqual(result.analysis_source, "rules")
-        self.assertEqual(result.prompt_ver, "dart-rules-v1")
+        self.assertEqual(result.data_status, "no_signal")
+        self.assertEqual(result.analysis_source, "features")
+        self.assertEqual(result.prompt_ver, "dart-features-v1")
         self.assertIsNone(result.llm_model)
         self.assertIsNone(result.llm_error)
         self.assertEqual(result.method_detail["source"], "DART")
+        self.assertEqual(result.method_detail["event_count"], 1)
 
-    async def test_agent_uses_llm_when_configured_and_event_is_eligible(self):
-        llm_analyzer = FakeLlmAnalyzer()
-        agent = DartAnalysisAgent(llm_analyzer=llm_analyzer)
+    async def test_agent_ignores_llm_analyzer(self):
+        # LLM 판정 경로 제거 — llm_analyzer 가 주입돼도 무시하고 피처만 산출(D1).
+        class _ShouldNotBeCalled:
+            async def analyze(self, **kwargs):  # noqa: ANN003
+                raise AssertionError("LLM 판정 경로는 제거됐다")
 
-        result = await agent.analyze(
-            SourceAgentInput(source="DART", stock_code="005930", events=[periodic_report_event()])
-        )
-
-        self.assertEqual(result.direction, "positive")
-        self.assertEqual(result.score, 0.73)
-        self.assertEqual(result.analysis_source, "llm")
-        self.assertEqual(result.llm_model, "test-llm")
-        self.assertEqual(result.prompt_ver, "dart-llm-v1")
-        self.assertEqual(result.method_detail["key_facts"], ["Revenue improved", "Operating profit improved"])
-        self.assertEqual(len(llm_analyzer.calls), 1)
-
-    async def test_agent_falls_back_to_rules_when_llm_fails(self):
-        llm_analyzer = FakeLlmAnalyzer(fail=True)
-        agent = DartAnalysisAgent(llm_analyzer=llm_analyzer)
+        agent = DartAnalysisAgent(llm_analyzer=_ShouldNotBeCalled())
 
         result = await agent.analyze(
             SourceAgentInput(source="DART", stock_code="005930", events=[periodic_report_event()])
         )
 
-        self.assertEqual(result.direction, "neutral")
-        self.assertEqual(result.score, 0.0)
-        self.assertEqual(result.analysis_source, "rules_fallback")
-        self.assertEqual(result.prompt_ver, "dart-rules-v1")
+        self.assertEqual(result.direction, "unknown")
+        self.assertEqual(result.analysis_source, "features")
         self.assertIsNone(result.llm_model)
-        self.assertEqual(result.llm_error, "LLM timeout")

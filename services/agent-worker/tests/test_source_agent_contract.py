@@ -74,5 +74,6 @@ class SourceAgentContractTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result.source, "DART")
         self.assertEqual(result.stock_code, "005930")
-        self.assertEqual(result.analysis_source, "rules")
-        self.assertEqual(result.prompt_ver, "dart-rules-v1")
+        # Phase 0(#546): DART 피처 전용 — 판정/LLM 경로 제거.
+        self.assertEqual(result.analysis_source, "features")
+        self.assertEqual(result.prompt_ver, "dart-features-v1")
