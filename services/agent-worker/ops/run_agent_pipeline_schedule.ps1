@@ -16,7 +16,7 @@ param(
   [ValidateSet("All", "Collect", "Drain")]
   [string]$Mode = "All",
 
-  [int]$DartLimit = 100,
+  [int]$DartLimit = 10,
   [int]$ReportLimit = 100,
   [int]$ReportDaysBack = 7,
   [string]$ReportDateStart = "",
@@ -24,6 +24,7 @@ param(
   [int]$ReportMaxPages = 20,
   [int]$MaxRuns = 20,
   [int]$TimeoutSec = 120,
+  [int]$DrainTimeoutSec = 600,
 
   [switch]$SkipDart,
   [switch]$SkipReport,
@@ -48,12 +49,14 @@ function ConvertTo-JsonBody {
 function Invoke-WorkerPost {
   param(
     [Parameter(Mandatory = $true)][string]$Path,
-    [Parameter(Mandatory = $true)][hashtable]$Body
+    [Parameter(Mandatory = $true)][hashtable]$Body,
+    [int]$TimeoutSecOverride = 0
   )
 
   $base = $WorkerBaseUrl.TrimEnd("/")
   $uri = "$base$Path"
   $json = ConvertTo-JsonBody $Body
+  $effectiveTimeout = if ($TimeoutSecOverride -gt 0) { $TimeoutSecOverride } else { $TimeoutSec }
   if ($DryRun) {
     Write-Step "DRY-RUN POST $Path $json"
     return [pscustomobject]@{
@@ -72,7 +75,7 @@ function Invoke-WorkerPost {
       -Uri $uri `
       -ContentType "application/json" `
       -Body $json `
-      -TimeoutSec $TimeoutSec
+      -TimeoutSec $effectiveTimeout
   }
   catch {
     $message = "Request failed: $Path - $($_.Exception.Message)"
@@ -144,43 +147,19 @@ function Invoke-CollectionSchedules {
 }
 
 function Invoke-QueueDrain {
-  $taskTypes = @()
+  # 공정 라운드로빈 drain — 서버측 run-cycle 이 task_type 간 한 패스당 1개씩 순환 처리해
+  # 어떤 한 type(특히 collect_dart)도 다른 type 을 굶기지 못한다. 과거의 "task_type 을
+  # 고정 순서로 max_runs 까지 연속 처리(=큐가 빌 때까지)" 드레인은 제거됨.
+  # 캡 계획은 서버 DEFAULT_CYCLE_PLAN(수집기 특성별 차등) 사용. Skip* 플래그는 수집(인큐)
+  # 단계에만 영향 — 스킵된 type 은 인큐된 작업이 없어 자연히 idle 처리된다.
+  # 빈 본문 호환을 위해 max_passes 만 명시한다(서버 기본 plan 사용).
+  $result = Invoke-WorkerPost `
+    -Path "/internal/queue/run-cycle" `
+    -Body @{ max_passes = 10000 } `
+    -TimeoutSecOverride $DrainTimeoutSec
 
-  if (-not $SkipDart) {
-    $taskTypes += @("collect_dart")
-  }
-  if (-not $SkipReport) {
-    $taskTypes += @("collect_report")
-  }
-  if (-not $SkipDart) {
-    $taskTypes += @("normalize_dart")
-  }
-  if (-not $SkipReport) {
-    $taskTypes += @("process_report", "normalize_report")
-  }
-  if (-not $SkipDart) {
-    $taskTypes += @("analyze_dart")
-  }
-  if (-not $SkipReport) {
-    $taskTypes += @("analyze_report")
-  }
-
-  $taskTypes += @(
-    "ml_infer",
-    "meta_combine",
-    "aggregate_signal",
-    "synthesize",
-    "risk_veto"
-  )
-
-  foreach ($taskType in $taskTypes) {
-    $result = Invoke-WorkerPost `
-      -Path "/internal/queue/$taskType/run-batch" `
-      -Body @{ max_runs = $MaxRuns }
-
-    if ($null -ne $result -and $result.PSObject.Properties.Name -contains "run_count") {
-      Write-Step "$taskType run_count=$($result.run_count)"
-    }
+  if ($null -ne $result -and $result.PSObject.Properties.Name -contains "total_runs") {
+    Write-Step "run-cycle passes=$($result.passes) total_runs=$($result.total_runs)"
   }
 }
 

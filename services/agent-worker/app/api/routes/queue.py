@@ -8,7 +8,12 @@ from pydantic import BaseModel, Field
 
 from app.core.database import get_database_pool
 from app.orchestrator.queue.handlers import build_task_handlers
-from app.orchestrator.queue.tasks import QueueTaskRunner, TaskHandler
+from app.orchestrator.queue.tasks import (
+    DEFAULT_CYCLE_PLAN,
+    QueueCycleRunner,
+    QueueTaskRunner,
+    TaskHandler,
+)
 
 router = APIRouter(prefix="/internal/queue", tags=["queue"])
 
@@ -26,6 +31,12 @@ class SweepStaleTasksRequest(BaseModel):
 
 class RunBatchRequest(BaseModel):
     max_runs: int = Field(default=20, ge=1, le=100)
+
+
+class RunCycleRequest(BaseModel):
+    # task_type → 한 사이클당 캡. 미지정 시 DEFAULT_CYCLE_PLAN(수집기 특성별 차등) 사용.
+    plan: dict[str, int] | None = None
+    max_passes: int = Field(default=10000, ge=1, le=1000000)
 
 
 @router.get("/tasks")
@@ -97,6 +108,24 @@ async def run_task_batch(
         "max_runs_reached": len(results) >= request.max_runs,
         "results": results,
     }
+
+
+@router.post("/run-cycle")
+async def run_queue_cycle(
+    request: RunCycleRequest,
+    pool: Any = Depends(get_database_pool),
+    handler_factory: TaskHandlerFactory = Depends(get_task_handler_factory),
+) -> dict[str, Any]:
+    """task_type 간 공정 라운드로빈 drain — 어떤 한 type 도 다른 type 을 굶기지 않는다.
+
+    기존 "task_type 을 고정 순서로 max_runs 까지 연속 처리(=큐가 빌 때까지)" 드레인을
+    대체한다. plan 의 각 type 에서 한 패스당 1개씩 순환 처리한다.
+    """
+    plan = request.plan or DEFAULT_CYCLE_PLAN
+    async with pool.acquire() as connection:
+        runner = QueueTaskRunner(connection, handler_factory(connection))
+        summary = await QueueCycleRunner(runner).run_cycle(plan, max_passes=request.max_passes)
+    return {"plan": plan, **summary}
 
 
 @router.post("/sweep-stale")

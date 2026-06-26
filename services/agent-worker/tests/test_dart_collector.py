@@ -412,3 +412,47 @@ class FakeRetryClient(DartDisclosureClient):
         if isinstance(item, Exception):
             raise item
         return json.loads(json.dumps(item))
+
+
+def _disclosure(i: int) -> dict:
+    return {
+        "corp_code": "00126380",
+        "corp_name": "삼성전자",
+        "stock_code": "005930",
+        "corp_cls": "Y",
+        "report_nm": f"보고서{i}",
+        "rcept_no": f"2026060800{i:02d}",
+        "flr_nm": "삼성전자",
+        "rcept_dt": "20260608",
+        "rm": "",
+    }
+
+
+class DartCollectorDocumentCapTest(unittest.IsolatedAsyncioTestCase):
+    def _collector(self, client, *, max_documents):
+        return DartCollector(
+            api_key="test-key",
+            corp_code_repository=FakeCorpCodeRepository(
+                {"corp_code": "00126380", "corp_name": "삼성전자"}
+            ),
+            client=client,
+            start_date="20260601",
+            end_date="20260608",
+            page_size=50,
+            fetch_documents=True,
+            max_documents=max_documents,
+        )
+
+    async def test_max_documents_caps_body_fetches(self):
+        client = FakeClient({"status": "000", "message": "정상", "list": [_disclosure(i) for i in range(5)]})
+        evidence = await self._collector(client, max_documents=2).collect("005930")
+        # 5건 전부 메타데이터로 적재되지만 본문 다운로드는 상한 2까지만.
+        self.assertEqual(len(evidence), 5)
+        doc_calls = [c for c in client.calls if "receipt_no" in c]
+        self.assertEqual(len(doc_calls), 2)
+
+    async def test_no_cap_fetches_all_documents(self):
+        client = FakeClient({"status": "000", "message": "정상", "list": [_disclosure(i) for i in range(5)]})
+        await self._collector(client, max_documents=None).collect("005930")
+        doc_calls = [c for c in client.calls if "receipt_no" in c]
+        self.assertEqual(len(doc_calls), 5)
