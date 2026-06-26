@@ -71,11 +71,22 @@ DROP SCHEMA public CASCADE; CREATE SCHEMA public;
 ```
 후 2) 재실행.
 
-## 컷오버 (후속 — #11)
+## 컷오버 (#11 — 배선 완료, 배포 토글)
 
-스키마 분리는 완료지만, 런타임 컷오버는 별도(#11 물리 publisher):
-- main-server `DATABASE_URL` 을 백엔드 DB 로 전환(현재는 수집 DB).
-- 워커가 발행 산출물(final_signals + stocks/analysis_results/agent_results/signal_events/
-  source_documents)을 백엔드 DB 로 publish(앱레벨) — 현재 백엔드의 PUBLISHED 테이블은 빈
-  스키마(stocks 시드만). 발행 전까진 `api.*` 가 0행.
-- 기존 단일 DB 의 `api.*` 읽기 계약은 컷오버 시 재설계.
+런타임 컷오버는 **코드 변경 없이** 환경변수 토글이다:
+
+1. **main-server → 백엔드 DB**: `docker-compose.yml` 이 이미 main-server 의
+   `DATABASE_URL: ${BACKEND_DATABASE_URL:-<owner fallback>}` 로 와이어링돼 있다.
+   `BACKEND_DATABASE_URL` 을 채우면(.env) main-server 는 백엔드 DB 로 접속한다.
+   비-compose 배포(Cloud Run 등)는 main-server 서비스의 `DATABASE_URL` 을 백엔드 인스턴스로
+   직접 지정한다. (검증: 백엔드 DB 가 plans 조회·api.signals_current 조회·users 쓰기 모두 정상.)
+2. **워커 → 백엔드 발행**: `BACKEND_DATABASE_URL` 설정 시 AGGREGATE 가 발행분에 한해
+   `PUBLISH_SIGNALS` 를 인큐 → `publish_stock` 이 PUBLISHED 6테이블을 백엔드로 복사(멱등).
+   미설정이면 단일 DB 모드(발행 no-op).
+
+**그린필드 주의**: 백엔드 DB 는 회원/구독 데이터를 백필하지 않는다(신규 부트스트랩). 컷오버 즉시
+기존 단일 DB 의 회원은 백엔드 DB 에 없으므로 **신규 가입부터 시작**한다(의도된 그린필드). 또한
+PUBLISHED 테이블은 워커가 발행하기 전까지 비어 있어 `api.*` 가 0행 → 종목별 발행이 누적되며 채워진다.
+
+3. **단일 DB `api.*` 읽기 계약 정리**: 컷오버 완료 후 수집 DB 의 `api.*` view/`signal_backend`
+   grant 는 더 이상 쓰지 않으므로 별도 마이그레이션으로 정리(선택).
