@@ -12,7 +12,11 @@ class Settings:
     def __init__(self) -> None:
         self.service_name = getenv("SERVICE_NAME", "agent-worker")
         self.version = getenv("SERVICE_VERSION", "0.1.0")
+        # 수집 DB (워커 소유 — stocks/signal_events/ml_inferences/meta_signals …).
         self.database_url = getenv("DATABASE_URL")
+        # 백엔드(서비스) DB 발행용 DSN (#531 2-DB 물리 분리). 워커가 산출물을
+        # 백엔드 DB로 publish 할 때만 사용. 미설정이면 발행 비활성(단일 DB 모드).
+        self.backend_database_url = getenv("BACKEND_DATABASE_URL")
         self.parsed_reports_path: Path = (
             Path(__file__).resolve().parents[4] / "data" / "parsed_reports.json"
         )

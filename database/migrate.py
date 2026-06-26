@@ -15,9 +15,15 @@ database/migrations/*.sql 을 파일명 순서로 적용하고 schema_migrations
 
 사용법:
     python database/migrate.py status
-    python database/migrate.py new "add fx source"      # 타임스탬프 마이그레이션 생성
+    python database/migrate.py new "add fx source"                 # 타임스탬프 마이그레이션 생성
+    python database/migrate.py new "payments col" --target backend  # 백엔드 DB 대상
     python database/migrate.py apply [--dry-run] [--seeds]
     python database/migrate.py apply --database-url postgresql://user:pw@host:5432/db
+
+2-DB 물리 분리(#531) — ``--target`` 로 대상 DB를 고른다(파일 헤더 ``-- target:`` 지시자 기준):
+    python database/migrate.py apply --target collection --database-url <수집 DB DSN>
+    python database/migrate.py apply --target backend    --database-url <백엔드 DB DSN>
+기본값 ``--target all`` 은 모든 파일을 한 DB에 적용(레거시 단일 DB — 하위호환).
 
 DATABASE_URL 결정 순서: --database-url > 환경변수 DATABASE_URL > 루트 .env 파일.
 """
@@ -45,6 +51,29 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
     applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 )
 """
+
+# 2-DB 물리 분리(#531): 각 마이그레이션은 대상 DB를 헤더 지시자로 선언한다.
+#   ``-- target: collection`` (수집 DB, 워커 소유) — 미선언 시 기본값.
+#   ``-- target: backend``    (백엔드/서비스 DB — 회원·관리자·결제 + 발행 산출물).
+#   ``-- target: all``        (양쪽 DB 모두, 단일 DB 모드 포함).
+# ``apply --target X`` 는 ``X`` 또는 ``all`` 로 표시된 파일만 적용한다.
+# 레거시 단일 DB 운영은 ``--target all``(기본)로 전부 적용 — 하위호환.
+TARGETS = ("collection", "backend", "all")
+_TARGET_RE = re.compile(r"^--\s*target:\s*(collection|backend|all)\s*$", re.MULTILINE)
+
+
+def parse_target(path: Path) -> str:
+    """마이그레이션 파일 헤더의 ``-- target:`` 지시자. 미선언 시 ``collection``."""
+    head = path.read_text(encoding="utf-8")[:2000]
+    match = _TARGET_RE.search(head)
+    return match.group(1) if match else "collection"
+
+
+def filter_by_target(files: list[Path], target: str) -> list[Path]:
+    """``--target`` 선택에 맞는 파일만 남긴다. ``all`` 은 전부 통과(단일 DB 모드)."""
+    if target == "all":
+        return files
+    return [p for p in files if parse_target(p) in (target, "all")]
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
@@ -168,18 +197,19 @@ def apply_seeds(conn, dry_run: bool) -> None:
         print(f"시드 완료: {path.name}")
 
 
-def cmd_status(conn) -> None:
-    files = list_sql_files(MIGRATIONS_DIR)
+def cmd_status(conn, target: str = "all") -> None:
+    files = filter_by_target(list_sql_files(MIGRATIONS_DIR), target)
     applied = fetch_ledger(conn)
     pending = verify_applied(applied, files)
     for path in files:
         marker = "pending" if path in pending else "applied"
-        print(f"  [{marker}] {path.name}")
-    print(f"\n적용 {len(files) - len(pending)} / 전체 {len(files)} (미적용 {len(pending)})")
+        print(f"  [{marker}] {path.name}  ({parse_target(path)})")
+    scope = "전체" if target == "all" else f"target={target}"
+    print(f"\n적용 {len(files) - len(pending)} / {scope} {len(files)} (미적용 {len(pending)})")
 
 
-def cmd_apply(conn, dry_run: bool, seeds: bool) -> None:
-    files = list_sql_files(MIGRATIONS_DIR)
+def cmd_apply(conn, dry_run: bool, seeds: bool, target: str = "all") -> None:
+    files = filter_by_target(list_sql_files(MIGRATIONS_DIR), target)
     applied = fetch_ledger(conn)
     pending = verify_applied(applied, files)
     apply_migrations(conn, pending, dry_run)
@@ -192,7 +222,7 @@ def _slugify(name: str) -> str:
     return slug or "migration"
 
 
-def cmd_new(name: str | None) -> None:
+def cmd_new(name: str | None, target: str = "collection") -> None:
     """타임스탬프 접두사로 새 마이그레이션 파일(빈 템플릿)을 만든다 — DB 접속 불필요."""
     if not name:
         raise SystemExit('이름이 필요합니다. 예: python database/migrate.py new "add fx source"')
@@ -202,6 +232,7 @@ def cmd_new(name: str | None) -> None:
         raise SystemExit(f"이미 존재합니다: {path.name}")
     template = (
         f"-- {path.name}\n"
+        f"-- target: {target}\n"
         "-- ============================================================================\n"
         f"-- {name}\n"
         "-- ----------------------------------------------------------------------------\n"
@@ -213,7 +244,7 @@ def cmd_new(name: str | None) -> None:
         "-- (checksum 검증). 변경은 새 마이그레이션으로 추가한다.\n"
     )
     path.write_text(template, encoding="utf-8", newline="\n")
-    print(f"생성: database/migrations/{path.name}")
+    print(f"생성: database/migrations/{path.name}  (target={target})")
 
 
 def main() -> None:
@@ -223,19 +254,26 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true", help="적용 대상만 출력")
     parser.add_argument("--seeds", action="store_true", help="마이그레이션 후 seeds/*.sql 실행")
     parser.add_argument("--database-url", default=None, help="DATABASE_URL 직접 지정")
+    parser.add_argument(
+        "--target",
+        choices=TARGETS,
+        default="all",
+        help="대상 DB (#531 2-DB 분리). collection|backend|all. 기본 all=단일 DB 전부 적용",
+    )
     args = parser.parse_args()
 
     if args.command == "new":
-        cmd_new(args.name)
+        # new 의 기본 target 은 collection(워커가 다수). 백엔드용은 --target backend.
+        cmd_new(args.name, target="collection" if args.target == "all" else args.target)
         return
 
     database_url = resolve_database_url(args.database_url)
     conn = psycopg2.connect(database_url)
     try:
         if args.command == "status":
-            cmd_status(conn)
+            cmd_status(conn, target=args.target)
         else:
-            cmd_apply(conn, dry_run=args.dry_run, seeds=args.seeds)
+            cmd_apply(conn, dry_run=args.dry_run, seeds=args.seeds, target=args.target)
     finally:
         conn.close()
 
