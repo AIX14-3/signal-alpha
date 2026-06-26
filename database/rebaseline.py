@@ -131,7 +131,6 @@ def split_blocks(dump: str) -> list[Block]:
     blocks: list[Block] = []
     matches = list(_TOC_RE.finditer(dump))
     for i, m in enumerate(matches):
-        start = m.end()
         end = matches[i + 1].start() if i + 1 < len(matches) else len(dump)
         body = dump[m.start():end].strip()
         blocks.append(Block(m.group("name"), m.group("type").strip(), m.group("schema").strip(), body))
