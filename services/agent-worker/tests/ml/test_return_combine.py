@@ -38,6 +38,16 @@ class _FakeMeta:
         return kwargs
 
 
+class _FakeAnalysis:
+    def __init__(self, *, found=True):
+        self.calls = []
+        self._found = found
+
+    async def update_final_signal_return_channel(self, **kwargs):
+        self.calls.append(kwargs)
+        return {"id": 1, **kwargs} if self._found else None
+
+
 def _inf(model_name, pred, *, gate=True):
     return {"model_name": model_name, "pred_value": pred, "gate_passed": gate}
 
@@ -47,11 +57,13 @@ def test_return_combine_persists_return_columns():
         [_inf("src_datalab", 0.03), _inf("src_hiring", 0.05)]
     )
     meta = _FakeMeta()
+    analysis = _FakeAnalysis()
     handler = ReturnCombineTaskHandler(
         connection=object(),
         inferences=inferences,
         meta=meta,
         collection=_FakeCollection(),
+        analysis=analysis,
         return_model=None,  # 폴백: base 예측 균등 평균
     )
 
@@ -72,6 +84,17 @@ def test_return_combine_persists_return_columns():
     assert call["final_score"] == 0.04
     assert call["direction"] == "positive"
 
+    # final_signals 에 return 채널 오버레이.
+    assert len(analysis.calls) == 1
+    overlay = analysis.calls[0]
+    assert overlay == {
+        "stock_id": 7,
+        "ml_final_score": 0.04,
+        "ml_direction": "positive",
+        "ml_confidence": 1.0,
+    }
+    assert result["final_signal_overlaid"] is True
+
 
 def test_return_combine_ignores_non_src_and_gated_rows():
     inferences = _FakeInferences(
@@ -84,7 +107,11 @@ def test_return_combine_ignores_non_src_and_gated_rows():
     )
     meta = _FakeMeta()
     handler = ReturnCombineTaskHandler(
-        connection=object(), inferences=inferences, meta=meta, collection=_FakeCollection()
+        connection=object(),
+        inferences=inferences,
+        meta=meta,
+        collection=_FakeCollection(),
+        analysis=_FakeAnalysis(),
     )
 
     result = asyncio.run(handler({"stock_id": 1, "task_context": {"as_of": "2026-06-01"}}))
@@ -108,6 +135,7 @@ def test_return_combine_uses_report_features_with_linear_model():
         inferences=inferences,
         meta=meta,
         collection=_FakeCollection(facts),
+        analysis=_FakeAnalysis(),
         return_model=model,
     )
 

@@ -130,6 +130,14 @@ export type ReportAccess = {
   free_remaining?: number;
 };
 
+// 메타러너 return 채널 (#525 WS-C) — 결정론 집계 점수(score)와 별개의 학습형 수익률 신호.
+// 미산출 종목은 null.
+export type MlReturn = {
+  score: number | null; // 부호 있는 return 점수(0–100 아님)
+  direction: string | null; // positive | negative | neutral | unknown
+  confidence: number | null; // 방향 합의 신뢰도 [0,1]
+};
+
 export type Report = {
   stock: Stock;
   report_version?: {
@@ -145,6 +153,7 @@ export type Report = {
   warning_level?: string | null;
   data_status?: string;
   summary: string | null;
+  ml_return?: MlReturn | null;
   sources: ReportSource[];
   access: ReportAccess;
   notice: string;

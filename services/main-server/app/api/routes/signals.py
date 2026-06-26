@@ -186,6 +186,19 @@ def _signal_list_item(stock_id: int, rows: list[dict[str, Any]]) -> dict[str, An
     }
 
 
+def _ml_return(row: dict[str, Any]) -> dict[str, Any] | None:
+    """메타러너 return 채널(#525 WS-C). 결정론 집계 점수와 별개 — 미산출 종목은 None."""
+    score = _number(row.get("ml_final_score"))
+    direction = row.get("ml_direction")
+    if score is None and direction is None:
+        return None
+    return {
+        "score": score,
+        "direction": direction,
+        "confidence": _number(row.get("ml_confidence")),
+    }
+
+
 def _signal_by_stock_response(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "signal_id": row["id"],
@@ -203,6 +216,7 @@ def _signal_by_stock_response(row: dict[str, Any]) -> dict[str, Any]:
         "data_status": _overall_data_status(row),
         "needs_review": bool(row.get("needs_review", False)),
         "summary": row.get("summary"),
+        "ml_return": _ml_return(row),
         "updated_at": _timestamp(row.get("published_at") or row.get("created_at")),
         "notice": NOTICE,
     }
@@ -239,6 +253,7 @@ def _signal_detail_response(row: dict[str, Any]) -> dict[str, Any]:
         "data_status": _overall_data_status(row),
         "needs_review": bool(row.get("needs_review", False)),
         "summary": row.get("summary"),
+        "ml_return": _ml_return(row),
         "positive_evidence": _json_array(row.get("positive_evidence")),
         "caution_evidence": _json_array(row.get("caution_evidence")),
         "sources": [

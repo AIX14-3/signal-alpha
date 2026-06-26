@@ -30,11 +30,13 @@ class ReturnCombineTaskHandler:
         inferences: Any | None = None,
         meta: Any | None = None,
         collection: Any | None = None,
+        analysis: Any | None = None,
         run_key: str = SOURCE_RUN_KEY,
         return_model: Mapping | None = None,
     ) -> None:
-        if inferences is None or meta is None or collection is None:
+        if inferences is None or meta is None or collection is None or analysis is None:
             from signal_alpha_data_access.repositories import (
+                AnalysisRepository,
                 CollectionRepository,
                 MetaSignalRepository,
                 MlInferenceRepository,
@@ -43,10 +45,12 @@ class ReturnCombineTaskHandler:
             inferences = inferences or MlInferenceRepository(connection)
             meta = meta or MetaSignalRepository(connection)
             collection = collection or CollectionRepository(connection)
+            analysis = analysis or AnalysisRepository(connection)
 
         self._inferences = inferences
         self._meta = meta
         self._collection = collection
+        self._analysis = analysis
         self._run_key = run_key
         # 학습 산출물은 핸들러 수명 동안 1회 로드(없으면 base 예측 균등 폴백).
         self._return_model = return_model if return_model is not None else load_return_model()
@@ -93,6 +97,14 @@ class ReturnCombineTaskHandler:
             final_score=result.final_score,
             direction=result.direction,
         )
+        # 소비처(백엔드/프론트) 노출: 현재 발행 신호에 return 채널을 오버레이(api.signals_current
+        # 가 final_signals.* 를 노출하므로 자동 전파). 신호 미생성 시 no-op(다음 사이클에 채움).
+        overlaid = await self._analysis.update_final_signal_return_channel(
+            stock_id=stock_id,
+            ml_final_score=result.final_score,
+            ml_direction=result.direction,
+            ml_confidence=result.confidence,
+        )
         return {
             "stock_id": stock_id,
             "run_key": self._run_key,
@@ -103,6 +115,7 @@ class ReturnCombineTaskHandler:
             "confidence": result.confidence,
             "method": result.method,
             "model_count": result.model_count,
+            "final_signal_overlaid": overlaid is not None,
         }
 
     async def _report_features(self, stock_id: int, as_of: date) -> dict | None:
