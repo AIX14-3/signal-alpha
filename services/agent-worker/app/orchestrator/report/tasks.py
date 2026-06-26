@@ -435,10 +435,13 @@ class ReportAnalyzeTaskHandler:
         event_ids = [int(event["id"]) for event in events]
         analysis_date = _report_analysis_date(events, task_context)
         run_key = str(task_context.get("run_key") or "REPORT").strip() or "REPORT"
-        direction = _report_analysis_direction(events)
-        source_score = _report_source_score(events, direction)
+        # Phase 0 (#525): 결정론 판정/스코어 제거 — 피처(밸류에이션)만 산출. 방향/점수 verdict 없음
+        # (학습형 메타러너가 Report 피처를 직접 받아 산출, D1). data_status="no_signal" +
+        # direction="unknown" 으로 AGGREGATE 점수·방향 집계에서 빠진다.
+        direction = "unknown"
+        source_score = 0.0
         needs_review = any(bool(event.get("needs_review") or event.get("fact_needs_review")) for event in events)
-        risk_flags = _report_risk_flags(events, needs_review)
+        risk_flags = _report_risk_flags(events, needs_review)  # 데이터 품질 플래그(판정 아님)
 
         analysis_result = await self._analysis_repository.upsert_analysis_result(
             stock_id=stock_id,
@@ -456,8 +459,9 @@ class ReportAnalyzeTaskHandler:
             "summary": _report_analysis_summary(events, direction),
             "risk_flags": risk_flags,
             "needs_review": needs_review,
+            "data_status": "no_signal",  # Phase 0: 판정 없음 → AGGREGATE 점수 평균서 제외
             "stock_code": task_context.get("stock_code") or _first_non_empty(events, "ticker"),
-            "analysis_source": "rules",
+            "analysis_source": "features",
             "report_quant": {
                 "valuation": _report_valuation_payload(events),
             },
@@ -502,7 +506,7 @@ class ReportAnalyzeTaskHandler:
             "direction": direction,
             "score": source_score,
             "needs_review": needs_review,
-            "analysis_source": "rules",
+            "analysis_source": "features",
         }
 
     async def _list_report_valuation_events(self, signal_event_ids: list[int]) -> list[Any]:
@@ -799,34 +803,8 @@ def _report_analysis_date(events: list[dict[str, Any]], task_context: dict[str, 
     return max(dates) if dates else date.today()
 
 
-def _report_analysis_direction(events: list[dict[str, Any]]) -> str:
-    weights = {"positive": 0, "negative": 0, "neutral": 0}
-    for event in events:
-        direction = str(event.get("signal_direction") or "unknown")
-        if direction in weights:
-            weights[direction] += 1
-    if weights["positive"] > weights["negative"] and weights["positive"] >= weights["neutral"]:
-        return "positive"
-    if weights["negative"] > weights["positive"] and weights["negative"] >= weights["neutral"]:
-        return "negative"
-    if weights["positive"] and weights["negative"]:
-        return "mixed"
-    return "neutral"
-
-
-def _report_source_score(events: list[dict[str, Any]], direction: str) -> float:
-    base = {
-        "positive": 0.35,
-        "negative": -0.35,
-        "mixed": 0.0,
-        "neutral": 0.0,
-    }.get(direction, 0.0)
-    complete_facts = sum(1 for event in events if event.get("target_price") is not None and event.get("implied_multiple") is not None)
-    completeness_bonus = min(0.15, complete_facts * 0.05)
-    review_penalty = 0.15 if any(bool(event.get("needs_review") or event.get("fact_needs_review")) for event in events) else 0.0
-    if base < 0:
-        return round(max(-1.0, base - completeness_bonus + review_penalty), 4)
-    return round(max(-1.0, min(1.0, base + completeness_bonus - review_penalty)), 4)
+# Phase 0 (#525): _report_analysis_direction / _report_source_score(결정론 판정·스코어)는
+# 제거됐다. 방향/점수는 학습형 메타러너 return 채널이 산출한다. 아래는 데이터 품질 플래그·요약만.
 
 
 def _report_risk_flags(events: list[dict[str, Any]], needs_review: bool) -> list[str]:
