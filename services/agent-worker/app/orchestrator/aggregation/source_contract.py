@@ -35,6 +35,15 @@ from app.orchestrator.aggregation.tasks import (
 # data_status 허용값 — aggregation 의 _blend_status / _aggregate 가 의미를 부여하는 값들.
 VALID_DATA_STATUS = {"ok", "partial", "failed", "no_signal"}
 
+# direction 허용값 — aggregation 의 VALID_DIRECTIONS({positive/negative/neutral/mixed})에
+# **"unknown"** 을 더한 집합. Phase 0 소스(DART/REPORT 등 features-only, data_status="no_signal")는
+# 결정론 verdict 를 내지 않고 method_signal="unknown" 으로 보낸다 — 정당한 계약값이며 aggregation 은
+# 이를 neutral 로 매핑하고 방향 합의에서 제외한다. 그래서 검증기도 "unknown" 을 위반으로 보지 않는다.
+VALID_CONTRACT_DIRECTIONS = VALID_DIRECTIONS | {"unknown"}
+
+# 점수 면제 상태 — coverage-only(점수 평균서 제외) 소스는 numeric score 가 없어도 위반이 아니다.
+SCORE_EXEMPT_DATA_STATUS = {"no_signal", "failed"}
+
 
 def validate_source_method_detail(
     detail: Any,
@@ -68,13 +77,17 @@ def validate_source_method_detail(
         )
 
     # 2) direction 이 있으면 허용값이어야 한다(없으면 aggregation 이 neutral 로 둠 → 위반 아님).
+    #    "unknown"(Phase 0 features-only)도 정당한 값으로 허용한다.
     direction = detail.get("direction") if detail.get("direction") is not None else method_signal
-    if direction is not None and str(direction).strip().lower() not in VALID_DIRECTIONS:
+    if direction is not None and str(direction).strip().lower() not in VALID_CONTRACT_DIRECTIONS:
         violations.append(
-            f"direction '{direction}' invalid — use one of {sorted(VALID_DIRECTIONS)}."
+            f"direction '{direction}' invalid — use one of {sorted(VALID_CONTRACT_DIRECTIONS)}."
         )
 
     # 3) score: source_score/score(또는 method_score 폴백) 중 하나는 숫자여야 점수에 반영된다.
+    #    단, coverage-only 상태(no_signal/failed)는 점수 평균서 제외되므로 score 면제.
+    data_status_raw = str(detail.get("data_status") or "")
+    score_exempt = data_status_raw in SCORE_EXEMPT_DATA_STATUS
     score_value = None
     for key in ("source_score", "score"):
         if detail.get(key) is not None:
@@ -82,12 +95,12 @@ def validate_source_method_detail(
             break
     if score_value is None:
         score_value = method_score
-    if score_value is None:
+    if score_value is None and not score_exempt:
         violations.append(
             "no numeric score — provide method_detail.source_score (signed [-1,1]) "
-            "or agent_results.method_score."
+            "or agent_results.method_score (data_status=no_signal/failed 는 면제)."
         )
-    elif not _is_number(score_value):
+    elif score_value is not None and not _is_number(score_value):
         violations.append(f"score '{score_value}' is not numeric.")
     elif "source_score" in detail and not (-1.0 <= float(detail["source_score"]) <= 1.0):
         violations.append("source_score out of range — must be signed [-1.0, 1.0].")
