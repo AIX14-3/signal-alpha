@@ -20,6 +20,7 @@ async def lifespan_with_database(app: FastAPI) -> AsyncIterator[None]:
     app.state.backend_database_pool = None
     app.state.price_collector_task = None
     app.state.ops_daemon_task = None
+    app.state.queue_drain_task = None
 
     if settings.database_url:
         from signal_alpha_data_access import DatabaseSettings, create_pool
@@ -70,12 +71,28 @@ async def lifespan_with_database(app: FastAPI) -> AsyncIterator[None]:
                 name="hiring-ops-daemon",
             )
 
+    # 큐 드레인 데몬 (워커 영역 완성 #11) — processing_queue 를 끝단(발행)까지 연속 소비.
+    # 기본 off. 단일 기동을 advisory lock 으로 보장(ops/price 와 동일 패턴).
+    if settings.queue_drain_daemon_enabled:
+        if app.state.database_pool is None:
+            logger.warning(
+                "QUEUE_DRAIN_DAEMON_ENABLED but DATABASE_URL is not set; "
+                "queue drain daemon will not start"
+            )
+        else:
+            from app.orchestrator.queue.drain_daemon import supervise_queue_daemon
+
+            app.state.queue_drain_task = asyncio.create_task(
+                supervise_queue_daemon(app.state.database_pool, settings),
+                name="queue-drain-daemon",
+            )
+
     try:
         yield
     finally:
         # 순서 고정: 데몬 cancel → 완료 대기 → pool.close
         # (역순이면 데몬이 닫힌 풀을 쓰다 InterfaceError)
-        for attr in ("price_collector_task", "ops_daemon_task"):
+        for attr in ("price_collector_task", "ops_daemon_task", "queue_drain_task"):
             task = getattr(app.state, attr, None)
             if task is not None:
                 task.cancel()
