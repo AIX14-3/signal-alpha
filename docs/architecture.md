@@ -49,7 +49,8 @@ signal-alpha/
     + **큐 드레인 데몬**(`QUEUE_DRAIN_DAEMON_ENABLED`) — `processing_queue` 를 체인 순서로 끝단
     (PUBLISH_SIGNALS 발행)까지 연속 소비. advisory-lock 단일 기동. 단발/CI 검증은 `run_worker_drain.py`.
   - **수집기**: `run_collector_instance.py` — 키움 실시간 가격 데몬 + `run_collectors.py`(patent/datalab).
-  - **스케줄러**: `run_scheduler_instance.py` — `COLLECT_*`(DART/report) + 종목 `ANALYZE_*` 팬아웃 주기 인큐.
+  - **스케줄러**: `run_scheduler_instance.py` — 워커 `/internal/schedules/*` 를 주기 호출(수집 스케줄). 팀
+    스케줄러 경계("스케줄러는 엔드포인트만 호출")를 따른다(직접 DB 인큐 안 함). 인큐분은 드레인 데몬이 소비.
   - 단일 통합 인스턴스(개발/소규모)로도 기동 가능(`PRICE_COLLECTOR_ENABLED` + 드레인 동시 on).
 - **`packages/data-access`** 는 재사용 가능한 repository 계층입니다. SQL을 여러 서비스에 흩뿌리지 말고
   repository를 우선 사용합니다.

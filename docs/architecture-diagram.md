@@ -23,7 +23,7 @@ flowchart LR
     end
 
     subgraph SCH["스케줄러 유닛"]
-        sch["scheduler<br/>run_scheduler_instance.py<br/>수집 스케줄(COLLECT_*) + 분석 팬아웃(ANALYZE_*) 주기 인큐"]
+        sch["scheduler<br/>run_scheduler_instance.py<br/>워커 /internal/schedules/* 주기 호출(수집 스케줄)"]
     end
 
     subgraph COL["수집기 유닛"]
@@ -54,7 +54,7 @@ flowchart LR
     web -- HTTP --> ms
     ms -- "SELECT · signal_backend" --> bv
     ms -- "DML · signal_backend" --> bt
-    sch -- "enqueue(COLLECT_*·ANALYZE_*) · signal_worker" --> cwt
+    sch -- "HTTP POST /internal/schedules/*" --> aw
     col -- "DML(원천 수집) · signal_worker" --> cwt
     aw -- "drain(processing_queue) DML · signal_worker" --> cwt
     aw -- "publish(PUBLISH_SIGNALS) · BACKEND_DATABASE_URL" --> bpub
@@ -150,7 +150,7 @@ flowchart TB
 
 ```mermaid
 flowchart TB
-    sch2["스케줄러: 수집 스케줄 + 종목 분석 팬아웃 인큐"]
+    sch2["스케줄러: 워커 /internal/schedules/* 주기 호출(수집 스케줄)"]
     subgraph fan["소스 분석 (워커 드레인 데몬이 processing_queue 에서 소비)"]
         price["PRICE — 주가 ML/DL<br/>price_prediction(별도 정량 신호)"]
         dart["DART 공시 — 근거(features)"]
