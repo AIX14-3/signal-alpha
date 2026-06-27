@@ -15,8 +15,6 @@ The scheduler must not contain collector or analyzer logic.
 - `main-server` and `web` do not run collection or analysis jobs.
 - PRICE collection remains the `agent-worker` lifespan daemon. PRICE analyzer reads DB data only.
 
-> **(#11 업데이트)** 워커는 이제 큐를 자동 소비한다. 큐 드레인 데몬(`app/orchestrator/queue/drain_daemon.py`, env `QUEUE_DRAIN_DAEMON_ENABLED`, advisory-lock 단일 기동)이 `processing_queue`를 체인 순서대로 끝단 `PUBLISH_SIGNALS` 발행까지 연속 소비하고, `run_scheduler_instance.py`가 주기적으로 COLLECT_*(DART/report) + 종목 ANALYZE_* 팬아웃을 인큐한다. 따라서 아래의 외부 스케줄러 + `run-batch` 수동 드레인 절차는 **단발·CI·로컬 검증용**(상주 드레인은 데몬이 담당)으로 보면 된다. 단발/CI 검증은 `run_worker_drain.py`.
-
 Existing internal endpoints:
 
 | Purpose | Endpoint |
@@ -35,7 +33,7 @@ Recommended choices:
 - Linux server: cron or systemd timer.
 - Managed deployment: Cloud Scheduler, Railway Cron, GitHub Actions schedule, or another external scheduler that can reach the internal worker URL.
 
-**(#11 업데이트)** 인프로세스 스케줄러/드레인 데몬은 이제 메인에 존재한다(`run_scheduler_instance.py` 인큐 + `drain_daemon.py` 드레인). 둘 다 advisory-lock 단일 기동(ops/price 데몬과 동일 패턴)이라 워커 인스턴스가 여러 개여도 중복 인큐/드레인이 차단된다. 외부 스케줄러는 그 데몬을 쓰지 않는 환경(데몬 비활성, 로컬/단발)에서의 대안으로 보면 된다. 외부 스케줄러를 쓸 때도 advisory-lock 없는 경로(아래 `run-batch`)는 단일 호출자 기준으로 운용한다.
+Avoid enabling a new `agent-worker` in-process scheduler daemon as the first step. If more than one worker instance is running, an in-process scheduler can enqueue duplicate work unless a distributed lock is added.
 
 ## 3. Collection Cadence
 
