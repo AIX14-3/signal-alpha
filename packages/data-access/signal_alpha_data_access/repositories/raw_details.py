@@ -637,6 +637,48 @@ class RawDetailRepository:
             stock_id,
         )
 
+    async def list_dart_ownership_events_by_stock(
+        self,
+        *,
+        stock_id: int,
+        since_date: Any | None = None,
+    ) -> list[Any]:
+        """DART 임원·주요주주 지분변동 이벤트 행(종목 기준, 윈도우 내, 최신순).
+
+        ``dart_ownership_events.stock_id`` 는 nullable(수집 시 미해결이면 NULL — 부분 인덱스
+        ``WHERE stock_id IS NOT NULL`` 가 방증)이라, stock_id 직접 매칭만 하면 미해결 이벤트가
+        누락돼 src_dart 가 운영에서 조용히 비활성된다. 그래서 항상 채워지는 ``corp_code``(NOT NULL)
+        를 ``dart_corp_codes`` 매핑으로 함께 매칭해 누락을 복구한다. ``report_date``(=rcept_dt,
+        known_at) 의 PIT 게이트(``<= asof``)는 호출측 ``assemble_features`` 가 강제한다(#546 Phase 1).
+        """
+        return await self._connection.fetch(
+            """
+            SELECT
+                e.stock_id,
+                e.corp_code,
+                e.rcept_no,
+                e.report_date,
+                e.holder_name,
+                e.holder_type,
+                e.shares,
+                e.ratio,
+                e.shares_delta,
+                e.ratio_delta,
+                e.report_reason
+            FROM dart_ownership_events e
+            WHERE (
+                e.stock_id = $1
+                OR e.corp_code IN (
+                    SELECT corp_code FROM dart_corp_codes WHERE stock_id = $1
+                )
+            )
+              AND ($2::date IS NULL OR e.report_date >= $2)
+            ORDER BY e.report_date DESC, e.id DESC
+            """,
+            stock_id,
+            since_date,
+        )
+
     async def list_datalab_details_by_category(
         self,
         *,

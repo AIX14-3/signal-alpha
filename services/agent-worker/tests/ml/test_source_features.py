@@ -69,6 +69,25 @@ def test_assemble_keeps_numeric_features_only():
     assert features["report"]["valuation_count"] == 1.0
 
 
+def test_assemble_dart_is_look_ahead_safe():
+    # DART 이벤트도 report_date<=asof 만 반영(D3). 미래 이벤트가 섞여도 결과 동일.
+    asof = date(2026, 6, 1)
+    past = [
+        {"report_date": "2026-05-20", "holder_type": "major", "shares_delta": 1000},
+        {"report_date": "2026-05-28", "holder_type": "executive", "shares_delta": -200},
+    ]
+    future = [{"report_date": "2026-06-10", "holder_type": "major", "shares_delta": 99999}]
+
+    with_future = assemble_features(asof, dart_rows=past + future)
+    only_past = assemble_features(asof, dart_rows=past)
+
+    assert with_future["dart"] == only_past["dart"]
+    # 숫자 피처만, latest_report_date(문자열)는 제외.
+    assert "latest_report_date" not in with_future["dart"]
+    assert with_future["dart"]["net_shares_delta"] == 800.0
+    assert all(v is None or isinstance(v, float) for v in with_future["dart"].values())
+
+
 def test_report_publish_date_pit():
     asof = date(2026, 6, 1)
     facts = [

@@ -122,6 +122,32 @@ def test_return_combine_ignores_non_src_and_gated_rows():
     assert result["confidence"] == 0.5
 
 
+def test_return_combine_includes_src_dart():
+    # src_dart 예측이 SOURCE_MODELS 에 있으므로 return 채널 결합에 자동 합류(#546 Phase 4).
+    inferences = _FakeInferences(
+        [
+            _inf("src_datalab", 0.03),
+            _inf("src_dart", 0.05),
+            _inf("ewma", 0.9),  # vol 모델 — 여전히 제외
+        ]
+    )
+    meta = _FakeMeta()
+    handler = ReturnCombineTaskHandler(
+        connection=object(),
+        inferences=inferences,
+        meta=meta,
+        collection=_FakeCollection(),
+        analysis=_FakeAnalysis(),
+        return_model=None,  # 폴백: base 예측 균등 평균
+    )
+
+    result = asyncio.run(handler({"stock_id": 3, "task_context": {"as_of": "2026-06-01"}}))
+
+    # src_datalab + src_dart 평균 → vol 모델 ewma 는 제외.
+    assert result["model_count"] == 2
+    assert result["final_score"] == 0.04  # (0.03+0.05)/2
+
+
 def test_return_combine_uses_report_features_with_linear_model():
     inferences = _FakeInferences([_inf("src_datalab", 0.1)])
     meta = _FakeMeta()

@@ -210,7 +210,8 @@ class DartAnalyzeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(result["analyzed_count"], 1)
-        self.assertEqual(result["direction"], "neutral")
+        # Phase 0(#546): 피처 전용 — 판정 없음(unknown/0), data_status=no_signal 로 AGGREGATE 제외.
+        self.assertEqual(result["direction"], "unknown")
         self.assertEqual(result["score"], 0.0)
         self.assertIsNotNone(result["ml_infer_task_id"])
         self.assertTrue(any("INSERT INTO analysis_results" in call[1] for call in connection.calls))
@@ -219,8 +220,8 @@ class DartAnalyzeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         agent_call = next(call for call in connection.calls if "INSERT INTO agent_results" in call[1])
         self.assertEqual(agent_call[2][2], "D-1")
         self.assertEqual(agent_call[2][4], 50.0)
-        self.assertEqual(agent_call[2][5], "neutral")
-        self.assertEqual(agent_call[2][10], "dart-rules-v1")
+        self.assertEqual(agent_call[2][5], "unknown")
+        self.assertEqual(agent_call[2][10], "dart-features-v1")
         method_detail = json.loads(agent_call[2][6])
         self.assertEqual(method_detail["source_score"], 0.0)
         self.assertEqual(method_detail["graph"], "dart_analysis_v1")
@@ -238,7 +239,7 @@ class DartAnalyzeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(aggregate_ctx["signal_date"], "2026-06-08")
         self.assertEqual(aggregate_ctx["run_key"], "AGGREGATED")
 
-    async def test_handler_uses_llm_for_high_impact_dart_event(self):
+    async def test_handler_ignores_llm_even_for_high_impact_dart_event(self):
         connection = FakeConnection(
             rows=[
                 {
@@ -276,24 +277,25 @@ class DartAnalyzeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        self.assertEqual(result["direction"], "positive")
-        self.assertEqual(result["score"], 0.73)
-        self.assertEqual(result["analysis_source"], "llm")
-        self.assertEqual(len(llm_analyzer.calls), 1)
+        # Phase 0(#546): LLM 판정 경로 제거 — use_llm=True 라도 무시하고 피처만 산출.
+        self.assertEqual(result["direction"], "unknown")
+        self.assertEqual(result["score"], 0.0)
+        self.assertEqual(result["analysis_source"], "features")
+        self.assertEqual(len(llm_analyzer.calls), 0)  # LLM 미호출
         analysis_call = next(call for call in connection.calls if "INSERT INTO analysis_results" in call[1])
-        self.assertEqual(analysis_call[2][5], 86.5)
-        self.assertEqual(analysis_call[2][11], "dart-llm-v1")
+        self.assertEqual(analysis_call[2][5], 50.0)
+        self.assertEqual(analysis_call[2][11], "dart-features-v1")
         agent_call = next(call for call in connection.calls if "INSERT INTO agent_results" in call[1])
-        self.assertEqual(agent_call[2][4], 86.5)
-        self.assertEqual(agent_call[2][5], "positive")
-        self.assertEqual(agent_call[2][9], "test-llm")
-        self.assertEqual(agent_call[2][10], "dart-llm-v1")
+        self.assertEqual(agent_call[2][4], 50.0)
+        self.assertEqual(agent_call[2][5], "unknown")
+        self.assertEqual(agent_call[2][9], None)
+        self.assertEqual(agent_call[2][10], "dart-features-v1")
         method_detail = json.loads(agent_call[2][6])
-        self.assertEqual(method_detail["source_score"], 0.73)
-        self.assertEqual(method_detail["analysis_source"], "llm")
-        self.assertEqual(method_detail["key_facts"], ["Revenue improved", "Operating profit improved"])
+        self.assertEqual(method_detail["source_score"], 0.0)
+        self.assertEqual(method_detail["analysis_source"], "features")
+        self.assertEqual(method_detail["data_status"], "no_signal")
 
-    async def test_handler_falls_back_to_rules_when_llm_fails(self):
+    async def test_handler_ignores_failing_llm_and_emits_features(self):
         connection = FakeConnection(
             rows=[
                 {
@@ -330,16 +332,17 @@ class DartAnalyzeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        self.assertEqual(result["direction"], "neutral")
-        self.assertEqual(result["analysis_source"], "rules_fallback")
+        # Phase 0(#546): LLM 미호출이라 실패 폴백도 없음 — 항상 피처 전용.
+        self.assertEqual(result["direction"], "unknown")
+        self.assertEqual(result["analysis_source"], "features")
         analysis_call = next(call for call in connection.calls if "INSERT INTO analysis_results" in call[1])
-        self.assertEqual(analysis_call[2][11], "dart-rules-v1")
+        self.assertEqual(analysis_call[2][11], "dart-features-v1")
         agent_call = next(call for call in connection.calls if "INSERT INTO agent_results" in call[1])
         self.assertEqual(agent_call[2][9], None)
-        self.assertEqual(agent_call[2][10], "dart-rules-v1")
+        self.assertEqual(agent_call[2][10], "dart-features-v1")
         method_detail = json.loads(agent_call[2][6])
-        self.assertEqual(method_detail["analysis_source"], "rules_fallback")
-        self.assertEqual(method_detail["llm_error"], "LLM timeout")
+        self.assertEqual(method_detail["analysis_source"], "features")
+        self.assertNotIn("llm_error", method_detail)
 
     async def test_handler_with_event_ids_analyzes_only_requested_dart_event(self):
         connection = FakeConnection(

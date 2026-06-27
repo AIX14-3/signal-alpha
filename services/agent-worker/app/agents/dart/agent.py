@@ -1,13 +1,20 @@
+"""DART 분석 에이전트 — Phase 0(#546): 피처 전용(결정론/LLM 판정 제거).
+
+DART 도 고정숫자 verdict 를 내지 않는다. ``build_dart_analysis_result`` 가 산출한 서술 피처를
+``direction="unknown"`` + ``data_status="no_signal"`` 로 감싸 반환 → AGGREGATE 점수/방향에서 자연
+제외, 판정은 학습형 메타러너 return 채널(src_dart)이 수행. LLM 판정 경로는 제거됐다(``llm_analyzer``·
+``llm_high_impact_only`` 인자는 상위 호출(graph/tasks) 호환을 위해 받되 **무시**한다 —
+``analyzers/dart/llm.py`` 는 dead code 로 남는다).
+"""
+
 from __future__ import annotations
 
-from typing import cast
-
-from app.agents.base import SourceAgentInput, SourceAgentOutput, SourceAgentStatus
-from app.analyzers.dart.llm import DartLlmAnalyzer, should_use_dart_llm
+from app.agents.base import SourceAgentInput, SourceAgentOutput
 from app.analyzers.dart.source_result import build_dart_analysis_result
 
-
-RULE_PROMPT_VERSION = "dart-rules-v1"
+FEATURE_PROMPT_VERSION = "dart-features-v1"
+# 하위호환 별칭 — 구 호출/저장 행 소비자 보호.
+RULE_PROMPT_VERSION = FEATURE_PROMPT_VERSION
 DartAgentResult = SourceAgentOutput
 
 
@@ -17,82 +24,26 @@ class DartAnalysisAgent:
     def __init__(
         self,
         *,
-        llm_analyzer: DartLlmAnalyzer | None = None,
-        llm_high_impact_only: bool = True,
+        llm_analyzer: object | None = None,  # Phase 0: 무시(graph/tasks 호출 호환용).
+        llm_high_impact_only: bool = True,  # Phase 0: 무시(graph/tasks 호출 호환용).
     ) -> None:
-        self._llm_analyzer = llm_analyzer
-        self._llm_high_impact_only = llm_high_impact_only
+        # Phase 0(#546): LLM 판정 경로 제거. 두 인자는 상위 호출 시그니처 호환을 위해 받되
+        # 저장/사용하지 않는다(죽은 상태 방지) — analyze 는 build_dart_analysis_result 만 쓴다.
+        pass
 
     async def analyze(self, input_data: SourceAgentInput) -> SourceAgentOutput:
-        stock_code = input_data.stock_code
-        events = input_data.events
-        rule_result = build_dart_analysis_result(events)
-        rule_data_status = str(rule_result.method_detail.get("data_status") or "ok")
-        if self._llm_analyzer is None or not should_use_dart_llm(
-            events,
-            high_impact_only=self._llm_high_impact_only,
-        ):
-            return SourceAgentOutput(
-                source="DART",
-                stock_code=stock_code,
-                direction=rule_result.direction,
-                score=rule_result.score,
-                summary=rule_result.summary,
-                risk_flags=rule_result.risk_flags,
-                method_detail=rule_result.method_detail,
-                needs_review=rule_result.needs_review,
-                data_status=_data_status(rule_data_status),
-                analysis_source="rules",
-                llm_model=None,
-                prompt_ver=RULE_PROMPT_VERSION,
-            )
-
-        try:
-            llm_result = await self._llm_analyzer.analyze(
-                events=events,
-                rule_result=rule_result,
-                stock_code=stock_code,
-            )
-        except Exception as exc:
-            return SourceAgentOutput(
-                source="DART",
-                stock_code=stock_code,
-                direction=rule_result.direction,
-                score=rule_result.score,
-                summary=rule_result.summary,
-                risk_flags=rule_result.risk_flags,
-                method_detail=rule_result.method_detail,
-                needs_review=rule_result.needs_review,
-                data_status=_data_status(rule_data_status),
-                analysis_source="rules_fallback",
-                llm_model=None,
-                prompt_ver=RULE_PROMPT_VERSION,
-                llm_error=str(exc),
-            )
-
-        data_status = "partial" if llm_result.needs_review else "ok"
+        result = build_dart_analysis_result(input_data.events)
         return SourceAgentOutput(
             source="DART",
-            stock_code=stock_code,
-            direction=llm_result.direction,
-            score=llm_result.score,
-            summary=llm_result.summary,
-            risk_flags=llm_result.risk_flags,
-            method_detail={
-                **rule_result.method_detail,
-                "data_status": data_status,
-                "llm_confidence": llm_result.confidence,
-                "key_facts": llm_result.key_facts,
-            },
-            needs_review=llm_result.needs_review,
-            data_status=data_status,
-            analysis_source="llm",
-            llm_model=self._llm_analyzer.model,
-            prompt_ver=self._llm_analyzer.prompt_version,
+            stock_code=input_data.stock_code,
+            direction=result.direction,  # "unknown" — 판정 없음(D1).
+            score=result.score,  # 0.0
+            summary=result.summary,
+            risk_flags=result.risk_flags,
+            method_detail=result.method_detail,  # data_status="no_signal"
+            needs_review=result.needs_review,
+            data_status="no_signal",
+            analysis_source="features",
+            llm_model=None,
+            prompt_ver=FEATURE_PROMPT_VERSION,
         )
-
-
-def _data_status(value: str) -> SourceAgentStatus:
-    if value in {"ok", "partial", "failed", "no_signal"}:
-        return cast(SourceAgentStatus, value)
-    return "partial"

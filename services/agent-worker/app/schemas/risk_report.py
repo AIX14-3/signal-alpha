@@ -26,6 +26,10 @@ class RiskReport:
     vetoed: bool
     veto_keywords: list[str] = field(default_factory=list)
     ml_risk: dict[str, Any] | None = None  # {combined_vol, confidence, method} or None
+    # 주가(PRICE) 데이터만으로 낸 방향성 예측 — 대체데이터와 합치기 전의 독립 예측치.
+    # final_score(대체데이터+주가가 LLM에서 합쳐지는 종합)와 별개로 사용자에게 따로 노출한다.
+    # {direction, score_100(예측확률 proxy 0~100), score, data_status, summary} or None.
+    price_prediction: dict[str, Any] | None = None
     evidence: list[dict[str, Any]] = field(default_factory=list)
     # --- LLM 설명 필드(또는 결정론 폴백) ---
     headline: str = ""
@@ -48,6 +52,7 @@ class RiskReport:
             "vetoed": self.vetoed,
             "veto_keywords": list(self.veto_keywords),
             "ml_risk": self.ml_risk,
+            "price_prediction": self.price_prediction,
             "evidence": self.evidence,
             "narrative": {
                 "headline": self.headline,

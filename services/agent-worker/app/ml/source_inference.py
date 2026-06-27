@@ -58,6 +58,7 @@ class SrcInferTaskHandler:
         *,
         datalab_loader: Any | None = None,
         hiring_loader: Any | None = None,
+        dart_loader: Any | None = None,
         models: list[SourceModel] | None = None,
         inferences: Any | None = None,
         queue: Any | None = None,
@@ -82,7 +83,13 @@ class SrcInferTaskHandler:
         )
 
         # 로더/리포지토리: 주입 없으면 실제 RawDetailRepository 기반으로 구성.
-        if datalab_loader is None or hiring_loader is None or inferences is None or queue is None:
+        if (
+            datalab_loader is None
+            or hiring_loader is None
+            or dart_loader is None
+            or inferences is None
+            or queue is None
+        ):
             from signal_alpha_data_access.repositories import (
                 MlInferenceRepository,
                 ProcessingQueueRepository,
@@ -98,6 +105,10 @@ class SrcInferTaskHandler:
                 from app.evidence_loaders.hiring_loader import HiringEvidenceLoader
 
                 hiring_loader = HiringEvidenceLoader(repo, lookback_days=loader_lookback)
+            if dart_loader is None:
+                from app.evidence_loaders.dart_loader import DartEvidenceLoader
+
+                dart_loader = DartEvidenceLoader(repo, lookback_days=loader_lookback)
             if inferences is None:
                 inferences = MlInferenceRepository(connection)
             if queue is None:
@@ -105,6 +116,7 @@ class SrcInferTaskHandler:
 
         self._datalab_loader = datalab_loader
         self._hiring_loader = hiring_loader
+        self._dart_loader = dart_loader
         self._inferences = inferences
         self._queue = queue
         self._models = (
@@ -123,12 +135,14 @@ class SrcInferTaskHandler:
 
         datalab_rows = await self._rows(self._datalab_loader, stock_id, stock_code, as_of)
         hiring_rows, sector_demand = await self._hiring(stock_id, stock_code, as_of)
+        dart_rows = await self._rows(self._dart_loader, stock_id, stock_code, as_of)
 
         predictions = predict_sources(
             as_of,
             models=self._models,
             datalab_rows=datalab_rows,
             hiring_rows=hiring_rows,
+            dart_rows=dart_rows,
             lookback_days=self._feature_lookback,
             sector_demand=sector_demand,
         )

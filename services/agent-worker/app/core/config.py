@@ -172,6 +172,14 @@ class Settings:
             "HIRING_ALERT_COLLECTOR_TYPES", default=["HIRING"]
         )
 
+        # ── 큐 드레인 데몬 (워커 영역 완성 #11) ──
+        # processing_queue 를 연속 소비해 수집→정규화→분석→집계→게이트→종합→발행(PUBLISH_SIGNALS)
+        # 까지 끝단으로 흘린다. 기존 ops/price 데몬과 동일 패턴(advisory lock 단일 기동).
+        # 기본 off(데몬 관례) — 운영/통합 인스턴스에서만 켠다.
+        self.queue_drain_daemon_enabled = _env_bool("QUEUE_DRAIN_DAEMON_ENABLED", default=False)
+        # 큐가 비었을 때(전 task_type idle) 다음 순회까지 대기 초. 작업이 있으면 쉬지 않고 계속 드레인.
+        self.queue_drain_interval_sec = float(getenv("QUEUE_DRAIN_INTERVAL_SEC", "5"))
+
 
 @lru_cache
 def get_settings() -> Settings:

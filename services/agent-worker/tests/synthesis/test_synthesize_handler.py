@@ -136,6 +136,37 @@ class SynthesizeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["report"]["ml_risk"]["combined_vol"], 0.31)
         self.assertEqual(result["report"]["ml_risk"]["method"], "stacking")
 
+    async def test_price_prediction_surfaced_separately(self):
+        # score_breakdown 의 PRICE 항목이 주가 단독 예측으로 분리돼 리포트/내러티브에 노출된다.
+        final = {
+            **_FINAL,
+            "score_breakdown": {
+                "PRICE": {
+                    "direction": "positive",
+                    "score_100": 59.0,
+                    "score": 0.18,
+                    "data_status": "ok",
+                    "summary": "5일 추세 상승",
+                },
+                "DART": {"direction": "negative", "score_100": 22.0, "data_status": "ok"},
+            },
+        }
+        connection = _FakeConnection(final, list(_EVENTS))
+        result = await self._run(connection, synthesizer=None)
+        pp = result["report"]["price_prediction"]
+        self.assertEqual(pp["direction"], "positive")
+        self.assertEqual(pp["score_100"], 59.0)
+        # 결정론 내러티브 첫 key_point 로 주가예측이 별도 노출된다.
+        self.assertTrue(
+            any("주가예측" in p for p in result["report"]["narrative"]["key_points"])
+        )
+
+    async def test_price_prediction_none_when_price_missing(self):
+        final = {**_FINAL, "score_breakdown": {"PRICE": {"data_status": "missing"}}}
+        connection = _FakeConnection(final, list(_EVENTS))
+        result = await self._run(connection, synthesizer=None)
+        self.assertIsNone(result["report"]["price_prediction"])
+
     async def test_requires_final_signal_id(self):
         connection = _FakeConnection(dict(_FINAL), [])
         handler = SynthesizeTaskHandler(connection, settings=None, synthesizer=None)
