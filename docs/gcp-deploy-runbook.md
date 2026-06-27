@@ -176,18 +176,13 @@ gcloud run services update sa-backend --region=$REGION \
 > ⚠️ APP_ENV=production 이면 BE 부팅 시 G5/G6 가드가 동작 — AUTH_SECRET_KEY 가 dev 기본값이거나 CORS 가 `*`/빈값이면 **부팅 실패**(의도된 안전장치). 위 순서대로면 통과한다.
 
 ## 11. Worker(agent-worker) → GCE VM (상시·내부·단일)
-> **(#11) 워커 큐 소비**: 데모는 **단일 통합 워커**로 띄운다 — `QUEUE_DRAIN_DAEMON_ENABLED=true`(큐를
-> 발행 `PUBLISH_SIGNALS`까지 연속 소비) + `PRICE_COLLECTOR_ENABLED=true`(가격 데몬 내장)를 함께 켠다.
-> 미설정 시 큐가 소비되지 않아 리포트가 발행되지 않는다. 규모가 커지면 수집기(`run_collector_instance.py`)·
-> 스케줄러(`run_scheduler_instance.py`)를 별도 인스턴스로 분리한다(`PRICE_COLLECTOR_ENABLED=false` + 드레인 on
-> 워커 + 수집기/스케줄러 = 5 컴퓨트 유닛). 토폴로지: [architecture-diagram.md](architecture-diagram.md).
 ```bash
 gcloud compute instances create-with-container sa-worker --zone=$ZONE --machine-type=e2-small \
   --network=sa-vpc --no-address --tags=sa-worker \
   --service-account=sa-worker@$PROJECT.iam.gserviceaccount.com \
   --scopes=cloud-platform \
   --container-image=$AR/agent-worker:demo \
-  --container-env=REPORT_STORAGE_BACKEND=gcs,GCS_REPORT_BUCKET=signal-alpha-reports,GCP_PROJECT_ID=$PROJECT,PRICE_COLLECTOR_ENABLED=true,QUEUE_DRAIN_DAEMON_ENABLED=true,KIWOOM_API_BASE=https://mockapi.kiwoom.com
+  --container-env=REPORT_STORAGE_BACKEND=gcs,GCS_REPORT_BUCKET=signal-alpha-reports,GCP_PROJECT_ID=$PROJECT,PRICE_COLLECTOR_ENABLED=true,KIWOOM_API_BASE=https://mockapi.kiwoom.com
 # 워커는 DB DSN 2개 주입: DATABASE_URL(=WORKER, sa-pg) + BACKEND_DATABASE_URL(=sa-be, 발행 대상).
 # create-with-container 는 Secret 직접 못 읽으므로 VM SSH 후 docker run 으로 둘 다 주입(가장 간단):
 #   docker run ... \
@@ -196,7 +191,7 @@ gcloud compute instances create-with-container sa-worker --zone=$ZONE --machine-
 # ⚠️ BACKEND_DATABASE_URL 미주입이면 워커는 단일 DB 모드로 동작 → 발행(publish_stock) no-op → 백엔드 api.* 가 0행.
 # 인터넷 egress(외부 API 수집)가 필요하면 Cloud NAT 구성(내부 전용 VM이라).
 ```
-> Worker 는 **단일 인스턴스**만(가격/ops/드레인 데몬이 advisory lock 으로 중복 기동 방지). 외부 포트(:8011) 방화벽 규칙은 만들지 않는다(내부 전용).
+> Worker 는 **단일 인스턴스**만(가격/ops 데몬 advisory lock). 외부 포트(:8011) 방화벽 규칙은 만들지 않는다(내부 전용).
 
 ## 12. 화면 확인 ✅
 ```bash
