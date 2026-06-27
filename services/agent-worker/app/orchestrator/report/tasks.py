@@ -435,13 +435,13 @@ class ReportAnalyzeTaskHandler:
         event_ids = [int(event["id"]) for event in events]
         analysis_date = _report_analysis_date(events, task_context)
         run_key = str(task_context.get("run_key") or "REPORT").strip() or "REPORT"
-        # Phase 0 (#525): 결정론 판정/스코어 제거 — 피처(밸류에이션)만 산출. 방향/점수 verdict 없음
-        # (학습형 메타러너가 Report 피처를 직접 받아 산출, D1). data_status="no_signal" +
-        # direction="unknown" 으로 AGGREGATE 점수·방향 집계에서 빠진다.
-        direction = "unknown"
-        source_score = 0.0
+        # 결정론 밸류에이션 신호: 정규화가 채운 애널리스트 투자의견(signal_direction)의 컨센서스로
+        # 방향/점수를 낸다(현재가 불필요 — 의견 분포만 사용). 의견 데이터가 전혀 없으면 features-only
+        # 폴백(unknown/no_signal). 점수는 SCORING_SOURCES 에 REPORT 가 없어 final_score 에 산입되지
+        # 않고(점수=주가/집계), 방향은 소스 근거로 쓰인다(소스별 라우팅: REPORT→결정론 밸류+LLM 서술).
+        direction, source_score, data_status = _report_consensus_direction(events)
         needs_review = any(bool(event.get("needs_review") or event.get("fact_needs_review")) for event in events)
-        risk_flags = _report_risk_flags(events, needs_review)  # 데이터 품질 플래그(판정 아님)
+        risk_flags = _report_risk_flags(events, needs_review)  # 데이터 품질 플래그
 
         analysis_result = await self._analysis_repository.upsert_analysis_result(
             stock_id=stock_id,
@@ -459,9 +459,9 @@ class ReportAnalyzeTaskHandler:
             "summary": _report_analysis_summary(events, direction),
             "risk_flags": risk_flags,
             "needs_review": needs_review,
-            "data_status": "no_signal",  # Phase 0: 판정 없음 → AGGREGATE 점수 평균서 제외
+            "data_status": data_status,  # 의견 컨센서스 있으면 ok, 없으면 no_signal(폴백)
             "stock_code": task_context.get("stock_code") or _first_non_empty(events, "ticker"),
-            "analysis_source": "features",
+            "analysis_source": "rules" if data_status == "ok" else "features",
             "report_quant": {
                 "valuation": _report_valuation_payload(events),
             },
@@ -506,7 +506,7 @@ class ReportAnalyzeTaskHandler:
             "direction": direction,
             "score": source_score,
             "needs_review": needs_review,
-            "analysis_source": "features",
+            "analysis_source": "rules" if data_status == "ok" else "features",
         }
 
     async def _list_report_valuation_events(self, signal_event_ids: list[int]) -> list[Any]:
@@ -552,6 +552,29 @@ class ReportAnalyzeTaskHandler:
 
 def _report_event_hash(raw_document_id: int) -> str:
     return hashlib.sha256(f"REPORT|{raw_document_id}".encode()).hexdigest()
+
+
+def _report_consensus_direction(events: list[dict[str, Any]]) -> tuple[str, float, str]:
+    """애널리스트 투자의견 컨센서스로 (direction, score[-1,1], data_status) 산출 — 결정론.
+
+    각 이벤트의 ``signal_direction``(정규화가 투자의견에서 매핑: positive/negative/neutral/unknown)을
+    모아 순매수도(=(긍정−부정)/방향성건수)를 점수로 쓴다. 방향성 의견이 하나도 없으면 features-only
+    폴백(unknown/0/no_signal) — 회귀 없음. 임계 ±0.2 는 AGGREGATE 의 방향 판정과 정렬한다.
+    """
+    directions = [str(event.get("signal_direction") or "unknown").strip().lower() for event in events]
+    directional = [d for d in directions if d in {"positive", "negative", "neutral"}]
+    if not directional:
+        return "unknown", 0.0, "no_signal"
+    positive = directional.count("positive")
+    negative = directional.count("negative")
+    score = round((positive - negative) / len(directional), 3)
+    if score >= 0.2:
+        direction = "positive"
+    elif score <= -0.2:
+        direction = "negative"
+    else:
+        direction = "neutral"
+    return direction, score, "ok"
 
 
 def _report_signal_direction(opinion: Any) -> str:

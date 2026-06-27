@@ -64,6 +64,9 @@ class SynthesizeTaskHandler:
         # 주가(PRICE)만의 독립 예측을 score_breakdown에서 분리 — 대체데이터와 합치기 전의 값.
         # 사용자에게 따로 노출하고, LLM이 대체데이터 근거와 "합쳐" 설명할 입력으로 쓴다.
         price_prediction = _price_prediction(final_signal.get("score_breakdown"))
+        # REPORT 결정론 밸류에이션 facts(목표주가/투자의견 등) — 점수엔 안 들어가고, 끝단 LLM이
+        # DART 공시(evidence)와 함께 "이 점수가 나온 이유"의 근거로 정제·서술한다(소스별 라우팅).
+        report_valuation = _report_valuation(final_signal.get("score_breakdown"))
 
         events = (
             [dict(row) for row in await self._normalization.list_signal_events_by_ids(signal_event_ids)]
@@ -105,6 +108,7 @@ class SynthesizeTaskHandler:
             veto_keywords=veto_keywords,
             ml_risk=ml_risk,
             price_prediction=price_prediction,
+            report_valuation=report_valuation,
             evidence=evidence,
         )
 
@@ -182,8 +186,37 @@ def _llm_context(report: RiskReport) -> dict[str, Any]:
         "ml_risk": report.ml_risk,
         # 주가 단독 예측 — LLM이 대체데이터 근거와 합쳐 설명하되, 이 예측 자체는 바꾸지 않는다.
         "price_prediction": report.price_prediction,
+        # REPORT 밸류에이션 facts — LLM이 근거로 정제·서술(점수 변경 금지).
+        "report_valuation": report.report_valuation,
         "evidence": report.evidence,
     }
+
+
+def _report_valuation(score_breakdown: Any) -> dict[str, Any] | None:
+    """score_breakdown 에서 REPORT 소스의 결정론 밸류에이션 facts 를 분리해 반환.
+
+    REPORT 는 features-only(no_signal)라 점수엔 안 들어가지만, 목표주가/투자의견 등 정형
+    valuation 은 LLM 종합의 근거로 가치가 크다. 없으면 None.
+    """
+    breakdown = _loads_breakdown(score_breakdown)
+    if breakdown is None:
+        return None
+    report = breakdown.get("REPORT")
+    if not isinstance(report, dict):
+        return None
+    valuation = report.get("valuation")
+    return dict(valuation) if isinstance(valuation, dict) else None
+
+
+def _loads_breakdown(score_breakdown: Any) -> dict[str, Any] | None:
+    """score_breakdown(JSONB dict 또는 JSON 문자열)을 dict 로 정규화. 실패 시 None."""
+    breakdown = score_breakdown
+    if isinstance(breakdown, str):
+        try:
+            breakdown = json.loads(breakdown)
+        except (TypeError, ValueError):
+            return None
+    return breakdown if isinstance(breakdown, dict) else None
 
 
 def _price_prediction(score_breakdown: Any) -> dict[str, Any] | None:
@@ -192,13 +225,8 @@ def _price_prediction(score_breakdown: Any) -> dict[str, Any] | None:
     score_breakdown 은 JSONB(dict) 또는 JSON 문자열일 수 있다. PRICE 항목이 없거나
     데이터가 없으면(missing) None. score_100 을 예측확률 proxy(0~100)로 노출한다.
     """
-    breakdown = score_breakdown
-    if isinstance(breakdown, str):
-        try:
-            breakdown = json.loads(breakdown)
-        except (TypeError, ValueError):
-            return None
-    if not isinstance(breakdown, dict):
+    breakdown = _loads_breakdown(score_breakdown)
+    if breakdown is None:
         return None
     price = breakdown.get("PRICE")
     if not isinstance(price, dict):

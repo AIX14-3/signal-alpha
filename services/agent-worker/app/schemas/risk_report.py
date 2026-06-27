@@ -30,6 +30,10 @@ class RiskReport:
     # final_score(대체데이터+주가가 LLM에서 합쳐지는 종합)와 별개로 사용자에게 따로 노출한다.
     # {direction, score_100(예측확률 proxy 0~100), score, data_status, summary} or None.
     price_prediction: dict[str, Any] | None = None
+    # 증권사 리포트(REPORT) 결정론 밸류에이션 facts — 목표주가/투자의견/컨센서스 등.
+    # 점수에 산입하지 않고(점수=주가 ML/DL), 끝단 LLM이 "이 점수가 나온 이유"를 설명할 때
+    # DART 공시(evidence)와 함께 근거로 정제·서술한다. {target_price, ...} or None.
+    report_valuation: dict[str, Any] | None = None
     evidence: list[dict[str, Any]] = field(default_factory=list)
     # --- LLM 설명 필드(또는 결정론 폴백) ---
     headline: str = ""
@@ -53,6 +57,7 @@ class RiskReport:
             "veto_keywords": list(self.veto_keywords),
             "ml_risk": self.ml_risk,
             "price_prediction": self.price_prediction,
+            "report_valuation": self.report_valuation,
             "evidence": self.evidence,
             "narrative": {
                 "headline": self.headline,

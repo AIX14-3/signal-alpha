@@ -60,7 +60,11 @@ class PriceAnalyzeTaskHandler:
             run_key=PRICE_RUN_KEY,
             source_signal_event_ids=[],
             base_score=_to_db_score(result.score),
-            analysis_mode="price_only",
+            # analysis_mode 는 DB CHECK(analysis_results_analysis_mode_check) 상 {full,dart_only,quick}
+            # 만 허용한다 — REPORT/ALTERNATIVE 와 동일하게 "full" 사용(소스 식별은 run_key="PRICE" +
+            # method_detail.source="PRICE" 로 하므로 분석모드 값에 의존하지 않는다). 'price_only' 는
+            # 제약 위반이라 적재 자체가 실패했었다(Neon→GCP 덤프 배포에서 마이그레이션 없이 안전).
+            analysis_mode="full",
             warning="; ".join(result.risk_flags) or None,
             version=PRICE_VERSION,
         )
