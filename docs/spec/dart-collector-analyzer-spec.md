@@ -4,9 +4,11 @@
 > 대상: `services/agent-worker`의 DART 수집, 정규화, 분석 흐름
 > 목적: DART 관련 개발을 이어갈 때 코드와 DB, API, 운영 방식을 한 번에 파악하기 위한 상세 스펙
 >
-> ⚠️ **정리(2026-06-26):** §7 `analyze_dart`의 **rule 기반 결정론 판정·선택적 LLM 판정 절은
-> 폐기 예정**이다 — DART도 고정숫자 verdict 대신 base 예측/피처만 산출하고 판정은 학습형
-> 메타러너가 한다(`docs/plan/dart-ml-metalearner-fusion.md` Phase 0). **수집·정규화(§5·§6)와
+> ⚠️ **#11 업데이트**: 주가 ML/DL 예측은 `RiskReport.price_prediction`으로 **별도 제공**(집계 `final_score`는 DART·ALTERNATIVE 유지, 뒤집지 않음). DART/REPORT=근거(LLM/결정론, 메타러너 미사용). 워커는 큐 드레인 데몬으로 발행까지 연속 소비. 상세 [architecture-diagram.md](../architecture-diagram.md).
+>
+> ⚠️ **정리(#11 업데이트):** 이전 계획(§7 판정을 학습형 메타러너로 이관)은 폐기됐다. **메타러너는
+> 미사용**이며, DART는 base 예측/피처를 산출하고 최종 정제는 **끝단 LLM 종합(SYNTHESIZE)**이 공시를
+> 근거로 수행한다(+RISK_VETO). 점수 자체는 주가(PRICE) ML/DL이 원천이다. **수집·정규화(§5·§6)와
 > DB 적재(§4)는 그대로 유효·재사용**한다.
 
 ---

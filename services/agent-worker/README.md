@@ -25,6 +25,23 @@ Expected response:
 }
 ```
 
+## Run Modes (#11)
+
+This one codebase boots as three deploy units (single combined boot is also possible for
+dev/small deployments). Full compute topology lives in
+[`docs/architecture-diagram.md`](../../docs/architecture-diagram.md).
+
+- **worker**: `uvicorn app.main:app` plus the **queue drain daemon**
+  (`app/orchestrator/queue/drain_daemon.py`, `QUEUE_DRAIN_DAEMON_ENABLED`). The daemon consumes
+  `processing_queue` in chain order all the way to the end (`PUBLISH_SIGNALS`), holding an advisory
+  lock so only one drainer runs. One-shot/CI verification: `run_worker_drain.py`.
+- **collector**: `run_collector_instance.py` — runs source collectors including the Kiwoom price
+  collector (`PRICE_COLLECTOR_ENABLED` also embeds it into the worker for single combined boot).
+- **scheduler**: `run_scheduler_instance.py` — periodically enqueues `COLLECT_*` (DART/report) and
+  per-stock `ANALYZE_*` fan-out tasks that the worker drain then consumes.
+
+The internal `enqueue` / `run-batch` endpoints below remain available as dev/manual tools.
+
 ## Responsibilities
 
 - Collect raw source data.

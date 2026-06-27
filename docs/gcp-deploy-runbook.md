@@ -182,7 +182,7 @@ gcloud compute instances create-with-container sa-worker --zone=$ZONE --machine-
   --service-account=sa-worker@$PROJECT.iam.gserviceaccount.com \
   --scopes=cloud-platform \
   --container-image=$AR/agent-worker:demo \
-  --container-env=REPORT_STORAGE_BACKEND=gcs,GCS_REPORT_BUCKET=signal-alpha-reports,GCP_PROJECT_ID=$PROJECT,PRICE_COLLECTOR_ENABLED=true,KIWOOM_API_BASE=https://mockapi.kiwoom.com
+  --container-env=REPORT_STORAGE_BACKEND=gcs,GCS_REPORT_BUCKET=signal-alpha-reports,GCP_PROJECT_ID=$PROJECT,PRICE_COLLECTOR_ENABLED=true,QUEUE_DRAIN_DAEMON_ENABLED=true,KIWOOM_API_BASE=https://mockapi.kiwoom.com
 # 워커는 DB DSN 2개 주입: DATABASE_URL(=WORKER, sa-pg) + BACKEND_DATABASE_URL(=sa-be, 발행 대상).
 # create-with-container 는 Secret 직접 못 읽으므로 VM SSH 후 docker run 으로 둘 다 주입(가장 간단):
 #   docker run ... \
@@ -191,7 +191,11 @@ gcloud compute instances create-with-container sa-worker --zone=$ZONE --machine-
 # ⚠️ BACKEND_DATABASE_URL 미주입이면 워커는 단일 DB 모드로 동작 → 발행(publish_stock) no-op → 백엔드 api.* 가 0행.
 # 인터넷 egress(외부 API 수집)가 필요하면 Cloud NAT 구성(내부 전용 VM이라).
 ```
-> Worker 는 **단일 인스턴스**만(가격/ops 데몬 advisory lock). 외부 포트(:8011) 방화벽 규칙은 만들지 않는다(내부 전용).
+> Worker 는 **단일 인스턴스**만(가격/ops/드레인 데몬이 advisory lock 으로 중복 기동 방지). 외부 포트(:8011) 방화벽 규칙은 만들지 않는다(내부 전용).
+> **(#11) 큐 소비 필수**: `QUEUE_DRAIN_DAEMON_ENABLED=true` 가 있어야 워커가 `processing_queue` 를 발행
+> (`PUBLISH_SIGNALS`)까지 연속 소비한다. 미설정이면 큐가 쌓이기만 하고 리포트가 발행되지 않는다.
+> 데모는 단일 통합 워커(드레인+가격 데몬 동시)면 충분하고, 규모가 커지면 수집기
+> (`run_collector_instance.py`)·스케줄러(`run_scheduler_instance.py`)를 별도 인스턴스로 분리한다.
 
 ## 12. 화면 확인 ✅
 ```bash

@@ -1,5 +1,7 @@
 # 통합 계획: DB 2-인스턴스 분리 + 소스별 ML/DL 메타러너 융합 (#525 + #531)
 
+> ⚠️ **#11 업데이트**: DART/REPORT 판정 경로는 LLM/결정론으로 변경됨(메타러너 미사용). 워커는 큐 드레인 데몬으로 발행까지 연속 소비. 토폴로지는 [architecture-diagram.md](../architecture-diagram.md) 참조. 아래 Report를 메타러너 피처로 투입하는 return 채널(src_* / SRC_INFER)은 코드만 있고 라이브 미배선/dormant — 운영에서 주가(PRICE) ML/DL 예측은 `price_prediction`으로 별도 제공되고(집계 `final_score`는 DART·ALTERNATIVE 유지, 뒤집지 않음), REPORT는 투자의견(signal_direction) 컨센서스 결정론 방향으로 끝단 LLM 근거에 합류한다. DB 2-인스턴스 분리·publish 토폴로지 서술은 유효.
+
 > 상태: 제안(Proposal). 두 작업(#525 메타러너 융합, #531 DB 분리)을 **하나의 계획·단일 브랜치**로 통합한다.
 > 구현은 워크스트림별 단계 커밋으로 진행한다. 영역: agent-worker + main-server + database + web.
 > 이 문서는 기존 `docs/plan/ml-metalearner-source-fusion.md`(#525)와 `docs/db-split-plan` 브랜치의

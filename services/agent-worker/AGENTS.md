@@ -11,13 +11,17 @@
 
 ## 큐와 오케스트레이션
 
-현재 구현된 DART task type은 다음뿐입니다.
+**(#11 업데이트)** `processing_queue`는 워커의 **큐 드레인 데몬**(`app/orchestrator/queue/drain_daemon.py`,
+`QUEUE_DRAIN_DAEMON_ENABLED`)이 체인 순서대로 끝단(`PUBLISH_SIGNALS` 발행)까지 연속 소비합니다(advisory-lock
+단일 기동, 단발/CI 검증은 `run_worker_drain.py`). 스케줄러 인스턴스(`run_scheduler_instance.py`)가
+`COLLECT_*`(DART/report)와 종목 `ANALYZE_*` 팬아웃을 주기 인큐하고, 워커 드레인이 이를 소비합니다.
 
-- `collect_dart`
-- `normalize_dart`
-- `analyze_dart`
-
-기획 문서에 언급되어 있어도 `analyze_alt`, `aggregate_debate`, `ml_score`, `create_final_signal` 핸들러가 존재한다고 가정하지 마세요. 새 핸들러는 명시적으로 추가하고 `app/orchestrator/queue` 경로에서 테스트하세요. Report는 `collect_report`, `process_report`, `normalize_report`, `analyze_report`가 연결되어 있습니다.
+소스별 핸들러: DART는 `collect_dart → normalize_dart → analyze_dart`, Report는
+`collect_report → process_report → normalize_report → analyze_report`가 연결되어 있습니다. 정량 점수는
+주가(PRICE) ML/DL이 원천이고, DART/REPORT/대안데이터는 근거로 끝단 LLM 종합(`SYNTHESIZE`)에 합류합니다
+(메타러너 미사용, 소스 학습형 `SRC_INFER` 채널은 코드만 있고 라이브 미배선). 새 핸들러는 명시적으로 추가하고
+`app/orchestrator/queue` 경로에서 테스트하세요. 라우팅·토폴로지 상세는
+[architecture-diagram.md](../../docs/architecture-diagram.md) 참조.
 
 ## Collector 규칙
 
@@ -62,7 +66,8 @@ Analyzer는 DB에 저장된 source 데이터를 읽고 구조화된 `SourceResul
 
 ## Price Collector
 
-키움 REST 가격 수집기는 `agent-worker` 내부 lifespan 백그라운드 task로 실행되며 `PRICE_COLLECTOR_ENABLED`로 제어합니다.
+키움 REST 가격 수집기는 기본적으로 **수집기 인스턴스**(`run_collector_instance.py`)에서 실행됩니다. 단일 통합
+기동에서는 `PRICE_COLLECTOR_ENABLED`로 워커 lifespan 백그라운드 task에 내장할 수 있습니다(#11 업데이트).
 
 - 수집 대상 종목은 반드시 `stocks.is_target`에서 가져옵니다.
 - 데몬 중복 polling을 막기 위해 advisory lock을 사용합니다.
