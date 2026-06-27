@@ -167,6 +167,30 @@ class SynthesizeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         result = await self._run(connection, synthesizer=None)
         self.assertIsNone(result["report"]["price_prediction"])
 
+    async def test_report_valuation_surfaced_for_llm(self):
+        # REPORT 밸류에이션 facts 가 score_breakdown 에서 분리돼 리포트/LLM 컨텍스트로 전달된다.
+        final = {
+            **_FINAL,
+            "score_breakdown": {
+                "REPORT": {
+                    "direction": "unknown",
+                    "data_status": "no_signal",
+                    "valuation": {"target_price": 90000, "methodology": "PER", "needs_review": False},
+                },
+            },
+        }
+        connection = _FakeConnection(final, list(_EVENTS))
+        result = await self._run(connection, synthesizer=None)
+        rv = result["report"]["report_valuation"]
+        self.assertEqual(rv["target_price"], 90000)
+        self.assertEqual(rv["methodology"], "PER")
+
+    async def test_report_valuation_none_when_absent(self):
+        final = {**_FINAL, "score_breakdown": {"DART": {"direction": "unknown"}}}
+        connection = _FakeConnection(final, list(_EVENTS))
+        result = await self._run(connection, synthesizer=None)
+        self.assertIsNone(result["report"]["report_valuation"])
+
     async def test_requires_final_signal_id(self):
         connection = _FakeConnection(dict(_FINAL), [])
         handler = SynthesizeTaskHandler(connection, settings=None, synthesizer=None)
