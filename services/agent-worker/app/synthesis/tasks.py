@@ -8,6 +8,7 @@ veto 정보를 모아, LLM이 설정돼 있으면 **설명 내러티브만** 생
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Mapping
 from typing import Any
@@ -60,6 +61,9 @@ class SynthesizeTaskHandler:
         if final_signal is None:
             return {"stock_id": stock_id, "skipped_reason": "final_signal_not_found"}
         final_signal = dict(final_signal)
+        # 주가(PRICE)만의 독립 예측을 score_breakdown에서 분리 — 대체데이터와 합치기 전의 값.
+        # 사용자에게 따로 노출하고, LLM이 대체데이터 근거와 "합쳐" 설명할 입력으로 쓴다.
+        price_prediction = _price_prediction(final_signal.get("score_breakdown"))
 
         events = (
             [dict(row) for row in await self._normalization.list_signal_events_by_ids(signal_event_ids)]
@@ -100,6 +104,7 @@ class SynthesizeTaskHandler:
             vetoed=vetoed,
             veto_keywords=veto_keywords,
             ml_risk=ml_risk,
+            price_prediction=price_prediction,
             evidence=evidence,
         )
 
@@ -175,7 +180,37 @@ def _llm_context(report: RiskReport) -> dict[str, Any]:
         "vetoed": report.vetoed,
         "veto_keywords": report.veto_keywords,
         "ml_risk": report.ml_risk,
+        # 주가 단독 예측 — LLM이 대체데이터 근거와 합쳐 설명하되, 이 예측 자체는 바꾸지 않는다.
+        "price_prediction": report.price_prediction,
         "evidence": report.evidence,
+    }
+
+
+def _price_prediction(score_breakdown: Any) -> dict[str, Any] | None:
+    """final_signals.score_breakdown 에서 PRICE 소스 항목만 분리해 주가 단독 예측으로 반환.
+
+    score_breakdown 은 JSONB(dict) 또는 JSON 문자열일 수 있다. PRICE 항목이 없거나
+    데이터가 없으면(missing) None. score_100 을 예측확률 proxy(0~100)로 노출한다.
+    """
+    breakdown = score_breakdown
+    if isinstance(breakdown, str):
+        try:
+            breakdown = json.loads(breakdown)
+        except (TypeError, ValueError):
+            return None
+    if not isinstance(breakdown, dict):
+        return None
+    price = breakdown.get("PRICE")
+    if not isinstance(price, dict):
+        return None
+    if str(price.get("data_status") or "") in {"missing", "failed"}:
+        return None
+    return {
+        "direction": price.get("direction"),
+        "score_100": price.get("score_100"),
+        "score": price.get("score"),
+        "data_status": price.get("data_status"),
+        "summary": price.get("summary"),
     }
 
 
@@ -191,6 +226,13 @@ def _deterministic_narrative(report: RiskReport) -> RiskNarrative:
         for item in report.evidence[:3]
         if item.get("title")
     ]
+    # 주가 단독 예측을 별도 라인으로 노출(대체데이터 종합과 구분).
+    if report.price_prediction:
+        pp = report.price_prediction
+        key_points.insert(
+            0,
+            f"[주가예측] 방향 {pp.get('direction')}, 예측확률 {pp.get('score_100')}",
+        )
     caution_points: list[str] = []
     if report.vetoed and report.veto_keywords:
         caution_points.append("리스크 veto: " + ", ".join(report.veto_keywords))
