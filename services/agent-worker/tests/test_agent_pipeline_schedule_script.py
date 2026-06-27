@@ -54,11 +54,9 @@ def test_dry_run_prints_schedule_and_queue_requests_without_worker() -> None:
     assert "DRY-RUN POST /internal/schedules/report/collect" in stdout
     assert '"days_back":5' in stdout
     assert '"max_pages":6' in stdout
-    assert "DRY-RUN POST /internal/queue/collect_dart/run-batch" in stdout
-    assert "DRY-RUN POST /internal/queue/risk_veto/run-batch" in stdout
-    assert stdout.index("/internal/queue/collect_dart/run-batch") < stdout.index(
-        "/internal/queue/collect_report/run-batch"
-    )
+    # 공정 라운드로빈 drain: 고정순서 per-type run-batch 대신 단일 run-cycle 호출.
+    assert "DRY-RUN POST /internal/queue/run-cycle" in stdout
+    assert "/internal/queue/collect_dart/run-batch" not in stdout
 
 
 def test_health_check_dry_run_and_skip_report_limit_queue_scope() -> None:
@@ -75,7 +73,6 @@ def test_health_check_dry_run_and_skip_report_limit_queue_scope() -> None:
     assert result.returncode == 0, result.stderr
     stdout = result.stdout
     assert "DRY-RUN GET /health" in stdout
-    assert "/internal/queue/collect_dart/run-batch" in stdout
-    assert "/internal/queue/analyze_dart/run-batch" in stdout
-    assert "/internal/queue/collect_report/run-batch" not in stdout
-    assert "/internal/queue/analyze_report/run-batch" not in stdout
+    # Drain 은 이제 단일 공정 run-cycle. per-type run-batch 드레인은 제거됨.
+    assert "/internal/queue/run-cycle" in stdout
+    assert "/internal/queue/collect_dart/run-batch" not in stdout

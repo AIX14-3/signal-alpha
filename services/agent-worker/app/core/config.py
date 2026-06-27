@@ -26,6 +26,11 @@ class Settings:
         self.dart_timeout_seconds = int(getenv("DART_TIMEOUT_SECONDS", "10"))
         self.dart_page_size = int(getenv("DART_PAGE_SIZE", "100"))
         self.dart_fetch_documents = _env_bool("DART_FETCH_DOCUMENTS", default=True)
+        # 한 collect_dart 회차당 본문 다운로드 상한 — 무거운 문서 fetch 로 워커가 분 단위로
+        # 묶이는 것을 막는다(작은 배치·공정 drain 과 병행). 상한 초과 공시는 메타데이터만 적재.
+        # 증분 수집(last_end_de 이후)이라 평상시 회차는 작고, 첫 회차/백필만 상한이 작동한다.
+        # 0 이하면 무제한(상한 없음).
+        self.dart_max_documents = int(getenv("DART_MAX_DOCUMENTS", "30"))
         self.dart_max_retries = int(getenv("DART_MAX_RETRIES", "2"))
         self.dart_retry_backoff_seconds = float(getenv("DART_RETRY_BACKOFF_SECONDS", "0.5"))
         # ── L1 정형 재무 수집 (fnlttSinglAcntAll → dart_financial_facts) ──

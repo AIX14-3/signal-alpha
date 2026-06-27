@@ -67,6 +67,7 @@ class DartCollectionTaskHandler:
             end_date=date_window["end_de"],
             page_size=self._settings.dart_page_size,
             fetch_documents=getattr(self._settings, "dart_fetch_documents", True),
+            max_documents=getattr(self._settings, "dart_max_documents", None),
         )
         evidence = await collector.collect(stock_code)
         result = await CollectionPersistence(self._connection).save_evidence_batch(

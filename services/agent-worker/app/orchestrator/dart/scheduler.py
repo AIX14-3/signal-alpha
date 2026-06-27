@@ -29,7 +29,7 @@ class DartCollectionScheduler:
     async def enqueue_due_collections(
         self,
         *,
-        limit: int = 100,
+        limit: int = 10,
         end_de: str | None = None,
         priority: str = "batch",
     ) -> dict[str, Any]:
