@@ -134,13 +134,17 @@ gcloud run services update sa-backend --region=$REGION \
 > ⚠️ APP_ENV=production 이면 BE 부팅 시 G5/G6 가드가 동작 — AUTH_SECRET_KEY 가 dev 기본값이거나 CORS 가 `*`/빈값이면 **부팅 실패**(의도된 안전장치). 위 순서대로면 통과한다.
 
 ## 11. Worker(agent-worker) → GCE VM (상시·내부·단일)
+> (#11 업데이트) 운영 토폴로지는 worker/collector/scheduler **3 유닛**으로 분리 가능하지만, 이 데모는
+> `agent-worker`를 **단일 통합 기동**으로 띄운다 — 드레인 데몬(`QUEUE_DRAIN_DAEMON_ENABLED`)이 큐를 끝단
+> 발행까지 소비하고 가격 수집(`PRICE_COLLECTOR_ENABLED`)도 같은 VM에 내장. 유닛 분리/2-DB 토폴로지는
+> [architecture-diagram.md](./architecture-diagram.md) 참조.
 ```bash
 gcloud compute instances create-with-container sa-worker --zone=$ZONE --machine-type=e2-small \
   --network=sa-vpc --no-address --tags=sa-worker \
   --service-account=sa-worker@$PROJECT.iam.gserviceaccount.com \
   --scopes=cloud-platform \
   --container-image=$AR/agent-worker:demo \
-  --container-env=REPORT_STORAGE_BACKEND=gcs,GCS_REPORT_BUCKET=signal-alpha-reports,GCP_PROJECT_ID=$PROJECT,PRICE_COLLECTOR_ENABLED=true,KIWOOM_API_BASE=https://mockapi.kiwoom.com
+  --container-env=REPORT_STORAGE_BACKEND=gcs,GCS_REPORT_BUCKET=signal-alpha-reports,GCP_PROJECT_ID=$PROJECT,QUEUE_DRAIN_DAEMON_ENABLED=true,PRICE_COLLECTOR_ENABLED=true,KIWOOM_API_BASE=https://mockapi.kiwoom.com
 # DATABASE_URL(=WORKER) 주입: create-with-container 는 Secret 직접 못 읽으므로 메타데이터/startup 으로 주입하거나
 # 가장 간단히 VM SSH 후 docker run -e DATABASE_URL="$(gcloud secrets versions access latest --secret=WORKER_DATABASE_URL)" ...
 # 인터넷 egress(외부 API 수집)가 필요하면 Cloud NAT 구성(내부 전용 VM이라).

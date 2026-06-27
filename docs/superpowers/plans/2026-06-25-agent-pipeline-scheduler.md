@@ -1,5 +1,7 @@
 # Agent Pipeline Scheduler Implementation Plan
 
+> ⚠️ **#11 업데이트**: DART/REPORT 판정 경로는 LLM/결정론으로 변경됨(메타러너 미사용). 워커는 큐 드레인 데몬으로 발행까지 연속 소비. 토폴로지는 [architecture-diagram.md](../../architecture-diagram.md) 참조. 아래의 "스케줄러는 `run-batch`로 큐를 수동 드레인" 전제는 낡음 — 이제 워커의 큐 드레인 데몬(`app/orchestrator/queue/drain_daemon.py`, `QUEUE_DRAIN_DAEMON_ENABLED`, advisory-lock 단일 기동)이 체인을 PUBLISH_SIGNALS 발행까지 연속 소비하고, `run_scheduler_instance.py`가 주기적으로 COLLECT_*/ANALYZE_* 팬아웃을 인큐한다. `run-batch`/`run_worker_drain.py`는 단발·CI 검증용.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add the first operational scheduling layer for DART and Report collection/analysis by documenting the schedule policy, adding a local PowerShell runner, and describing Docker Compose and external cron execution.
