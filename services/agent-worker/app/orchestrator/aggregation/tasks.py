@@ -19,18 +19,18 @@ from signal_alpha_data_access.repositories import (
 
 AGGREGATE_RUN_KEY = "AGGREGATED"
 AGGREGATE_VERSION = "final-agg-v1"
-# REPORT 는 deterministic valuation 근거 소스로 수용하지만 점수 산정에는 넣지 않는다.
-SOURCE_ORDER = ("DART", "PRICE", "REPORT", "ALTERNATIVE")
-SCORING_SOURCES = {"DART", "ALTERNATIVE"}
+# 대체데이터(HIRING/PATENT/DATALAB)는 서로 다른 신호라 묶지 않고 **각자 독립 소스**로 점수에 넣는다
+# (ALTERNATIVE 로 collapse 안 함). PRICE/REPORT 는 근거 소스로 수용하되 점수 산정에는 넣지 않는다.
+SOURCE_ORDER = ("DART", "PRICE", "REPORT", "HIRING", "PATENT", "DATALAB")
+SCORING_SOURCES = {"DART", "HIRING", "PATENT", "DATALAB"}
 VALID_DIRECTIONS = {"positive", "negative", "neutral", "mixed"}
 SOURCE_ALIASES = {
     "DART": "DART",
     "PRICE": "PRICE",
     "REPORT": "REPORT",
-    "ALTERNATIVE": "ALTERNATIVE",
-    "HIRING": "ALTERNATIVE",
-    "PATENT": "ALTERNATIVE",
-    "DATALAB": "ALTERNATIVE",
+    "HIRING": "HIRING",
+    "PATENT": "PATENT",
+    "DATALAB": "DATALAB",
 }
 
 
@@ -48,11 +48,8 @@ class NormalizedSourceResult:
     summary: str | None
     source_signal_event_ids: list[int]
     valuation: dict[str, Any] | None
-    # The un-aliased source (HIRING/PATENT/DATALAB/DART/PRICE/REPORT). ``source``
-    # above is coarse (the alternative trio collapses to ALTERNATIVE for scoring);
-    # this preserves the individual collector so the report card per source can be
-    # nested under ALTERNATIVE in the breakdown. Defaults to "" so direct
-    # constructions in tests stay valid.
+    # un-aliased 소스(HIRING/PATENT/DATALAB/DART/PRICE/REPORT). 대체데이터 collapse 폐기 후
+    # ``source`` 와 동일하다(각 소스가 독립 peer). 하위호환·테스트 호환 위해 필드 유지(기본 "").
     fine_source: str = ""
 
 
@@ -111,12 +108,10 @@ class AggregateSignalTaskHandler:
             )
 
         signal_date = _signal_date(rows, task_context)
-        # Blend the alternative trio (HIRING/PATENT/DATALAB) into one ALTERNATIVE
-        # peer BEFORE scoring so the three don't outvote DART 3:1, then re-nest the
-        # individual collectors into the breakdown for per-source report cards.
+        # 소스별 독립 집계: 대체데이터(HIRING/PATENT/DATALAB)를 묶지 않고 각자 peer 로 점수화한다.
+        # _coalesce_by_source 는 같은 소스의 다중 행(예: DART 다중 이벤트 run_key)만 1 peer 로 합친다.
         coarse = _coalesce_by_source(normalized)
         aggregate = _aggregate(coarse)
-        aggregate["score_breakdown"] = _nest_alternatives(aggregate["score_breakdown"], normalized)
         source_signal_event_ids = _source_signal_event_ids(normalized)
         warning = "; ".join(aggregate["risk_flags"]) or None
         analysis_result = await self._analysis_repository.upsert_analysis_result(
@@ -309,39 +304,6 @@ def _blend_status(statuses: list[str]) -> str:
         if level in statuses:
             return level
     return "failed"
-
-
-def _nest_alternatives(
-    breakdown: dict[str, dict[str, Any]],
-    normalized: list[NormalizedSourceResult],
-) -> dict[str, dict[str, Any]]:
-    """Nest each individual alternative collector under breakdown["ALTERNATIVE"].
-
-    The report renders hiring/datalab as their own cards by reading
-    ``breakdown["ALTERNATIVE"][source]`` (reports.py). The coarse ALTERNATIVE entry
-    keeps its blended scoring fields; this only ADDS per-collector sub-entries.
-    """
-    alt_entry = breakdown.get("ALTERNATIVE")
-    if not isinstance(alt_entry, dict):
-        return breakdown
-    for result in normalized:
-        if result.source != "ALTERNATIVE":
-            continue
-        key = (result.fine_source or "").lower()
-        if not key or key == "alternative":
-            continue
-        alt_entry[key] = {
-            "direction": result.direction,
-            "score": result.score,
-            "score_100": result.score_100,
-            "data_status": result.data_status,
-            "needs_review": result.needs_review,
-            "analysis_result_id": result.analysis_result_id,
-            "agent_result_id": result.agent_result_id,
-            "risk_flags": result.risk_flags,
-            "summary": result.summary,
-        }
-    return breakdown
 
 
 def _aggregate(results: list[NormalizedSourceResult]) -> dict[str, Any]:
