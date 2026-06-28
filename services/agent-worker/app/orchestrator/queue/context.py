@@ -10,7 +10,32 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from app.orchestrator.queue.task_types import AGGREGATE_SIGNAL
+from app.orchestrator.queue.task_types import AGGREGATE_SIGNAL, PUBLISH_SIGNALS
+
+
+async def enqueue_publish_signals(
+    queue: Any,
+    *,
+    settings: Any,
+    stock_id: int,
+    stock_code: Any,
+    priority: str = "batch",
+) -> int | None:
+    """발행분을 백엔드 DB 로 복사하는 ``PUBLISH_SIGNALS`` 를 인큐한다.
+
+    **리스크 veto 게이트 뒤**에서만 호출해야 한다 — 치명 키워드 신호가 백엔드로 새지 않게,
+    발행은 RISK_VETO 통과(또는 veto 대상 이벤트가 없는 발행분) 이후로 미룬다. ``BACKEND_DATABASE_URL``
+    미설정(단일 DB)이면 인큐하지 않는다(핸들러도 no-op). 멱등 — dedupe 로 한 번만.
+    """
+    if not getattr(settings, "backend_database_url", None):
+        return None
+    return await queue.enqueue(
+        stock_id=stock_id,
+        task_type=PUBLISH_SIGNALS,
+        priority=priority,
+        task_context={"stock_code": stock_code},
+        dedupe=True,
+    )
 
 
 async def enqueue_aggregate(

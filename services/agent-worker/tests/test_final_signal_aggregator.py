@@ -98,6 +98,11 @@ class AggregateSignalTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["warning_level"], "CAUTION")
         self.assertTrue(result["needs_review"])
         self.assertTrue(result["is_published"])
+        # 발행분(근거 이벤트 있음)은 끝단 LLM 종합(SYNTHESIZE)으로만 보내고, 백엔드 발행
+        # (PUBLISH_SIGNALS)은 RISK_VETO 게이트 뒤로 미룬다 — AGGREGATE 가 직접 인큐하지 않는다
+        # (치명 키워드 신호가 veto 전에 백엔드로 새는 것을 방지).
+        self.assertIsNotNone(result["synthesize_task_id"])
+        self.assertIsNone(result["publish_task_id"])
 
         analysis_call = next(call for call in connection.calls if "INSERT INTO analysis_results" in call[1])
         self.assertEqual(analysis_call[2][3], "AGGREGATED")
