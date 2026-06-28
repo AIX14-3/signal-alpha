@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any, Mapping, Sequence
 
+import numpy as np
+
 from app.ml.source_models import HAVE_LGBM, feature_order, vectorize
 
 if HAVE_LGBM:  # pragma: no cover - 백엔드 있을 때만
@@ -130,14 +132,15 @@ def train_booster(
     train_idx, valid_idx = folds[-1]
     merged_params = {**DEFAULT_PARAMS, **(params or {}), "seed": seed}
 
+    # lightgbm 4.x Dataset 은 list-of-lists 를 거부(ndarray/Sequence 필요) → numpy 로 변환.
     train_set = lgb.Dataset(
-        [panel.X[i] for i in train_idx],
-        label=[panel.y[i] for i in train_idx],
+        np.asarray([panel.X[i] for i in train_idx], dtype="float64"),
+        label=np.asarray([panel.y[i] for i in train_idx], dtype="float64"),
         feature_name=panel.feature_names,
     )
     valid_set = lgb.Dataset(
-        [panel.X[i] for i in valid_idx],
-        label=[panel.y[i] for i in valid_idx],
+        np.asarray([panel.X[i] for i in valid_idx], dtype="float64"),
+        label=np.asarray([panel.y[i] for i in valid_idx], dtype="float64"),
         reference=train_set,
     )
     return lgb.train(
