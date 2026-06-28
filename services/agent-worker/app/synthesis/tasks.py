@@ -67,6 +67,9 @@ class SynthesizeTaskHandler:
         # REPORT 결정론 밸류에이션 facts(목표주가/투자의견 등) — 점수엔 안 들어가고, 끝단 LLM이
         # DART 공시(evidence)와 함께 "이 점수가 나온 이유"의 근거로 정제·서술한다(소스별 라우팅).
         report_valuation = _report_valuation(final_signal.get("score_breakdown"))
+        # 소스별 6 + 통합 1 = 7개 예측률(주가 BASE ⊕ 대체데이터). RETURN_COMBINE 이 final_signals 에
+        # 적재한 값(P3) → web 표시값과 동일. LLM 은 이 수치를 바꾸지 않고 설명만 한다(C안 P4).
+        source_predictions = _loads_breakdown(final_signal.get("source_predictions"))
 
         events = (
             [dict(row) for row in await self._normalization.list_signal_events_by_ids(signal_event_ids)]
@@ -109,6 +112,7 @@ class SynthesizeTaskHandler:
             ml_risk=ml_risk,
             price_prediction=price_prediction,
             report_valuation=report_valuation,
+            source_predictions=source_predictions,
             evidence=evidence,
         )
 
@@ -188,6 +192,8 @@ def _llm_context(report: RiskReport) -> dict[str, Any]:
         "price_prediction": report.price_prediction,
         # REPORT 밸류에이션 facts — LLM이 근거로 정제·서술(점수 변경 금지).
         "report_valuation": report.report_valuation,
+        # 7개 예측률(주가 BASE ⊕ 대체데이터) — 있을 때만 컨텍스트에 포함(없으면 기존과 동일).
+        **({"source_predictions": report.source_predictions} if report.source_predictions else {}),
         "evidence": report.evidence,
     }
 
@@ -261,6 +267,14 @@ def _deterministic_narrative(report: RiskReport) -> RiskNarrative:
             0,
             f"[주가예측] 방향 {pp.get('direction')}, 예측확률 {pp.get('score_100')}",
         )
+    # 7개 예측률(주가 BASE ⊕ 대체데이터) 통합치를 한 줄로 노출(수치 불변).
+    if report.source_predictions:
+        integrated = report.source_predictions.get("SRC") or {}
+        if integrated.get("final_score") is not None:
+            key_points.append(
+                f"[메타예측] 통합 방향 {integrated.get('direction')} · "
+                f"소스별 {len(report.source_predictions)}개 예측률"
+            )
     caution_points: list[str] = []
     if report.vetoed and report.veto_keywords:
         caution_points.append("리스크 veto: " + ", ".join(report.veto_keywords))
