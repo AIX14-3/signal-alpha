@@ -1,8 +1,8 @@
 # 워커 설계 설명서 + 팀 핸드오프 (#11 워커 영역 완성)
 
-> 팀 공유용. 현재 워커 동작 설계 + "메타러너+대체데이터→LLM 예측 라인"을 **연결 OFF 상태로
-> 미리 만들어 둔 plug-in 지점** + 다음 단계를 정리한다. 토폴로지 그림: [architecture-diagram.md](../architecture-diagram.md).
-> 동작 기준은 항상 코드/테스트. 최종 갱신: 2026-06-28.
+> 팀 공유용. 현재 워커 동작 설계 + "메타러너 예측 라인(주가 BASE 앵커 + 대체데이터 가산)"의 구현·
+> 학습 상태(§5) + 다음 단계를 정리한다. 코드 수준 파이프라인: [worker-pipeline-detailed.md](./worker-pipeline-detailed.md),
+> 토폴로지 그림: [architecture-diagram.md](../architecture-diagram.md). 동작 기준은 항상 코드/테스트. 최종 갱신: 2026-06-28.
 
 ---
 
@@ -46,7 +46,7 @@ COLLECT_* → NORMALIZE_* → ANALYZE_* → ML_INFER → META_COMBINE
 - **DART·증권사리포트·대안데이터 = 근거** → 끝단 LLM 종합(`SYNTHESIZE`)이 *집계 점수 + 주가 예측 + 근거*를 합쳐 서술(temperature=0, 점수 불변).
   - **DART** → 끝단 LLM 정제(+ 치명 키워드는 `RISK_VETO` 결정론 룰). 메타러너 미사용.
   - **REPORT** → 투자의견(`signal_direction`) 컨센서스로 **결정론 방향**(`_report_consensus_direction`, 의견 없으면 no_signal 폴백).
-- 메타러너 학습 채널(`SRC_INFER`)은 **코드만 있고 라이브 미배선**(§5 참조).
+- 메타러너 예측 라인(`SRC_INFER`)은 **구현·배선됨**(주가 BASE 앵커 + 대체데이터 가산 → 7예측률). §5 참조.
 
 **소스 출력 계약**(각 분석기가 내는 `agent_results.method_detail`):
 `{ source, source_score(-1~1), direction(positive/negative/neutral/mixed/unknown), data_status(ok/partial/failed/no_signal), summary, risk_flags }`.
@@ -65,12 +65,11 @@ COLLECT_* → NORMALIZE_* → ANALYZE_* → ML_INFER → META_COMBINE
 
 ---
 
-## 5. 메타러너 예측 라인 — 주가 BASE 앵커 + 대체데이터 가산 (구현됨, C안)
+## 5. 메타러너 예측 라인 — 주가 BASE 앵커 + 대체데이터 가산 (구현됨)
 
-> 2026-06-28 재설계로 **plug-in OFF 가 아니라 제품 라인으로 구현**됐다(C안). 핵심: **주가 예측률을
-> BASE(앵커)로 두고, 각 대체데이터(datalab·특허·채용·DART·리포트)를 주가에 융합해 소스별 예측률을
-> 더한다.** 점수 헤드라인은 결정론 집계(§3) 유지, 7개 예측률은 **병행 노출**(b). 상세 다이어그램:
-> [worker-pipeline-detailed.md](./worker-pipeline-detailed.md) §C.
+> 핵심: **주가 예측률을 BASE(앵커)로 두고, 각 대체데이터(datalab·특허·채용·DART·리포트)를 주가에
+> 융합해 소스별 예측률을 더한다.** 점수 헤드라인은 결정론 집계(§3) 유지, 7개 예측률은 **병행 노출**한다.
+> 코드 수준 단계별 흐름·다이어그램: [worker-pipeline-detailed.md](./worker-pipeline-detailed.md).
 
 **구현된 흐름**:
 ```
@@ -93,11 +92,11 @@ SRC_INFER (app/ml/source_inference.py)
   `app/ml/train_price_model.py`(OHLCV 밀집 패널), 이벤트형 소스=`app/ml/train_source_models.py`.
 - **대체 4모델(datalab/hiring/dart/patent)은 미학습** — 원천 데이터 미적재(실적재 단계 필요).
 
-**⚠️ 남은 배선 1건 — SRC_INFER 라이브 트리거**:
-- 핸들러는 등록·DRAIN_ORDER 포함이지만 **라이브 경로에서 `SRC_INFER` 를 인큐하는 코드가 아직 없다**
-  → 라인이 dormant(드레인해도 안 돔). 켜려면 `ANALYZE_PRICE`(`orchestrator/price/tasks.py`) 등
-  per-stock 단계 끝에서 `enqueue(task_type=SRC_INFER, task_context={stock_code, as_of})` 추가.
-- 켜면: 아티팩트 있는 소스만 예측(현재 src_price) → 7예측률 중 가능한 것부터 채워진다.
+**SRC_INFER 라이브 트리거 — 배선됨**:
+- `ANALYZE_PRICE`(`orchestrator/price/tasks.py`)가 per-stock 1회 `SRC_INFER` 를 인큐한다 → 라인 라이브.
+- 아티팩트 있는 소스만 예측(현재 `src_price`) → 7예측률 중 가능한 것부터 채워지고, 나머지는 None(graceful).
+- E2E(로컬 PG + 학습된 src_price)로 `ANALYZE_PRICE → SRC_INFER → RETURN_COMBINE → final_signals.
+  source_predictions → SYNTHESIZE` 노출까지 검증됨.
 
 > 주의: 학습 채널은 라벨·데이터가 충분해야 의미가 있다(약신호는 단기 예측력 약함). 주가는 데이터가
 > 풍부해 BASE 로 적합하고, 대체데이터는 적재 후 가산. 점수 산식(§3)은 어느 경우든 불변.
