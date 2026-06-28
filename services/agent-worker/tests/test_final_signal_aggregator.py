@@ -119,7 +119,9 @@ class AggregateSignalTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         breakdown = json.loads(args[10])
         self.assertEqual(breakdown["DART"]["score"], 0.0)
         self.assertEqual(breakdown["PRICE"]["data_status"], "missing")
-        self.assertEqual(breakdown["ALTERNATIVE"]["data_status"], "missing")
+        self.assertEqual(breakdown["HIRING"]["data_status"], "missing")
+        self.assertEqual(breakdown["PATENT"]["data_status"], "missing")
+        self.assertEqual(breakdown["DATALAB"]["data_status"], "missing")
         self.assertEqual(breakdown["REPORT"]["data_status"], "missing")
 
     async def test_positive_and_negative_sources_publish_mixed_caution_before_score_threshold(self):
@@ -131,7 +133,7 @@ class AggregateSignalTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
                 direction="negative",
                 source_score=-0.5,
                 method_score=25.0,
-                source="ALTERNATIVE",
+                source="HIRING",
             ),
         ]
         connection = FakeConnection(rows=rows)
@@ -161,7 +163,7 @@ class AggregateSignalTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
                     direction="positive",
                     source_score=0.36,
                     method_score=68.0,
-                    source="ALTERNATIVE",
+                    source="HIRING",
                 )
             ]
         )
@@ -183,8 +185,8 @@ class AggregateSignalTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result["is_published"])
         final_call = next(call for call in connection.calls if "INSERT INTO final_signals" in call[1])
         breakdown = json.loads(final_call[2][10])
-        self.assertEqual(breakdown["ALTERNATIVE"]["analysis_result_id"], 100)
-        self.assertEqual(breakdown["ALTERNATIVE"]["score"], 0.36)
+        self.assertEqual(breakdown["HIRING"]["analysis_result_id"], 100)
+        self.assertEqual(breakdown["HIRING"]["score"], 0.36)
         self.assertEqual(breakdown["DART"]["data_status"], "missing")
         self.assertEqual(breakdown["REPORT"]["data_status"], "missing")
 
@@ -241,7 +243,8 @@ class AggregateSignalTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(breakdown["REPORT"]["score"], 1.0)
         self.assertEqual(breakdown["REPORT"]["valuation"], valuation)
         self.assertEqual(breakdown["PRICE"]["data_status"], "missing")
-        self.assertEqual(breakdown["ALTERNATIVE"]["data_status"], "missing")
+        self.assertEqual(breakdown["HIRING"]["data_status"], "missing")
+        self.assertEqual(breakdown["DATALAB"]["data_status"], "missing")
 
     async def test_unknown_source_is_excluded_and_records_validation_log(self):
         row = dart_agent_row(source="")
@@ -303,10 +306,9 @@ class AggregateSignalTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(breakdown["DART"]["data_status"], "ok")
         self.assertEqual(breakdown["PRICE"]["data_status"], "no_signal")
         self.assertEqual(breakdown["REPORT"]["data_status"], "missing")
-        # The alternative trio is nested under ALTERNATIVE so the report renders
-        # hiring/datalab as their own cards, each with its own state.
-        self.assertEqual(breakdown["ALTERNATIVE"]["hiring"]["data_status"], "ok")
-        self.assertEqual(breakdown["ALTERNATIVE"]["datalab"]["data_status"], "no_signal")
+        # 대체데이터는 묶지 않고 각자 top-level peer 로 분리(coalesce 폐기).
+        self.assertEqual(breakdown["HIRING"]["data_status"], "ok")
+        self.assertEqual(breakdown["DATALAB"]["data_status"], "no_signal")
 
     async def test_queue_handlers_registers_aggregate_signal(self):
         handlers = build_task_handlers(FakeConnection())
