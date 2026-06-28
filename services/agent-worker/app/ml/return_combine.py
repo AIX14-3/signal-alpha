@@ -134,12 +134,23 @@ class ReturnCombineTaskHandler:
                 final_score=res.final_score,
                 direction=res.direction,
             )
-        # 발행 신호 오버레이는 **통합 예측률** 기준(기존 동작 유지 — api.signals_current 자동 전파).
+        # 발행 신호 오버레이: ml_*(통합) + source_predictions(소스별 6 + 통합 1 = 7개)를
+        # final_signals 에 기록 → publisher(SELECT *)·api.signals_current(final_signals.*) 자동 전파(P3).
+        source_predictions = {
+            run_key: {
+                "final_score": res.final_score,
+                "direction": res.direction,
+                "confidence": res.confidence,
+                "model_count": res.model_count,
+            }
+            for run_key, res in [*per_source, (self._run_key, integrated)]
+        }
         overlaid = await self._analysis.update_final_signal_return_channel(
             stock_id=stock_id,
             ml_final_score=integrated.final_score,
             ml_direction=integrated.direction,
             ml_confidence=integrated.confidence,
+            source_predictions=source_predictions,
         )
         return {
             "stock_id": stock_id,
