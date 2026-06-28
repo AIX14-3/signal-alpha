@@ -28,9 +28,12 @@
 `app/orchestrator/queue/drain_daemon.py` — `processing_queue` 를 체인 순서로 끝단까지 연속 소비한다:
 
 ```
-COLLECT_* → NORMALIZE_* → ANALYZE_* → ML_INFER → META_COMBINE
+COLLECT_* → NORMALIZE_* → ANALYZE_* → SRC_INFER → RETURN_COMBINE
   → AGGREGATE_SIGNAL → RISK_VETO → SYNTHESIZE → PUBLISH_SIGNALS
 ```
+
+> 주가 변동성 ML 채널(`ML_INFER`/`META_COMBINE`)은 C안 Phase 1(#585)에서 **제거**됐다.
+> 현재 ANALYZE 다음 ML 단계는 메타러너 예측 라인(`SRC_INFER`→`RETURN_COMBINE`, §5)뿐이다.
 
 - env `QUEUE_DRAIN_DAEMON_ENABLED=true` 라야 동작(기본 off). advisory-lock 단일 기동(ops/price 데몬과 동일).
 - 단발/CI 검증: `run_worker_drain.py`(`--watch` 연속). 이전엔 큐 자동소비 주체가 없어 리포트가 발행되지 않았다.
@@ -42,7 +45,8 @@ COLLECT_* → NORMALIZE_* → ANALYZE_* → ML_INFER → META_COMBINE
 핵심 설계 결정(#11). **점수를 뒤집지 않는다**:
 
 - **주가(PRICE) ML/DL** → `RiskReport.price_prediction` 으로 **별도 정량 신호** 제공(방향+예측확률 score_100).
-- **집계 점수(`final_score`)** = `SCORING_SOURCES`(현재 `{DART, ALTERNATIVE}`) 평균 — *유지*(대체데이터 기여 보존).
+- **집계 점수(`final_score`)** = `SCORING_SOURCES`(현재 `{DART, HIRING, PATENT, DATALAB}`) 평균 — 대체데이터를
+  소스별 독립 산입(C안 Phase 2, #584 — 단일 ALTERNATIVE collapse 폐기). 점수를 뒤집지 않는다.
 - **DART·증권사리포트·대안데이터 = 근거** → 끝단 LLM 종합(`SYNTHESIZE`)이 *집계 점수 + 주가 예측 + 근거*를 합쳐 서술(temperature=0, 점수 불변).
   - **DART** → 끝단 LLM 정제(+ 치명 키워드는 `RISK_VETO` 결정론 룰). 메타러너 미사용.
   - **REPORT** → 투자의견(`signal_direction`) 컨센서스로 **결정론 방향**(`_report_consensus_direction`, 의견 없으면 no_signal 폴백).

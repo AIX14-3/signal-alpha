@@ -31,11 +31,6 @@ flowchart TB
   Q --> ndl
   Q --> ap
 
-  %% 변동성 채널 (run_key=ML)
-  ad --> mi[ML_INFER]
-  ar --> mi
-  mi --> mc["META_COMBINE<br/>run_key=ML · combined_vol(변동성)"]
-
   %% 메타러너 예측 라인 (주가 BASE 앵커 + 대체데이터 가산)
   ap --> si["SRC_INFER<br/>소스 base 모델(src_price·datalab·hiring·dart·patent)<br/>아티팩트 있는 소스만 추론(없으면 None)"]
   si --> rc["RETURN_COMBINE<br/>주가 BASE ⊕ 각 소스 → 소스별 6 + 통합 1 = 7 예측률<br/>meta_signals(run_key=SRC_*/SRC)"]
@@ -46,13 +41,12 @@ flowchart TB
   apa --> agg
   adl --> agg
   ap --> agg
-  mc --> agg
   agg["AGGREGATE_SIGNAL<br/>final_score = SCORING_SOURCES{DART,HIRING,PATENT,DATALAB} 평균<br/>PRICE/REPORT=근거 · 발행 판정(is_published)"]
 
   rc -. "source_predictions 오버레이" .-> fsig[("final_signals · meta_signals")]
   agg -.-> fsig
 
-  agg -- "발행분" --> sy["SYNTHESIZE — 끝단 LLM(temp=0, 점수 불변)<br/>집계점수 + price_prediction + source_predictions(7) + evidence + ml_risk 서술"]
+  agg -- "발행분" --> sy["SYNTHESIZE — 끝단 LLM(temp=0, 점수 불변)<br/>집계점수 + price_prediction + source_predictions(7) + evidence 서술"]
   agg -- "발행분" --> pub[PUBLISH_SIGNALS]
   sy -- "종합 뒤" --> rv["RISK_VETO<br/>치명 키워드 → 미발행/needs_review"]
   rv -. "정제 1회" .-> sy
@@ -71,10 +65,13 @@ flowchart TB
   `agent_results.method_detail` 계약(`{source, source_score(-1~1), direction, data_status, summary, risk_flags}`)을
   낸다. 검증기 `app/orchestrator/aggregation/source_contract.py`.
 
-- **변동성 채널 (run_key=ML)**: `ANALYZE_DART`/`ANALYZE_REPORT` 가 `ML_INFER` 인큐(`dart/tasks.py`,
-  `report/tasks.py`). `ML_INFER`(`ml/inference.py`)는 OHLCV 로 vol 모델(ewma/har_rv/garch/tcn) 예측 →
-  `META_COMBINE`(`ml/meta_combine.py`) stacking 결합 → `meta_signals.combined_vol`(run_key=ML). 이 채널은
-  **변동성/리스크 크기**만 산출한다(방향 예측 아님).
+- **변동성 채널 (run_key=ML) — 제거됨 (C안 Phase 1, #585)**: 이전엔 `ANALYZE_DART`/`ANALYZE_REPORT`
+  가 `ML_INFER`→`META_COMBINE` 로 OHLCV vol 모델(ewma/har_rv/garch/tcn)을 stacking 해
+  `meta_signals.combined_vol`(run_key=ML)을 산출했으나 **태스크·핸들러·모듈이 완전 제거**됐다
+  (`ml/inference.py`/`meta_combine.py` 삭제). `combined_vol` 컬럼은 스키마만 유지하고 **신규 적재가
+  끊겼다**(생산자 없음). 소비처(`SYNTHESIZE` 의 `ml_risk`, `run_recommend` 의 변동성 역가중)는
+  `run_key=ML` 행을 읽지만 신규 행이 안 생겨 사실상 무력 — 레거시 ML 행이 없는 종목은 `ml_risk=None`·
+  `vol_w=1.0`(소비 코드는 None-safe 불변). 벤더 패키지 `packages/vol-models` 는 미사용으로 잔존(무해).
 
 - **메타러너 예측 라인 (run_key=SRC)** — 아래 별도 절.
 
@@ -84,14 +81,16 @@ flowchart TB
 
 - **종합 (`SYNTHESIZE`, `synthesis/tasks.py`)**: 끝단 LLM(temperature=0). **점수·방향·발행은 불변**, 설명
   내러티브만 생성한다. 입력: 집계 점수 + `price_prediction`(주가 단독, score_breakdown.PRICE) +
-  `source_predictions`(7 예측률) + `report_valuation` + evidence + `ml_risk`(변동성). LLM 미설정 시 결정론 폴백.
+  `source_predictions`(7 예측률) + `report_valuation` + evidence. (`ml_risk` 는 `run_key=ML` 행에서
+  오는데 vol 채널 제거로 신규 적재가 없어 보통 None — 잔존 인자이나 서술 기여 미미.) LLM 미설정 시 결정론 폴백.
   종합 **뒤** `RISK_VETO`(`gates/risk_veto.py`)가 치명 키워드를 검사하고, 필요 시 LLM 정제 1회(RISK_VETO→
   SYNTHESIZE 재인큐) 후에도 치명이면 미발행.
 
 - **발행 (`PUBLISH_SIGNALS`)**: `final_signals` 등을 백엔드 DB 로 앱레벨 발행(`signal_publisher`, `SELECT *`
   동적 복사) → `api.signals_current`/`signal_detail`(읽기 계약 view, `source_predictions` 포함) → web.
 
-- **추천 (`run_recommend.py`)**: `final_signals`/`meta_signals` → `recommendations`(rank, 변동성 역가중).
+- **추천 (`run_recommend.py`)**: `final_signals`/`meta_signals` → `recommendations`(rank). 변동성
+  역가중(`vol_w`)은 `combined_vol` 신규 적재 중단으로 사실상 무력(레거시 ML 행 없으면 `vol_w=1.0`, None-safe).
 
 ## 메타러너 예측 라인 — 주가 BASE 앵커 + 대체데이터 가산
 
@@ -110,8 +109,8 @@ flowchart TB
 4. 발행 경로(`PUBLISH_SIGNALS` → `api.signals_current.source_predictions`)와 `SYNTHESIZE`(LLM 서술,
    수치 불변)로 사용자에게 노출.
 
-숫자 예측률은 메타러너/융합이 확정하고 LLM 은 서술만 한다. 변동성 채널(run_key=ML)과는 자연키로
-분리되어 `combined_vol` 을 오염시키지 않는다(SRC 행의 combined_vol 은 NULL).
+숫자 예측률은 메타러너/융합이 확정하고 LLM 은 서술만 한다. 메타러너 return 행은 `run_key=SRC` 로
+분리 적재된다(제거된 vol 채널의 `run_key=ML` 과 무관 — `combined_vol` 은 항상 NULL).
 
 ## 점수·발행 정책
 

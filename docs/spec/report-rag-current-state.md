@@ -179,7 +179,7 @@ ReportAnalyzeTaskHandler
 - LLM을 호출하지 않고 결정론 규칙으로 데이터 방향성, 점수, 검토 필요 여부를 계산합니다.
 - `analysis_results`에 Report 분석 대표 row를 저장합니다.
 - `agent_results.method_detail.report_quant.valuation`에 목표가, EPS, 적용 배수, 내재 배수, 피어 그룹, extraction source, needs_review를 저장합니다.
-- `ML_INFER` 작업을 등록하고 `aggregate_ctx.source_analysis_result_ids`에 Report `analysis_result_id`를 담아 후속 Aggregator queue 체인으로 넘깁니다. **(#11 업데이트)** 메타러너(ML_INFER) 채널은 코드만 있고 라이브 미배선이며, REPORT는 점수가 아니라 끝단 LLM 종합(SYNTHESIZE)에 합류하는 근거다. 방향은 투자의견 컨센서스 기반 결정론으로 산출한다.
+- `AGGREGATE_SIGNAL` 작업을 **직접 등록**하고 `aggregate_ctx.source_analysis_result_ids`에 Report `analysis_result_id`를 담아 후속 Aggregator queue 체인으로 넘깁니다. **(C안 Phase 1, #585)** 과거 경유하던 변동성 ML 채널(`ML_INFER`/`META_COMBINE`)은 제거됐고 `report/tasks.py`가 `enqueue_aggregate` 로 바로 넘긴다. REPORT는 점수가 아니라 끝단 LLM 종합(SYNTHESIZE)에 합류하는 근거이며, 방향은 투자의견 컨센서스 기반 결정론으로 산출한다.
 - 사용자-facing 최종 발행은 직접 하지 않고, 후속 Aggregator/gate 경로에 맡깁니다.
 
 현재 빈틈:
