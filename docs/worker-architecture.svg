@@ -107,13 +107,13 @@
     <text x="841" y="376" text-anchor="middle" class="c" fill="#334155">AGGREGATE</text>
     <text x="841" y="392" text-anchor="middle" class="lbl">소스 정렬+근거</text>
 
-    <rect x="938" y="356" width="140" height="44" rx="7" fill="#f1f5f9" stroke="#475569"/>
-    <text x="1008" y="376" text-anchor="middle" class="c" fill="#334155">RISK_VETO</text>
-    <text x="1008" y="392" text-anchor="middle" class="lbl">치명 키워드</text>
+    <rect x="938" y="356" width="140" height="44" rx="7" fill="#ecfccb" stroke="#65a30d"/>
+    <text x="1008" y="376" text-anchor="middle" class="c" fill="#3f6212">SYNTHESIZE</text>
+    <text x="1008" y="392" text-anchor="middle" class="lbl">끝단 LLM(temp=0)</text>
 
-    <rect x="1100" y="356" width="150" height="44" rx="7" fill="#ecfccb" stroke="#65a30d"/>
-    <text x="1175" y="376" text-anchor="middle" class="c" fill="#3f6212">SYNTHESIZE</text>
-    <text x="1175" y="392" text-anchor="middle" class="lbl">끝단 LLM(temp=0)</text>
+    <rect x="1100" y="356" width="150" height="44" rx="7" fill="#f1f5f9" stroke="#475569"/>
+    <text x="1175" y="376" text-anchor="middle" class="c" fill="#334155">RISK_VETO</text>
+    <text x="1175" y="392" text-anchor="middle" class="lbl">치명 키워드 → 발행 게이트</text>
 
     <rect x="1272" y="356" width="148" height="44" rx="7" fill="#f3e8ff" stroke="#9333ea"/>
     <text x="1346" y="376" text-anchor="middle" class="c" fill="#6b21a8">PUBLISH</text>
@@ -127,15 +127,15 @@
   <line x1="1250" y1="378" x2="1271" y2="378" stroke="#9333ea" stroke-width="1.8" marker-end="url(#arrP)"/>
 
   <!-- ============ ③ 소스 라우팅 ============ -->
-  <text x="40" y="478" class="sec">③ 소스별 라우팅 — 점수=주가(별도 예측) · DART/REPORT/대안=근거 · 끝단 LLM이 합쳐 서술 (메타러너 미사용)</text>
+  <text x="40" y="478" class="sec">③ 소스별 라우팅 — 헤드라인 점수=결정론 집계(DART+대체데이터) · 주가=별도 예측(price_prediction) · REPORT=근거 · 끝단 LLM이 합쳐 서술</text>
   <rect x="40" y="492" width="1400" height="300" rx="10" fill="#f8fafc" stroke="#e2e8f0"/>
 
   <!-- PRICE (score lane) -->
   <rect x="64" y="516" width="300" height="96" rx="9" fill="#d1fae5" stroke="#059669" stroke-width="2"/>
-  <text x="80" y="540" class="h" fill="#065f46">PRICE — 주가 ML/DL</text>
-  <text x="80" y="561" class="s">analyzers/price (정량 예측)</text>
+  <text x="80" y="540" class="h" fill="#065f46">PRICE — 주가 기술지표(규칙)</text>
+  <text x="80" y="561" class="s">analyzers/price · indicators/rules (ML/DL 아님)</text>
   <text x="80" y="580" class="s">정량 예측 → score_breakdown.PRICE</text>
-  <text x="80" y="599" class="albl" fill="#047857">⇒ RiskReport.price_prediction (별도 정량 신호)</text>
+  <text x="80" y="599" class="albl" fill="#047857">⇒ price_prediction · ML/DL 모델은 §4 src_price</text>
 
   <!-- evidence sources -->
   <rect x="64" y="636" width="300" height="132" rx="9" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.5"/>
