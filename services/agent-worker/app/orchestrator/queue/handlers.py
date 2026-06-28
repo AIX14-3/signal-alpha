@@ -5,8 +5,10 @@ from typing import Any
 from app.core.config import get_settings
 from app.orchestrator.queue.task_types import (
     AGGREGATE_SIGNAL,
-    ANALYZE_ALTERNATIVE,
     ANALYZE_DART,
+    ANALYZE_DATALAB,
+    ANALYZE_HIRING,
+    ANALYZE_PATENT,
     ANALYZE_PRICE,
     ANALYZE_REPORT,
     COLLECT_DART,
@@ -29,6 +31,7 @@ from app.orchestrator.queue.tasks import TaskHandler
 
 
 def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
+    from app.analyzers.registry import registration_for
     from app.orchestrator.alternative.tasks import (
         AlternativeAnalyzeTaskHandler,
         DataLabNormalizeTaskHandler,
@@ -94,5 +97,16 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
         NORMALIZE_DATALAB: DataLabNormalizeTaskHandler(connection),
         ENRICH_PATENT: PatentEnrichTaskHandler(connection),
         ENRICH_HIRING: HiringSkillEnrichTaskHandler(connection),
-        ANALYZE_ALTERNATIVE: AlternativeAnalyzeTaskHandler(connection),
+        # Per-source analysis stages (C안 Phase 3) — one handler per source, each
+        # given its single-source registration so the shared handler analyzes ONE
+        # source and publishes its own run_key signal.
+        ANALYZE_HIRING: AlternativeAnalyzeTaskHandler(
+            connection, registrations=[registration_for("HIRING")]
+        ),
+        ANALYZE_PATENT: AlternativeAnalyzeTaskHandler(
+            connection, registrations=[registration_for("PATENT")]
+        ),
+        ANALYZE_DATALAB: AlternativeAnalyzeTaskHandler(
+            connection, registrations=[registration_for("DATALAB")]
+        ),
     }

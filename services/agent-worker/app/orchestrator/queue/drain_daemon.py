@@ -20,8 +20,10 @@ from app.orchestrator.queue.handlers import build_task_handlers
 from app.orchestrator.queue.tasks import QueueTaskRunner
 from app.orchestrator.queue.task_types import (
     AGGREGATE_SIGNAL,
-    ANALYZE_ALTERNATIVE,
     ANALYZE_DART,
+    ANALYZE_DATALAB,
+    ANALYZE_HIRING,
+    ANALYZE_PATENT,
     ANALYZE_PRICE,
     ANALYZE_REPORT,
     COLLECT_DART,
@@ -64,7 +66,10 @@ DRAIN_ORDER: tuple[str, ...] = (
     NORMALIZE_PATENT,
     ENRICH_PATENT,
     NORMALIZE_DATALAB,
-    ANALYZE_ALTERNATIVE,
+    # 대체데이터 소스별 분석 스테이지 (C안 Phase 3 — 1태스크=1소스)
+    ANALYZE_DATALAB,
+    ANALYZE_HIRING,
+    ANALYZE_PATENT,
     ANALYZE_PRICE,
     # 메타러너 예측 라인 (주가 BASE 앵커 + 소스 return 채널)
     SRC_INFER,

@@ -17,13 +17,10 @@ flowchart TB
   subgraph REPORT["증권사 리포트"]
     cr[COLLECT_REPORT] --> prc[PROCESS_REPORT] --> nr[NORMALIZE_REPORT] --> ar[ANALYZE_REPORT]
   end
-  subgraph ALT["Alternative (coalesce)"]
-    nh[NORMALIZE_HIRING] --> eh[ENRICH_HIRING]
-    npa[NORMALIZE_PATENT] --> ep[ENRICH_PATENT]
-    ndl[NORMALIZE_DATALAB]
-    eh --> aa[ANALYZE_ALTERNATIVE]
-    ep --> aa
-    ndl --> aa
+  subgraph ALT["Alternative (소스별 독립 분석·점수)"]
+    nh[NORMALIZE_HIRING] --> eh[ENRICH_HIRING] --> ah[ANALYZE_HIRING]
+    npa[NORMALIZE_PATENT] --> ep[ENRICH_PATENT] --> apa[ANALYZE_PATENT]
+    ndl[NORMALIZE_DATALAB] --> adl[ANALYZE_DATALAB]
   end
   ap[ANALYZE_PRICE]
 
@@ -45,10 +42,12 @@ flowchart TB
 
   ad --> agg
   ar --> agg
-  aa --> agg
+  ah --> agg
+  apa --> agg
+  adl --> agg
   ap --> agg
   mc --> agg
-  agg["AGGREGATE_SIGNAL<br/>final_score = SCORING_SOURCES{DART,ALTERNATIVE} 평균<br/>PRICE/REPORT=근거 · 발행 판정(is_published)"]
+  agg["AGGREGATE_SIGNAL<br/>final_score = SCORING_SOURCES{DART,HIRING,PATENT,DATALAB} 평균<br/>PRICE/REPORT=근거 · 발행 판정(is_published)"]
 
   rc -. "source_predictions 오버레이" .-> fsig[("final_signals · meta_signals")]
   agg -.-> fsig
@@ -66,8 +65,9 @@ flowchart TB
 ## 단계별 동작
 
 - **수집 → 정규화 → 분석 (소스별)**: DART(`COLLECT→NORMALIZE→ANALYZE`), 리포트(`COLLECT→PROCESS→
-  NORMALIZE→ANALYZE`), Alternative(hiring/patent `NORMALIZE→ENRICH`, datalab `NORMALIZE` → `ANALYZE_ALTERNATIVE`
-  로 coalesce — 다수 소스가 DART 를 3:1 로 압도하지 않게), 주가(`ANALYZE_PRICE`). 각 분석기는
+  NORMALIZE→ANALYZE`), Alternative(소스별 독립 분석 스테이지 — hiring `NORMALIZE→ENRICH→ANALYZE_HIRING`,
+  patent `NORMALIZE→ENRICH→ANALYZE_PATENT`, datalab `NORMALIZE→ANALYZE_DATALAB`; 각 소스가 자기 run_key 로
+  독립 final_signals 1 행을 내고 집계서 동등 peer 로 산입), 주가(`ANALYZE_PRICE`). 각 분석기는
   `agent_results.method_detail` 계약(`{source, source_score(-1~1), direction, data_status, summary, risk_flags}`)을
   낸다. 검증기 `app/orchestrator/aggregation/source_contract.py`.
 
@@ -78,8 +78,8 @@ flowchart TB
 
 - **메타러너 예측 라인 (run_key=SRC)** — 아래 별도 절.
 
-- **집계 (`AGGREGATE_SIGNAL`, `aggregation/tasks.py`)**: `final_score` = `SCORING_SOURCES={DART, ALTERNATIVE}`
-  평균(점수를 뒤집지 않음). PRICE/REPORT 는 점수에 산입하지 않고 **근거**로만 수집. 이 단계가 발행 판정
+- **집계 (`AGGREGATE_SIGNAL`, `aggregation/tasks.py`)**: `final_score` = `SCORING_SOURCES={DART, HIRING, PATENT, DATALAB}`
+  평균(소스별 독립 산입, 점수를 뒤집지 않음). PRICE/REPORT 는 점수에 산입하지 않고 **근거**로만 수집. 이 단계가 발행 판정
   (`is_published`/`warning_level`/`needs_review`) 게이트이며, 발행분만 `SYNTHESIZE` 와 `PUBLISH_SIGNALS` 를 인큐한다.
 
 - **종합 (`SYNTHESIZE`, `synthesis/tasks.py`)**: 끝단 LLM(temperature=0). **점수·방향·발행은 불변**, 설명

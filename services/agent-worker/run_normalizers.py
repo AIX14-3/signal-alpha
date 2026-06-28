@@ -2,8 +2,8 @@
 
 Collectors enqueue ``NORMALIZE_*`` tasks (raw_documents → source_documents/
 signal_events). The agent-worker lifespan does **not** auto-drain the queue (only
-the price/ops daemons run), and ``run_analyzers.py`` drains **only**
-``ANALYZE_ALTERNATIVE``. So between "collect" and "analyze" the normalize step has
+the price/ops daemons run), and ``run_analyzers.py`` drains **only** the
+``ANALYZE_{SOURCE}`` stages. So between "collect" and "analyze" the normalize step has
 no driver. This CLI fills that gap so the scheduled pipeline
 (collect → normalize → analyze) runs end to end on a runner that attaches directly
 to the DB — no publicly reachable worker required.

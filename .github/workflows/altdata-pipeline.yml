@@ -3,12 +3,12 @@ name: AltData Pipeline
 # 대체데이터 파이프라인 1회 실행: 수집 → 정규화 → 분석 → final_signals 발행.
 #
 # 왜 필요한가: 워커(배포 시 GCE)는 큐를 자동으로 비우지 않는다(가격/ops 데몬만 상시).
-# 또 run_analyzers.py 는 ANALYZE_ALTERNATIVE 만 드레인하므로, 수집이 쌓은 NORMALIZE_*
+# 또 run_analyzers.py 는 ANALYZE_{DATALAB,HIRING,PATENT} 만 드레인하므로, 수집이 쌓은 NORMALIZE_*
 # 단계를 비워줄 드라이버가 없다. 이 워크플로가 Actions 러너에서 세 CLI 를 순서대로 돌려
 # 큐를 끝까지 비운다. CLI 는 DB 에 직접 붙으므로 공개 워커가 필요 없다.
 #   run_collectors.py  → raw_documents + NORMALIZE_* enqueue
 #   run_normalizers.py → NORMALIZE_* 드레인 → source_documents/signal_events
-#   run_analyzers.py   → ANALYZE_ALTERNATIVE enqueue+드레인 → final_signals(소스별 1행)
+#   run_analyzers.py   → ANALYZE_{DATALAB,HIRING,PATENT} enqueue+드레인 → final_signals(소스별 1행)
 #
 # 활성화 전제 — 리포지토리 Secrets(Settings > Secrets and variables > Actions):
 #   DATABASE_URL                         (worker 롤 또는 owner)

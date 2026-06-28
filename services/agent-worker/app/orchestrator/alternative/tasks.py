@@ -5,19 +5,20 @@ Converges the Alternative sources onto the same queue model DART uses
 
   NORMALIZE_HIRING / NORMALIZE_PATENT
       raw detail rows -> source_documents + signal_events + signal_metrics
-      -> enqueue ANALYZE_ALTERNATIVE (per stock, deduped by stock + as_of)
+      -> (ENRICH_HIRING / ENRICH_PATENT) -> enqueue ANALYZE_HIRING / ANALYZE_PATENT
+      (per stock, deduped by stock + as_of)
   NORMALIZE_DATALAB (router; no signal_events — DataLab raw lives in a separate
       datalab_raw_documents table with no source_documents FK anchor)
-      category_id -> datalab_category_stocks -> enqueue ANALYZE_ALTERNATIVE
-  ANALYZE_ALTERNATIVE (per stock, per source)
+      category_id -> datalab_category_stocks -> enqueue ANALYZE_DATALAB
+  ANALYZE_DATALAB / ANALYZE_HIRING / ANALYZE_PATENT (per stock, ONE source each)
       reuses build_registry()/loaders/analyzers; each source's SourceResult is
       mapped to its OWN signal (build_source_signal) and persisted under its own
       run_key via AlternativeSignalPersistence — no cross-source merge. The three
-      sources become peer signals (like DART), not one blended row.
+      sources are peer signals (like DART), each its own pipeline stage (C안 Phase 3).
 
 The analysis granularity is per-stock-per-source (windowed): the Alternative
-analyzers score aggregated windows, and a single ANALYZE task publishes one
-final_signals row per registered source for that stock.
+analyzers score aggregated windows, and each ANALYZE_{SOURCE} task publishes one
+final_signals row for that source+stock.
 """
 
 from __future__ import annotations
@@ -42,7 +43,9 @@ from app.analyzers.patent.normalize_rules import classify_patent_filing
 from app.analyzers.registry import SourceRegistration, build_registry
 from app.orchestrator.alternative_persistence import AlternativeSignalPersistence
 from app.orchestrator.queue.task_types import (
-    ANALYZE_ALTERNATIVE,
+    ANALYZE_DATALAB,
+    ANALYZE_HIRING,
+    ANALYZE_PATENT,
     ENRICH_HIRING,
     ENRICH_PATENT,
 )
@@ -56,13 +59,22 @@ from signal_alpha_data_access.repositories import (
 
 logger = logging.getLogger(__name__)
 
+# Each Alternative source routes to its own ANALYZE_{SOURCE} stage (C안 Phase 3).
+# Keyed by the producer's ``SOURCE_TYPE`` so a normalize/enrich handler enqueues
+# the matching per-source analysis. A new source adds one entry here.
+ANALYZE_TASK_BY_SOURCE = {
+    "HIRING": ANALYZE_HIRING,
+    "PATENT": ANALYZE_PATENT,
+    "DATALAB": ANALYZE_DATALAB,
+}
+
 
 class _AltNormalizeBase:
     """Shared normalize flow for raw sources anchored in ``raw_documents``.
 
     Subclasses provide the source type, the raw-detail loader, and the
     per-document classification; the base handles source_document/signal_event
-    upserts and the per-stock ANALYZE_ALTERNATIVE enqueue.
+    upserts and the per-stock ANALYZE_{SOURCE} enqueue.
     """
 
     SOURCE_TYPE: str = ""
@@ -182,6 +194,7 @@ class _AltNormalizeBase:
             queue_repository=self._queue_repository,
             stock_ids=stock_ids,
             as_of=as_of,
+            task_type=ANALYZE_TASK_BY_SOURCE[self.SOURCE_TYPE],
         )
 
 
@@ -225,7 +238,7 @@ class HiringNormalizeTaskHandler(_AltNormalizeBase):
         """Insert OCR enrichment before analysis: enqueue ENRICH_HIRING per stock.
 
         Each ENRICH_HIRING carries the just-normalized ``raw_document_ids`` and
-        enqueues the per-stock ANALYZE_ALTERNATIVE once the poster skills are
+        enqueues the per-stock ANALYZE_HIRING once the poster skills are
         cached, so the hiring score sees the freshly extracted tech demand. With
         nothing normalized there is nothing to enrich, so fall back to the plain
         analysis enqueue (keeps an empty run from stalling the pipeline). Mirrors
@@ -236,6 +249,7 @@ class HiringNormalizeTaskHandler(_AltNormalizeBase):
                 queue_repository=self._queue_repository,
                 stock_ids=stock_ids,
                 as_of=as_of,
+                task_type=ANALYZE_HIRING,
             )
         task_ids: list[int] = []
         for stock_id in dict.fromkeys(stock_ids):  # distinct, order-preserving
@@ -297,7 +311,7 @@ class PatentNormalizeTaskHandler(_AltNormalizeBase):
         """Insert LLM enrichment before analysis: enqueue ENRICH_PATENT per stock.
 
         Each ENRICH_PATENT carries the just-normalized ``raw_document_ids`` and
-        enqueues the per-stock ANALYZE_ALTERNATIVE once enrichment is cached, so
+        enqueues the per-stock ANALYZE_PATENT once enrichment is cached, so
         the patent score is built on the freshly extracted significance features.
         With nothing normalized there is nothing to enrich, so fall back to the
         plain analysis enqueue (keeps an empty run from stalling the pipeline).
@@ -307,6 +321,7 @@ class PatentNormalizeTaskHandler(_AltNormalizeBase):
                 queue_repository=self._queue_repository,
                 stock_ids=stock_ids,
                 as_of=as_of,
+                task_type=ANALYZE_PATENT,
             )
         task_ids: list[int] = []
         for stock_id in dict.fromkeys(stock_ids):  # distinct, order-preserving
@@ -335,8 +350,8 @@ class DataLabNormalizeTaskHandler:
 
     The task carries ``source_raw_ids`` = [datalab_raw_documents.id]; the loader
     resolves each row's ``category_id`` → mapped stocks. After normalization it
-    enqueues one deduped ANALYZE_ALTERNATIVE per distinct stock (same as
-    hiring/patent), keeping the windowed cross-source analysis path intact.
+    enqueues one deduped ANALYZE_DATALAB per distinct stock (same shape as
+    hiring/patent's per-source analysis), keeping the windowed analysis path intact.
     """
 
     SOURCE_TYPE = "DATALAB"
@@ -431,6 +446,7 @@ class DataLabNormalizeTaskHandler:
             queue_repository=self._queue_repository,
             stock_ids=stock_ids,
             as_of=as_of,
+            task_type=ANALYZE_DATALAB,
         )
         return {
             "normalized_count": normalized_count,
@@ -475,7 +491,7 @@ class PatentEnrichTaskHandler:
     Enriches only the patents named in ``source_raw_ids`` (the rows the matching
     NORMALIZE_PATENT task just promoted), caches the features in
     ``patent_raw_details.llm_features``, then enqueues the per-stock
-    ANALYZE_ALTERNATIVE so analysis runs on the freshly extracted significance.
+    ANALYZE_PATENT so analysis runs on the freshly extracted significance.
 
     Best-effort by design: when no Gemini key is configured (or the client cannot
     be built) it skips the LLM step and still enqueues analysis, so the pipeline
@@ -520,6 +536,7 @@ class PatentEnrichTaskHandler:
             queue_repository=self._queue_repository,
             stock_ids=stock_ids,
             as_of=as_of,
+            task_type=ANALYZE_PATENT,
         )
         return {
             "enriched": stats,
@@ -554,7 +571,7 @@ class HiringSkillEnrichTaskHandler:
     Enriches only the postings named in ``source_raw_ids`` (the rows the matching
     NORMALIZE_HIRING task just promoted): reads each poster image, OCRs it with
     Tesseract, caches the extracted skill set in ``hiring_raw_details.ocr_skills``,
-    then enqueues the per-stock ANALYZE_ALTERNATIVE so analysis runs on the fresh
+    then enqueues the per-stock ANALYZE_HIRING so analysis runs on the fresh
     skills. Mirrors ``PatentEnrichTaskHandler``.
 
     Best-effort by design: when the OCR processor cannot be built (Pillow/
@@ -599,6 +616,7 @@ class HiringSkillEnrichTaskHandler:
             queue_repository=self._queue_repository,
             stock_ids=stock_ids,
             as_of=as_of,
+            task_type=ANALYZE_HIRING,
         )
         return {
             "enriched": stats,
@@ -627,12 +645,14 @@ class HiringSkillEnrichTaskHandler:
 class AlternativeAnalyzeTaskHandler:
     """Per-stock, per-source analysis — the queue-triggered AlternativeAgent.
 
-    Reuses the registered loaders/analyzers, but each source is now published as
-    its OWN signal (build_source_signal → its own run_key) instead of being merged
-    cross-source. Runs the sources **sequentially** on the handler's single asyncpg
-    connection (one connection cannot serve concurrent queries). With ~3 sources
-    per stock the lost concurrency is negligible; batch throughput comes from
-    running many ANALYZE_ALTERNATIVE tasks via the queue's run-batch loop.
+    One handler instance is registered per ANALYZE_{SOURCE} stage (DATALAB/HIRING/
+    PATENT) with a single-source ``registrations`` list, so each task analyzes ONE
+    source (C안 Phase 3). The class stays source-agnostic — it iterates whatever
+    registrations it is given (one, or the full trio for ad-hoc/CLI use). Each
+    source is published as its OWN signal (build_source_signal → its own run_key),
+    never merged cross-source. Runs its registration(s) **sequentially** on the
+    handler's single asyncpg connection; batch throughput comes from running many
+    ANALYZE_{SOURCE} tasks via the queue's run-batch loop.
     """
 
     def __init__(
@@ -826,13 +846,13 @@ def _from_output(output: SourceAgentOutput) -> SourceResult:
 
 
 def analysis_task_context(as_of: str) -> dict[str, Any]:
-    """Canonical ANALYZE_ALTERNATIVE dedupe key, shared by every producer.
+    """Canonical per-source analysis (ANALYZE_{SOURCE}) dedupe key, shared by every producer.
 
-    enqueue(dedupe=True) matches stock_id separately and compares task_context
-    with IS NOT DISTINCT FROM, so the context must carry ONLY the stable as_of
-    (YYYY-MM-DD) and nothing stock-specific (e.g. stock_code/ticker). Every
-    producer (run_analyzers.py and _enqueue_analysis_for_stocks) builds its
-    context here so the same stock+day always yields an identical key and
+    enqueue(dedupe=True) matches stock_id + task_type separately and compares
+    task_context with IS NOT DISTINCT FROM, so the context must carry ONLY the
+    stable as_of (YYYY-MM-DD) and nothing stock-specific (e.g. stock_code/ticker).
+    Every producer (run_analyzers.py and _enqueue_analysis_for_stocks) builds its
+    context here so the same stock+day+source always yields an identical key and
     dedupes to one task; diverging the shape between producers silently defeats
     the dedupe and piles up duplicate analysis tasks.
     """
@@ -844,13 +864,20 @@ async def _enqueue_analysis_for_stocks(
     queue_repository: ProcessingQueueRepository,
     stock_ids: list[int],
     as_of: str,
+    task_type: str,
 ) -> list[int]:
-    """Enqueue one deduped ANALYZE_ALTERNATIVE per distinct stock."""
+    """Enqueue one deduped per-source analysis (``task_type``) per distinct stock.
+
+    ``task_type`` is the source's own ANALYZE_{SOURCE} stage (e.g. ANALYZE_HIRING)
+    so each source routes to its own handler. The dedupe key stays as_of-only — the
+    task_type already separates the sources, so the same stock+day yields one task
+    per source.
+    """
     task_ids: list[int] = []
     for stock_id in dict.fromkeys(stock_ids):  # distinct, order-preserving
         task_id = await queue_repository.enqueue(
             stock_id=stock_id,
-            task_type=ANALYZE_ALTERNATIVE,
+            task_type=task_type,
             priority="batch",
             task_context=analysis_task_context(as_of),
             dedupe=True,
@@ -887,7 +914,7 @@ def _source_raw_ids(value: Any) -> list[int]:
 def _as_of_str(value: Any = None) -> str:
     """Normalize any as_of input to a stable ``YYYY-MM-DD`` string.
 
-    Defaults to today. Used for the ANALYZE_ALTERNATIVE dedupe key so the same
+    Defaults to today. Used for the ANALYZE_{SOURCE} dedupe key so the same
     stock on the same day always produces the identical task_context.
     """
     if value in (None, ""):

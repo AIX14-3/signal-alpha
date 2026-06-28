@@ -249,7 +249,7 @@ class HiringNormalizeHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(event_call[2][6], "positive")         # signal_direction
 
         # OCR enrichment is slotted before analysis: normalize → ENRICH_HIRING
-        # (which enqueues ANALYZE_ALTERNATIVE once skills are cached).
+        # (which enqueues ANALYZE_HIRING once skills are cached).
         enqueues = conn._enqueue_inserts()
         self.assertEqual(len(enqueues), 1)
         self.assertEqual(enqueues[0][2][1], "ENRICH_HIRING")       # task_type
@@ -332,10 +332,10 @@ class DataLabNormalizeHandlerTest(unittest.IsolatedAsyncioTestCase):
         metric_call = conn._inserts("signal_metrics")[0]
         self.assertEqual(metric_call[2][1], "datalab_search_index")
 
-        # one deduped ANALYZE_ALTERNATIVE per distinct stock
+        # one deduped ANALYZE_DATALAB per distinct stock
         enqueues = conn._enqueue_inserts()
         self.assertEqual({e[2][0] for e in enqueues}, {1, 3})
-        self.assertTrue(all(e[2][1] == "ANALYZE_ALTERNATIVE" for e in enqueues))
+        self.assertTrue(all(e[2][1] == "ANALYZE_DATALAB" for e in enqueues))
 
     async def test_same_category_observations_resolve_mapping_once(self):
         # Two observations of the same category (different dates) × 2 stocks = 4
@@ -712,15 +712,34 @@ class HandlerRegistrationTest(unittest.IsolatedAsyncioTestCase):
     async def test_build_task_handlers_registers_alternative_types(self):
         from app.orchestrator.queue.handlers import build_task_handlers
         from app.orchestrator.queue.task_types import (
-            ANALYZE_ALTERNATIVE,
+            ANALYZE_DATALAB,
+            ANALYZE_HIRING,
+            ANALYZE_PATENT,
             NORMALIZE_DATALAB,
             NORMALIZE_HIRING,
             NORMALIZE_PATENT,
         )
 
         handlers = build_task_handlers(FakeConnection())
-        for task_type in (NORMALIZE_HIRING, NORMALIZE_PATENT, NORMALIZE_DATALAB, ANALYZE_ALTERNATIVE):
+        for task_type in (
+            NORMALIZE_HIRING,
+            NORMALIZE_PATENT,
+            NORMALIZE_DATALAB,
+            ANALYZE_DATALAB,
+            ANALYZE_HIRING,
+            ANALYZE_PATENT,
+        ):
             self.assertIn(task_type, handlers)
+
+        # Each ANALYZE_{SOURCE} handler is registered with exactly its one source
+        # (C안 Phase 3 — the former single ANALYZE_ALTERNATIVE handler split per source).
+        for task_type, source in (
+            (ANALYZE_DATALAB, "DATALAB"),
+            (ANALYZE_HIRING, "HIRING"),
+            (ANALYZE_PATENT, "PATENT"),
+        ):
+            registrations = handlers[task_type]._registrations
+            self.assertEqual([r.source for r in registrations], [source])
 
     async def test_runner_no_longer_skips_alternative_task(self):
         # Regression for #117: an Alt task with a registered handler runs instead
