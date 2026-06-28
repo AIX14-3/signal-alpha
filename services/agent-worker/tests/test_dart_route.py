@@ -225,13 +225,7 @@ class DartRouteTest(unittest.TestCase):
             return {"normalized_count": 1, "analysis_task_ids": [301]}
 
         async def analyze_handler(task):
-            return {"analysis_result_id": 10, "ml_infer_task_id": 401}
-
-        async def ml_handler(task):
-            return {"meta_combine_task_id": 501}
-
-        async def meta_handler(task):
-            return {"aggregate_task_id": 601}
+            return {"analysis_result_id": 10, "aggregate_task_id": 601}
 
         async def aggregate_handler(task):
             return {"final_signal_id": 900, "synthesize_task_id": 701}
@@ -248,8 +242,6 @@ class DartRouteTest(unittest.TestCase):
             "collect_dart": collect_handler,
             "normalize_dart": normalize_handler,
             "analyze_dart": analyze_handler,
-            "ml_infer": ml_handler,
-            "meta_combine": meta_handler,
             "aggregate_signal": aggregate_handler,
             "synthesize": synthesize_handler,
             "risk_veto": risk_veto_handler,
@@ -275,8 +267,6 @@ class DartRouteTest(unittest.TestCase):
         self.assertEqual(payload["normalize"][0]["task_id"], 201)
         self.assertEqual(payload["analyze"][0]["status"], "success")
         self.assertEqual(payload["analyze"][0]["task_id"], 301)
-        self.assertEqual(payload["ml_infer"][0]["status"], "success")
-        self.assertEqual(payload["meta_combine"][0]["status"], "success")
         self.assertEqual(payload["aggregate_signal"][0]["status"], "success")
         self.assertEqual(payload["synthesize"][0]["status"], "success")
         self.assertEqual(payload["risk_veto"][0]["status"], "success")
@@ -284,7 +274,6 @@ class DartRouteTest(unittest.TestCase):
         self.assertEqual(payload["final_signals"]["count"], 1)
         self.assertEqual(payload["final_signals"]["items"][0]["run_key"], "AGGREGATED")
         self.assertEqual(payload["queue_summary"]["normalize_pending_count"], 0)
-        self.assertEqual(payload["queue_summary"]["ml_infer_run_count"], 1)
         self.assertFalse(payload["queue_summary"]["aggregate_signal_limit_reached"])
         self.assertFalse(payload["queue_summary"]["normalize_limit_reached"])
 

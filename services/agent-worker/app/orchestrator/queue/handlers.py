@@ -13,8 +13,6 @@ from app.orchestrator.queue.task_types import (
     COLLECT_REPORT,
     ENRICH_HIRING,
     ENRICH_PATENT,
-    META_COMBINE,
-    ML_INFER,
     NORMALIZE_DART,
     NORMALIZE_DATALAB,
     NORMALIZE_HIRING,
@@ -46,8 +44,6 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
     )
     from app.orchestrator.aggregation.tasks import AggregateSignalTaskHandler
     from app.orchestrator.price.tasks import PriceAnalyzeTaskHandler
-    from app.ml.inference import MlInferTaskHandler
-    from app.ml.meta_combine import MetaCombineTaskHandler
     from app.ml.return_combine import ReturnCombineTaskHandler
     from app.ml.source_inference import SrcInferTaskHandler
     from app.publish.publish_task import PublishSignalsTaskHandler
@@ -79,8 +75,6 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
         ),
         ANALYZE_PRICE: PriceAnalyzeTaskHandler(connection),
         AGGREGATE_SIGNAL: AggregateSignalTaskHandler(connection),
-        ML_INFER: MlInferTaskHandler(connection),
-        META_COMBINE: MetaCombineTaskHandler(connection),
         # 소스별 base 모델 추론(#525 Phase 3). run_key=SRC 로 분리 적재(D4). 성공 예측이
         # 있으면 RETURN_COMBINE 을 인큐해 return 채널을 결합한다.
         SRC_INFER: SrcInferTaskHandler(connection),

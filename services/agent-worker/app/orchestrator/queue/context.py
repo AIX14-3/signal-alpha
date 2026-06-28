@@ -22,9 +22,9 @@ async def enqueue_aggregate(
 ) -> int | None:
     """선형 체인에서 게이트2(AGGREGATE_SIGNAL)를 인큐한다.
 
-    ``aggregate_ctx`` 는 DartAnalyze가 만들어 ML_INFER→META_COMBINE 를 불투명하게 통과시킨
-    컨텍스트(``signal_date``·``stock_code``·``aggregation_key``). AGGREGATE는 이제 fan-in
-    방식이라 ``source_analysis_result_ids`` 없이도 (stock_id, signal_date)로 모든 소스를 모은다 —
+    ``aggregate_ctx`` 는 ANALYZE_DART/REPORT 가 만들어 AGGREGATE 로 직접 넘기는
+    컨텍스트(``signal_date``·``stock_code``·``aggregation_key``). AGGREGATE는 fan-in 방식이라
+    ``source_analysis_result_ids`` 없이도 (stock_id, signal_date)로 모든 소스를 모은다 —
     ids 가 있으면 그 목록만 집계하는 레거시 단일 프로듀서 경로로 동작한다.
     """
     if not aggregate_ctx:

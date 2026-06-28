@@ -213,7 +213,7 @@ class DartAnalyzeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         # Phase 0(#546): 피처 전용 — 판정 없음(unknown/0), data_status=no_signal 로 AGGREGATE 제외.
         self.assertEqual(result["direction"], "unknown")
         self.assertEqual(result["score"], 0.0)
-        self.assertIsNotNone(result["ml_infer_task_id"])
+        self.assertIsNotNone(result["aggregate_task_id"])
         self.assertTrue(any("INSERT INTO analysis_results" in call[1] for call in connection.calls))
         analysis_call = next(call for call in connection.calls if "INSERT INTO analysis_results" in call[1])
         self.assertEqual(analysis_call[2][5], 50.0)
@@ -226,18 +226,15 @@ class DartAnalyzeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(method_detail["source_score"], 0.0)
         self.assertEqual(method_detail["graph"], "dart_analysis_v1")
         self.assertEqual(method_detail["graph_nodes"], ["validate_input", "analyze", "validate_output"])
-        # 선형 체인: 분석 후 트리거는 ML_INFER이고, AGGREGATE가 나중에 쓸 컨텍스트는
-        # task_context.aggregate_ctx 로 실어 ML→META가 통과시킨다.
+        # 선형 체인: 분석 후 곧장 AGGREGATE 인큐(주가 변동성 ML 채널 제거 — C안).
         queue_call = next(call for call in connection.calls if "INSERT INTO processing_queue" in call[1])
-        self.assertEqual(queue_call[2][1], "ml_infer")
+        self.assertEqual(queue_call[2][1], "aggregate_signal")
         task_context = json.loads(queue_call[2][6])
         self.assertEqual(task_context["stock_code"], "005930")
-        self.assertEqual(task_context["run_key"], "ML")
-        aggregate_ctx = task_context["aggregate_ctx"]
         # AGGREGATE 는 fan-in — DART 단일 분석결과 id 를 더 이상 싣지 않는다.
-        self.assertNotIn("source_analysis_result_ids", aggregate_ctx)
-        self.assertEqual(aggregate_ctx["signal_date"], "2026-06-08")
-        self.assertEqual(aggregate_ctx["run_key"], "AGGREGATED")
+        self.assertNotIn("source_analysis_result_ids", task_context)
+        self.assertEqual(task_context["signal_date"], "2026-06-08")
+        self.assertEqual(task_context["run_key"], "AGGREGATED")
 
     async def test_handler_ignores_llm_even_for_high_impact_dart_event(self):
         connection = FakeConnection(
