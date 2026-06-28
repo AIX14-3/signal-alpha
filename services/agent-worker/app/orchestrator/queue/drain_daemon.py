@@ -38,7 +38,6 @@ from app.orchestrator.queue.task_types import (
     PROCESS_REPORT,
     PUBLISH_SIGNALS,
     RETURN_COMBINE,
-    RISK_VETO,
     SRC_INFER,
     SYNTHESIZE,
 )
@@ -74,9 +73,8 @@ DRAIN_ORDER: tuple[str, ...] = (
     # 메타러너 예측 라인 (주가 BASE 앵커 + 소스 return 채널)
     SRC_INFER,
     RETURN_COMBINE,
-    # 집계 → 게이트 → 종합 → 발행
+    # 집계 → 종합 → 발행 (발행 차단 게이트 폐기 — 종합 결과를 곧장 발행)
     AGGREGATE_SIGNAL,
-    RISK_VETO,
     SYNTHESIZE,
     PUBLISH_SIGNALS,
 )

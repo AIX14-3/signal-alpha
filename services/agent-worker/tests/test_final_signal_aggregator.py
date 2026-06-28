@@ -98,11 +98,10 @@ class AggregateSignalTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["warning_level"], "CAUTION")
         self.assertTrue(result["needs_review"])
         self.assertTrue(result["is_published"])
-        # 발행분(근거 이벤트 있음)은 끝단 LLM 종합(SYNTHESIZE)으로만 보내고, 백엔드 발행
-        # (PUBLISH_SIGNALS)은 RISK_VETO 게이트 뒤로 미룬다 — AGGREGATE 가 직접 인큐하지 않는다
-        # (치명 키워드 신호가 veto 전에 백엔드로 새는 것을 방지).
+        # 발행은 무조건 — AGGREGATE 는 항상 끝단 LLM 종합(SYNTHESIZE)을 인큐하고, SYNTHESIZE 가
+        # 곧장 PUBLISH_SIGNALS 를 인큐한다(발행 차단 게이트 폐기). AGGREGATE 는 발행을 직접 인큐하지 않는다.
         self.assertIsNotNone(result["synthesize_task_id"])
-        self.assertIsNone(result["publish_task_id"])
+        self.assertNotIn("publish_task_id", result)
 
         analysis_call = next(call for call in connection.calls if "INSERT INTO analysis_results" in call[1])
         self.assertEqual(analysis_call[2][3], "AGGREGATED")
@@ -268,7 +267,8 @@ class AggregateSignalTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(result["warning_level"], "WARNING")
-        self.assertFalse(result["is_published"])
+        # warning_level 은 표시용 메타로만 남고 발행은 무조건(발행 차단 게이트 폐기).
+        self.assertTrue(result["is_published"])
         self.assertTrue(any("INSERT INTO validation_logs" in call[1] for call in connection.calls))
         final_call = next(call for call in connection.calls if "INSERT INTO final_signals" in call[1])
         breakdown = json.loads(final_call[2][10])

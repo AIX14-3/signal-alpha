@@ -8,8 +8,6 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
-from app.core.config import get_settings
-from app.orchestrator.queue.context import enqueue_publish_signals
 from app.orchestrator.queue.task_types import SYNTHESIZE
 from signal_alpha_data_access.repositories import (
     AnalysisRepository,
@@ -150,43 +148,23 @@ class AggregateSignalTaskHandler:
         priority = str(task_context.get("priority") or "batch")
         stock_code = task_context.get("stock_code")
 
-        # 이 게이트가 발행 판정을 내린다. 발행분만 끝단 LLM 종합(SYNTHESIZE)으로 보내고, 리스크
-        # veto는 종합 "뒤"에서 동작한다(SYNTHESIZE가 RISK_VETO를 인큐). 미발행/needs_review는 종합
-        # 으로 보내지 않는다(버릴 게 아니라 처음부터 발행 대상이 아님).
-        #
-        # **백엔드 발행(PUBLISH_SIGNALS)은 RISK_VETO 게이트 뒤로 미룬다.** 과거엔 여기서 SYNTHESIZE 와
-        # 병렬로 PUBLISH 를 인큐했는데, 드레인 순서상 PUBLISH 가 RISK_VETO(=SYNTHESIZE가 인큐)보다
-        # 먼저 돌아 **치명 키워드 신호가 veto 되기 전에 백엔드로 발행**될 수 있었다(veto 는 수집 DB
-        # is_published 만 끄고 백엔드 사본은 남아 영구 노출). 그래서 발행은 RISK_VETO 통과 시 거기서
-        # 인큐한다(`enqueue_publish_signals`). 단 근거 이벤트가 없는 발행분은 veto 대상(스캔할 텍스트)
-        # 이 없으므로 SYNTHESIZE/RISK_VETO 를 거치지 않고 여기서 곧바로 발행한다.
-        synthesize_task_id: int | None = None
-        publish_task_id: int | None = None
-        if aggregate["is_published"]:
-            if source_signal_event_ids:
-                synthesize_task_id = await self._queue_repository.enqueue(
-                    stock_id=stock_id,
-                    task_type=SYNTHESIZE,
-                    priority=priority,
-                    source_signal_event_ids=source_signal_event_ids,
-                    task_context={
-                        "final_signal_id": int(final_signal["id"]),
-                        "stock_code": stock_code,
-                        "run_key": "ML",
-                        # 발행 우선순위를 체인(SYNTHESIZE→RISK_VETO→PUBLISH) 끝까지 전파해
-                        # immediate 신호의 백엔드 발행이 batch 로 강등되지 않게 한다.
-                        "priority": priority,
-                    },
-                    dedupe=True,
-                )
-            else:
-                publish_task_id = await enqueue_publish_signals(
-                    self._queue_repository,
-                    settings=get_settings(),
-                    stock_id=stock_id,
-                    stock_code=stock_code,
-                    priority=priority,
-                )
+        # 발행은 무조건. 모든 집계 신호를 끝단 LLM 종합(SYNTHESIZE)으로 보내고, SYNTHESIZE 가
+        # 법적 금지단어 필터만 거쳐 곧장 PUBLISH_SIGNALS 를 인큐한다(발행 차단 게이트 폐기).
+        # 근거 이벤트가 없어도 7예측률 서술은 가능하므로 SYNTHESIZE 로 보낸다. 발행 우선순위는
+        # 체인(SYNTHESIZE→PUBLISH) 끝까지 전파해 immediate 신호가 batch 로 강등되지 않게 한다.
+        synthesize_task_id = await self._queue_repository.enqueue(
+            stock_id=stock_id,
+            task_type=SYNTHESIZE,
+            priority=priority,
+            source_signal_event_ids=source_signal_event_ids,
+            task_context={
+                "final_signal_id": int(final_signal["id"]),
+                "stock_code": stock_code,
+                "run_key": "ML",
+                "priority": priority,
+            },
+            dedupe=True,
+        )
 
         return {
             "analysis_result_id": analysis_result["id"],
@@ -200,7 +178,6 @@ class AggregateSignalTaskHandler:
             "needs_review": aggregate["needs_review"],
             "is_published": aggregate["is_published"],
             "synthesize_task_id": synthesize_task_id,
-            "publish_task_id": publish_task_id,
         }
 
 
@@ -348,7 +325,9 @@ def _aggregate(results: list[NormalizedSourceResult]) -> dict[str, Any]:
     needs_review = warning_level in {"CAUTION", "WARNING"} or signal == "mixed" or any(
         result.needs_review for result in results
     )
-    is_published = warning_level != "WARNING"
+    # 발행은 무조건(7예측률 무조건 발행). warning_level/근거 유무로 발행을 막지 않는다 —
+    # warning_level/needs_review 는 표시용 메타로만 남는다(발행 차단 게이트 폐기).
+    is_published = True
     return {
         "signal": signal,
         "final_score": _to_100(aggregate_score),

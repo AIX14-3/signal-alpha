@@ -11,10 +11,9 @@ from app.synthesis.tasks import SynthesizeTaskHandler
 class _FakeConnection:
     """SQL 내용으로 라우팅하는 가짜 연결."""
 
-    def __init__(self, final_signal, events, meta=None):
+    def __init__(self, final_signal, events):
         self._final_signal = final_signal
         self._events = events
-        self._meta = meta
         self.narrative_update = None
 
     async def fetch(self, sql, *args):  # list_signal_events_by_ids
@@ -26,11 +25,9 @@ class _FakeConnection:
             return {"id": args[0]}
         if "FROM final_signals WHERE id" in sql:
             return self._final_signal
-        if "FROM meta_signals" in sql:
-            return self._meta
         return None
 
-    async def fetchval(self, sql, *args):  # RISK_VETO enqueue (dedupe SELECT + INSERT)
+    async def fetchval(self, sql, *args):  # PUBLISH_SIGNALS enqueue (settings=None 이라 미호출)
         return 999 if "INSERT INTO processing_queue" in sql else None
 
 
@@ -88,8 +85,6 @@ class SynthesizeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
                 "task_context": {
                     "final_signal_id": 55,
                     "stock_code": "005930",
-                    "vetoed": True,
-                    "matched_keywords": ["감사의견거절"],
                 },
             }
         )
@@ -103,10 +98,8 @@ class SynthesizeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         # 수치/판정은 final_signal 값 그대로(LLM/폴백이 못 바꿈)
         self.assertEqual(report["signal"], "negative")
         self.assertEqual(report["final_score"], 22.0)
-        self.assertFalse(report["is_published"])
-        self.assertTrue(report["vetoed"])
-        # veto 사유가 caution에 설명됨
-        self.assertTrue(any("감사의견거절" in c for c in report["narrative"]["caution_points"]))
+        # RISK_VETO 폐기 — vetoed 는 항상 False(발행 차단 게이트 없음).
+        self.assertFalse(report["vetoed"])
         # 결정론 폴백은 집계 요약을 덮어쓰지 않는다(DB 미갱신).
         self.assertFalse(result["narrative_persisted"])
         self.assertIsNone(connection.narrative_update)
@@ -147,12 +140,11 @@ class SynthesizeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result["narrative_persisted"])
         self.assertIsNone(connection.narrative_update)
 
-    async def test_includes_ml_risk_when_meta_present(self):
-        meta = {"combined_vol": 0.31, "confidence": 0.8, "method": "stacking"}
-        connection = _FakeConnection(dict(_FINAL), list(_EVENTS), meta=meta)
+    async def test_ml_risk_is_none_after_vol_channel_removed(self):
+        # vol(변동성) ML 채널 폐기(#585) — ml_risk 는 항상 None.
+        connection = _FakeConnection(dict(_FINAL), list(_EVENTS))
         result = await self._run(connection, synthesizer=None)
-        self.assertEqual(result["report"]["ml_risk"]["combined_vol"], 0.31)
-        self.assertEqual(result["report"]["ml_risk"]["method"], "stacking")
+        self.assertIsNone(result["report"]["ml_risk"])
 
     async def test_price_prediction_surfaced_separately(self):
         # score_breakdown 의 PRICE 항목이 주가 단독 예측으로 분리돼 리포트/내러티브에 노출된다.

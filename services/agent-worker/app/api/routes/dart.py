@@ -17,7 +17,7 @@ from app.orchestrator.queue.task_types import (
     ANALYZE_DART,
     COLLECT_DART,
     NORMALIZE_DART,
-    RISK_VETO,
+    PUBLISH_SIGNALS,
     SYNTHESIZE,
 )
 from app.orchestrator.queue.tasks import QueueTaskRunner, TaskHandler
@@ -190,11 +190,11 @@ async def run_e2e(
             request.max_downstream_runs,
             run_until_idle=request.run_until_idle,
         )
-        risk_veto_task_ids = _task_ids_from_results(synthesize_results, "risk_veto_task_id")
-        risk_veto_results = await _run_task_ids(
+        publish_task_ids = _task_ids_from_results(synthesize_results, "publish_task_id")
+        publish_results = await _run_task_ids(
             runner,
-            RISK_VETO,
-            risk_veto_task_ids,
+            PUBLISH_SIGNALS,
+            publish_task_ids,
             request.max_downstream_runs,
             run_until_idle=request.run_until_idle,
         )
@@ -221,8 +221,8 @@ async def run_e2e(
         aggregate_results=aggregate_results,
         synthesize_task_ids=synthesize_task_ids,
         synthesize_results=synthesize_results,
-        risk_veto_task_ids=risk_veto_task_ids,
-        risk_veto_results=risk_veto_results,
+        publish_task_ids=publish_task_ids,
+        publish_results=publish_results,
         max_normalize_runs=request.max_normalize_runs,
         max_analyze_runs=request.max_analyze_runs,
         max_downstream_runs=request.max_downstream_runs,
@@ -235,7 +235,7 @@ async def run_e2e(
         "analyze": analyze_results,
         "aggregate_signal": aggregate_results,
         "synthesize": synthesize_results,
-        "risk_veto": risk_veto_results,
+        "publish_signals": publish_results,
         "queue_summary": queue_summary,
         "analysis_results": {"count": len(items), "items": items},
         "final_signals": {"count": len(final_signal_items), "items": final_signal_items},
@@ -355,8 +355,8 @@ def _queue_summary(
     aggregate_results: list[dict[str, Any]],
     synthesize_task_ids: list[int],
     synthesize_results: list[dict[str, Any]],
-    risk_veto_task_ids: list[int],
-    risk_veto_results: list[dict[str, Any]],
+    publish_task_ids: list[int],
+    publish_results: list[dict[str, Any]],
     max_normalize_runs: int,
     max_analyze_runs: int,
     max_downstream_runs: int,
@@ -391,9 +391,9 @@ def _queue_summary(
             run_until_idle,
         ),
         **_task_ids_summary(
-            "risk_veto",
-            risk_veto_task_ids,
-            risk_veto_results,
+            "publish_signals",
+            publish_task_ids,
+            publish_results,
             max_downstream_runs,
             run_until_idle,
         ),
