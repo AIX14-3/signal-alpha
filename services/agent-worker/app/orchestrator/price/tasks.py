@@ -19,6 +19,7 @@ from typing import Any
 
 from app.analyzers.price.analyzer import PriceAnalyzer
 from app.collectors.price.ohlcv_reader import OhlcvReader
+from app.orchestrator.queue.context import enqueue_aggregate
 from app.orchestrator.queue.task_types import SRC_INFER
 from signal_alpha_data_access.repositories import (
     AnalysisRepository,
@@ -93,12 +94,25 @@ class PriceAnalyzeTaskHandler:
         # 주가는 매 종목마다 분석되므로 여기서 per-stock 1회 SRC_INFER 를 인큐한다. SRC_INFER 가
         # base 모델로 추론(아티팩트 있는 소스만, 현재 src_price) → RETURN_COMBINE → meta_signals/
         # final_signals.source_predictions. 아티팩트 전무면 예측 None 으로 안전 no-op(점수 불변).
+        priority = str(task_context.get("priority") or "batch")
         src_infer_task_id = await self._queue.enqueue(
             stock_id=stock_id,
             task_type=SRC_INFER,
-            priority=str(task_context.get("priority") or "batch"),
+            priority=priority,
             task_context={"stock_code": stock_code, "as_of": analysis_date.isoformat()},
             dedupe=True,
+        )
+        # 주가는 평일 매일 분석되므로 = 발행 하한선. 대체데이터가 그날 없는 단독 종목도 발행되도록
+        # 여기서 AGGREGATE_SIGNAL 을 인큐한다(fan-in: (stock_id, signal_date)로 모든 소스를 모음).
+        # 대체데이터가 같은 날 AGGREGATE 를 인큐해도 dedupe 로 한 번만 집계된다.
+        aggregate_task_id = await enqueue_aggregate(
+            self._queue,
+            stock_id=stock_id,
+            aggregate_ctx={
+                "signal_date": analysis_date.isoformat(),
+                "stock_code": stock_code,
+            },
+            priority=priority,
         )
         return {
             "analysis_result_id": int(analysis_result["id"]),
@@ -107,6 +121,7 @@ class PriceAnalyzeTaskHandler:
             "score": result.score,
             "data_status": result.data_status,
             "src_infer_task_id": src_infer_task_id,
+            "aggregate_task_id": aggregate_task_id,
         }
 
 
