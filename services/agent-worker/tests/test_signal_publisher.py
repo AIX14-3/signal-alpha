@@ -51,8 +51,16 @@ class _FakeSource:
 
 
 class _FakeBackend:
-    def __init__(self):
+    def __init__(self, columns_by_table=None):
         self.executed = []  # (table-ish sql, rows)
+        # None → 컬럼 조회가 빈 결과 → publisher 가 원본 컬럼으로 폴백(기존 동작).
+        self._columns_by_table = columns_by_table
+
+    async def fetch(self, sql, table):
+        # _backend_columns 의 pg_attribute 조회 대역.
+        if self._columns_by_table is None:
+            return []
+        return [{"attname": c} for c in self._columns_by_table.get(table, [])]
 
     async def executemany(self, sql, args_list):
         self.executed.append((sql, args_list))
@@ -82,3 +90,54 @@ def test_publish_stock_copies_in_order_and_skips_empty():
     assert "INSERT INTO stocks" in backend.executed[0][0]
     assert "INSERT INTO final_signals" in backend.executed[1][0]
     assert len(backend.executed[1][1]) == 2  # final_signals 2행
+
+
+def test_publish_drops_columns_absent_in_backend_schema():
+    # 수집 DB final_signals 에 source_predictions 가 있으나 백엔드는 아직 그 마이그를
+    # 못 받은 드리프트 상황. 옛 동작은 INSERT 가 "column does not exist" 로 종목 발행을
+    # 통째로 실패시켰다 — 이제 누락 컬럼만 건너뛰고 나머지는 정상 복사해야 한다.
+    source = _FakeSource(
+        {
+            "stocks": [{"id": 1, "ticker": "005930"}],
+            "final_signals": [
+                {
+                    "id": 85,
+                    "stock_id": 1,
+                    "ml_direction": "positive",
+                    "source_predictions": {"SRC": {"final_score": 0.6}},
+                }
+            ],
+        }
+    )
+    backend = _FakeBackend(
+        columns_by_table={
+            "stocks": ["id", "ticker"],
+            "final_signals": ["id", "stock_id", "ml_direction"],  # source_predictions 없음
+        }
+    )
+
+    counts = asyncio.run(publish_stock(source, backend, stock_id=1))
+
+    assert counts["final_signals"] == 1  # 전체 페일이 아니라 행은 복사됨
+    fs_sql, fs_args = backend.executed[1]
+    assert "INSERT INTO final_signals" in fs_sql
+    assert "source_predictions" not in fs_sql  # 백엔드에 없는 컬럼은 빠짐
+    assert '"ml_direction"' in fs_sql
+    assert len(fs_args[0]) == 3  # id, stock_id, ml_direction (source_predictions 제외)
+
+
+def test_publish_falls_back_when_backend_missing_id_column():
+    # id(ON CONFLICT 키)가 빠지는 건 부가 컬럼 부재가 아니라 구조적 드리프트 → 우아한 강등
+    # 대상이 아니다. 원본 컬럼으로 폴백해(실 DB 라면 INSERT 가 시끄럽게 실패) 조용한 빈/부분
+    # INSERT 를 만들지 않는다.
+    source = _FakeSource(
+        {"final_signals": [{"id": 85, "stock_id": 1, "ml_direction": "positive"}]}
+    )
+    backend = _FakeBackend(columns_by_table={"final_signals": ["stock_id", "ml_direction"]})  # id 없음
+
+    asyncio.run(publish_stock(source, backend, stock_id=1))
+
+    fs_sql = backend.executed[0][0]  # 이 source 는 final_signals 만 비어있지 않음
+    assert "INSERT INTO final_signals" in fs_sql
+    assert '"id"' in fs_sql  # id 를 드롭하지 않고 유지
+    assert "ON CONFLICT (id)" in fs_sql
