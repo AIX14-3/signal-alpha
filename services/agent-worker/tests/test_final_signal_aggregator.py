@@ -6,15 +6,20 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "packages" / "data-access"))
 
-from app.orchestrator.aggregation.tasks import AggregateSignalTaskHandler
+from app.orchestrator.aggregation.tasks import (
+    AggregateSignalTaskHandler,
+    _return_to_score_100,
+)
 from app.orchestrator.queue.handlers import build_task_handlers
 from app.orchestrator.queue.task_types import AGGREGATE_SIGNAL
 
 
 class FakeConnection:
-    def __init__(self, rows=None):
+    def __init__(self, rows=None, src=None):
         self.calls = []
         self.rows = rows or []
+        # 통합 SRC 예측 행(meta_signals run_key='SRC'). None 이면 헤드라인은 중립(50)으로 폴백.
+        self.src = src
         self.next_id = 700
 
     async def fetch(self, sql, *args):
@@ -23,6 +28,9 @@ class FakeConnection:
 
     async def fetchrow(self, sql, *args):
         self.calls.append(("fetchrow", sql, args))
+        # 헤드라인용 SRC 조회는 id 시퀀스를 소비하지 않게 별도 라우팅.
+        if "FROM meta_signals" in sql:
+            return self.src
         self.next_id += 1
         return {"id": self.next_id}
 
@@ -152,8 +160,12 @@ class AggregateSignalTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        self.assertEqual(result["signal"], "mixed")
-        self.assertEqual(result["final_score"], 62.5)
+        # 헤드라인은 통합 SRC 예측 — SRC 미계산(src=None)이면 중립(50)으로 발행.
+        self.assertEqual(result["signal"], "neutral")
+        self.assertEqual(result["final_score"], 50.0)
+        # 결정론 블렌드는 표시·경보 메타로만 남는다(헤드라인 아님).
+        self.assertEqual(result["deterministic_signal"], "mixed")
+        self.assertEqual(result["deterministic_score"], 62.5)
         self.assertEqual(result["warning_level"], "CAUTION")
         self.assertTrue(result["needs_review"])
         self.assertTrue(result["is_published"])
@@ -182,8 +194,11 @@ class AggregateSignalTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        self.assertEqual(result["signal"], "positive")
-        self.assertEqual(result["final_score"], 68.0)
+        # 헤드라인은 중립(SRC 미계산) — 결정론 블렌드(positive/68)는 메타로만.
+        self.assertEqual(result["signal"], "neutral")
+        self.assertEqual(result["final_score"], 50.0)
+        self.assertEqual(result["deterministic_signal"], "positive")
+        self.assertEqual(result["deterministic_score"], 68.0)
         self.assertEqual(result["source_agreement"], "LOW")
         self.assertEqual(result["warning_level"], "CAUTION")
         self.assertTrue(result["is_published"])
@@ -237,8 +252,11 @@ class AggregateSignalTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        self.assertEqual(result["signal"], "positive")
-        self.assertEqual(result["final_score"], 68.0)
+        # 헤드라인은 중립(SRC 미계산); 결정론 블렌드(positive/68)·score_breakdown 은 보존.
+        self.assertEqual(result["signal"], "neutral")
+        self.assertEqual(result["final_score"], 50.0)
+        self.assertEqual(result["deterministic_signal"], "positive")
+        self.assertEqual(result["deterministic_score"], 68.0)
         self.assertEqual(result["source_agreement"], "HIGH")
         final_call = next(call for call in connection.calls if "INSERT INTO final_signals" in call[1])
         breakdown = json.loads(final_call[2][10])
@@ -315,10 +333,78 @@ class AggregateSignalTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(breakdown["HIRING"]["data_status"], "ok")
         self.assertEqual(breakdown["DATALAB"]["data_status"], "no_signal")
 
+    async def test_headline_uses_integrated_src_prediction(self):
+        # 통합 SRC 예측이 있으면 헤드라인은 결정론 블렌드가 아니라 SRC 방향/점수를 따른다.
+        src = {
+            "asof_date": date(2026, 6, 19),
+            "run_key": "SRC",
+            "final_score": 0.03,  # 예측 수익률 +3%
+            "direction": "positive",
+            "confidence": 0.6,
+        }
+        connection = FakeConnection(
+            rows=[dart_agent_row(direction="negative", source_score=-0.5, method_score=25.0)],
+            src=src,
+        )
+        handler = AggregateSignalTaskHandler(connection)
+
+        result = await handler(
+            {
+                "id": 30,
+                "stock_id": 1,
+                "source_analysis_result_ids": [100],
+                "task_context": {"stock_code": "005930", "signal_date": "2026-06-19"},
+            }
+        )
+
+        self.assertEqual(result["signal"], "positive")
+        self.assertEqual(result["final_score"], _return_to_score_100(0.03))
+        self.assertGreater(result["final_score"], 50.0)
+        # 결정론 블렌드(negative)는 헤드라인이 아니라 메타로만.
+        self.assertEqual(result["deterministic_signal"], "negative")
+        final_call = next(call for call in connection.calls if "INSERT INTO final_signals" in call[1])
+        self.assertEqual(final_call[2][7], "positive")  # signal
+        self.assertEqual(final_call[2][5], _return_to_score_100(0.03))  # final_score
+
+    async def test_headline_neutral_when_src_date_mismatch(self):
+        # SRC 가 다른 날짜 것뿐이면(오늘 미계산) 중립으로 발행 — 다음 드레인에 갱신.
+        src = {"asof_date": date(2026, 6, 18), "final_score": 0.03, "direction": "positive"}
+        connection = FakeConnection(
+            rows=[dart_agent_row(direction="positive", source_score=0.5, method_score=75.0)],
+            src=src,
+        )
+        handler = AggregateSignalTaskHandler(connection)
+
+        result = await handler(
+            {
+                "id": 30,
+                "stock_id": 1,
+                "source_analysis_result_ids": [100],
+                "task_context": {"stock_code": "005930", "signal_date": "2026-06-19"},
+            }
+        )
+
+        self.assertEqual(result["signal"], "neutral")
+        self.assertEqual(result["final_score"], 50.0)
+
     async def test_queue_handlers_registers_aggregate_signal(self):
         handlers = build_task_handlers(FakeConnection())
 
         self.assertIn(AGGREGATE_SIGNAL, handlers)
+
+
+class ReturnToScoreTest(unittest.TestCase):
+    def test_zero_return_is_neutral_50(self):
+        self.assertEqual(_return_to_score_100(0.0), 50.0)
+
+    def test_positive_above_50_negative_below(self):
+        self.assertGreater(_return_to_score_100(0.03), 50.0)
+        self.assertLess(_return_to_score_100(-0.03), 50.0)
+
+    def test_monotonic_and_bounded(self):
+        self.assertLess(_return_to_score_100(0.03), _return_to_score_100(0.10))
+        self.assertGreaterEqual(_return_to_score_100(10.0), 99.0)
+        self.assertLessEqual(_return_to_score_100(-10.0), 1.0)
 
 
 if __name__ == "__main__":

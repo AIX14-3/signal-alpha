@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -11,6 +12,7 @@ from typing import Any
 from app.orchestrator.queue.task_types import SYNTHESIZE
 from signal_alpha_data_access.repositories import (
     AnalysisRepository,
+    MetaSignalRepository,
     NormalizationRepository,
     ProcessingQueueRepository,
 )
@@ -18,6 +20,10 @@ from signal_alpha_data_access.repositories import (
 
 AGGREGATE_RUN_KEY = "AGGREGATED"
 AGGREGATE_VERSION = "final-agg-v1"
+# 통합 SRC 예측(메타러너 return 채널)의 meta_signals run_key. RETURN_COMBINE 이 적재한다.
+SRC_RUN_KEY = "SRC"
+# 예측 수익률 → 0-100 'AI 예측 점수' 변환 기울기(tanh). +3% → ~64, 0% → 50, -2% → ~41 (승인 매핑).
+_RETURN_SCORE_STEEPNESS = 9.6
 # 대체데이터(HIRING/PATENT/DATALAB)는 서로 다른 신호라 묶지 않고 **각자 독립 소스**로 점수에 넣는다
 # (ALTERNATIVE 로 collapse 안 함). PRICE/REPORT 는 근거 소스로 수용하되 점수 산정에는 넣지 않는다.
 SOURCE_ORDER = ("DART", "PRICE", "REPORT", "HIRING", "PATENT", "DATALAB")
@@ -57,6 +63,7 @@ class AggregateSignalTaskHandler:
         self._analysis_repository = AnalysisRepository(connection)
         self._normalization_repository = NormalizationRepository(connection)
         self._queue_repository = ProcessingQueueRepository(connection)
+        self._meta_repository = MetaSignalRepository(connection)
 
     async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
         stock_id = int(task["stock_id"])
@@ -113,12 +120,23 @@ class AggregateSignalTaskHandler:
         aggregate = _aggregate(coarse)
         source_signal_event_ids = _source_signal_event_ids(normalized)
         warning = "; ".join(aggregate["risk_flags"]) or None
+
+        # 발행 헤드라인 = 통합 SRC 예측(메타러너 return 채널). RETURN_COMBINE 이 meta_signals
+        # (run_key="SRC")에 적재한 통합 예측 수익률을 0-100 점수로 변환해 헤드라인(signal/final_score)
+        # 으로 쓴다. 결정론 SCORING_SOURCES 블렌드(_aggregate 의 signal/final_score)는 더 이상
+        # 헤드라인이 아니며 score_breakdown/warning 등 표시·경보 메타로만 남는다. SRC 가 아직 없으면
+        # (아티팩트 전무 또는 RETURN_COMBINE 미완) 중립(50)으로 발행하고, 다음 드레인에 SRC 가
+        # 채워지면 AGGREGATE 재실행이 헤드라인을 갱신한다(eventual consistency — meta_signals 는
+        # is_current 게이트가 없어 항상 읽힌다).
+        src_row = await self._meta_repository.latest_for_stock(stock_id=stock_id, run_key=SRC_RUN_KEY)
+        headline_signal, headline_score = _src_headline(src_row, signal_date)
+
         analysis_result = await self._analysis_repository.upsert_analysis_result(
             stock_id=stock_id,
             analysis_date=signal_date,
             run_key=AGGREGATE_RUN_KEY,
             source_signal_event_ids=source_signal_event_ids,
-            base_score=aggregate["final_score"],
+            base_score=headline_score,
             analysis_mode="full",
             warning=warning,
             version=AGGREGATE_VERSION,
@@ -129,9 +147,9 @@ class AggregateSignalTaskHandler:
             signal_date=signal_date,
             run_key=AGGREGATE_RUN_KEY,
             version=AGGREGATE_VERSION,
-            final_score=aggregate["final_score"],
+            final_score=headline_score,
             confidence=aggregate["consensus_score"],
-            signal=aggregate["signal"],
+            signal=headline_signal,
             source_agreement=aggregate["source_agreement"],
             warning_level=aggregate["warning_level"],
             score_breakdown=aggregate["score_breakdown"],
@@ -170,8 +188,11 @@ class AggregateSignalTaskHandler:
             "analysis_result_id": analysis_result["id"],
             "final_signal_id": final_signal["id"],
             "aggregated_count": len(normalized),
-            "signal": aggregate["signal"],
-            "final_score": aggregate["final_score"],
+            "signal": headline_signal,
+            "final_score": headline_score,
+            # 결정론 블렌드(표시·경보 메타) — 헤드라인이 아니라 참고용.
+            "deterministic_signal": aggregate["signal"],
+            "deterministic_score": aggregate["final_score"],
             "source_agreement": aggregate["source_agreement"],
             "consensus_score": aggregate["consensus_score"],
             "warning_level": aggregate["warning_level"],
@@ -649,6 +670,33 @@ def _clamp_signed(value: float) -> float:
 
 def _to_100(score: float) -> float:
     return round(max(0.0, min(100.0, (score + 1.0) * 50.0)), 2)
+
+
+def _src_headline(src_row: Any, signal_date: date) -> tuple[str, float]:
+    """통합 SRC 예측(meta_signals run_key='SRC')을 발행 헤드라인(signal, 0-100 score)으로 변환.
+
+    SRC ``final_score`` 는 예측 '수익률'(작은 부호값)이라 tanh 로 0-100 'AI 예측 점수'에 매핑한다
+    (50=중립, 상승↑/하락↓). 해당 ``signal_date`` 의 SRC 가 없으면(아직 미계산) 중립(neutral, 50.0)
+    으로 둔다 — 다음 드레인에 SRC 가 채워지면 AGGREGATE 재실행이 갱신한다.
+    """
+    if not src_row:
+        return "neutral", 50.0
+    row = dict(src_row)
+    asof = row.get("asof_date")
+    final_score = row.get("final_score")
+    if asof is None or final_score is None or _to_date(asof) != signal_date:
+        return "neutral", 50.0
+    return _src_signal(row.get("direction")), _return_to_score_100(_number(final_score))
+
+
+def _src_signal(direction: Any) -> str:
+    text = str(direction or "neutral").strip().lower()
+    return text if text in {"positive", "negative", "neutral"} else "neutral"
+
+
+def _return_to_score_100(return_value: float) -> float:
+    """예측 수익률(부호값) → 0-100 점수. tanh 로 50 중심에 매핑(상승↑/하락↓), 극단값은 포화."""
+    return round(50.0 + 50.0 * math.tanh(_RETURN_SCORE_STEEPNESS * return_value), 2)
 
 
 def _dedupe(values: list[str]) -> list[str]:
