@@ -10,8 +10,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from app.api.routes.auth import NOTICE, get_current_user
 from app.core.database import get_database_pool
 
-SOURCE_ORDER = ("DART", "PRICE", "REPORT", "ALTERNATIVE")
-# final_signals.run_key (소스별 발행 모델 B) → 응답 score_breakdown.alternative 하위 키.
+# detail 응답 sources 순서. 대체데이터는 소스별 독립 점수(C안 Phase 2)라 worker
+# score_breakdown 에 HIRING/PATENT/DATALAB 가 각 top-level 키로 들어온다(ALTERNATIVE 폐기).
+SOURCE_ORDER = ("DART", "PRICE", "REPORT", "HIRING", "PATENT", "DATALAB")
+# final_signals.run_key (소스별 발행 모델 B) → list 응답 score_breakdown.alternative 하위 키.
 ALT_RUN_KEYS = ("hiring", "patent", "datalab")
 _STATUS_PRIORITY = {"WARNING": 3, "CAUTION": 2, "NORMAL": 1}
 _AGREEMENT_PRIORITY = {"LOW": 3, "MEDIUM": 2, "HIGH": 1}  # 보수적 = 낮은 합의 우선
@@ -414,10 +416,8 @@ def _normalize_source(value: Any) -> str | None:
     if value is None:
         return None
     text = str(value).strip().upper()
-    if text in SOURCE_ORDER:
+    if text in SOURCE_ORDER:  # HIRING/PATENT/DATALAB 는 이제 각 독립 소스(C안 Phase 2)
         return text
-    if text in {"HIRING", "PATENT", "DATALAB"}:
-        return "ALTERNATIVE"
     return None
 
 

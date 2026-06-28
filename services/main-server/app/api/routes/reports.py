@@ -25,11 +25,13 @@ router = APIRouter(prefix="/api/reports", tags=["reports"])
 # (집계 SOURCE_ORDER 와 일치). 리포트 원본은 수집/파싱/정규화로 DB 에는 계속 적재된다.
 ALL_SOURCES = ("price", "dart", "hiring", "datalab")
 PUBLIC_SOURCES = {"dart", "datalab"}  # 비회원 공개
+# 대체데이터는 소스별 독립 점수(C안 Phase 2)라 score_breakdown 에 HIRING/DATALAB 가
+# top-level 평탄 키로 들어온다(과거 ALTERNATIVE 중첩 폐기).
 _SOURCE_TO_BREAKDOWN = {
     "price": "PRICE",
     "dart": "DART",
-    "hiring": "ALTERNATIVE",
-    "datalab": "ALTERNATIVE",
+    "hiring": "HIRING",
+    "datalab": "DATALAB",
 }
 _SOURCE_TO_EVENT_TYPE = {
     "price": "PRICE",
@@ -247,11 +249,6 @@ def _source_block(source: str, breakdown: dict[str, Any], *, locked: bool) -> di
     detail = breakdown.get(_SOURCE_TO_BREAKDOWN[source])
     if not isinstance(detail, dict):
         detail = {}
-    # ALTERNATIVE 하위에 hiring/datalab 가 중첩돼 있으면 사용.
-    if source in ("hiring", "datalab"):
-        nested = detail.get(source)
-        if isinstance(nested, dict):
-            detail = nested
     return {
         "source": source,
         "direction": detail.get("direction", "unknown"),
