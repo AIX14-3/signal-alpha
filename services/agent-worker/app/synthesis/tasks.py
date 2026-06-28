@@ -1,9 +1,10 @@
 """SYNTHESIZE 큐 핸들러 — 끝단 LLM 종합·설명 + 리스크 리포트(JSON).
 
-RISK_VETO 다음 단계. final_signal(수치/판정) + 최근 meta_signal(결합 변동성) + 소스 근거 +
-veto 정보를 모아, LLM이 설정돼 있으면 **설명 내러티브만** 생성하고(수치 불변), 아니면 결정론
-폴백으로 내러티브를 만든다. 결과 내러티브는 final_signals(summary/bull/bear)에만 반영하고,
-리스크 리포트(JSON)를 반환한다.
+발행 직전 단계. final_signal(수치/판정) + 소스 근거를 모아, LLM이 설정돼 있으면 **설명
+내러티브만** 생성하고(수치 불변), 아니면 결정론 폴백으로 내러티브를 만든다. 유일 가드는
+synthesizer 의 법적 금지단어 필터(``_reject_investment_advice``)뿐 — 위반 시 결정론 폴백.
+결과 내러티브는 final_signals(summary/bull/bear)에 반영하고, 곧장 PUBLISH_SIGNALS 를 인큐해
+백엔드로 무조건 발행한다(발행 차단 게이트 폐기).
 """
 
 from __future__ import annotations
@@ -13,8 +14,11 @@ import os
 from collections.abc import Mapping
 from typing import Any
 
-from app.orchestrator.queue.context import parse_int_list, parse_task_context
-from app.orchestrator.queue.task_types import RISK_VETO
+from app.orchestrator.queue.context import (
+    enqueue_publish_signals,
+    parse_int_list,
+    parse_task_context,
+)
 from app.schemas.risk_report import RiskReport
 from app.synthesis.synthesizer import RiskNarrative, Synthesizer
 
@@ -29,15 +33,14 @@ class SynthesizeTaskHandler:
     ) -> None:
         from signal_alpha_data_access.repositories import (
             AnalysisRepository,
-            MetaSignalRepository,
             NormalizationRepository,
             ProcessingQueueRepository,
         )
 
         self._analysis = AnalysisRepository(connection)
         self._normalization = NormalizationRepository(connection)
-        self._meta = MetaSignalRepository(connection)
         self._queue = ProcessingQueueRepository(connection)
+        self._settings = settings
         self._synthesizer = synthesizer if synthesizer is not None else _build_synthesizer(settings)
 
     async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
@@ -50,9 +53,6 @@ class SynthesizeTaskHandler:
         signal_event_ids = parse_int_list(
             task.get("source_signal_event_ids") or ctx.get("source_signal_event_ids")
         )
-        vetoed = bool(ctx.get("vetoed"))
-        veto_keywords = [str(k) for k in (ctx.get("matched_keywords") or [])]
-        run_key = str(ctx.get("run_key") or "ML")
         stock_code = str(ctx.get("stock_code") or stock_id)
 
         final_signal = await self._analysis.get_final_signal_by_id(
@@ -87,16 +87,7 @@ class SynthesizeTaskHandler:
             for event in events
         ]
 
-        meta_row = await self._meta.latest_for_stock(stock_id=stock_id, run_key=run_key)
-        ml_risk = None
-        if meta_row is not None:
-            meta = dict(meta_row)
-            ml_risk = {
-                "combined_vol": _to_float(meta.get("combined_vol")),
-                "confidence": _to_float(meta.get("confidence")),
-                "method": meta.get("method"),
-            }
-
+        # vol(변동성) ML 채널은 폐기됨(#585) — combined_vol 은 더 이상 적재되지 않으므로 ml_risk 는 None.
         report = RiskReport(
             stock_id=stock_id,
             stock_code=stock_code,
@@ -107,9 +98,9 @@ class SynthesizeTaskHandler:
             warning_level=str(final_signal.get("warning_level") or "NORMAL"),
             is_published=bool(final_signal.get("is_published")),
             needs_review=bool(final_signal.get("needs_review")),
-            vetoed=vetoed,
-            veto_keywords=veto_keywords,
-            ml_risk=ml_risk,
+            vetoed=False,
+            veto_keywords=[],
+            ml_risk=None,
             price_prediction=price_prediction,
             report_valuation=report_valuation,
             source_predictions=source_predictions,
@@ -135,36 +126,23 @@ class SynthesizeTaskHandler:
                 bear_point=bear_point,
             )
 
-        # 선형 체인: 종합 "뒤"에서 리스크 veto가 동작한다(치명 키워드면 정제 루프). 이 종합이
-        # 정제(refine) 결과면 refined=true로 알려, 정제 후에도 치명적이면 미발행하게 한다.
-        refined = bool(ctx.get("refine"))
+        # 선형 체인: 종합 결과를 곧장 백엔드로 무조건 발행한다(발행 차단 게이트 폐기). 법적 금지단어
+        # 필터는 synthesizer 단계에서 이미 적용됐다(위반 시 결정론 폴백 서술). 발행 우선순위 전파.
         priority = str(ctx.get("priority") or "batch")
-        risk_veto_task_id: int | None = None
-        if signal_event_ids:
-            risk_veto_task_id = await self._queue.enqueue(
-                stock_id=stock_id,
-                task_type=RISK_VETO,
-                priority=priority,
-                source_signal_event_ids=signal_event_ids,
-                task_context={
-                    "final_signal_id": int(final_signal_id),
-                    "stock_code": stock_code,
-                    "run_key": run_key,
-                    "refined": refined,
-                    # 발행 우선순위를 RISK_VETO→PUBLISH 까지 전파(immediate 강등 방지).
-                    "priority": priority,
-                },
-                dedupe=True,
-            )
+        publish_task_id = await enqueue_publish_signals(
+            self._queue,
+            settings=self._settings,
+            stock_id=stock_id,
+            stock_code=stock_code,
+            priority=priority,
+        )
 
         return {
             "stock_id": stock_id,
             "final_signal_id": int(final_signal_id),
             "narrative_source": source,
             "narrative_persisted": narrative_persisted,
-            "vetoed": vetoed,
-            "refined": refined,
-            "risk_veto_task_id": risk_veto_task_id,
+            "publish_task_id": publish_task_id,
             "report": report.to_dict(),
         }
 
@@ -310,8 +288,6 @@ def synthesis_llm_enabled(settings: Any) -> bool:
     """끝단 종합 LLM이 실제로 구성돼 있는지(=``_build_synthesizer`` 가 클라이언트를 만들 수 있는지).
 
     ``_build_synthesizer`` 와 **동일 조건**만 평가하되 클라이언트를 만들지 않는다(부작용 없음).
-    RISK_VETO가 'LLM 정제 루프를 돌릴 가치가 있는지' 판단에 쓴다 — LLM이 없으면 정제는 무동작이라
-    정제 왕복 없이 곧장 발행 보류하는 게 맞다(``gates/risk_veto.py`` 참고).
     """
     if settings is None:
         return False

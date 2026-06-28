@@ -1,6 +1,6 @@
 """큐 태스크 페이로드 파싱 공용 헬퍼.
 
-게이트형 파이프라인 핸들러(risk_veto·meta_combine·synthesis 등)가 공유하는 작은 파서.
+파이프라인 큐 핸들러(aggregation·synthesis 등)가 공유하는 작은 파서/인큐 헬퍼.
 ``task_context`` 는 dict 또는 JSON 문자열로, id 목록은 list/JSON/PG 배열 리터럴(``{1,2,3}``)로
 들어올 수 있어 핸들러마다 복붙되던 로직을 한 곳으로 모은다.
 """
@@ -23,9 +23,8 @@ async def enqueue_publish_signals(
 ) -> int | None:
     """발행분을 백엔드 DB 로 복사하는 ``PUBLISH_SIGNALS`` 를 인큐한다.
 
-    **리스크 veto 게이트 뒤**에서만 호출해야 한다 — 치명 키워드 신호가 백엔드로 새지 않게,
-    발행은 RISK_VETO 통과(또는 veto 대상 이벤트가 없는 발행분) 이후로 미룬다. ``BACKEND_DATABASE_URL``
-    미설정(단일 DB)이면 인큐하지 않는다(핸들러도 no-op). 멱등 — dedupe 로 한 번만.
+    끝단 SYNTHESIZE 가 종합(법적 금지단어 필터 포함) 뒤 무조건 호출한다 — 7예측률 무조건 발행.
+    ``BACKEND_DATABASE_URL`` 미설정(단일 DB)이면 인큐하지 않는다(핸들러도 no-op). 멱등 — dedupe 로 한 번만.
     """
     if not getattr(settings, "backend_database_url", None):
         return None

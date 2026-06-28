@@ -231,10 +231,10 @@ class DartRouteTest(unittest.TestCase):
             return {"final_signal_id": 900, "synthesize_task_id": 701}
 
         async def synthesize_handler(task):
-            return {"final_signal_id": 900, "risk_veto_task_id": 801}
+            return {"final_signal_id": 900, "publish_task_id": 801}
 
-        async def risk_veto_handler(task):
-            return {"final_signal_id": 900, "vetoed": False}
+        async def publish_handler(task):
+            return {"stock_id": 1, "published": 1}
 
         connection = FakeConnection()
         app.dependency_overrides[get_database_pool] = lambda: FakePool(connection)
@@ -244,7 +244,7 @@ class DartRouteTest(unittest.TestCase):
             "analyze_dart": analyze_handler,
             "aggregate_signal": aggregate_handler,
             "synthesize": synthesize_handler,
-            "risk_veto": risk_veto_handler,
+            "publish_signals": publish_handler,
         }
         client = TestClient(app)
 
@@ -269,7 +269,7 @@ class DartRouteTest(unittest.TestCase):
         self.assertEqual(payload["analyze"][0]["task_id"], 301)
         self.assertEqual(payload["aggregate_signal"][0]["status"], "success")
         self.assertEqual(payload["synthesize"][0]["status"], "success")
-        self.assertEqual(payload["risk_veto"][0]["status"], "success")
+        self.assertEqual(payload["publish_signals"][0]["status"], "success")
         self.assertEqual(payload["analysis_results"]["count"], 1)
         self.assertEqual(payload["final_signals"]["count"], 1)
         self.assertEqual(payload["final_signals"]["items"][0]["run_key"], "AGGREGATED")

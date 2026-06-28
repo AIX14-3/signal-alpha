@@ -123,7 +123,6 @@ DEFAULT_CYCLE_PLAN: dict[str, int] = {
     "return_combine": 20,
     "aggregate_signal": 30,
     "synthesize": 20,
-    "risk_veto": 20,
     "publish_signals": 20,
 }
 

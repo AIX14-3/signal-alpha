@@ -25,11 +25,8 @@ RETURN_COMBINE = "return_combine"
 # 15 chars (task_type VARCHAR(50)).
 PUBLISH_SIGNALS = "publish_signals"
 
-# 리스크 veto — 치명 키워드(상장폐지/감사의견거절 등) 탐지 시 final_signal 발행 보류.
-# AGGREGATE_SIGNAL이 발행 신호에 대해 enqueue. 9 chars (task_type VARCHAR(50)).
-RISK_VETO = "risk_veto"
-
-# 끝단 LLM 종합·설명 + 리스크 리포트(JSON). RISK_VETO 다음 단계(수치 불변, 설명만).
+# 끝단 LLM 종합·설명 + 리스크 리포트(JSON). 발행 직전 단계(수치 불변, 설명만). 종합 결과를
+# 곧장 PUBLISH_SIGNALS 로 인큐한다 — 유일 가드는 법적 금지단어 필터뿐(발행 차단 게이트 폐기).
 # 10 chars (task_type VARCHAR(50)).
 SYNTHESIZE = "synthesize"
 
