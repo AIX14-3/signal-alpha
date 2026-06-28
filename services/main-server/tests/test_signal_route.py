@@ -161,7 +161,9 @@ class SignalRouteTest(unittest.TestCase):
         self.assertIn("데이터 방향성", body["notice"])
 
         sources = {source["source"]: source for source in body["sources"]}
-        self.assertEqual(set(sources), {"DART", "PRICE", "REPORT", "ALTERNATIVE"})
+        self.assertEqual(
+            set(sources), {"DART", "PRICE", "REPORT", "HIRING", "PATENT", "DATALAB"}
+        )
         self.assertEqual(sources["DART"]["score"], 50)
         self.assertEqual(sources["DART"]["data_status"], "ok")
         self.assertEqual(sources["DART"]["summary"], "공시 기반 중립 방향성입니다.")

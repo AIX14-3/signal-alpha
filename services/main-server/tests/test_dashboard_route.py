@@ -64,8 +64,12 @@ class FakeConnection:
                     "published_at": datetime(2026, 6, 18, tzinfo=UTC),
                     "created_at": datetime(2026, 6, 18, tzinfo=UTC),
                     "score_breakdown": {
-                        "DART": {"direction": "neutral", "score": 50, "data_status": "ok"},
-                        "PRICE": {"direction": "positive", "score": 72, "data_status": "ok"},
+                        # worker 는 score(부호 -1~1) + score_100(0~100) 을 함께 싣고,
+                        # 미산출 소스도 data_status="missing" placeholder 로 채운다.
+                        "DART": {"direction": "neutral", "score": 0.0, "score_100": 50, "data_status": "ok"},
+                        "PRICE": {"direction": "positive", "score": 0.44, "score_100": 72, "data_status": "ok"},
+                        "HIRING": {"direction": "positive", "score": 0.28, "score_100": 64, "data_status": "ok"},
+                        "REPORT": {"direction": "unknown", "score": None, "score_100": None, "data_status": "missing"},
                     },
                     "consensus_score": 80,
                 }
@@ -140,10 +144,17 @@ class DashboardRouteTest(unittest.TestCase):
         self.assertEqual(item["latest_signal"]["direction"], "positive")
         self.assertEqual(item["latest_signal"]["alignment_rate"], 0.8)
         self.assertFalse(item["latest_signal"]["needs_review"])
+        # 기여 소스만 센다: DART/PRICE/HIRING(ok) = 3. REPORT(missing placeholder)·PATENT/DATALAB(미존재) 제외.
+        self.assertEqual(item["latest_signal"]["source_count"], 3)
         sources = {source["source"]: source for source in item["source_summary"]}
-        self.assertEqual(set(sources), {"DART", "PRICE", "REPORT", "ALTERNATIVE"})
+        self.assertEqual(set(sources), {"DART", "PRICE", "REPORT", "HIRING", "PATENT", "DATALAB"})
         self.assertEqual(sources["DART"]["data_status"], "ok")
         self.assertEqual(sources["REPORT"]["data_status"], "missing")
+        # 평탄 HIRING 키가 읽힌다(과거 ALTERNATIVE 중첩 → 깨졌던 경로). PATENT 는 미존재 → missing.
+        self.assertEqual(sources["HIRING"]["data_status"], "ok")
+        # 0~100 스케일(score_100=64)을 노출 — 부호 score(0.28)가 아님.
+        self.assertEqual(sources["HIRING"]["score"], 64)
+        self.assertEqual(sources["PATENT"]["data_status"], "missing")
         self.assertEqual(item["journal"], {"has_journal": True, "latest_journal_id": 300})
         self.assertIn("데이터 방향성", body["notice"])
 
