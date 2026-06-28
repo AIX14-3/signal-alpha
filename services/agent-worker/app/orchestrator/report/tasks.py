@@ -11,9 +11,9 @@ from app.collectors.report.crawler import collect_stock
 from app.collectors.report.parsers.run_parser import process_from_s3
 from app.collectors.report.pdf_downloader import download_and_upload, make_report_storage_key
 from app.collectors.report.storage import ReportStorageClient, get_report_storage_client
+from app.orchestrator.queue.context import enqueue_aggregate
 from app.orchestrator.queue.task_types import (
     ANALYZE_REPORT,
-    ML_INFER,
     NORMALIZE_REPORT,
     PROCESS_REPORT,
 )
@@ -486,22 +486,17 @@ class ReportAnalyzeTaskHandler:
             "aggregation_key": f"AGGREGATED:{stock_id}:{analysis_date.isoformat()}:final-agg-v1",
             "source_analysis_result_ids": [int(analysis_result["id"])],
         }
-        ml_infer_task_id = await self._queue_repository.enqueue(
+        aggregate_task_id = await enqueue_aggregate(
+            self._queue_repository,
             stock_id=stock_id,
-            task_type=ML_INFER,
+            aggregate_ctx=aggregate_ctx,
             priority=str(task_context.get("priority") or "batch"),
-            task_context={
-                "stock_code": task_context.get("stock_code") or _first_non_empty(events, "ticker"),
-                "run_key": "ML",
-                "aggregate_ctx": aggregate_ctx,
-            },
-            dedupe=True,
         )
 
         return {
             "analysis_result_id": analysis_result["id"],
             "agent_result_id": agent_result["id"],
-            "ml_infer_task_id": ml_infer_task_id,
+            "aggregate_task_id": aggregate_task_id,
             "analyzed_count": len(events),
             "direction": direction,
             "score": source_score,

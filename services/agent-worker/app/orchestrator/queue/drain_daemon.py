@@ -28,8 +28,6 @@ from app.orchestrator.queue.task_types import (
     COLLECT_REPORT,
     ENRICH_HIRING,
     ENRICH_PATENT,
-    META_COMBINE,
-    ML_INFER,
     NORMALIZE_DART,
     NORMALIZE_DATALAB,
     NORMALIZE_HIRING,
@@ -68,9 +66,7 @@ DRAIN_ORDER: tuple[str, ...] = (
     NORMALIZE_DATALAB,
     ANALYZE_ALTERNATIVE,
     ANALYZE_PRICE,
-    # ML/DL 라인 (vol 채널 + 소스 return 채널)
-    ML_INFER,
-    META_COMBINE,
+    # 메타러너 예측 라인 (주가 BASE 앵커 + 소스 return 채널)
     SRC_INFER,
     RETURN_COMBINE,
     # 집계 → 게이트 → 종합 → 발행

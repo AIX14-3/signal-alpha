@@ -8,14 +8,6 @@ AGGREGATE_SIGNAL = "aggregate_signal"
 # fan-in AGGREGATE 가 (stock,date)로 집어가는 PRICE 피어를 만든다. 13 chars (VARCHAR(50)).
 ANALYZE_PRICE = "analyze_price"
 
-# ML/DL 추론 (게이트 통과 모델만) — 종목 OHLCV를 vol-benchmark 모델로 추론해 ml_inferences 적재.
-# architecture.mermaid의 ML/DL 단계. 메타러너 결합 입력. 9 chars (task_type VARCHAR(50)).
-ML_INFER = "ml_infer"
-
-# 메타러너 결합 (stacking) — ml_inferences를 학습 가중으로 결합해 meta_signals 적재.
-# ML_INFER가 성공 추론이 있을 때 enqueue. 12 chars (task_type VARCHAR(50)).
-META_COMBINE = "meta_combine"
-
 # 소스별 base 모델 추론 (#525 Phase 3) — DataLab/Hiring 정형 피처를 forward-return base
 # 모델로 추론해 ml_inferences(model_name=src_*, run_key=SRC) 적재. 타깃이 return 이라
 # 기존 vol 결합(run_key=ML)과 run_key 로 분리(D4). return 채널 결합은 WS-C 가 인큐.

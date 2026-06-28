@@ -324,7 +324,7 @@ class ReportAnalyzeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["analyzed_count"], 1)
         self.assertEqual(result["analysis_result_id"], 901)
         self.assertEqual(result["agent_result_id"], 902)
-        self.assertEqual(result["ml_infer_task_id"], 701)
+        self.assertEqual(result["aggregate_task_id"], 701)
         # 결정론 밸류에이션 신호: 투자의견(signal_direction="positive") 컨센서스 → positive, score 1.0.
         self.assertEqual(result["direction"], "positive")
         self.assertEqual(result["analysis_source"], "rules")
@@ -350,15 +350,15 @@ class ReportAnalyzeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(method_detail["report_quant"]["valuation"]["implied_multiple"], 15.0)
         self.assertEqual(method_detail["report_quant"]["valuation"]["needs_review"], False)
 
-        enqueue_call = conn._enqueue("ml_infer")
+        # 주가 변동성 ML 채널 제거(C안): 분석 → AGGREGATE 직결. aggregate_ctx 는 task_context 최상위,
+        # source_analysis_result_ids 는 enqueue 의 별도 컬럼으로 전달된다(레거시 단일 프로듀서 경로).
+        enqueue_call = conn._enqueue("aggregate_signal")
         self.assertEqual(enqueue_call[2][0], 1)
+        self.assertIn([901], enqueue_call[2])
         task_context = json.loads(enqueue_call[2][6])
         self.assertEqual(task_context["stock_code"], "005930")
-        self.assertEqual(task_context["run_key"], "ML")
-        aggregate_ctx = task_context["aggregate_ctx"]
-        self.assertEqual(aggregate_ctx["source_analysis_result_ids"], [901])
-        self.assertEqual(aggregate_ctx["signal_date"], "2026-06-24")
-        self.assertEqual(aggregate_ctx["run_key"], "AGGREGATED")
+        self.assertEqual(task_context["signal_date"], "2026-06-24")
+        self.assertEqual(task_context["run_key"], "AGGREGATED")
 
 
 class ReportConsensusDirectionTest(unittest.TestCase):
