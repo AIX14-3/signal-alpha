@@ -35,6 +35,10 @@ class _FakeBackend:
     def transaction(self):
         return _FakeTxn()
 
+    async def fetch(self, sql, table):
+        # _backend_columns 조회 대역 — 빈 결과면 publisher 가 원본 컬럼으로 폴백.
+        return []
+
     async def executemany(self, sql, args_list):
         self.executed.append((sql, args_list))
 
