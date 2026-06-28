@@ -138,18 +138,21 @@ class SynthesizeTaskHandler:
         # 선형 체인: 종합 "뒤"에서 리스크 veto가 동작한다(치명 키워드면 정제 루프). 이 종합이
         # 정제(refine) 결과면 refined=true로 알려, 정제 후에도 치명적이면 미발행하게 한다.
         refined = bool(ctx.get("refine"))
+        priority = str(ctx.get("priority") or "batch")
         risk_veto_task_id: int | None = None
         if signal_event_ids:
             risk_veto_task_id = await self._queue.enqueue(
                 stock_id=stock_id,
                 task_type=RISK_VETO,
-                priority=str(ctx.get("priority") or "batch"),
+                priority=priority,
                 source_signal_event_ids=signal_event_ids,
                 task_context={
                     "final_signal_id": int(final_signal_id),
                     "stock_code": stock_code,
                     "run_key": run_key,
                     "refined": refined,
+                    # 발행 우선순위를 RISK_VETO→PUBLISH 까지 전파(immediate 강등 방지).
+                    "priority": priority,
                 },
                 dedupe=True,
             )

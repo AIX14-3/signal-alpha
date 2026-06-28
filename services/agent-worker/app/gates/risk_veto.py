@@ -17,7 +17,11 @@ from typing import Any
 from dataclasses import dataclass
 
 from app.gates.rules.veto_keywords import veto_keywords
-from app.orchestrator.queue.context import parse_int_list, parse_task_context
+from app.orchestrator.queue.context import (
+    enqueue_publish_signals,
+    parse_int_list,
+    parse_task_context,
+)
 from app.orchestrator.queue.task_types import SYNTHESIZE
 
 # 강한 해소/부인 신호만(보수적). 키워드 직후에 이런 표현이 있으면 치명 사건이 *해소/부인*된
@@ -98,6 +102,13 @@ class RiskVetoTaskHandler:
         self._queue = ProcessingQueueRepository(connection)
         self._settings = settings
 
+    def _resolve_settings(self) -> Any:
+        if self._settings is not None:
+            return self._settings
+        from app.core.config import get_settings
+
+        return get_settings()
+
     def _llm_refine_available(self) -> bool:
         """끝단 종합 LLM이 구성돼 있어 정제 루프가 의미가 있는지.
 
@@ -106,12 +117,7 @@ class RiskVetoTaskHandler:
         """
         from app.synthesis.tasks import synthesis_llm_enabled
 
-        settings = self._settings
-        if settings is None:
-            from app.core.config import get_settings
-
-            settings = get_settings()
-        return synthesis_llm_enabled(settings)
+        return synthesis_llm_enabled(self._resolve_settings())
 
     async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
         stock_id = int(task["stock_id"])
@@ -145,37 +151,55 @@ class RiskVetoTaskHandler:
         # 리스크 veto는 LLM 종합 "뒤"에서 동작한다. 치명 키워드가 나와도 미발행으로 버리지 않고
         # LLM 정제(리스크 강조)를 1회 거친다. 정제 후에도 치명적이면 그때 발행 보류(needs_review).
         # 단, LLM이 구성돼 있지 않으면 정제는 무동작이므로 정제 왕복 없이 곧장 보류한다.
+        priority = str(ctx.get("priority") or "batch")
         applied = False
         synthesize_task_id: int | None = None
-        if decision.vetoed and final_signal_id is not None:
-            do_refine = not refined and self._llm_refine_available()
-            if do_refine:
-                synthesize_task_id = await self._queue.enqueue(
-                    stock_id=stock_id,
-                    task_type=SYNTHESIZE,
-                    priority=str(ctx.get("priority") or "batch"),
-                    source_signal_event_ids=signal_event_ids,
-                    task_context={
-                        "final_signal_id": int(final_signal_id),
-                        "stock_code": ctx.get("stock_code"),
-                        "run_key": ctx.get("run_key") or "ML",
-                        "refine": True,
-                        "vetoed": True,
-                        "matched_keywords": decision.matched_keywords,
-                    },
-                    dedupe=True,
-                )
-            else:
-                reason = "정제 후에도 치명" if refined else "LLM 미구성 → 정제 생략"
-                await self._analysis.apply_risk_veto(final_signal_id=int(final_signal_id))
-                await self._normalization.record_validation_log(
-                    target_type="final_signal",
-                    target_id_int=int(final_signal_id),
-                    validation_type="risk_veto",
-                    passed=False,
-                    message=f"risk_veto({reason}): " + ", ".join(decision.matched_keywords),
-                )
-                applied = True
+        publish_task_id: int | None = None
+        # veto 여부로 먼저 갈라 **발행은 not-vetoed 분기에만** 둔다 — 치명 신호가 백엔드로 새지
+        # 않도록 구조적으로 보장(분기 가드의 빈틈에 의존하지 않음).
+        if decision.vetoed:
+            if final_signal_id is not None:
+                do_refine = not refined and self._llm_refine_available()
+                if do_refine:
+                    synthesize_task_id = await self._queue.enqueue(
+                        stock_id=stock_id,
+                        task_type=SYNTHESIZE,
+                        priority=priority,
+                        source_signal_event_ids=signal_event_ids,
+                        task_context={
+                            "final_signal_id": int(final_signal_id),
+                            "stock_code": ctx.get("stock_code"),
+                            "run_key": ctx.get("run_key") or "ML",
+                            "priority": priority,
+                            "refine": True,
+                            "vetoed": True,
+                            "matched_keywords": decision.matched_keywords,
+                        },
+                        dedupe=True,
+                    )
+                else:
+                    reason = "정제 후에도 치명" if refined else "LLM 미구성 → 정제 생략"
+                    await self._analysis.apply_risk_veto(final_signal_id=int(final_signal_id))
+                    await self._normalization.record_validation_log(
+                        target_type="final_signal",
+                        target_id_int=int(final_signal_id),
+                        validation_type="risk_veto",
+                        passed=False,
+                        message=f"risk_veto({reason}): " + ", ".join(decision.matched_keywords),
+                    )
+                    applied = True
+            # vetoed 인데 final_signal_id 가 없으면 apply 도 발행도 하지 않는다(안전 — 미발행).
+        else:
+            # veto 게이트 통과 — 이제 백엔드 발행(PUBLISH_SIGNALS)을 인큐한다. 발행을 이 게이트
+            # 뒤로 미뤄, 치명 키워드 신호가 veto 되기 전에 백엔드로 새지 않게 한다(AGGREGATE 는
+            # 근거 이벤트가 있는 발행분의 PUBLISH 를 여기로 위임).
+            publish_task_id = await enqueue_publish_signals(
+                self._queue,
+                settings=self._resolve_settings(),
+                stock_id=stock_id,
+                stock_code=ctx.get("stock_code"),
+                priority=priority,
+            )
 
         return {
             "stock_id": stock_id,
@@ -185,4 +209,5 @@ class RiskVetoTaskHandler:
             "refined": refined,
             "applied": applied,
             "synthesize_task_id": synthesize_task_id,
+            "publish_task_id": publish_task_id,
         }

@@ -169,7 +169,8 @@ class RiskVetoTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
     async def test_clean_signal_is_not_vetoed(self):
         rows = [{"title": "신규 수주", "summary": "매출 성장", "evidence_text": "흑자 전환"}]
         connection = _FakeConnection(rows)
-        handler = RiskVetoTaskHandler(connection)
+        # 백엔드 미설정(단일 DB) → 발행 인큐 없음(핸들러 no-op과 동일).
+        handler = RiskVetoTaskHandler(connection, settings=SimpleNamespace())
 
         result = await handler(
             {"stock_id": 10, "source_signal_event_ids": [101], "task_context": {"final_signal_id": 55}}
@@ -178,6 +179,67 @@ class RiskVetoTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result["vetoed"])
         self.assertFalse(result["applied"])
         self.assertIsNone(connection.veto_applied_id)
+        self.assertIsNone(result["publish_task_id"])
+        self.assertEqual([a for a in connection.enqueued if a[1] == "publish_signals"], [])
+
+    async def test_clean_signal_enqueues_publish_after_veto_gate(self):
+        # 핵심 수정: veto 통과 신호의 백엔드 발행(PUBLISH_SIGNALS)은 AGGREGATE 가 아니라 이
+        # RISK_VETO 게이트 뒤에서 인큐된다(치명 신호가 veto 전에 백엔드로 새는 것을 막음).
+        rows = [{"title": "신규 수주", "summary": "매출 성장", "evidence_text": "흑자 전환"}]
+        connection = _FakeConnection(rows)
+        handler = RiskVetoTaskHandler(
+            connection, settings=SimpleNamespace(backend_database_url="postgresql://backend/db")
+        )
+
+        result = await handler(
+            {
+                "stock_id": 10,
+                "source_signal_event_ids": [101],
+                "task_context": {"final_signal_id": 55, "stock_code": "005930"},
+            }
+        )
+
+        self.assertFalse(result["vetoed"])
+        self.assertIsNotNone(result["publish_task_id"])
+        publish = [a for a in connection.enqueued if a[1] == "publish_signals"]
+        self.assertEqual(len(publish), 1)
+        self.assertEqual(publish[0][0], 10)  # stock_id
+
+    async def test_publish_preserves_immediate_priority(self):
+        # priority 가 체인(…→RISK_VETO→PUBLISH)으로 전파돼 immediate 발행이 batch 로 강등되지 않는다.
+        rows = [{"title": "신규 수주", "summary": "매출 성장", "evidence_text": "흑자 전환"}]
+        connection = _FakeConnection(rows)
+        handler = RiskVetoTaskHandler(
+            connection, settings=SimpleNamespace(backend_database_url="postgresql://backend/db")
+        )
+
+        await handler(
+            {
+                "stock_id": 10,
+                "source_signal_event_ids": [101],
+                "task_context": {"final_signal_id": 55, "stock_code": "005930", "priority": "immediate"},
+            }
+        )
+
+        publish = [a for a in connection.enqueued if a[1] == "publish_signals"]
+        self.assertEqual(publish[0][2], "immediate")  # priority 인자(강등 X)
+
+    async def test_vetoed_signal_does_not_enqueue_publish(self):
+        # 치명 키워드 신호는 backend 설정과 무관하게 발행되지 않는다(미발행 보류).
+        rows = [{"title": "감사보고서", "summary": "감사의견거절", "evidence_text": ""}]
+        connection = _FakeConnection(rows)
+        handler = RiskVetoTaskHandler(
+            connection, settings=SimpleNamespace(backend_database_url="postgresql://backend/db")
+        )
+
+        result = await handler(
+            {"stock_id": 10, "source_signal_event_ids": [101], "task_context": {"final_signal_id": 55}}
+        )
+
+        self.assertTrue(result["vetoed"])
+        self.assertTrue(result["applied"])  # LLM 미구성 → 곧장 보류
+        self.assertIsNone(result["publish_task_id"])
+        self.assertEqual([a for a in connection.enqueued if a[1] == "publish_signals"], [])
 
     async def test_skips_without_signal_events(self):
         connection = _FakeConnection([])

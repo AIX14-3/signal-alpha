@@ -9,7 +9,8 @@ from decimal import Decimal
 from typing import Any
 
 from app.core.config import get_settings
-from app.orchestrator.queue.task_types import PUBLISH_SIGNALS, SYNTHESIZE
+from app.orchestrator.queue.context import enqueue_publish_signals
+from app.orchestrator.queue.task_types import SYNTHESIZE
 from signal_alpha_data_access.repositories import (
     AnalysisRepository,
     NormalizationRepository,
@@ -149,36 +150,43 @@ class AggregateSignalTaskHandler:
         priority = str(task_context.get("priority") or "batch")
         stock_code = task_context.get("stock_code")
 
-        # 선형 체인(게이트2 = 신호·모델 품질): ML_INFER→META_COMBINE이 앞단에서 끝나고
-        # 이 게이트가 발행 판정을 내린다. 발행분만 끝단 LLM 종합(SYNTHESIZE)으로 보내고,
-        # 리스크 veto는 종합 "뒤"에서 동작한다(SYNTHESIZE가 RISK_VETO를 인큐). 미발행/needs_review는
-        # 종합으로 보내지 않는다(버릴 게 아니라 처음부터 발행 대상이 아님).
+        # 이 게이트가 발행 판정을 내린다. 발행분만 끝단 LLM 종합(SYNTHESIZE)으로 보내고, 리스크
+        # veto는 종합 "뒤"에서 동작한다(SYNTHESIZE가 RISK_VETO를 인큐). 미발행/needs_review는 종합
+        # 으로 보내지 않는다(버릴 게 아니라 처음부터 발행 대상이 아님).
+        #
+        # **백엔드 발행(PUBLISH_SIGNALS)은 RISK_VETO 게이트 뒤로 미룬다.** 과거엔 여기서 SYNTHESIZE 와
+        # 병렬로 PUBLISH 를 인큐했는데, 드레인 순서상 PUBLISH 가 RISK_VETO(=SYNTHESIZE가 인큐)보다
+        # 먼저 돌아 **치명 키워드 신호가 veto 되기 전에 백엔드로 발행**될 수 있었다(veto 는 수집 DB
+        # is_published 만 끄고 백엔드 사본은 남아 영구 노출). 그래서 발행은 RISK_VETO 통과 시 거기서
+        # 인큐한다(`enqueue_publish_signals`). 단 근거 이벤트가 없는 발행분은 veto 대상(스캔할 텍스트)
+        # 이 없으므로 SYNTHESIZE/RISK_VETO 를 거치지 않고 여기서 곧바로 발행한다.
         synthesize_task_id: int | None = None
-        if aggregate["is_published"] and source_signal_event_ids:
-            synthesize_task_id = await self._queue_repository.enqueue(
-                stock_id=stock_id,
-                task_type=SYNTHESIZE,
-                priority=priority,
-                source_signal_event_ids=source_signal_event_ids,
-                task_context={
-                    "final_signal_id": int(final_signal["id"]),
-                    "stock_code": stock_code,
-                    "run_key": "ML",
-                },
-                dedupe=True,
-            )
-
-        # 물리 2-DB 발행(#11): 발행분에 한해 백엔드 DB로 산출물 복사를 인큐. BACKEND_DATABASE_URL
-        # 미설정(단일 DB)이면 인큐하지 않는다(핸들러도 no-op). 멱등 — 다음 사이클에 최신 반영.
         publish_task_id: int | None = None
-        if aggregate["is_published"] and getattr(get_settings(), "backend_database_url", None):
-            publish_task_id = await self._queue_repository.enqueue(
-                stock_id=stock_id,
-                task_type=PUBLISH_SIGNALS,
-                priority=priority,
-                task_context={"stock_code": stock_code},
-                dedupe=True,
-            )
+        if aggregate["is_published"]:
+            if source_signal_event_ids:
+                synthesize_task_id = await self._queue_repository.enqueue(
+                    stock_id=stock_id,
+                    task_type=SYNTHESIZE,
+                    priority=priority,
+                    source_signal_event_ids=source_signal_event_ids,
+                    task_context={
+                        "final_signal_id": int(final_signal["id"]),
+                        "stock_code": stock_code,
+                        "run_key": "ML",
+                        # 발행 우선순위를 체인(SYNTHESIZE→RISK_VETO→PUBLISH) 끝까지 전파해
+                        # immediate 신호의 백엔드 발행이 batch 로 강등되지 않게 한다.
+                        "priority": priority,
+                    },
+                    dedupe=True,
+                )
+            else:
+                publish_task_id = await enqueue_publish_signals(
+                    self._queue_repository,
+                    settings=get_settings(),
+                    stock_id=stock_id,
+                    stock_code=stock_code,
+                    priority=priority,
+                )
 
         return {
             "analysis_result_id": analysis_result["id"],
