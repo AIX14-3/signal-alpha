@@ -103,10 +103,6 @@
     <text x="479" y="376" text-anchor="middle" class="c" fill="#1e3a8a">ANALYZE_*</text>
     <text x="479" y="392" text-anchor="middle" class="lbl">dart·report·price·alt</text>
 
-    <rect x="576" y="356" width="168" height="44" rx="7" fill="#e0f2fe" stroke="#0284c7"/>
-    <text x="660" y="376" text-anchor="middle" class="c" fill="#075985">ML_INFER → META</text>
-    <text x="660" y="392" text-anchor="middle" class="lbl">vol 채널(가격)</text>
-
     <rect x="766" y="356" width="150" height="44" rx="7" fill="#f1f5f9" stroke="#475569"/>
     <text x="841" y="376" text-anchor="middle" class="c" fill="#334155">AGGREGATE</text>
     <text x="841" y="392" text-anchor="middle" class="lbl">소스 정렬+근거</text>
@@ -125,8 +121,7 @@
   </g>
   <line x1="210" y1="378" x2="231" y2="378" stroke="#475569" stroke-width="1.6" marker-end="url(#arr)"/>
   <line x1="382" y1="378" x2="403" y2="378" stroke="#475569" stroke-width="1.6" marker-end="url(#arr)"/>
-  <line x1="554" y1="378" x2="575" y2="378" stroke="#475569" stroke-width="1.6" marker-end="url(#arr)"/>
-  <line x1="744" y1="378" x2="765" y2="378" stroke="#475569" stroke-width="1.6" marker-end="url(#arr)"/>
+  <line x1="554" y1="378" x2="765" y2="378" stroke="#475569" stroke-width="1.6" marker-end="url(#arr)"/>
   <line x1="916" y1="378" x2="937" y2="378" stroke="#475569" stroke-width="1.6" marker-end="url(#arr)"/>
   <line x1="1078" y1="378" x2="1099" y2="378" stroke="#475569" stroke-width="1.6" marker-end="url(#arr)"/>
   <line x1="1250" y1="378" x2="1271" y2="378" stroke="#9333ea" stroke-width="1.8" marker-end="url(#arrP)"/>
@@ -138,7 +133,7 @@
   <!-- PRICE (score lane) -->
   <rect x="64" y="516" width="300" height="96" rx="9" fill="#d1fae5" stroke="#059669" stroke-width="2"/>
   <text x="80" y="540" class="h" fill="#065f46">PRICE — 주가 ML/DL</text>
-  <text x="80" y="561" class="s">analyzers/price · vol-models(ewma/har_rv/garch/tcn)</text>
+  <text x="80" y="561" class="s">analyzers/price (정량 예측)</text>
   <text x="80" y="580" class="s">정량 예측 → score_breakdown.PRICE</text>
   <text x="80" y="599" class="albl" fill="#047857">⇒ RiskReport.price_prediction (별도 정량 신호)</text>
 
@@ -185,18 +180,18 @@
   <line x1="680" y1="635" x2="746" y2="635" stroke="#475569" stroke-width="1.8" marker-end="url(#arr)"/>
   <line x1="1048" y1="635" x2="1114" y2="635" stroke="#9333ea" stroke-width="1.8" marker-end="url(#arrP)"/>
 
-  <!-- ============ ④ 메타러너 라인 (연결 OFF) ============ -->
-  <text x="40" y="846" class="sec">④ 메타러너 + 대체데이터 → 예측 라인 (연결 OFF · 팀 plug-in 지점)</text>
+  <!-- ============ ④ 메타러너 라인 (배선됨) ============ -->
+  <text x="40" y="846" class="sec">④ 메타러너 + 대체데이터 → 예측 라인 (배선됨 · 아티팩트 학습 대기)</text>
   <rect x="40" y="860" width="1400" height="190" rx="10" fill="#f9fafb" stroke="#d1d5db" stroke-dasharray="6 4"/>
-  <rect x="1230" y="872" width="190" height="30" rx="15" fill="#fef2f2" stroke="#ef4444"/>
-  <text x="1325" y="892" text-anchor="middle" class="badge" fill="#b91c1c">⏻ 연결 OFF (dormant)</text>
+  <rect x="1218" y="872" width="202" height="30" rx="15" fill="#ecfdf5" stroke="#10b981"/>
+  <text x="1319" y="892" text-anchor="middle" class="badge" fill="#047857">✅ 배선됨 (학습 대기)</text>
 
   <rect x="64" y="912" width="270" height="110" rx="9" fill="#f3f4f6" stroke="#9ca3af" stroke-dasharray="5 4"/>
-  <text x="80" y="936" class="h" fill="#4b5563">SRC_INFER (미배선)</text>
+  <text x="80" y="936" class="h" fill="#4b5563">SRC_INFER (배선됨)</text>
   <text x="80" y="958" class="s">소스 정형피처 → base 모델</text>
   <text x="80" y="977" class="c" fill="#6b7280">src_datalab · src_hiring (LightGBM)</text>
   <text x="80" y="996" class="lbl">아티팩트: app/ml/artifacts/source_models/*.txt</text>
-  <text x="80" y="1012" class="lbl">⚠ 아무도 SRC_INFER 를 인큐 안 함 ← OFF 지점</text>
+  <text x="80" y="1012" class="lbl">ANALYZE_PRICE 가 SRC_INFER 인큐(#579)</text>
 
   <rect x="402" y="912" width="270" height="110" rx="9" fill="#f3f4f6" stroke="#9ca3af" stroke-dasharray="5 4"/>
   <text x="418" y="936" class="h" fill="#4b5563">RETURN_COMBINE</text>
@@ -208,14 +203,14 @@
   <text x="756" y="936" class="h" fill="#4b5563">meta_signals(run_key=SRC)</text>
   <text x="756" y="958" class="s">return: final_score/direction</text>
   <text x="756" y="977" class="s">/confidence</text>
-  <text x="756" y="1000" class="lbl">vol 채널(run_key=ML)과 분리(D4)</text>
+  <text x="756" y="1000" class="lbl">run_key=SRC 분리 적재 (vol 채널 제거됨)</text>
 
   <rect x="1078" y="912" width="338" height="110" rx="9" fill="#fffbeb" stroke="#d97706" stroke-dasharray="5 4"/>
-  <text x="1094" y="936" class="h" fill="#92400e">팀 plug-in 절차 (켜기)</text>
-  <text x="1094" y="957" class="s">① ANALYZE_*/REPORT 끝에 SRC_INFER 인큐</text>
-  <text x="1094" y="975" class="s">② base 모델 아티팩트 학습(train_source_models.py)</text>
-  <text x="1094" y="993" class="s">③ AGGREGATE/SYNTHESIZE 가 meta_signals(SRC) 합류</text>
-  <text x="1094" y="1013" class="lbl">env gate 권장 · 문서 docs/spec/worker-design-and-handoff.md</text>
+  <text x="1094" y="936" class="h" fill="#92400e">남은 작업 (실값화)</text>
+  <text x="1094" y="957" class="s">✓ 라인 배선(ANALYZE_PRICE→SRC_INFER) · ✓ source_predictions 합류</text>
+  <text x="1094" y="975" class="s">▶ base 모델 아티팩트 학습(train_source_models.py)</text>
+  <text x="1094" y="993" class="s">  — src_price 만 학습됨, 나머지는 실적재·학습 대기</text>
+  <text x="1094" y="1013" class="lbl">문서 docs/spec/worker-design-and-handoff.md</text>
 
   <line x1="334" y1="967" x2="400" y2="967" stroke="#94a3b8" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#arrG)"/>
   <line x1="672" y1="967" x2="738" y2="967" stroke="#94a3b8" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#arrG)"/>
@@ -232,7 +227,7 @@
   <rect x="560" y="1102" width="20" height="14" rx="3" fill="#f3e8ff" stroke="#9333ea"/>
   <text x="586" y="1113" class="s">발행/백엔드</text>
   <rect x="710" y="1102" width="20" height="14" rx="3" fill="#f3f4f6" stroke="#9ca3af" stroke-dasharray="4 3"/>
-  <text x="736" y="1113" class="s">연결 OFF(미배선, 팀 plug-in)</text>
+  <text x="736" y="1113" class="s">메타러너 라인(배선됨·학습 대기)</text>
   <line x1="980" y1="1109" x2="1010" y2="1109" stroke="#9333ea" stroke-width="1.8" marker-end="url(#arrP)"/>
   <text x="1016" y="1113" class="s">publish 경계</text>
 </svg>
