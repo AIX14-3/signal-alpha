@@ -25,6 +25,7 @@ from typing import Any, Mapping, Sequence
 from app.analyzers.dart.indicators import compute_indicators as dart_indicators
 from app.analyzers.datalab.indicators import compute_indicators as datalab_indicators
 from app.analyzers.hiring.indicators import compute_indicators as hiring_indicators
+from app.analyzers.patent.indicators import compute_indicators as patent_indicators
 from app.analyzers.price import indicators as price_ind
 from app.analyzers.report.valuation import build_valuation_summary
 
@@ -35,6 +36,7 @@ KNOWN_AT: dict[str, str] = {
     "report": "publish_date",  # 리포트 발행일
     "dart": "report_date",  # DART 이벤트 공시 접수일(=rcept_dt)
     "price": "trade_date",  # OHLCV 체결일
+    "patent": "application_date",  # 특허 출원일(로더/분석기와 동일 기준)
 }
 
 DEFAULT_LOOKBACK_DAYS = 30
@@ -169,6 +171,7 @@ def assemble_features(
     report_facts: Sequence[Mapping[str, Any]] = (),
     dart_rows: Sequence[Mapping[str, Any]] = (),
     price_rows: Sequence[Mapping[str, Any]] = (),
+    patent_rows: Sequence[Mapping[str, Any]] = (),
     lookback_days: int = DEFAULT_LOOKBACK_DAYS,
     sector_demand: dict | None = None,
 ) -> dict[str, dict[str, float | None]]:
@@ -197,6 +200,11 @@ def assemble_features(
         as_of=asof,
         lookback_days=lookback_days,
     )
+    patent = patent_indicators(
+        pit_rows(patent_rows, asof, date_key=KNOWN_AT["patent"]),
+        as_of=asof,
+        lookback_days=lookback_days,
+    )
     # 주가는 스케일-프리 비율 피처를 직접 산출(절대가 indicator 비사용). PIT 게이트는 trade_date.
     price = price_features(pit_rows(price_rows, asof, date_key=KNOWN_AT["price"]))
 
@@ -205,5 +213,6 @@ def assemble_features(
         "hiring": _numeric(asdict(hiring)),
         "report": _numeric(report),
         "dart": _numeric(asdict(dart)),
+        "patent": _numeric(asdict(patent)),
         "price": price,
     }

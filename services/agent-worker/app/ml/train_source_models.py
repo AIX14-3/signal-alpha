@@ -203,6 +203,10 @@ def _build_loader(source: str, repo: Any, lookback_days: int, *, connection: Any
         from app.evidence_loaders.dart_loader import DartEvidenceLoader
 
         return DartEvidenceLoader(repo, lookback_days=lookback_days)
+    if source == "patent":
+        from app.evidence_loaders.patent_loader import PatentEvidenceLoader
+
+        return PatentEvidenceLoader(repo, lookback_days=lookback_days)
     from app.evidence_loaders.hiring_loader import HiringEvidenceLoader
 
     return HiringEvidenceLoader(repo, lookback_days=lookback_days)
