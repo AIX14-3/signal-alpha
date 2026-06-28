@@ -150,32 +150,28 @@ flowchart TB
 
 ```mermaid
 flowchart TB
-    sch2["스케줄러: 워커 /internal/schedules/* 주기 호출(수집 스케줄)"]
+    sch2["스케줄러: 주가=평일 매일 1회 · 대체데이터=스케줄(없으면 마지막 업데이트 기준)"]
     subgraph fan["소스 분석 (워커 드레인 데몬이 processing_queue 에서 소비)"]
-        price["PRICE — 주가 기술지표(규칙)<br/>price_prediction(별도 정량 신호) · ML/DL은 src_price 별개"]
-        dart["DART 공시 — 근거(features)"]
-        report["증권사 리포트<br/>투자의견 컨센서스(결정론)"]
-        alt["Alternative<br/>(datalab · hiring · patent)"]
+        price["ANALYZE_PRICE — 주가 예측률 BASE<br/>(기술지표 규칙; ML/DL 주가는 src_price)"]
+        dart["DART 공시 분석"]
+        report["증권사 리포트(투자의견 컨센서스)"]
+        alt["채용 · 특허 · 데이터랩"]
     end
-    agg["AGGREGATE<br/>소스 정렬 + 근거 수집(점수 산입은 SCORING_SOURCES)"]
-    synth["끝단 LLM 종합(SYNTHESIZE)<br/>주가 예측 별도 노출 + DART/REPORT 근거 서술(temp=0)"]
-    rv2["RISK_VETO 게이트<br/>치명 키워드 → 미발행/needs_review"]
-    fs["final_signals + RiskReport(JSON)"]
+    comb["예측률 결합(SRC_INFER→RETURN_COMBINE)<br/>주가 BASE ⊕ 각 대체데이터(부정 ↓ / 긍정 ↑)<br/>→ 대체 5 + 주가 1 + 통합 1 = 7 예측률"]
+    agg["AGGREGATE → final_signals · meta_signals<br/>주가 매일 갱신 → 무조건 발행"]
+    synth["끝단 LLM 종합(SYNTHESIZE)<br/>7 예측률 서술 · 법적 금지단어 필터만"]
     pub["publish(PUBLISH_SIGNALS) → 백엔드 DB"]
-    api2["api.signals_current / signal_detail<br/>(읽기 계약 view)"]
+    api2["api.signals_current / signal_detail"]
     web2["web 대시보드"]
 
-    sch2 --> fan --> agg --> synth --> rv2 -- "veto 통과 → 발행" --> pub --> api2 --> web2
-    rv2 -. "정제 1회" .-> synth
-    agg --> fs
+    sch2 --> fan --> comb --> agg --> synth --> pub --> api2 --> web2
 ```
 
-> **소스별 라우팅(#11 결정)**: 주가(PRICE)는 `analyzers/price` 의 **기술지표 규칙**으로 `price_prediction`
-> 을 내 **별도 제공**한다(ML/DL 주가 모델 `src_price` 는 메타러너 라인의 별개 채널). 집계 점수
-> (`final_score`)는 `SCORING_SOURCES`(`{DART, HIRING, PATENT, DATALAB}`, 대체데이터 소스별 독립) 기준이며
-> 뒤집지 않는다. **PRICE·증권사 리포트는 근거**로 끝단 LLM 종합이 집계 점수·주가 예측과 함께 합친다.
-> 발행(PUBLISH_SIGNALS)은 **RISK_VETO 게이트 통과 뒤**에 일어난다(치명 키워드 신호 누수 방지).
-> LLM 은 점수를 바꾸지 않고 *이유만* 서술한다(temperature=0).
+> **목표 설계(라우팅)**: 주가 예측률을 **BASE** 로 두고 각 대체데이터(DART·리포트·채용·특허·데이터랩) 분석을
+> 그 위에 **가/감산**(부정 ↓, 긍정 ↑)해 **7 예측률**(대체 5 + 주가 1 + 통합 1)을 만든다. 주가는 평일 매일
+> 갱신되므로 종목마다 **무조건 발행**한다. 끝단 LLM 은 7 예측률을 사용자에게 **서술**하고(예측률만으론 설명
+> 부족), 유일한 가드는 **법적 금지단어 필터**(투자·매수·매도·적극매수·적극매도)다. `RISK_VETO` 치명키워드
+> 보류·`run_recommend` 추천 랭킹·근거 이벤트 발행 게이트는 **폐기**한다(설계 확정 후 코드 재작성).
 > REPORT 는 투자의견(`signal_direction`) 컨센서스로 결정론 방향을 낸다.
 > 소스별 수집기/분석기는 `agent-worker/app/collectors/*` · `analyzers/*` 아래 소스 단위
 > (`dart · report · price · datalab · hiring · patent`)로 구성됩니다. 출력 계약 검증기는

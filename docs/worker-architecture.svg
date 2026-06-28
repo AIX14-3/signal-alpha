@@ -105,15 +105,11 @@
 
     <rect x="766" y="356" width="150" height="44" rx="7" fill="#f1f5f9" stroke="#475569"/>
     <text x="841" y="376" text-anchor="middle" class="c" fill="#334155">AGGREGATE</text>
-    <text x="841" y="392" text-anchor="middle" class="lbl">소스 정렬+근거</text>
+    <text x="841" y="392" text-anchor="middle" class="lbl">7 예측률 · 무조건 발행</text>
 
-    <rect x="938" y="356" width="140" height="44" rx="7" fill="#ecfccb" stroke="#65a30d"/>
-    <text x="1008" y="376" text-anchor="middle" class="c" fill="#3f6212">SYNTHESIZE</text>
-    <text x="1008" y="392" text-anchor="middle" class="lbl">끝단 LLM(temp=0)</text>
-
-    <rect x="1100" y="356" width="150" height="44" rx="7" fill="#f1f5f9" stroke="#475569"/>
-    <text x="1175" y="376" text-anchor="middle" class="c" fill="#334155">RISK_VETO</text>
-    <text x="1175" y="392" text-anchor="middle" class="lbl">치명 키워드 → 발행 게이트</text>
+    <rect x="938" y="356" width="150" height="44" rx="7" fill="#ecfccb" stroke="#65a30d"/>
+    <text x="1013" y="376" text-anchor="middle" class="c" fill="#3f6212">SYNTHESIZE</text>
+    <text x="1013" y="392" text-anchor="middle" class="lbl">끝단 LLM · 법적 필터만</text>
 
     <rect x="1272" y="356" width="148" height="44" rx="7" fill="#f3e8ff" stroke="#9333ea"/>
     <text x="1346" y="376" text-anchor="middle" class="c" fill="#6b21a8">PUBLISH</text>
@@ -123,11 +119,10 @@
   <line x1="382" y1="378" x2="403" y2="378" stroke="#475569" stroke-width="1.6" marker-end="url(#arr)"/>
   <line x1="554" y1="378" x2="765" y2="378" stroke="#475569" stroke-width="1.6" marker-end="url(#arr)"/>
   <line x1="916" y1="378" x2="937" y2="378" stroke="#475569" stroke-width="1.6" marker-end="url(#arr)"/>
-  <line x1="1078" y1="378" x2="1099" y2="378" stroke="#475569" stroke-width="1.6" marker-end="url(#arr)"/>
-  <line x1="1250" y1="378" x2="1271" y2="378" stroke="#9333ea" stroke-width="1.8" marker-end="url(#arrP)"/>
+  <line x1="1088" y1="378" x2="1271" y2="378" stroke="#9333ea" stroke-width="1.8" marker-end="url(#arrP)"/>
 
   <!-- ============ ③ 소스 라우팅 ============ -->
-  <text x="40" y="478" class="sec">③ 소스별 라우팅 — 헤드라인 점수=결정론 집계(DART+대체데이터) · 주가=별도 예측(price_prediction) · REPORT=근거 · 끝단 LLM이 합쳐 서술</text>
+  <text x="40" y="478" class="sec">③ 소스별 라우팅(목표) — 주가 예측률 BASE ⊕ 대체데이터 → 7 예측률 무조건 발행 · 끝단 LLM 서술(법적 금지단어 필터만)</text>
   <rect x="40" y="492" width="1400" height="300" rx="10" fill="#f8fafc" stroke="#e2e8f0"/>
 
   <!-- PRICE (score lane) -->
@@ -137,46 +132,46 @@
   <text x="80" y="580" class="s">정량 예측 → score_breakdown.PRICE</text>
   <text x="80" y="599" class="albl" fill="#047857">⇒ price_prediction · ML/DL 모델은 §4 src_price</text>
 
-  <!-- evidence sources -->
+  <!-- alt sources combined into price prediction -->
   <rect x="64" y="636" width="300" height="132" rx="9" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.5"/>
-  <text x="80" y="660" class="h" fill="#1e40af">대체데이터 — 근거(evidence)</text>
-  <text x="80" y="682" class="s">DART 공시 → 끝단 LLM 정제 (+ RISK_VETO 룰)</text>
-  <text x="80" y="702" class="s">증권사 리포트 → 투자의견 컨센서스(결정론 방향)</text>
-  <text x="80" y="722" class="s">Alternative — hiring · patent · datalab</text>
+  <text x="80" y="660" class="h" fill="#1e40af">대체데이터 → 주가 예측률에 가/감산</text>
+  <text x="80" y="682" class="s">DART 공시 · 증권사 리포트 · 채용 · 특허 · 데이터랩</text>
+  <text x="80" y="702" class="s">부정 → 예측률 ↓ · 긍정 → 예측률 ↑</text>
+  <text x="80" y="722" class="s">갱신 없으면 마지막 업데이트 기준(유효기간 표기)</text>
   <text x="80" y="745" class="lbl">계약 method_detail{source,score,direction,data_status}</text>
   <text x="80" y="761" class="lbl">검증기 aggregation/source_contract.py</text>
 
   <!-- AGGREGATE node (routing) -->
   <rect x="430" y="560" width="250" height="150" rx="9" fill="#f1f5f9" stroke="#475569" stroke-width="1.5"/>
   <text x="446" y="584" class="h" fill="#334155">AGGREGATE</text>
-  <text x="446" y="606" class="s">집계 점수 final_score</text>
-  <text x="446" y="625" class="albl" fill="#334155">= SCORING_SOURCES</text>
-  <text x="446" y="643" class="s">(DART·HIRING·PATENT·DATALAB) — 뒤집지 않음</text>
-  <text x="446" y="667" class="s">PRICE·REPORT = 근거로 수집</text>
-  <text x="446" y="687" class="lbl">대체데이터 점수 산술블렌드 X</text>
+  <text x="446" y="606" class="s">7 예측률 취합</text>
+  <text x="446" y="625" class="albl" fill="#334155">→ final_signals · meta_signals</text>
+  <text x="446" y="643" class="s">대체 5 + 주가 1 + 통합 1 = 7</text>
+  <text x="446" y="667" class="s">주가 매일 갱신 → 무조건 발행</text>
+  <text x="446" y="687" class="lbl">발행 판정·근거 게이트 없음</text>
 
   <!-- SYNTHESIZE node -->
   <rect x="748" y="560" width="300" height="150" rx="9" fill="#ecfccb" stroke="#65a30d" stroke-width="2"/>
   <text x="764" y="584" class="h" fill="#3f6212">SYNTHESIZE — 끝단 LLM (temperature=0)</text>
-  <text x="764" y="608" class="s">입력: 집계 점수 + price_prediction + 근거</text>
-  <text x="764" y="628" class="albl" fill="#3f6212">점수 불변 · "이 점수가 나온 이유"만 서술</text>
-  <text x="764" y="650" class="s">주가 단독 예측은 별도 라인으로 노출</text>
+  <text x="764" y="608" class="s">입력: 7 예측률 (+ 마지막 업데이트 설명)</text>
+  <text x="764" y="628" class="albl" fill="#3f6212">7 예측률을 사용자에게 서술(설명 보강)</text>
+  <text x="764" y="650" class="s">유일 가드: 법적 금지단어 필터(투자/매수/매도…)</text>
   <text x="764" y="673" class="lbl">prompts/synthesis_v1.md</text>
   <text x="764" y="691" class="lbl">결정론 폴백(LLM 미설정 시)</text>
 
   <!-- result -->
   <rect x="1116" y="560" width="300" height="150" rx="9" fill="#f3e8ff" stroke="#9333ea" stroke-width="1.5"/>
   <text x="1132" y="584" class="h" fill="#6b21a8">final_signals + RiskReport(JSON)</text>
-  <text x="1132" y="607" class="s">final_score · signal · price_prediction</text>
-  <text x="1132" y="626" class="s">report_valuation · evidence · narrative</text>
+  <text x="1132" y="607" class="s">source_predictions(7) · signal · narrative</text>
+  <text x="1132" y="626" class="s">무조건 발행(주가 매일)</text>
   <text x="1132" y="649" class="albl" fill="#7c3aed">→ PUBLISH_SIGNALS → 백엔드 DB</text>
   <text x="1132" y="671" class="s">→ api.signals_current → web 대시보드</text>
 
   <!-- routing arrows -->
   <line x1="364" y1="564" x2="428" y2="600" stroke="#059669" stroke-width="1.8" marker-end="url(#arr)"/>
-  <text x="356" y="556" class="albl" fill="#047857">price_prediction</text>
+  <text x="356" y="556" class="albl" fill="#047857">주가 BASE</text>
   <line x1="364" y1="676" x2="428" y2="650" stroke="#475569" stroke-width="1.6" marker-end="url(#arr)"/>
-  <text x="360" y="640" class="albl">근거 수집</text>
+  <text x="360" y="640" class="albl">가/감산 결합</text>
   <line x1="680" y1="635" x2="746" y2="635" stroke="#475569" stroke-width="1.8" marker-end="url(#arr)"/>
   <line x1="1048" y1="635" x2="1114" y2="635" stroke="#9333ea" stroke-width="1.8" marker-end="url(#arrP)"/>
 
@@ -219,9 +214,9 @@
   <!-- ============ LEGEND ============ -->
   <text x="40" y="1090" class="sec">범례</text>
   <rect x="40" y="1102" width="20" height="14" rx="3" fill="#d1fae5" stroke="#059669"/>
-  <text x="66" y="1113" class="s">주가(점수·별도 예측)</text>
+  <text x="66" y="1113" class="s">주가 예측률 BASE</text>
   <rect x="230" y="1102" width="20" height="14" rx="3" fill="#dbeafe" stroke="#3b82f6"/>
-  <text x="256" y="1113" class="s">대체데이터(근거)</text>
+  <text x="256" y="1113" class="s">대체데이터(가/감산)</text>
   <rect x="400" y="1102" width="20" height="14" rx="3" fill="#ecfccb" stroke="#65a30d"/>
   <text x="426" y="1113" class="s">끝단 LLM 종합</text>
   <rect x="560" y="1102" width="20" height="14" rx="3" fill="#f3e8ff" stroke="#9333ea"/>
