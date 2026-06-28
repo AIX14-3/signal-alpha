@@ -227,6 +227,36 @@ class SynthesizeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         result = await self._run(connection, synthesizer=None)
         self.assertTrue(any("메타예측" in p for p in result["report"]["narrative"]["key_points"]))
 
+    async def test_source_freshness_surfaced_when_reused(self):
+        # last-known 재사용 — data_age_days>0 인 소스만 신선도로 노출(missing/0 제외).
+        final = {
+            **_FINAL,
+            "score_breakdown": {
+                "DART": {"direction": "positive", "data_status": "ok", "data_age_days": 5},
+                "PRICE": {"direction": "neutral", "data_status": "ok", "data_age_days": 0},
+                "HIRING": {"data_status": "missing", "data_age_days": 9},
+            },
+        }
+        synth = _CapturingSynth()
+        connection = _FakeConnection(final, list(_EVENTS))
+        result = await self._run(connection, synthesizer=synth)
+        self.assertEqual(result["report"]["source_freshness"], {"DART": 5})
+        self.assertEqual(synth.context["source_freshness"], {"DART": 5})
+
+    async def test_source_freshness_absent_when_all_fresh(self):
+        final = {**_FINAL, "score_breakdown": {"DART": {"data_status": "ok", "data_age_days": 0}}}
+        connection = _FakeConnection(dict(final), list(_EVENTS))
+        result = await self._run(connection, synthesizer=None)
+        self.assertNotIn("source_freshness", result["report"])
+
+    async def test_source_freshness_in_deterministic_caution(self):
+        final = {**_FINAL, "score_breakdown": {"DART": {"data_status": "ok", "data_age_days": 3}}}
+        connection = _FakeConnection(dict(final), list(_EVENTS))
+        result = await self._run(connection, synthesizer=None)
+        self.assertTrue(
+            any("최종 업데이트" in c for c in result["report"]["narrative"]["caution_points"])
+        )
+
     async def test_requires_final_signal_id(self):
         connection = _FakeConnection(dict(_FINAL), [])
         handler = SynthesizeTaskHandler(connection, settings=None, synthesizer=None)

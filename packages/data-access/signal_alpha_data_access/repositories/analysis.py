@@ -262,17 +262,27 @@ class AnalysisRepository:
         *,
         stock_id: int,
         analysis_date: Any,
+        long_window_days: int = 30,
+        short_window_days: int = 7,
     ) -> list[Any]:
-        """Fan-in: the latest per-source agent_result for one stock on one date.
+        """Fan-in: the latest per-source agent_result for one stock, within a window.
 
         Returns the same row shape as ``list_agent_results_for_aggregation`` so the
         aggregation handler can normalize either source identically. Unlike that
         method (which takes an explicit id list a single producer passes in), this
-        gathers EVERY independent source signal that exists for the stock/date —
+        gathers EVERY independent source signal that exists for the stock —
         DART/PRICE/REPORT/HIRING/PATENT/DATALAB each under their own run_key — and
         keeps the newest analysis_result per run_key (``DISTINCT ON``). The
         cross-source ``AGGREGATED`` / ``ML`` / ``META`` run_keys are excluded so the
         aggregate never folds a prior aggregate back into itself.
+
+        **Last-known reuse:** instead of an exact-date match, each source falls back
+        to its most recent result on or before ``analysis_date`` within a per-source
+        validity window — slow-moving sources (DART/PATENT/REPORT) reuse up to
+        ``long_window_days``, fast-moving ones (HIRING/DATALAB/PRICE) up to
+        ``short_window_days``. ``data_age_days`` exposes how stale each reused row is
+        (0 = same-day) so the aggregate/synthesis can surface "최종 업데이트 N일 전".
+        Rows older than their window are dropped (that source shows ``missing``).
         """
         return await self._connection.fetch(
             """
@@ -280,6 +290,7 @@ class AnalysisRepository:
                 analysis_results.id AS analysis_result_id,
                 analysis_results.stock_id,
                 analysis_results.analysis_date,
+                ($2::DATE - analysis_results.analysis_date) AS data_age_days,
                 analysis_results.run_key AS analysis_run_key,
                 analysis_results.analysis_mode,
                 analysis_results.version AS analysis_version,
@@ -298,7 +309,15 @@ class AnalysisRepository:
             INNER JOIN analysis_results
                 ON analysis_results.id = agent_results.result_id
             WHERE analysis_results.stock_id = $1
-              AND analysis_results.analysis_date = $2::DATE
+              AND analysis_results.analysis_date <= $2::DATE
+              AND analysis_results.analysis_date >= $2::DATE - (
+                    CASE
+                        WHEN analysis_results.run_key LIKE 'DART%'
+                          OR analysis_results.run_key LIKE 'PATENT%'
+                          OR analysis_results.run_key LIKE 'REPORT%' THEN $3::INT
+                        ELSE $4::INT
+                    END
+                  )
               AND (
                     analysis_results.run_key LIKE 'DART%'
                  OR analysis_results.run_key LIKE 'PRICE%'
@@ -309,12 +328,15 @@ class AnalysisRepository:
               )
             ORDER BY
                 analysis_results.run_key,
+                analysis_results.analysis_date DESC,
                 analysis_results.created_at DESC,
                 analysis_results.id DESC,
                 agent_results.id DESC
             """,
             stock_id,
             analysis_date,
+            long_window_days,
+            short_window_days,
         )
 
     async def list_agent_results_for_aggregation(self, analysis_result_ids: list[int]) -> list[Any]:

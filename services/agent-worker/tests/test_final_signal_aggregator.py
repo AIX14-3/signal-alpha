@@ -52,12 +52,14 @@ def dart_agent_row(
     source="DART",
     risk_flags=None,
     report_quant=None,
+    data_age_days=0,
 ):
     risk_flags = risk_flags or []
     return {
         "analysis_result_id": analysis_result_id,
         "stock_id": 1,
         "analysis_date": date(2026, 6, 19),
+        "data_age_days": data_age_days,
         "analysis_run_key": "DART_EVENT_501",
         "analysis_mode": "dart_only",
         "analysis_version": "dart-rules-v1",
@@ -332,6 +334,29 @@ class AggregateSignalTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         # 대체데이터는 묶지 않고 각자 top-level peer 로 분리(coalesce 폐기).
         self.assertEqual(breakdown["HIRING"]["data_status"], "ok")
         self.assertEqual(breakdown["DATALAB"]["data_status"], "no_signal")
+
+    async def test_reused_source_age_surfaces_in_breakdown(self):
+        # last-known 재사용 — 직전(5일 전) DART 결과를 유효기간 내 재사용하면 그 나이가
+        # score_breakdown 에 노출돼 "최종 업데이트 N일 전" 서술 근거가 된다.
+        connection = FakeConnection(
+            rows=[dart_agent_row(direction="positive", source_score=0.4, method_score=70.0, data_age_days=5)]
+        )
+        handler = AggregateSignalTaskHandler(connection)
+
+        await handler(
+            {
+                "id": 30,
+                "stock_id": 1,
+                "source_analysis_result_ids": [100],
+                "task_context": {"stock_code": "005930", "signal_date": "2026-06-24"},
+            }
+        )
+
+        final_call = next(call for call in connection.calls if "INSERT INTO final_signals" in call[1])
+        breakdown = json.loads(final_call[2][10])
+        self.assertEqual(breakdown["DART"]["data_age_days"], 5)
+        # 당일 수집(미재사용) 소스는 0.
+        self.assertEqual(breakdown["PRICE"].get("data_age_days"), None)  # missing 소스엔 age 키 없음
 
     async def test_headline_uses_integrated_src_prediction(self):
         # 통합 SRC 예측이 있으면 헤드라인은 결정론 블렌드가 아니라 SRC 방향/점수를 따른다.

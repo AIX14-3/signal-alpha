@@ -38,6 +38,9 @@ class RiskReport:
     # 주가 BASE 앵커 ⊕ 각 대체데이터로 메타러너/융합이 낸 수치(LLM 불변, 설명만).
     # {run_key: {final_score, direction, confidence, model_count}} or None.
     source_predictions: dict[str, Any] | None = None
+    # last-known 재사용 신선도 — 그날 갱신 없이 직전 분석을 유효기간 내 재사용한 소스의 나이(일).
+    # {source: age_days} (age_days>0 인 소스만). LLM 이 "최종 업데이트 N일 전" 으로 서술하는 근거.
+    source_freshness: dict[str, int] = field(default_factory=dict)
     evidence: list[dict[str, Any]] = field(default_factory=list)
     # --- LLM 설명 필드(또는 결정론 폴백) ---
     headline: str = ""
@@ -74,4 +77,7 @@ class RiskReport:
         # 7개 예측률은 있을 때만 노출 — 없을 땐 기존 출력과 동일(하위호환).
         if self.source_predictions is not None:
             data["source_predictions"] = self.source_predictions
+        # 재사용된 소스가 있을 때만 신선도 노출(하위호환).
+        if self.source_freshness:
+            data["source_freshness"] = dict(self.source_freshness)
         return data

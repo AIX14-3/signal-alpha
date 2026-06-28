@@ -56,6 +56,8 @@ class NormalizedSourceResult:
     # un-aliased 소스(HIRING/PATENT/DATALAB/DART/PRICE/REPORT). 대체데이터 collapse 폐기 후
     # ``source`` 와 동일하다(각 소스가 독립 peer). 하위호환·테스트 호환 위해 필드 유지(기본 "").
     fine_source: str = ""
+    # last-known 재사용 나이(일). 0=당일, N=직전 분석이 N일 전(유효기간 내 재사용). 표시·서술용.
+    data_age_days: int = 0
 
 
 class AggregateSignalTaskHandler:
@@ -235,7 +237,18 @@ def _normalize_source_result(row: dict[str, Any]) -> NormalizedSourceResult | No
         ),
         valuation=valuation,
         fine_source=_fine_source_from(row, detail) or source,
+        data_age_days=_data_age_days(row.get("data_age_days")),
     )
+
+
+def _data_age_days(value: Any) -> int:
+    """last-known 재사용 나이(일)를 안전 정수화(없으면 0=당일)."""
+    if value is None:
+        return 0
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
 
 
 # Source families recognized when un-aliasing a run_key/method_detail.source into
@@ -301,6 +314,8 @@ def _blend_group(source: str, group: list[NormalizedSourceResult]) -> Normalized
         source_signal_event_ids=sorted(set(event_ids)),
         valuation=next((r.valuation for r in group if r.valuation is not None), None),
         fine_source=source,
+        # 묶인 행 중 가장 오래된 나이(가장 보수적인 신선도)를 대표값으로.
+        data_age_days=max(r.data_age_days for r in group),
     )
 
 
@@ -409,6 +424,8 @@ def _score_breakdown(results: list[NormalizedSourceResult]) -> dict[str, dict[st
             "agent_result_id": result.agent_result_id,
             "risk_flags": result.risk_flags,
             "summary": result.summary,
+            # last-known 재사용 나이(일) — 0=당일. 리포트·LLM 서술이 "최종 업데이트 N일 전" 표기에 쓴다.
+            "data_age_days": result.data_age_days,
             **({"valuation": result.valuation} if result.valuation is not None else {}),
         }
     return breakdown
