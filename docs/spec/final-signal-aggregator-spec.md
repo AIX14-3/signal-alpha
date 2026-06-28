@@ -1,6 +1,6 @@
 # Final Signal Aggregator Spec
 
-> ⚠️ **#11 업데이트**: 집계 점수(`final_score`)는 SCORING_SOURCES(DART·ALTERNATIVE) 기준을 **유지**한다(뒤집지 않음 — 대체데이터 기여 보존). **주가(PRICE) ML/DL 예측은 `RiskReport.price_prediction`으로 별도 제공**되는 정량 신호이고, DART/REPORT/PRICE 는 끝단 LLM 종합(SYNTHESIZE)이 합치는 근거다(메타러너 미사용, temperature=0). 워커는 큐 드레인 데몬으로 발행까지 연속 소비. 상세 [architecture-diagram.md](../architecture-diagram.md).
+> ⚠️ **#11 업데이트**: 집계 점수(`final_score`)는 `SCORING_SOURCES`(`{DART, HIRING, PATENT, DATALAB}`, 대체데이터 소스별 독립) 기준을 **유지**한다(뒤집지 않음). **주가(PRICE)는 기술지표 규칙으로 `RiskReport.price_prediction`을 별도 제공**한다(ML/DL 주가 모델 `src_price` 는 메타러너 라인 별개). REPORT/PRICE 는 끝단 LLM 종합(SYNTHESIZE)이 합치는 근거다(헤드라인 점수엔 메타러너 미사용, temperature=0). 발행은 `RISK_VETO` 게이트 통과 뒤. 워커는 큐 드레인 데몬으로 발행까지 연속 소비. 상세 [architecture-diagram.md](../architecture-diagram.md).
 
 > Status: MVP task implemented
 > Created: 2026-06-19  
@@ -50,7 +50,7 @@ Collector
   `method_detail.report_quant.valuation`을 `score_breakdown.REPORT.valuation`에 보존한다.
 - Main Server 대시보드는 `final_signals`를 기준으로 최신 시그널을 조회한다.
 - `final_signals`를 실제로 쓰는 기존 구현은 Alternative 계열 persistence가 있다.
-- 전체 통합 Aggregator는 DART/REPORT/ALTERNATIVE/PRICE 결과를 수용한다. **(#11 업데이트)** 집계 점수(`final_score`)는 SCORING_SOURCES(DART·ALTERNATIVE) 기준을 유지한다(뒤집지 않음). 주가(PRICE) ML/DL 예측은 `RiskReport.price_prediction`으로 **별도 제공**되는 정량 신호이고, DART/REPORT/PRICE는 끝단 LLM 종합(SYNTHESIZE)이 집계 점수와 함께 합치는 근거다. 메타러너 미사용.
+- 전체 통합 Aggregator는 DART/REPORT/HIRING/PATENT/DATALAB/PRICE 결과를 수용한다. **(#11 업데이트)** 집계 점수(`final_score`)는 `SCORING_SOURCES`(`{DART, HIRING, PATENT, DATALAB}`, 대체데이터 소스별 독립) 기준을 유지한다(뒤집지 않음). 주가(PRICE)는 기술지표 규칙으로 `RiskReport.price_prediction`을 **별도 제공**한다(ML/DL 주가 모델 `src_price` 는 별개). REPORT/PRICE는 끝단 LLM 종합(SYNTHESIZE)이 집계 점수와 함께 합치는 근거다(헤드라인 점수엔 메타러너 미사용).
 
 기존 `AlternativeSignalPersistence`는 현재 동작을 유지한다. 다만 신규 전체 통합 경로에서는
 source analyzer가 `final_signals`를 직접 쓰지 않고 Aggregator를 통해 쓰는 것을 원칙으로 한다.
@@ -224,9 +224,9 @@ ALTERNATIVE
 MVP에서는 하나 이상의 source result가 있으면 final signal을 생성할 수 있다.
 없는 source는 `score_breakdown`에서 `data_status="missing"`으로 표현한다.
 
-**(#11 업데이트)** 집계 점수(`aggregate_score`/`final_score`)는 SCORING_SOURCES(DART·ALTERNATIVE) 평균을 **유지**한다
-(뒤집지 않음 — 대체데이터 기여 보존). PRICE·REPORT는 이 점수 평균에 넣지 않는다: 주가(PRICE) ML/DL 예측은
-`RiskReport.price_prediction`으로 **별도 제공**되는 정량 신호, REPORT는 투자의견(`signal_direction`) 컨센서스 방향을 근거로 제공한다.
+**(#11 업데이트)** 집계 점수(`aggregate_score`/`final_score`)는 `SCORING_SOURCES`(`{DART, HIRING, PATENT, DATALAB}`, 소스별 독립) 평균을 **유지**한다
+(뒤집지 않음). PRICE·REPORT는 이 점수 평균에 넣지 않는다: 주가(PRICE)는 기술지표 규칙으로
+`RiskReport.price_prediction`을 **별도 제공**(ML/DL 주가 모델 `src_price` 는 별개), REPORT는 투자의견(`signal_direction`) 컨센서스 방향을 근거로 제공한다.
 끝단 LLM 종합(SYNTHESIZE)이 집계 점수 + 주가 예측 + DART/REPORT 근거를 **합쳐** 서술한다(점수 불변, DART는 공시 LLM 정제 + RISK_VETO).
 메타러너는 미사용이다. 아래 MVP 평균 산식이 현재 집계 점수 계약이다.
 

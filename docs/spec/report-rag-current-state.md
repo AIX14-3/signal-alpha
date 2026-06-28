@@ -1,6 +1,6 @@
 # 증권사 리포트 수집/밸류에이션 현재 구현 상태
 
-> ⚠️ **#11 업데이트**: 주가 ML/DL 예측은 `RiskReport.price_prediction`으로 **별도 제공**(집계 `final_score`는 DART·ALTERNATIVE 유지, 뒤집지 않음). DART/REPORT=근거(LLM/결정론, 메타러너 미사용). 워커는 큐 드레인 데몬으로 발행까지 연속 소비. 상세 [architecture-diagram.md](../architecture-diagram.md).
+> ⚠️ **#11 업데이트**: 주가(PRICE)는 기술지표 규칙으로 `RiskReport.price_prediction`을 **별도 제공**(ML/DL 주가는 `src_price` 별개; 집계 `final_score`는 `{DART, HIRING, PATENT, DATALAB}` 소스별 독립 유지, 뒤집지 않음). DART/REPORT=근거(LLM/결정론, 헤드라인 점수엔 메타러너 미사용). 발행은 `RISK_VETO` 게이트 뒤. 워커는 큐 드레인 데몬으로 발행까지 연속 소비. 상세 [architecture-diagram.md](../architecture-diagram.md).
 
 최종 갱신일: 2026-06-25
 

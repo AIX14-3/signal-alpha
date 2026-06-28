@@ -46,10 +46,11 @@ flowchart TB
   rc -. "source_predictions 오버레이" .-> fsig[("final_signals · meta_signals")]
   agg -.-> fsig
 
-  agg -- "발행분" --> sy["SYNTHESIZE — 끝단 LLM(temp=0, 점수 불변)<br/>집계점수 + price_prediction + source_predictions(7) + evidence 서술"]
-  agg -- "발행분" --> pub[PUBLISH_SIGNALS]
+  agg -- "발행분(근거 이벤트)" --> sy["SYNTHESIZE — 끝단 LLM(temp=0, 점수 불변)<br/>집계점수 + price_prediction + source_predictions(7) + evidence 서술"]
   sy -- "종합 뒤" --> rv["RISK_VETO<br/>치명 키워드 → 미발행/needs_review"]
   rv -. "정제 1회" .-> sy
+  rv -- "veto 통과 → 발행" --> pub[PUBLISH_SIGNALS]
+  agg -. "발행분(이벤트 없음·veto 대상 X)" .-> pub
   pub --> api["백엔드 DB · api.signals_current<br/>(source_predictions 포함)"] --> web[web 대시보드]
   fsig --> rec["run_recommend → recommendations"]
 ```
@@ -77,7 +78,8 @@ flowchart TB
 
 - **집계 (`AGGREGATE_SIGNAL`, `aggregation/tasks.py`)**: `final_score` = `SCORING_SOURCES={DART, HIRING, PATENT, DATALAB}`
   평균(소스별 독립 산입, 점수를 뒤집지 않음). PRICE/REPORT 는 점수에 산입하지 않고 **근거**로만 수집. 이 단계가 발행 판정
-  (`is_published`/`warning_level`/`needs_review`) 게이트이며, 발행분만 `SYNTHESIZE` 와 `PUBLISH_SIGNALS` 를 인큐한다.
+  (`is_published`/`warning_level`/`needs_review`) 게이트다. 발행분 중 **근거 이벤트가 있으면 `SYNTHESIZE`** 로 보내고
+  (백엔드 발행은 그 뒤 `RISK_VETO` 통과 시), **이벤트가 없으면**(veto 대상 텍스트 없음) 곧바로 `PUBLISH_SIGNALS` 를 인큐한다.
 
 - **종합 (`SYNTHESIZE`, `synthesis/tasks.py`)**: 끝단 LLM(temperature=0). **점수·방향·발행은 불변**, 설명
   내러티브만 생성한다. 입력: 집계 점수 + `price_prediction`(주가 단독, score_breakdown.PRICE) +
@@ -85,6 +87,10 @@ flowchart TB
   오는데 vol 채널 제거로 신규 적재가 없어 보통 None — 잔존 인자이나 서술 기여 미미.) LLM 미설정 시 결정론 폴백.
   종합 **뒤** `RISK_VETO`(`gates/risk_veto.py`)가 치명 키워드를 검사하고, 필요 시 LLM 정제 1회(RISK_VETO→
   SYNTHESIZE 재인큐) 후에도 치명이면 미발행.
+
+- **리스크 veto·발행 순서(중요)**: 백엔드 발행(`PUBLISH_SIGNALS`)은 **`RISK_VETO` 게이트 뒤**에서 인큐된다 —
+  veto 통과 시 `RISK_VETO` 가 직접 `PUBLISH` 를 인큐하고, 치명이면 발행하지 않는다. (과거엔 `AGGREGATE` 가
+  `SYNTHESIZE` 와 병렬로 `PUBLISH` 를 인큐해, 드레인 순서상 치명 신호가 veto 전에 백엔드로 새어나갈 수 있었다.)
 
 - **발행 (`PUBLISH_SIGNALS`)**: `final_signals` 등을 백엔드 DB 로 앱레벨 발행(`signal_publisher`, `SELECT *`
   동적 복사) → `api.signals_current`/`signal_detail`(읽기 계약 view, `source_predictions` 포함) → web.
