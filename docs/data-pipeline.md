@@ -64,12 +64,14 @@ stocks
   적재(`PRICE_COLLECTOR_ENABLED`로 워커 내장 on/off 가능, 단일 통합 기동 시 워커 lifespan에 내장)(#11 업데이트).
   PRICE analyzer는 DB만 읽음(키움 API 직접 호출 금지).
 - **구현됨**: DataLab 카테고리 기반 수집 경로.
-- **구현됨**: Report 큐 경로 `collect_report → process_report → normalize_report → analyze_report → ml_infer` (결정론 밸류에이션 fact 추출). Report 분석 결과 ID는 `aggregate_ctx.source_analysis_result_ids`로 ML/Aggregator queue 입력까지 전달되며, Aggregator는 `REPORT`를 최종 `score_breakdown.REPORT` 근거 소스로 수용합니다. Report는 valuation payload를 보존하지만 현재 점수 산정 소스에는 포함하지 않습니다.
+- **구현됨**: Report 큐 경로 `collect_report → process_report → normalize_report → analyze_report → aggregate_signal` (결정론 밸류에이션 fact 추출). `analyze_report` 가 `aggregate_ctx.source_analysis_result_ids`에 Report `analysis_result_id`를 담아 **AGGREGATE 로 직접** 넘기며(과거 경유하던 vol ML 채널 `ml_infer` 는 C안 Phase 1 #585 에서 제거), Aggregator는 `REPORT`를 최종 `score_breakdown.REPORT` 근거 소스로 수용합니다. Report는 valuation payload를 보존하지만 현재 점수 산정 소스에는 포함하지 않습니다.
 - **폐지됨**: 리포트 PDF **임베딩/RAG 검색**과 **pgvector** 확장은 제거되었습니다(`report_chunks` 테이블 제거, `embed_report`/RAG retriever/Report Agent 부재). 리포트 분석은 RAG가 아니라 `report_valuation_facts` 기반 결정론 추출입니다. 자세한 현황은 `spec/report-rag-current-state.md`.
-- **구현됨(#11 업데이트)**: 워커 드레인 데몬이 큐를 끝단까지 소비한다 — 주가(PRICE) ML/DL 예측은
-  `RiskReport.price_prediction`으로 **별도 제공**되고(집계 `final_score`는 `SCORING_SOURCES`(DART·ALTERNATIVE)
-  유지, 뒤집지 않음), DART/REPORT/대안데이터는 근거로 끝단 LLM 종합(`SYNTHESIZE`)이 합친 뒤 `PUBLISH_SIGNALS`로
-  발행됩니다(메타러너 미사용, 소스 학습형 `SRC_INFER` 채널은 코드만 있고 라이브 미배선). 라우팅 상세는
+- **구현됨(#11 업데이트)**: 워커 드레인 데몬이 큐를 끝단까지 소비한다 — 주가(PRICE)는 `analyzers/price`
+  의 **기술지표 규칙**으로 `RiskReport.price_prediction`을 **별도 제공**하고(ML/DL 주가 모델 `src_price` 는
+  메타러너 라인 별개; 집계 `final_score`는 `SCORING_SOURCES`(`{DART, HIRING, PATENT, DATALAB}`, 소스별 독립)
+  유지, 뒤집지 않음), DART/REPORT/대안데이터는 근거로 끝단 LLM 종합(`SYNTHESIZE`) → `RISK_VETO` 게이트
+  통과 뒤 `PUBLISH_SIGNALS`로 발행됩니다(헤드라인 점수엔 메타러너 미사용; 소스 학습형 `SRC_INFER` 채널은
+  `ANALYZE_PRICE` 가 인큐해 **배선됨**). 라우팅 상세는
   [architecture-diagram.md](./architecture-diagram.md). legacy `report_raw`, `report_signal`은 과거 경로용으로만 유지.
 
 ## LLM·분석 규칙

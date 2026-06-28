@@ -73,13 +73,15 @@ signal-alpha/
   최종: source alignment + evidence + needs_review  →  final_signals  →  web 대시보드
 ```
 
-> **소스별 라우팅(#11 결정)**: 주가(PRICE) ML/DL 예측은 `RiskReport.price_prediction` 으로 **별도
-> 제공**되는 정량 신호이고, 집계 점수(`final_score`)는 `SCORING_SOURCES`(DART·ALTERNATIVE) 기준을
-> **유지**합니다(뒤집지 않음 — 대체데이터 기여 보존). **DART·증권사 리포트·대안데이터는 근거**로
-> 끝단 LLM 종합(SYNTHESIZE)이 집계 점수·주가 예측과 함께 합칩니다(메타러너 미사용). DART 는 LLM 정제
-> (+`RISK_VETO` 결정론 룰), REPORT 는 투자의견(`signal_direction`) 컨센서스로 결정론 방향을 냅니다.
-> LLM 은 점수를 바꾸지 않고 이유만 서술합니다(temperature=0). 소스 학습형 메타러너 채널(`SRC_INFER`)은
-> 코드만 있고 라이브 미배선입니다. 출력 계약 검증기는 `app/orchestrator/aggregation/source_contract.py`.
+> **소스별 라우팅(#11 결정)**: 주가(PRICE)는 `analyzers/price` 의 **기술지표 규칙**으로 `price_prediction`
+> 을 **별도 제공**합니다(ML/DL 주가 모델 `src_price` 는 메타러너 라인의 별개 채널). 집계 점수
+> (`final_score`)는 `SCORING_SOURCES`(`{DART, HIRING, PATENT, DATALAB}`, 대체데이터 소스별 독립) 기준을
+> **유지**합니다(뒤집지 않음). **PRICE·증권사 리포트·대안데이터는 근거**로 끝단 LLM 종합(SYNTHESIZE)이
+> 집계 점수·주가 예측과 함께 합칩니다(헤드라인 점수엔 메타러너 미사용 — 7예측률은 병행 노출). DART 는
+> LLM 정제(+`RISK_VETO` 결정론 룰), REPORT 는 투자의견(`signal_direction`) 컨센서스로 결정론 방향을 냅니다.
+> 발행(`PUBLISH_SIGNALS`)은 **`RISK_VETO` 게이트 통과 뒤**에 일어납니다(치명 신호 누수 방지). LLM 은 점수를
+> 바꾸지 않고 이유만 서술합니다(temperature=0). 소스 학습형 메타러너 채널(`SRC_INFER`)은 `ANALYZE_PRICE` 가
+> 인큐해 **배선됨**(아티팩트 학습 후 실값). 출력 계약 검증기는 `app/orchestrator/aggregation/source_contract.py`.
 
 소스별 수집기/분석기는 `agent-worker/app/collectors/*` 와 `analyzers/*` 아래에 소스 단위로 구성됩니다
 (`dart, report, price, datalab, hiring, patent, sec`). 작업 단계별 큐 모델과 테이블 흐름은

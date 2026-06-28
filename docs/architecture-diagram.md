@@ -152,25 +152,30 @@ flowchart TB
 flowchart TB
     sch2["스케줄러: 워커 /internal/schedules/* 주기 호출(수집 스케줄)"]
     subgraph fan["소스 분석 (워커 드레인 데몬이 processing_queue 에서 소비)"]
-        price["PRICE — 주가 ML/DL<br/>price_prediction(별도 정량 신호)"]
+        price["PRICE — 주가 기술지표(규칙)<br/>price_prediction(별도 정량 신호) · ML/DL은 src_price 별개"]
         dart["DART 공시 — 근거(features)"]
         report["증권사 리포트<br/>투자의견 컨센서스(결정론)"]
         alt["Alternative<br/>(datalab · hiring · patent)"]
     end
     agg["AGGREGATE<br/>소스 정렬 + 근거 수집(점수 산입은 SCORING_SOURCES)"]
     synth["끝단 LLM 종합(SYNTHESIZE)<br/>주가 예측 별도 노출 + DART/REPORT 근거 서술(temp=0)"]
+    rv2["RISK_VETO 게이트<br/>치명 키워드 → 미발행/needs_review"]
     fs["final_signals + RiskReport(JSON)"]
     pub["publish(PUBLISH_SIGNALS) → 백엔드 DB"]
     api2["api.signals_current / signal_detail<br/>(읽기 계약 view)"]
     web2["web 대시보드"]
 
-    sch2 --> fan --> agg --> synth --> fs --> pub --> api2 --> web2
+    sch2 --> fan --> agg --> synth --> rv2 -- "veto 통과 → 발행" --> pub --> api2 --> web2
+    rv2 -. "정제 1회" .-> synth
+    agg --> fs
 ```
 
-> **소스별 라우팅(#11 결정)**: 주가(PRICE) ML/DL 예측은 `RiskReport.price_prediction` 으로 **별도
-> 제공**되는 정량 신호이고, 집계 점수(`final_score`)는 `SCORING_SOURCES`(DART·ALTERNATIVE) 기준을
-> **유지**한다(뒤집지 않음). **DART·증권사 리포트·대안데이터는 근거**로 끝단 LLM 종합이 집계 점수·주가
-> 예측과 함께 합친다(메타러너 미사용). LLM 은 점수를 바꾸지 않고 *이유만* 서술한다(temperature=0).
+> **소스별 라우팅(#11 결정)**: 주가(PRICE)는 `analyzers/price` 의 **기술지표 규칙**으로 `price_prediction`
+> 을 내 **별도 제공**한다(ML/DL 주가 모델 `src_price` 는 메타러너 라인의 별개 채널). 집계 점수
+> (`final_score`)는 `SCORING_SOURCES`(`{DART, HIRING, PATENT, DATALAB}`, 대체데이터 소스별 독립) 기준이며
+> 뒤집지 않는다. **PRICE·증권사 리포트는 근거**로 끝단 LLM 종합이 집계 점수·주가 예측과 함께 합친다.
+> 발행(PUBLISH_SIGNALS)은 **RISK_VETO 게이트 통과 뒤**에 일어난다(치명 키워드 신호 누수 방지).
+> LLM 은 점수를 바꾸지 않고 *이유만* 서술한다(temperature=0).
 > REPORT 는 투자의견(`signal_direction`) 컨센서스로 결정론 방향을 낸다.
 > 소스별 수집기/분석기는 `agent-worker/app/collectors/*` · `analyzers/*` 아래 소스 단위
 > (`dart · report · price · datalab · hiring · patent`)로 구성됩니다. 출력 계약 검증기는
