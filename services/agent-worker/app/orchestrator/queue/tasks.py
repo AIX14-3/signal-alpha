@@ -112,14 +112,15 @@ DEFAULT_CYCLE_PLAN: dict[str, int] = {
     "NORMALIZE_DATALAB": 10,
     "ENRICH_PATENT": 10,
     "ENRICH_HIRING": 10,
-    "ANALYZE_ALTERNATIVE": 20,
+    # 대체데이터 소스별 분석 스테이지 (C안 Phase 3 — 1태스크=1소스)
+    "ANALYZE_DATALAB": 20,
+    "ANALYZE_HIRING": 20,
+    "ANALYZE_PATENT": 20,
     # PRICE — 빠름(DB만 읽음), 큰 캡
     "analyze_price": 50,
     # ML/메타/집계/발행 (가벼움)
     "src_infer": 20,
-    "ml_infer": 20,
     "return_combine": 20,
-    "meta_combine": 20,
     "aggregate_signal": 30,
     "synthesize": 20,
     "risk_veto": 20,

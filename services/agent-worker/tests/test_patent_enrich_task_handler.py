@@ -1,10 +1,10 @@
 """Queue-wiring tests for the patent C3 enrichment step.
 
 Covers the two seams that put LLM enrichment *inside* the queue pipeline:
-  - PatentNormalizeTaskHandler enqueues ENRICH_PATENT (not ANALYZE_ALTERNATIVE)
+  - PatentNormalizeTaskHandler enqueues ENRICH_PATENT (not ANALYZE_PATENT)
     after normalizing, carrying the just-normalized raw_ids.
   - PatentEnrichTaskHandler enriches only those raw_ids, then enqueues
-    ANALYZE_ALTERNATIVE — and degrades gracefully (skips the LLM, still enqueues
+    ANALYZE_PATENT — and degrades gracefully (skips the LLM, still enqueues
     analysis) when no Gemini client is available.
 
 DB is a recording fake; Gemini is injected.
@@ -20,7 +20,7 @@ from app.orchestrator.alternative.tasks import (
     PatentEnrichTaskHandler,
     PatentNormalizeTaskHandler,
 )
-from app.orchestrator.queue.task_types import ANALYZE_ALTERNATIVE, ENRICH_PATENT
+from app.orchestrator.queue.task_types import ANALYZE_PATENT, ENRICH_PATENT
 
 
 class FakeConnection:
@@ -53,7 +53,7 @@ class FakeConnection:
         types = set()
         for args in self.fetchval_args():
             for value in args:
-                if value in (ENRICH_PATENT, ANALYZE_ALTERNATIVE):
+                if value in (ENRICH_PATENT, ANALYZE_PATENT):
                     types.add(value)
         return types
 
@@ -102,7 +102,7 @@ class PatentEnrichTaskHandlerTests(unittest.IsolatedAsyncioTestCase):
             any("UPDATE patent_raw_details" in c[1] for c in conn.calls if c[0] == "execute")
         )
         # … and handed off to analysis (not another enrich).
-        self.assertEqual(conn.enqueued_task_types(), {ANALYZE_ALTERNATIVE})
+        self.assertEqual(conn.enqueued_task_types(), {ANALYZE_PATENT})
         self.assertTrue(result["analysis_task_ids"])
 
     async def test_no_client_skips_llm_but_still_enqueues_analysis(self):
@@ -123,7 +123,7 @@ class PatentEnrichTaskHandlerTests(unittest.IsolatedAsyncioTestCase):
         # No patent fetch / no cache write when enrichment is disabled …
         self.assertFalse(any("patent_raw_details" in c[1] for c in conn.calls))
         # … but the pipeline still moves on to analysis (count-based fallback).
-        self.assertEqual(conn.enqueued_task_types(), {ANALYZE_ALTERNATIVE})
+        self.assertEqual(conn.enqueued_task_types(), {ANALYZE_PATENT})
 
 
 class PatentNormalizeFollowupTests(unittest.IsolatedAsyncioTestCase):
@@ -146,7 +146,7 @@ class PatentNormalizeFollowupTests(unittest.IsolatedAsyncioTestCase):
 
         await handler._enqueue_followups(stock_ids=[5], raw_document_ids=[], as_of="2026-06-17")
 
-        self.assertEqual(conn.enqueued_task_types(), {ANALYZE_ALTERNATIVE})
+        self.assertEqual(conn.enqueued_task_types(), {ANALYZE_PATENT})
 
 
 if __name__ == "__main__":

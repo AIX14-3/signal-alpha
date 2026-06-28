@@ -61,7 +61,14 @@ class QueueCycleRunnerTest(unittest.IsolatedAsyncioTestCase):
     async def test_default_plan_has_all_collectors(self):
         # 기본 plan 에 price/alternative/dart/report/ml/발행 type 이 모두 포함(과거 drain 리스트엔
         # price/alternative 가 빠져 있었다).
-        for task_type in ("analyze_price", "ANALYZE_ALTERNATIVE", "collect_dart", "publish_signals"):
+        for task_type in (
+            "analyze_price",
+            "ANALYZE_DATALAB",
+            "ANALYZE_HIRING",
+            "ANALYZE_PATENT",
+            "collect_dart",
+            "publish_signals",
+        ):
             self.assertIn(task_type, DEFAULT_CYCLE_PLAN)
 
 

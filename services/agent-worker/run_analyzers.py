@@ -6,7 +6,7 @@ comes from env via the analyzer config dataclasses.
 
 Queue-based flow:
   ① discover target stocks (fetch_target_stocks) and enqueue one deduped
-     ANALYZE_ALTERNATIVE task per stock (as_of = today, YYYY-MM-DD).
+     ANALYZE_{SOURCE} task per stock per wanted source (as_of = today, YYYY-MM-DD).
   ② drain the queue with QueueTaskRunner across ``batch_concurrency`` workers;
      each task runs AlternativeAnalyzeTaskHandler (the same loaders/analyzers/
      aggregator/persistence as before — collectors now feed the same path).
@@ -29,12 +29,12 @@ sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "packages" / "data-access"))
 
 from app.analyzers.config import AggregatorConfig, AnalyzerRuntimeConfig
-from app.analyzers.registry import build_registry
+from app.analyzers.registry import registration_for
 from app.orchestrator.alternative.tasks import (
+    ANALYZE_TASK_BY_SOURCE,
     AlternativeAnalyzeTaskHandler,
     analysis_task_context,
 )
-from app.orchestrator.queue.task_types import ANALYZE_ALTERNATIVE
 from app.orchestrator.queue.tasks import QueueTaskRunner
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -147,15 +147,16 @@ async def run_once(args: argparse.Namespace) -> None:
         if any(only_flags.values())
         else {"HIRING", "PATENT", "DATALAB"}
     )
-    registrations = [r for r in build_registry() if r.source in wanted]
-    if not registrations:
+    if not wanted:
         raise RuntimeError("No source selected (check --hiring-only/--patent-only/--datalab-only).")
+    # Each wanted source routes to its own ANALYZE_{SOURCE} stage (C안 Phase 3).
+    wanted_task_types = [ANALYZE_TASK_BY_SOURCE[source] for source in sorted(wanted)]
 
-    # Queue-based: this driver enqueues one deduped ANALYZE_ALTERNATIVE per target
-    # stock, then drains the queue with QueueTaskRunner. The analysis itself lives
-    # in AlternativeAnalyzeTaskHandler (same loaders/analyzers; each source now
-    # publishes its own per-source signal), so collectors and this driver feed the
-    # *same* queue path (#117).
+    # Queue-based: this driver enqueues one deduped ANALYZE_{SOURCE} per target
+    # stock per wanted source, then drains the queue with QueueTaskRunner. The
+    # analysis itself lives in AlternativeAnalyzeTaskHandler (same loaders/analyzers;
+    # each source publishes its own per-source signal), so collectors and this
+    # driver feed the *same* queue path (#117).
     from signal_alpha_data_access.repositories import ProcessingQueueRepository
 
     aggregator_config = AggregatorConfig.from_env()
@@ -177,13 +178,17 @@ async def run_once(args: argparse.Namespace) -> None:
     summary = {"processed": 0, "published": 0, "no_data": 0, "error": 0}
 
     def _build_runner(conn: Any) -> QueueTaskRunner:
-        handler = AlternativeAnalyzeTaskHandler(
-            conn,
-            registrations=registrations,
-            aggregator_config=aggregator_config,
-            runtime_config=runtime,
-        )
-        return QueueTaskRunner(conn, {ANALYZE_ALTERNATIVE: handler})
+        # One single-source handler per wanted source, keyed by its ANALYZE_{SOURCE}.
+        handlers = {
+            ANALYZE_TASK_BY_SOURCE[source]: AlternativeAnalyzeTaskHandler(
+                conn,
+                registrations=[registration_for(source)],
+                aggregator_config=aggregator_config,
+                runtime_config=runtime,
+            )
+            for source in sorted(wanted)
+        }
+        return QueueTaskRunner(conn, handlers)
 
     try:
         async with pool.acquire() as conn:
@@ -196,48 +201,59 @@ async def run_once(args: argparse.Namespace) -> None:
             )
             queue_repository = ProcessingQueueRepository(conn)
             for target in targets:
-                await queue_repository.enqueue(
-                    stock_id=int(target["stock_id"]),
-                    task_type=ANALYZE_ALTERNATIVE,
-                    priority="batch",
-                    # Canonical key (as_of only) so this dedupes against the
-                    # normalize-side producer; the handler resolves ticker from
-                    # stock_id. Including stock_code here would defeat dedupe.
-                    task_context=analysis_task_context(as_of_str),
-                    dedupe=True,
-                )
+                for task_type in wanted_task_types:
+                    await queue_repository.enqueue(
+                        stock_id=int(target["stock_id"]),
+                        task_type=task_type,
+                        priority="batch",
+                        # Canonical key (as_of only) so this dedupes against the
+                        # normalize-side producer; the handler resolves ticker from
+                        # stock_id. Including stock_code here would defeat dedupe.
+                        task_context=analysis_task_context(as_of_str),
+                        dedupe=True,
+                    )
 
         print("\nALTERNATIVE ANALYZER")
         print("=" * 60)
         print(f"targets={len(targets)} sources={sorted(wanted)} concurrency={runtime.batch_concurrency}")
 
+        def _record(result: dict[str, Any]) -> None:
+            status = result["status"]
+            if status == "success":
+                payload = result.get("result") or {}
+                summary["processed"] += 1
+                if payload.get("available_sources"):
+                    summary["published"] += 1
+                else:
+                    summary["no_data"] += 1
+                # One final_signals row per source now — summarise each.
+                per_source = ", ".join(
+                    f"{s['source']}={s['direction']} {float(s.get('score') or 0.0):+.3f}"
+                    f"→fs{s.get('final_signal_id')}"
+                    for s in payload.get("sources") or []
+                )
+                print(
+                    f"  stock_id={payload.get('stock_id')}: "
+                    f"avail={payload.get('available_sources')} [{per_source}]"
+                )
+            else:  # failed/skipped — isolate and keep draining
+                summary["error"] += 1
+                print(f"  task_id={result.get('task_id')}: {status} {result.get('error', '')}")
+
         async def drain_worker() -> None:
+            # One pass = sweep every wanted ANALYZE_{SOURCE} type once; exit when a
+            # full sweep finds nothing (mirrors drain_until_idle across types).
             while True:
-                async with pool.acquire() as conn:
-                    result = await _build_runner(conn).run_task(ANALYZE_ALTERNATIVE)
-                status = result["status"]
-                if status == "idle":
+                progressed = False
+                for task_type in wanted_task_types:
+                    async with pool.acquire() as conn:
+                        result = await _build_runner(conn).run_task(task_type)
+                    if result["status"] == "idle":
+                        continue
+                    progressed = True
+                    _record(result)
+                if not progressed:
                     return
-                if status == "success":
-                    payload = result.get("result") or {}
-                    summary["processed"] += 1
-                    if payload.get("available_sources"):
-                        summary["published"] += 1
-                    else:
-                        summary["no_data"] += 1
-                    # One final_signals row per source now — summarise each.
-                    per_source = ", ".join(
-                        f"{s['source']}={s['direction']} {float(s.get('score') or 0.0):+.3f}"
-                        f"→fs{s.get('final_signal_id')}"
-                        for s in payload.get("sources") or []
-                    )
-                    print(
-                        f"  stock_id={payload.get('stock_id')}: "
-                        f"avail={payload.get('available_sources')} [{per_source}]"
-                    )
-                else:  # failed/skipped — isolate and keep draining
-                    summary["error"] += 1
-                    print(f"  task_id={result.get('task_id')}: {status} {result.get('error', '')}")
 
         await asyncio.gather(*[drain_worker() for _ in range(max(1, runtime.batch_concurrency))])
 

@@ -6,7 +6,7 @@ This module enqueues every report source for one stock in a single call so the
 operator (or a scheduler) can fan a stock out across all collectors:
 
   - ANALYZE_PRICE          → PRICE analysis_result (ohlcv_data)
-  - ANALYZE_ALTERNATIVE    → HIRING/PATENT/DATALAB analysis_results
+  - ANALYZE_{DATALAB,HIRING,PATENT} → per-source analysis_results (C안 Phase 3)
   - COLLECT_DART (chain)   → DART analysis_result → ML → fan-in AGGREGATE
   - AGGREGATE_SIGNAL       → fan-in blend of whatever sources exist for the date
 
@@ -23,9 +23,15 @@ from typing import Any
 
 from app.orchestrator.queue.task_types import (
     AGGREGATE_SIGNAL,
-    ANALYZE_ALTERNATIVE,
+    ANALYZE_DATALAB,
+    ANALYZE_HIRING,
+    ANALYZE_PATENT,
     ANALYZE_PRICE,
 )
+
+# Per-source analysis stages (C안 Phase 3) — the former single ANALYZE_ALTERNATIVE
+# is now one stage per source. Fan a stock out across all three.
+_ALTERNATIVE_TASK_TYPES = (ANALYZE_DATALAB, ANALYZE_HIRING, ANALYZE_PATENT)
 
 
 async def enqueue_stock_pipeline(
@@ -37,7 +43,7 @@ async def enqueue_stock_pipeline(
     priority: str = "batch",
     include_dart_collection: bool = False,
     collect_dart_task_type: str = "collect_dart",
-) -> dict[str, int | None]:
+) -> dict[str, Any]:
     """Enqueue the full per-stock source fan-out. Returns the enqueued task ids.
 
     ``include_dart_collection`` is opt-in because DART collection carries its own
@@ -55,13 +61,15 @@ async def enqueue_stock_pipeline(
         task_context=base_ctx,
         dedupe=True,
     )
-    alternative_task_id = await queue.enqueue(
-        stock_id=stock_id,
-        task_type=ANALYZE_ALTERNATIVE,
-        priority=priority,
-        task_context=base_ctx,
-        dedupe=True,
-    )
+    alternative_task_ids: dict[str, int | None] = {}
+    for task_type in _ALTERNATIVE_TASK_TYPES:
+        alternative_task_ids[task_type] = await queue.enqueue(
+            stock_id=stock_id,
+            task_type=task_type,
+            priority=priority,
+            task_context=base_ctx,
+            dedupe=True,
+        )
     dart_task_id: int | None = None
     if include_dart_collection:
         dart_task_id = await queue.enqueue(
@@ -82,7 +90,8 @@ async def enqueue_stock_pipeline(
     )
     return {
         "analyze_price_task_id": price_task_id,
-        "analyze_alternative_task_id": alternative_task_id,
+        # One task id per per-source analysis stage (keyed by task_type).
+        "analyze_alternative_task_ids": alternative_task_ids,
         "collect_dart_task_id": dart_task_id,
         "aggregate_signal_task_id": aggregate_task_id,
     }

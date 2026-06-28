@@ -111,3 +111,28 @@ def build_registry(
             ),
         ),
     ]
+
+
+def registration_for(
+    source: str,
+    *,
+    hiring_config: HiringRuleConfig | None = None,
+    patent_config: PatentRuleConfig | None = None,
+    datalab_config: DataLabRuleConfig | None = None,
+) -> SourceRegistration:
+    """The single ``SourceRegistration`` for one source.
+
+    Each ANALYZE_{SOURCE} stage handler analyzes exactly one source, so it is
+    constructed with a one-element registration list. This pulls that source out
+    of ``build_registry`` (the full list stays the source of truth — adding a
+    source here is still a single append there). Raises if the source is unknown.
+    """
+    registry = build_registry(
+        hiring_config=hiring_config,
+        patent_config=patent_config,
+        datalab_config=datalab_config,
+    )
+    try:
+        return next(r for r in registry if r.source == source)
+    except StopIteration:
+        raise KeyError(f"unknown alternative source: {source!r}") from None

@@ -48,18 +48,24 @@ NORMALIZE_HIRING = "NORMALIZE_HIRING"
 NORMALIZE_PATENT = "NORMALIZE_PATENT"
 NORMALIZE_DATALAB = "NORMALIZE_DATALAB"
 # LLM significance enrichment, slotted between NORMALIZE_PATENT and
-# ANALYZE_ALTERNATIVE: a patent's title+abstract -> Gemini -> cached llm_features
+# ANALYZE_PATENT: a patent's title+abstract -> Gemini -> cached llm_features
 # the patent analyzer reads to weight filings by importance. Enqueued per stock
 # carrying the just-normalized raw_document_ids; enriches only those, then
-# enqueues the per-stock ANALYZE_ALTERNATIVE. 14 chars (task_type is VARCHAR(50)).
+# enqueues the per-stock ANALYZE_PATENT. 14 chars (task_type is VARCHAR(50)).
 ENRICH_PATENT = "ENRICH_PATENT"
-# OCR skill enrichment, slotted between NORMALIZE_HIRING and ANALYZE_ALTERNATIVE:
+# OCR skill enrichment, slotted between NORMALIZE_HIRING and ANALYZE_HIRING:
 # a hiring poster image (extra_payload.image_urls) -> Tesseract OCR -> tech-skill
 # set -> cached hiring_raw_details.ocr_skills the hiring analyzer reads to weight
 # postings by concrete tech demand. Enqueued per stock carrying the just-normalized
 # raw_document_ids; enriches only those, then enqueues the per-stock
-# ANALYZE_ALTERNATIVE. 13 chars (task_type is VARCHAR(50)).
+# ANALYZE_HIRING. 13 chars (task_type is VARCHAR(50)).
 ENRICH_HIRING = "ENRICH_HIRING"
-# Cross-source, per-stock analysis (not per-event): one task analyzes all
-# registered Alternative sources for a stock on a given as_of date.
-ANALYZE_ALTERNATIVE = "ANALYZE_ALTERNATIVE"
+# Per-source, per-stock analysis (not per-event): one task analyzes ONE
+# Alternative source for a stock on a given as_of date. Split from the former
+# single ANALYZE_ALTERNATIVE so each source is its own pipeline stage (C안 Phase 3)
+# — the score is already separated per source upstream, this aligns the stages/
+# diagram with that. Uppercase to match the alternative family; the longest value
+# (ANALYZE_DATALAB) is 15 chars (task_type is VARCHAR(50)).
+ANALYZE_DATALAB = "ANALYZE_DATALAB"
+ANALYZE_HIRING = "ANALYZE_HIRING"
+ANALYZE_PATENT = "ANALYZE_PATENT"

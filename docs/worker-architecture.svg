@@ -156,7 +156,7 @@
   <text x="446" y="584" class="h" fill="#334155">AGGREGATE</text>
   <text x="446" y="606" class="s">집계 점수 final_score</text>
   <text x="446" y="625" class="albl" fill="#334155">= SCORING_SOURCES</text>
-  <text x="446" y="643" class="s">(DART · ALTERNATIVE) — 뒤집지 않음</text>
+  <text x="446" y="643" class="s">(DART·HIRING·PATENT·DATALAB) — 뒤집지 않음</text>
   <text x="446" y="667" class="s">PRICE·REPORT = 근거로 수집</text>
   <text x="446" y="687" class="lbl">대체데이터 점수 산술블렌드 X</text>
 
@@ -212,7 +212,7 @@
 
   <rect x="1078" y="912" width="338" height="110" rx="9" fill="#fffbeb" stroke="#d97706" stroke-dasharray="5 4"/>
   <text x="1094" y="936" class="h" fill="#92400e">팀 plug-in 절차 (켜기)</text>
-  <text x="1094" y="957" class="s">① ANALYZE_ALT/REPORT 끝에 SRC_INFER 인큐</text>
+  <text x="1094" y="957" class="s">① ANALYZE_*/REPORT 끝에 SRC_INFER 인큐</text>
   <text x="1094" y="975" class="s">② base 모델 아티팩트 학습(train_source_models.py)</text>
   <text x="1094" y="993" class="s">③ AGGREGATE/SYNTHESIZE 가 meta_signals(SRC) 합류</text>
   <text x="1094" y="1013" class="lbl">env gate 권장 · 문서 docs/spec/worker-design-and-handoff.md</text>

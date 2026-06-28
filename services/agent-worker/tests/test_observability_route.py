@@ -17,8 +17,8 @@ from app.core.database import get_database_pool
 from app.main import app
 
 QUEUE_ROWS = [
-    {"task_type": "ANALYZE_ALTERNATIVE", "status": "pending", "count": 3, "oldest_waiting_at": None},
-    {"task_type": "ANALYZE_ALTERNATIVE", "status": "success", "count": 7, "oldest_waiting_at": None},
+    {"task_type": "ANALYZE_DATALAB", "status": "pending", "count": 3, "oldest_waiting_at": None},
+    {"task_type": "ANALYZE_DATALAB", "status": "success", "count": 7, "oldest_waiting_at": None},
     {"task_type": "normalize_dart", "status": "failed", "count": 2, "oldest_waiting_at": None},
 ]
 
