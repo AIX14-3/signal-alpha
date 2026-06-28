@@ -112,7 +112,7 @@ export type Stock = {
 
 export type WatchlistItem = { stock: Stock; created_at: string | null };
 
-export type SourceKey = "price" | "dart" | "hiring" | "datalab" | "report";
+export type SourceKey = "price" | "dart" | "hiring" | "datalab" | "patent" | "report";
 
 export type ReportSource = {
   source: SourceKey;
@@ -120,6 +120,16 @@ export type ReportSource = {
   score?: number | null;
   data_status?: string;
   summary?: string | null;
+  locked: boolean;
+};
+
+// 메타러너 소스별 예측률 — 주가 BASE ⊕ 각 공공데이터로 만든 0–100 'AI 예측 점수'.
+// 통합(SRC)은 Report.score(헤드라인)로 노출되고, 여기엔 per-source(주가 1 + 공공데이터 5)만 담긴다.
+export type PredictionRate = {
+  source: SourceKey;
+  score?: number | null; // 0–100 (score_100)
+  direction?: string | null; // positive | negative | neutral | unknown
+  data_status?: string;
   locked: boolean;
 };
 
@@ -155,6 +165,7 @@ export type Report = {
   summary: string | null;
   ml_return?: MlReturn | null;
   sources: ReportSource[];
+  prediction_rates?: PredictionRate[];
   access: ReportAccess;
   notice: string;
 };
