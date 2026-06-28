@@ -115,9 +115,13 @@ flowchart LR
 3. **`RETURN_COMBINE`**(`ml/return_combine.py`): 각 소스 = `combine_return({src_price, src_<source>})` 로
    **주가 BASE 를 앵커로 포함**해 융합. 소스별 6개(`SRC_PRICE`/`SRC_DATALAB`/`SRC_HIRING`/`SRC_DART`/
    `SRC_PATENT`/`SRC_REPORT`) + 통합 1개(`SRC`) = **총 7개** 를 `meta_signals`(per-source run_key)에 적재하고,
-   현재 발행 신호의 `final_signals.source_predictions`(JSONB) + `ml_*` 컬럼에 오버레이한다.
+   현재 발행 신호의 `final_signals.source_predictions`(JSONB) + `ml_*` 컬럼에 오버레이한다. 각 예측률 엔트리는
+   예측 수익률(`final_score`)과 함께 **0-100 'AI 예측 점수'(`score_100`, tanh 변환 — `meta_learner.return_to_score_100`,
+   헤드라인과 동일)** 를 동반 적재해 사용자 노출에 그대로 쓴다.
 4. 발행 경로(`PUBLISH_SIGNALS` → `api.signals_current.source_predictions`)와 `SYNTHESIZE`(LLM 서술,
-   수치 불변)로 사용자에게 노출.
+   수치 불변)로 사용자에게 노출. 리포트 API(`/api/reports/{ticker}` → `prediction_rates`, `reports.py`)는
+   **주가 1 + 공공데이터 5(DART·증권사리포트·채용·특허·네이버데이터랩) = per-source 6개 예측률을 0-100 으로 따로
+   노출**한다(통합 `SRC` 는 헤드라인 `score`/`direction` 으로 이미 노출). 비회원은 공개 소스(DART·데이터랩)만.
 
 숫자 예측률은 메타러너/융합이 확정하고 LLM 은 서술만 한다. 메타러너 return 행은 `run_key=SRC` 로
 분리 적재된다(제거된 vol 채널의 `run_key=ML` 과 무관 — `combined_vol` 은 항상 NULL).
@@ -125,6 +129,9 @@ flowchart LR
 ## 발행 정책 (목표 설계)
 
 - **발행 산출물 = 7 예측률**(`source_predictions`): 대체 5 + 주가 1 + 통합 1. 주가가 BASE, 대체데이터는 가/감산.
+  각 예측률은 0-100 `score_100` 동반(헤드라인과 동일 tanh 변환).
+- **사용자 노출**: 통합(`SRC`)은 발행 **헤드라인**(`score`/`direction`). per-source 6개(주가 1 + **공공데이터
+  예측률 5개** = 주가 ⊕ 각 공공데이터)는 리포트 `prediction_rates` 로 **따로** 보여준다(공공데이터 5개가 핵심 노출).
 - **무조건 발행**: 주가는 평일 매일 갱신되므로 종목마다 항상 7 예측률을 발행한다(발행 판정·근거 게이트 없음).
 - 끝단 LLM 서술이 7 예측률에 설명을 덧붙인다(법적 금지단어만 필터). 결정론 헤드라인 점수·추천 랭킹은 폐기.
 

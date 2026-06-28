@@ -6,10 +6,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "packages" / "data-access"))
 
-from app.orchestrator.aggregation.tasks import (
-    AggregateSignalTaskHandler,
-    _return_to_score_100,
-)
+from app.ml.meta_learner import return_to_score_100
+from app.orchestrator.aggregation.tasks import AggregateSignalTaskHandler
 from app.orchestrator.queue.handlers import build_task_handlers
 from app.orchestrator.queue.task_types import AGGREGATE_SIGNAL
 
@@ -383,13 +381,13 @@ class AggregateSignalTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(result["signal"], "positive")
-        self.assertEqual(result["final_score"], _return_to_score_100(0.03))
+        self.assertEqual(result["final_score"], return_to_score_100(0.03))
         self.assertGreater(result["final_score"], 50.0)
         # 결정론 블렌드(negative)는 헤드라인이 아니라 메타로만.
         self.assertEqual(result["deterministic_signal"], "negative")
         final_call = next(call for call in connection.calls if "INSERT INTO final_signals" in call[1])
         self.assertEqual(final_call[2][7], "positive")  # signal
-        self.assertEqual(final_call[2][5], _return_to_score_100(0.03))  # final_score
+        self.assertEqual(final_call[2][5], return_to_score_100(0.03))  # final_score
 
     async def test_headline_neutral_when_src_date_mismatch(self):
         # SRC 가 다른 날짜 것뿐이면(오늘 미계산) 중립으로 발행 — 다음 드레인에 갱신.
@@ -420,16 +418,16 @@ class AggregateSignalTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
 
 class ReturnToScoreTest(unittest.TestCase):
     def test_zero_return_is_neutral_50(self):
-        self.assertEqual(_return_to_score_100(0.0), 50.0)
+        self.assertEqual(return_to_score_100(0.0), 50.0)
 
     def test_positive_above_50_negative_below(self):
-        self.assertGreater(_return_to_score_100(0.03), 50.0)
-        self.assertLess(_return_to_score_100(-0.03), 50.0)
+        self.assertGreater(return_to_score_100(0.03), 50.0)
+        self.assertLess(return_to_score_100(-0.03), 50.0)
 
     def test_monotonic_and_bounded(self):
-        self.assertLess(_return_to_score_100(0.03), _return_to_score_100(0.10))
-        self.assertGreaterEqual(_return_to_score_100(10.0), 99.0)
-        self.assertLessEqual(_return_to_score_100(-10.0), 1.0)
+        self.assertLess(return_to_score_100(0.03), return_to_score_100(0.10))
+        self.assertGreaterEqual(return_to_score_100(10.0), 99.0)
+        self.assertLessEqual(return_to_score_100(-10.0), 1.0)
 
 
 if __name__ == "__main__":

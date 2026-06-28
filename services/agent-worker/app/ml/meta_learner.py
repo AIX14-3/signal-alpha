@@ -28,6 +28,15 @@ METHOD_EMPTY = "empty"
 # return 채널 학습형 결합(부호 있는 선형 stacker). vol 의 비음수 가중 평균과 구분.
 METHOD_LINEAR = "linear_stacking"
 
+# 예측 수익률(부호값) → 0-100 'AI 예측 점수' 변환 기울기(tanh). 50=중립, 상승↑/하락↓.
+# +3% → ~64, 0% → 50, -2% → ~41 (사용자 승인 매핑). 헤드라인(통합)·소스별 예측률에 공통 적용.
+RETURN_SCORE_STEEPNESS = 9.6
+
+
+def return_to_score_100(return_value: float, *, steepness: float = RETURN_SCORE_STEEPNESS) -> float:
+    """예측 수익률 → 0-100 점수. tanh 로 50 중심에 매핑(상승↑/하락↓), 극단값은 포화."""
+    return round(50.0 + 50.0 * math.tanh(steepness * return_value), 2)
+
 # return 채널 학습 산출물 기본 경로. 없으면 base 예측 균등 평균 폴백.
 DEFAULT_RETURN_ARTIFACT_PATH = (
     Path(__file__).resolve().parent / "artifacts" / "meta_learner_return.json"

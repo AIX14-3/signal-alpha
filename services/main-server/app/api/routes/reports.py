@@ -39,6 +39,18 @@ _SOURCE_TO_EVENT_TYPE = {
     "hiring": "HIRING",
     "datalab": "DATALAB",
 }
+# 메타러너 소스별 예측률(주가 BASE ⊕ 각 공공데이터). 통합(SRC)은 헤드라인(score/direction)으로
+# 이미 노출되므로 여기선 주가 1 + 공공데이터 5 = 6개 per-source 만 사용자에게 따로 보여준다.
+# 값은 final_signals.source_predictions(JSONB) 의 score_100(0-100, 발행 시 적재)·direction.
+_PREDICTION_RATE_SOURCES = ("price", "dart", "datalab", "hiring", "patent", "report")
+_PREDICTION_RATE_RUN_KEY = {
+    "price": "SRC_PRICE",
+    "dart": "SRC_DART",
+    "datalab": "SRC_DATALAB",
+    "hiring": "SRC_HIRING",
+    "patent": "SRC_PATENT",
+    "report": "SRC_REPORT",
+}
 _BLIND_NOTICE = "전체 리포트는 로그인 후 무료 3회까지 열람할 수 있습니다. 비회원은 DART·네이버 데이터만 확인할 수 있습니다."
 
 
@@ -216,6 +228,14 @@ def _report_response(
         _source_block(s, breakdown, locked=(not unlocked and s not in PUBLIC_SOURCES))
         for s in ALL_SOURCES
     ]
+    # 소스별 예측률(주가 BASE ⊕ 각 공공데이터) — 통합(헤드라인) 외에 사용자에게 따로 노출.
+    predictions = _json_object(row.get("source_predictions"))
+    prediction_rates = [
+        _prediction_rate_block(
+            s, predictions, locked=(not unlocked and s not in PUBLIC_SOURCES)
+        )
+        for s in _PREDICTION_RATE_SOURCES
+    ]
     access: dict[str, Any] = {"unlocked": unlocked, "is_member": is_member}
     if issued_via is not None:
         access["issued_via"] = issued_via
@@ -238,6 +258,7 @@ def _report_response(
         "data_status": "ok" if unlocked else "partial",
         "summary": row.get("summary") if unlocked else None,
         "sources": sources,
+        "prediction_rates": prediction_rates,
         "access": access,
         "notice": NOTICE if unlocked else _BLIND_NOTICE,
     }
@@ -255,6 +276,28 @@ def _source_block(source: str, breakdown: dict[str, Any], *, locked: bool) -> di
         "score": _number(detail.get("score_100", detail.get("score"))),
         "data_status": detail.get("data_status", "missing"),
         "summary": detail.get("summary"),
+        "locked": False,
+    }
+
+
+def _prediction_rate_block(
+    source: str, predictions: dict[str, Any], *, locked: bool
+) -> dict[str, Any]:
+    """소스별 예측률 1건 — 주가 BASE ⊕ 해당 공공데이터의 0-100 'AI 예측 점수' + 방향.
+
+    비회원에게 공개 소스(dart/datalab) 외에는 잠금 표시(``locked``). 해당 소스 예측이 없으면
+    (아티팩트/데이터 결측) ``missing`` 으로 노출한다.
+    """
+    if locked:
+        return {"source": source, "locked": True}
+    entry = predictions.get(_PREDICTION_RATE_RUN_KEY[source])
+    if not isinstance(entry, dict):
+        return {"source": source, "score": None, "direction": "unknown", "data_status": "missing", "locked": False}
+    return {
+        "source": source,
+        "score": _number(entry.get("score_100")),
+        "direction": entry.get("direction", "unknown"),
+        "data_status": "ok" if entry.get("score_100") is not None else "missing",
         "locked": False,
     }
 

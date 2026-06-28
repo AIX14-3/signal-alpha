@@ -15,7 +15,7 @@ from collections.abc import Mapping
 from datetime import date, datetime
 from typing import Any
 
-from app.ml.meta_learner import combine_return, load_return_model
+from app.ml.meta_learner import combine_return, load_return_model, return_to_score_100
 from app.ml.source_features import assemble_features
 from app.ml.source_inference import DEFAULT_HORIZON
 from app.ml.source_models import SOURCE_MODELS, SOURCE_RUN_KEY
@@ -139,6 +139,9 @@ class ReturnCombineTaskHandler:
         source_predictions = {
             run_key: {
                 "final_score": res.final_score,
+                # 예측 수익률(부호값)을 0-100 'AI 예측 점수'로 동반 표기 — 헤드라인과 동일 변환(tanh).
+                # 사용자 리포트가 소스별(주가 + 공공데이터 5) 예측률을 0-100 로 보여줄 때 그대로 쓴다.
+                "score_100": return_to_score_100(res.final_score) if res.final_score is not None else None,
                 "direction": res.direction,
                 "confidence": res.confidence,
                 "model_count": res.model_count,

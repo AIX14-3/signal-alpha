@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import math
 from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -9,6 +8,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
+from app.ml.meta_learner import return_to_score_100
 from app.orchestrator.queue.task_types import SYNTHESIZE
 from signal_alpha_data_access.repositories import (
     AnalysisRepository,
@@ -22,8 +22,6 @@ AGGREGATE_RUN_KEY = "AGGREGATED"
 AGGREGATE_VERSION = "final-agg-v1"
 # 통합 SRC 예측(메타러너 return 채널)의 meta_signals run_key. RETURN_COMBINE 이 적재한다.
 SRC_RUN_KEY = "SRC"
-# 예측 수익률 → 0-100 'AI 예측 점수' 변환 기울기(tanh). +3% → ~64, 0% → 50, -2% → ~41 (승인 매핑).
-_RETURN_SCORE_STEEPNESS = 9.6
 # 대체데이터(HIRING/PATENT/DATALAB)는 서로 다른 신호라 묶지 않고 **각자 독립 소스**로 점수에 넣는다
 # (ALTERNATIVE 로 collapse 안 함). PRICE/REPORT 는 근거 소스로 수용하되 점수 산정에는 넣지 않는다.
 SOURCE_ORDER = ("DART", "PRICE", "REPORT", "HIRING", "PATENT", "DATALAB")
@@ -703,17 +701,12 @@ def _src_headline(src_row: Any, signal_date: date) -> tuple[str, float]:
     final_score = row.get("final_score")
     if asof is None or final_score is None or _to_date(asof) != signal_date:
         return "neutral", 50.0
-    return _src_signal(row.get("direction")), _return_to_score_100(_number(final_score))
+    return _src_signal(row.get("direction")), return_to_score_100(_number(final_score))
 
 
 def _src_signal(direction: Any) -> str:
     text = str(direction or "neutral").strip().lower()
     return text if text in {"positive", "negative", "neutral"} else "neutral"
-
-
-def _return_to_score_100(return_value: float) -> float:
-    """예측 수익률(부호값) → 0-100 점수. tanh 로 50 중심에 매핑(상승↑/하락↓), 극단값은 포화."""
-    return round(50.0 + 50.0 * math.tanh(_RETURN_SCORE_STEEPNESS * return_value), 2)
 
 
 def _dedupe(values: list[str]) -> list[str]:
