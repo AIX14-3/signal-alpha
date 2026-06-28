@@ -572,11 +572,14 @@ class AnalysisRepository:
         ml_final_score: float | None,
         ml_direction: str | None,
         ml_confidence: float | None,
+        source_predictions: Any = None,
     ) -> Any:
         """메타러너 return 채널(#525 WS-C)을 종목의 현재 신호에 오버레이.
 
-        결정론 집계 점수(final_score/signal/confidence)는 건드리지 않고 ml_* 컬럼만 갱신(D4).
-        현재 발행 신호(is_current)가 아직 없으면(체인 순서) no-op — 다음 사이클에 채워진다.
+        결정론 집계 점수(final_score/signal/confidence)는 건드리지 않고 ml_*/source_predictions
+        컬럼만 갱신(D4). ``source_predictions`` 는 소스별 6 + 통합 1 = 7개 예측률 JSONB(C안 P3,
+        ``{run_key: {final_score, direction, confidence, model_count}}``). 현재 발행 신호
+        (is_current)가 아직 없으면(체인 순서) no-op — 다음 사이클에 채워진다.
         """
         return await self._connection.fetchrow(
             """
@@ -584,7 +587,8 @@ class AnalysisRepository:
             SET
                 ml_final_score = $2,
                 ml_direction = $3,
-                ml_confidence = $4
+                ml_confidence = $4,
+                source_predictions = $5::jsonb
             WHERE stock_id = $1 AND is_current = TRUE
             RETURNING *
             """,
@@ -592,6 +596,7 @@ class AnalysisRepository:
             ml_final_score,
             ml_direction,
             ml_confidence,
+            _jsonb(source_predictions),
         )
 
 

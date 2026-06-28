@@ -87,15 +87,18 @@ def test_return_combine_persists_return_columns():
     assert by_run["SRC_DATALAB"]["final_score"] == 0.03
     assert by_run["SRC_HIRING"]["final_score"] == 0.05
 
-    # final_signals 에 return 채널 오버레이.
+    # final_signals 에 return 채널 오버레이(통합 ml_* + 소스별 source_predictions).
     assert len(analysis.calls) == 1
     overlay = analysis.calls[0]
-    assert overlay == {
-        "stock_id": 7,
-        "ml_final_score": 0.04,
-        "ml_direction": "positive",
-        "ml_confidence": 1.0,
-    }
+    assert overlay["stock_id"] == 7
+    assert overlay["ml_final_score"] == 0.04
+    assert overlay["ml_direction"] == "positive"
+    assert overlay["ml_confidence"] == 1.0
+    # source_predictions = 소스별 + 통합(SRC) 7개 형태(여기선 주가 부재 → datalab/hiring + SRC).
+    sp = overlay["source_predictions"]
+    assert sp["SRC"]["final_score"] == 0.04
+    assert sp["SRC_DATALAB"]["final_score"] == 0.03
+    assert sp["SRC_HIRING"]["final_score"] == 0.05
     assert result["final_signal_overlaid"] is True
 
 
