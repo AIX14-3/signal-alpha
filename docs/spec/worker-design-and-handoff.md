@@ -65,36 +65,42 @@ COLLECT_* → NORMALIZE_* → ANALYZE_* → ML_INFER → META_COMBINE
 
 ---
 
-## 5. 🔌 메타러너 + 대체데이터 → LLM 예측 라인 (연결 OFF, plug-in 지점)
+## 5. 메타러너 예측 라인 — 주가 BASE 앵커 + 대체데이터 가산 (구현됨, C안)
 
-> 목적: 팀원이 자기 대체데이터로 **학습형 예측치**를 만들어 합류시킬 수 있게 **골격을 미리 깔아두고
-> 연결선만 OFF**. 문서대로 plug-in 하면 켜진다. 데이터/라벨이 쌓이기 전엔 OFF가 정상.
+> 2026-06-28 재설계로 **plug-in OFF 가 아니라 제품 라인으로 구현**됐다(C안). 핵심: **주가 예측률을
+> BASE(앵커)로 두고, 각 대체데이터(datalab·특허·채용·DART·리포트)를 주가에 융합해 소스별 예측률을
+> 더한다.** 점수 헤드라인은 결정론 집계(§3) 유지, 7개 예측률은 **병행 노출**(b). 상세 다이어그램:
+> [worker-pipeline-detailed.md](./worker-pipeline-detailed.md) §C.
 
-**설계된 흐름(코드 존재, 미배선)**:
+**구현된 흐름**:
 ```
-ANALYZE_ALTERNATIVE/REPORT (소스 정형 피처 적재)
-  → [OFF] SRC_INFER  (app/ml/source_inference.py)
-        : 소스 피처 → base 모델(src_datalab/src_hiring, LightGBM) → ml_inferences(run_key=SRC, forward-return)
+SRC_INFER (app/ml/source_inference.py)
+  : 소스 정형 피처 → base 모델(src_price·src_datalab·src_hiring·src_dart·src_patent, LightGBM)
+    → ml_inferences(run_key=SRC, forward-return). 아티팩트 부재 시 예측 None(graceful).
   → RETURN_COMBINE (app/ml/return_combine.py)
-        : src_* + Report 피처 결합 → meta_signals(run_key=SRC) return 컬럼(final_score/direction/confidence)
-  → [미배선] AGGREGATE/SYNTHESIZE 가 meta_signals(SRC) 를 읽어 합류
+    : 각 소스 = combine_return({src_price, src_<source>}) 로 **주가 BASE 앵커 ⊕ 소스** 융합.
+      소스별 6(SRC_PRICE/DATALAB/HIRING/DART/PATENT/REPORT) + 통합 1(SRC) = 7개를 meta_signals
+      (per-source run_key)에 적재 + final_signals.source_predictions(JSONB) 오버레이.
+  → SYNTHESIZE (app/synthesis/tasks.py)
+    : RiskReport + LLM 컨텍스트에 7개 예측률 노출, LLM 은 서술만(점수 불변). 결정론 폴백도 한 줄 요약.
+  → PUBLISH_SIGNALS → 백엔드 DB → api.signals_current.source_predictions → web.
 ```
 
-**OFF 스위치(현재 미배선 지점)** — 켜려면 여기를 연결:
-1. **SRC_INFER 인큐**: 라이브 경로에서 아무도 `SRC_INFER` 를 인큐하지 않는다. `ANALYZE_ALTERNATIVE`/`ANALYZE_REPORT`
-   핸들러 끝에서 `enqueue(task_type=SRC_INFER, ...)` 추가(env gate 권장: `SRC_INFER_ENABLED`).
-2. **base 모델 아티팩트**: `app/ml/artifacts/source_models/{src_datalab,src_hiring,...}.txt`(LightGBM Booster).
-   없으면 예측 None(graceful skip). 학습: `app/ml/train_source_models.py`.
-3. **합류부**: `AGGREGATE`(`aggregation/tasks.py`) 또는 `SYNTHESIZE`(`synthesis/tasks.py`) 가
-   `meta_signals(run_key=SRC)` 를 읽어 `price_prediction` 옆에 **별도 예측치**로 노출(점수 산식은 §3 유지 권장).
+**구현 상태(2026-06-28)**:
+- P1 주가 BASE(`src_price`, 스케일-프리 피처) — PR #568 ✅ / P2 per-source 융합+특허 — #570 ✅
+  / P3 7예측률 발행·노출(final_signals.source_predictions + api view) — #572 ✅ / P4 LLM 서술 — #574 ✅.
+- `src_price` **학습 완료**(Neon 3년 OHLCV·20종목, OOF hit≈0.59, PoC). 학습 하니스: 주가=
+  `app/ml/train_price_model.py`(OHLCV 밀집 패널), 이벤트형 소스=`app/ml/train_source_models.py`.
+- **대체 4모델(datalab/hiring/dart/patent)은 미학습** — 원천 데이터 미적재(실적재 단계 필요).
 
-**팀원 plug-in 절차(자기 소스 학습 합류)**:
-- (a) 소스 정형 피처를 `app/ml/source_features.py` 계약대로 어셈블(이미 datalab/hiring/dart 로더 있음).
-- (b) `train_source_models.py` 로 base 모델 아티팩트 생성(라벨 = forward-return, L6 abnormal_return_20d 정렬).
-- (c) 위 OFF 스위치 1~3 을 env gate 로 켠다. 끄면 기존 동작(점수=주가/집계, 대체=근거) 그대로.
+**⚠️ 남은 배선 1건 — SRC_INFER 라이브 트리거**:
+- 핸들러는 등록·DRAIN_ORDER 포함이지만 **라이브 경로에서 `SRC_INFER` 를 인큐하는 코드가 아직 없다**
+  → 라인이 dormant(드레인해도 안 돔). 켜려면 `ANALYZE_PRICE`(`orchestrator/price/tasks.py`) 등
+  per-stock 단계 끝에서 `enqueue(task_type=SRC_INFER, task_context={stock_code, as_of})` 추가.
+- 켜면: 아티팩트 있는 소스만 예측(현재 src_price) → 7예측률 중 가능한 것부터 채워진다.
 
-> 주의: 학습 채널은 라벨·데이터가 충분해야 의미가 있다(약신호는 단기 예측력 약함). 우선은 §3 결정론/LLM 라인으로
-> 동작시키고, 데이터 쌓인 뒤 REPORT(컨센서스 상관 높음)부터 학습 채널을 켜는 것을 권장.
+> 주의: 학습 채널은 라벨·데이터가 충분해야 의미가 있다(약신호는 단기 예측력 약함). 주가는 데이터가
+> 풍부해 BASE 로 적합하고, 대체데이터는 적재 후 가산. 점수 산식(§3)은 어느 경우든 불변.
 
 ---
 

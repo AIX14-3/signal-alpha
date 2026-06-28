@@ -221,3 +221,21 @@ flowchart TB
 
 주가 BASE 가 데이터 풍부로 비교적 안정적이라 §5 의 "데이터 부족" 우려는 일부 완화됨 → (a)도 가능.
 다만 대체데이터 가산분의 신뢰도가 낮으므로, **초기엔 (b)로 안전하게 노출하고 검증 후 (a) 교체**를 권장.
+
+---
+
+## D. 구현 상태 (2026-06-28)
+
+| 단계 | 내용 | 상태 |
+|---|---|---|
+| P1 | 주가 BASE 모델 `src_price`(스케일-프리 피처) | ✅ PR #568 머지 |
+| P2 | per-source 융합(주가⊕소스) + 특허 `src_patent` | ✅ PR #570 머지 |
+| P3 | 7예측률 발행·노출(`final_signals.source_predictions` + api view) | ✅ PR #572 머지 |
+| P4 | SYNTHESIZE LLM 서술 + RiskReport 노출 | ✅ PR #574 머지 |
+| 학습 | `src_price` 학습(Neon 3년·20종목, OOF hit≈0.59 PoC) | ✅ #576 (대체4모델 미학습=데이터 미적재) |
+
+- 헤드라인 결정: **(b) 결정론 집계 유지 + 7예측률 병행** 으로 진행 중. (a) 교체는 학습·검증 후.
+- **⚠️ 라이브 트리거 미배선**: `SRC_INFER` 를 인큐하는 코드가 아직 없어 라인은 **dormant**(드레인해도 안 돔).
+  켜려면 `ANALYZE_PRICE`(`orchestrator/price/tasks.py`) 등 per-stock 단계 끝에서
+  `enqueue(task_type=SRC_INFER, task_context={stock_code, as_of})` 추가 필요(E2E 선행 조건).
+- A 다이어그램의 "SRC 채널 OFF(생산자 없음)" 표기는 위 트리거 미배선과 동일한 사실을 가리킨다.
