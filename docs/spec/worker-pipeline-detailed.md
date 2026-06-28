@@ -1,9 +1,10 @@
 # 워커 드레인 파이프라인 (목표 설계)
 
-> `services/agent-worker` 큐 드레인 파이프라인의 **목표 설계**다 — 주가 예측률 BASE ⊕ 대체데이터 →
+> `services/agent-worker` 큐 드레인 파이프라인의 **목표 설계 + 구현 상태**다 — 주가 예측률 BASE ⊕ 대체데이터 →
 > **7 예측률 무조건 발행**, 끝단 LLM 서술(법적 금지단어만 필터). 결정론 집계 헤드라인·근거 이벤트 게이트·
-> `RISK_VETO`·`run_recommend` 는 **폐기**한다. 이 설계 확정 후 코드를 재작성한다(아래 "구현 상태"에 현재 코드와의 차이).
-> 토폴로지·DB 경계는 [architecture-diagram.md](../architecture-diagram.md). 최종 갱신: 2026-06-28.
+> `RISK_VETO`·`run_recommend` 는 **폐기**한다. **이 설계는 PR 스택(#602→#608→#610→#612→#614, 독립 #604·#606)
+> 으로 구현 완료돼 머지 대기 중**이다(아래 "구현 상태" 표 참고).
+> 토폴로지·DB 경계는 [architecture-diagram.md](../architecture-diagram.md). 최종 갱신: 2026-06-29.
 
 ## 전체 흐름
 
@@ -126,7 +127,7 @@ flowchart LR
 숫자 예측률은 메타러너/융합이 확정하고 LLM 은 서술만 한다. 메타러너 return 행은 `run_key=SRC` 로
 분리 적재된다(제거된 vol 채널의 `run_key=ML` 과 무관 — `combined_vol` 은 항상 NULL).
 
-## 발행 정책 (목표 설계)
+## 발행 정책 (구현됨 — PR 스택 머지 대기)
 
 - **발행 산출물 = 7 예측률**(`source_predictions`): 대체 5 + 주가 1 + 통합 1. 주가가 BASE, 대체데이터는 가/감산.
   각 예측률은 0-100 `score_100` 동반(헤드라인과 동일 tanh 변환).
@@ -135,7 +136,7 @@ flowchart LR
 - **무조건 발행**: 주가는 평일 매일 갱신되므로 종목마다 항상 7 예측률을 발행한다(발행 판정·근거 게이트 없음).
 - 끝단 LLM 서술이 7 예측률에 설명을 덧붙인다(법적 금지단어만 필터). 결정론 헤드라인 점수·추천 랭킹은 폐기.
 
-## 현재 구현·학습 상태 (2026-06-28)
+## 현재 구현·학습 상태 (2026-06-29)
 
 | 항목 | 상태 |
 |---|---|
@@ -143,7 +144,21 @@ flowchart LR
 | `SRC_INFER` 라이브 트리거(ANALYZE_PRICE) | 배선됨 |
 | `src_price`(주가 BASE) 모델 | **학습됨** — Neon 3년·20종목, OOF 방향적중 ≈0.59, 소표본·중첩 라벨의 **PoC** 수준 |
 | `src_datalab`/`src_hiring`/`src_dart`/`src_patent` | **미학습** — 원천 데이터 미적재(실적재 단계 필요) → 예측 None(graceful) |
-| 발행 헤드라인 | **현재** 결정론 집계(7예측률 병행) → **목표** 7예측률 무조건 발행으로 재작성(이 문서 설계) |
+| 목표 설계 재작성(이 문서) | **구현 완료(PR 스택 OPEN, 머지 대기)** — 아래 표 |
+
+### 목표 설계 구현 PR 스택 (2026-06-29, 머지 대기)
+
+| PR | base | 내용 |
+|---|---|---|
+| #602 | main | RISK_VETO 완전 제거 · 발행 무조건화(`is_published=True`, 항상 SYNTHESIZE) · SYNTHESIZE→PUBLISH 직결(법적필터만) |
+| #604 | main | `run_recommend`/`RecommendationRepository` 제거(테이블 스키마는 보존) |
+| #606 | main | `ANALYZE_PRICE` 가 `AGGREGATE_SIGNAL` 무조건 인큐(단독 주가 종목도 발행) |
+| #608 | #602 | 발행 헤드라인 = 통합 SRC 예측(meta_signals SRC → 0-100 tanh 변환), 결정론 블렌드는 표시·경보 메타로 강등 |
+| #610 | #608 | 대체데이터 last-known 재사용(소스별 윈도 DART/PATENT/REPORT=30일·HIRING/DATALAB/PRICE=7일) + "최종 업데이트 N일 전" |
+| #612 | #610 | `source_predictions` 각 엔트리 `score_100`(0-100) 동반 + 리포트 API `prediction_rates`(주가1+공공데이터5) 노출 |
+| #614 | #612 | 프론트(web) 리포트 "AI 예측률" 섹션 렌더 |
+
+> 머지 순서: 독립=#604·#606. 체인=**#602→#608→#610→#612→#614**(선행 머지 시 GitHub 자동 main 재타겟).
 
 - 학습 하니스: 주가 = `app/ml/train_price_model.py`(OHLCV 밀집 패널), 이벤트형 소스 =
   `app/ml/train_source_models.py`(event_study_panel forward-return 라벨).
@@ -155,4 +170,4 @@ flowchart LR
 
 - 대체 4모델은 데이터가 적재·학습돼야 예측에 기여한다(현재는 `src_price` 만 실값).
 - 메타러너 예측 정확도는 데이터량에 비례하며 현 단계는 PoC — 발행 신뢰도 자료로 단정하지 말 것.
-- **목표 설계에서 결정론 헤드라인 점수·RISK_VETO·run_recommend 는 폐기**하고 7 예측률 무조건 발행으로 재작성한다(코드 재작성 대기).
+- **결정론 헤드라인 점수·RISK_VETO·run_recommend 는 폐기 완료**(7 예측률 무조건 발행으로 재작성됨 — 위 PR 스택, 머지 대기).
