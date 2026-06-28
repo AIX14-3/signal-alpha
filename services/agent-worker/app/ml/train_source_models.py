@@ -23,7 +23,9 @@ import argparse
 import asyncio
 import math
 import os
+from datetime import date, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Sequence
 
 from app.ml.source_features import DEFAULT_LOOKBACK_DAYS, assemble_features
@@ -61,7 +63,7 @@ async def collect_samples(
         raise ValueError(f"unknown source: {source} (expected one of {list(MODEL_NAME_BY_SOURCE)})")
 
     repo = RawDetailRepository(connection)
-    loader = _build_loader(source, repo, loader_lookback_days)
+    loader = _build_loader(source, repo, loader_lookback_days, connection=connection)
     labels = await EventStudyRepository(connection).list_for_training(
         asof_from=asof_from, asof_to=asof_to, universe_snapshot=universe
     )
@@ -164,7 +166,35 @@ def evaluate_oof(
     }
 
 
-def _build_loader(source: str, repo: Any, lookback_days: int) -> Any:
+# 주가 학습 윈도우(달력일) — sma60 등 ~60 거래세션 + 피처 lookback 을 덮도록 넉넉히.
+DEFAULT_PRICE_TRAIN_WINDOW_DAYS = 160
+
+
+class _PriceTrainingLoader:
+    """학습용 주가 로더 — evidence 로더와 동일한 ``load()`` 계약으로 OHLCV 행을 돌려준다.
+
+    런타임(SrcInfer)은 최근 세션을 읽지만, 학습은 라벨의 as_of 시점 PIT 윈도우가 필요하므로
+    ``list_ohlcv_between([as_of - window, as_of])`` 로 조회한다(look-ahead 0).
+    """
+
+    def __init__(self, connection: Any, *, window_days: int = DEFAULT_PRICE_TRAIN_WINDOW_DAYS) -> None:
+        from signal_alpha_data_access.repositories import MarketDataRepository
+
+        self._market = MarketDataRepository(connection)
+        self._window = window_days
+
+    async def load(self, *, stock_id: int, stock_code: str, as_of: Any) -> list[Any]:
+        end = as_of if isinstance(as_of, date) else date.fromisoformat(str(as_of)[:10])
+        start = end - timedelta(days=self._window)
+        rows = await self._market.list_ohlcv_between(
+            stock_id=stock_id, start_date=start, end_date=end
+        )
+        return [SimpleNamespace(metadata={"rows": [dict(row) for row in rows]})]
+
+
+def _build_loader(source: str, repo: Any, lookback_days: int, *, connection: Any = None) -> Any:
+    if source == "price":
+        return _PriceTrainingLoader(connection)
     if source == "datalab":
         from app.evidence_loaders.datalab_loader import DataLabEvidenceLoader
 
