@@ -19,9 +19,11 @@ from typing import Any
 
 from app.analyzers.price.analyzer import PriceAnalyzer
 from app.collectors.price.ohlcv_reader import OhlcvReader
+from app.orchestrator.queue.task_types import SRC_INFER
 from signal_alpha_data_access.repositories import (
     AnalysisRepository,
     MarketDataRepository,
+    ProcessingQueueRepository,
     StockRepository,
 )
 
@@ -41,6 +43,7 @@ class PriceAnalyzeTaskHandler:
             stocks=StockRepository(connection),
             market_data=MarketDataRepository(connection),
         )
+        self._queue = ProcessingQueueRepository(connection)
         self._analyzer = PriceAnalyzer()
 
     async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
@@ -86,12 +89,24 @@ class PriceAnalyzeTaskHandler:
             evidence_quality=100 if result.data_status == "ok" else 0,
             prompt_ver=PRICE_VERSION,
         )
+        # 메타러너 SRC 라인 트리거(C안): 주가 BASE 앵커 ⊕ 대체데이터 → 소스별 7예측률.
+        # 주가는 매 종목마다 분석되므로 여기서 per-stock 1회 SRC_INFER 를 인큐한다. SRC_INFER 가
+        # base 모델로 추론(아티팩트 있는 소스만, 현재 src_price) → RETURN_COMBINE → meta_signals/
+        # final_signals.source_predictions. 아티팩트 전무면 예측 None 으로 안전 no-op(점수 불변).
+        src_infer_task_id = await self._queue.enqueue(
+            stock_id=stock_id,
+            task_type=SRC_INFER,
+            priority=str(task_context.get("priority") or "batch"),
+            task_context={"stock_code": stock_code, "as_of": analysis_date.isoformat()},
+            dedupe=True,
+        )
         return {
             "analysis_result_id": int(analysis_result["id"]),
             "agent_result_id": int(agent_result["id"]),
             "direction": result.direction,
             "score": result.score,
             "data_status": result.data_status,
+            "src_infer_task_id": src_infer_task_id,
         }
 
 
