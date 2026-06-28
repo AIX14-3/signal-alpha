@@ -99,6 +99,12 @@ def test_return_combine_persists_return_columns():
     assert sp["SRC"]["final_score"] == 0.04
     assert sp["SRC_DATALAB"]["final_score"] == 0.03
     assert sp["SRC_HIRING"]["final_score"] == 0.05
+    # 각 예측률은 0-100 'AI 예측 점수'(score_100)를 동반한다(사용자 리포트 소스별 노출용).
+    from app.ml.meta_learner import return_to_score_100
+
+    assert sp["SRC"]["score_100"] == return_to_score_100(0.04)
+    assert sp["SRC_DATALAB"]["score_100"] == return_to_score_100(0.03)
+    assert sp["SRC_DATALAB"]["score_100"] > 50.0  # 양(+) 수익률 → 50 초과
     assert result["final_signal_overlaid"] is True
 
 

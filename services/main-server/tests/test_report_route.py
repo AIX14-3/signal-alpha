@@ -12,7 +12,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "packages" / "data-access"))
 
-from app.api.routes.reports import _SOURCE_TO_BREAKDOWN, _source_block
+from app.api.routes.reports import (
+    _PREDICTION_RATE_SOURCES,
+    _prediction_rate_block,
+    _SOURCE_TO_BREAKDOWN,
+    _source_block,
+)
 
 
 _BREAKDOWN = {
@@ -52,6 +57,42 @@ class SourceBlockMappingTest(unittest.TestCase):
 
     def test_locked_block_hides_detail(self):
         block = _source_block("hiring", _BREAKDOWN, locked=True)
+        self.assertEqual(block, {"source": "hiring", "locked": True})
+
+
+_SOURCE_PREDICTIONS = {
+    "SRC": {"final_score": 0.04, "score_100": 70.0, "direction": "positive"},
+    "SRC_PRICE": {"final_score": 0.02, "score_100": 60.0, "direction": "positive"},
+    "SRC_DART": {"final_score": 0.03, "score_100": 64.0, "direction": "positive"},
+    "SRC_DATALAB": {"final_score": -0.02, "score_100": 41.0, "direction": "negative"},
+    "SRC_HIRING": {"final_score": 0.01, "score_100": 55.0, "direction": "positive"},
+    "SRC_PATENT": {"final_score": 0.0, "score_100": 50.0, "direction": "neutral"},
+    "SRC_REPORT": {"final_score": 0.05, "score_100": 73.0, "direction": "positive"},
+}
+
+
+class PredictionRateBlockTest(unittest.TestCase):
+    def test_exposes_price_and_five_public_data_rates(self):
+        # 주가 1 + 공공데이터 5(dart/datalab/hiring/patent/report) = per-source 6개.
+        self.assertEqual(
+            _PREDICTION_RATE_SOURCES, ("price", "dart", "datalab", "hiring", "patent", "report")
+        )
+
+    def test_reads_score_100_and_direction(self):
+        block = _prediction_rate_block("dart", _SOURCE_PREDICTIONS, locked=False)
+        self.assertEqual(block["score"], 64)
+        self.assertEqual(block["direction"], "positive")
+        self.assertEqual(block["data_status"], "ok")
+        report = _prediction_rate_block("report", _SOURCE_PREDICTIONS, locked=False)
+        self.assertEqual(report["score"], 73)
+
+    def test_absent_prediction_is_missing(self):
+        block = _prediction_rate_block("patent", {"SRC_DART": _SOURCE_PREDICTIONS["SRC_DART"]}, locked=False)
+        self.assertEqual(block["data_status"], "missing")
+        self.assertIsNone(block["score"])
+
+    def test_locked_hides_detail(self):
+        block = _prediction_rate_block("hiring", _SOURCE_PREDICTIONS, locked=True)
         self.assertEqual(block, {"source": "hiring", "locked": True})
 
 

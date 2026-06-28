@@ -3,9 +3,16 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect } from "react";
-import { ApiError, type ReportSource } from "@/lib/apiClient";
+import { ApiError, type PredictionRate, type ReportSource } from "@/lib/apiClient";
 import { WatchlistButton } from "@/components/WatchlistButton";
-import { directionLabel, SOURCE_META, SOURCE_ORDER, sourceLabel, sourceStatusLine } from "@/lib/format";
+import {
+  directionLabel,
+  PREDICTION_RATE_ORDER,
+  SOURCE_META,
+  SOURCE_ORDER,
+  sourceLabel,
+  sourceStatusLine,
+} from "@/lib/format";
 import { useAuthStore } from "@/stores/authStore";
 import { useReportStore } from "@/stores/reportStore";
 import { useToastStore } from "@/stores/toastStore";
@@ -55,6 +62,7 @@ export default function ReportPage() {
   const unlocked = report.access.unlocked;
   const isMember = report.access.is_member;
   const byKey = new Map(report.sources.map((s) => [s.source, s] as const));
+  const byPred = new Map((report.prediction_rates ?? []).map((p) => [p.source, p] as const));
   const loginHref = `/login?returnTo=${encodeURIComponent(`/report/${ticker}`)}`;
   const issueLabel = quota?.subscription_active
     ? "리포트 열람"
@@ -139,6 +147,28 @@ export default function ReportPage() {
         )}
       </div>
 
+      {/* AI 예측률 — 주가 BASE ⊕ 각 공공데이터로 만든 0–100 예측 점수(통합은 위 종합 점수). */}
+      {byPred.size > 0 && (
+        <section className="mt-8">
+          <h2 className="text-[18px] font-bold">AI 예측률</h2>
+          <p className="mt-1 text-[13px] text-muted">
+            주가 예측을 기준으로 각 공공데이터를 가·감산한 소스별 예측 점수입니다(0–100, 50=중립). 통합 예측은 위 종합 점수예요.
+          </p>
+          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+            {PREDICTION_RATE_ORDER.map((key) => (
+              <PredictionRateCard
+                key={key}
+                sourceKey={key}
+                rate={byPred.get(key)}
+                isMember={isMember}
+                busy={issuing}
+                onUnlock={onUnlock}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
       {/* 5소스 카드 */}
       <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {SOURCE_ORDER.map((key) => {
@@ -207,6 +237,57 @@ function SourceCard({
       <div className="mt-2 text-[12px] text-muted">{sourceStatusLine(src.data_status, src.score)}</div>
       <div className="mt-2 text-[13px] font-semibold text-sky-deep">상세 보기 →</div>
     </Link>
+  );
+}
+
+function PredictionRateCard({
+  sourceKey,
+  rate,
+  isMember,
+  busy,
+  onUnlock,
+}: {
+  sourceKey: "price" | "dart" | "datalab" | "hiring" | "patent" | "report";
+  rate: PredictionRate | undefined;
+  isMember: boolean;
+  busy: boolean;
+  onUnlock: () => void;
+}) {
+  const meta = SOURCE_META[sourceKey];
+  if (!rate || rate.locked) {
+    return (
+      <button
+        type="button"
+        onClick={onUnlock}
+        disabled={busy}
+        className="card relative grid min-h-[104px] place-items-center overflow-hidden p-3 text-center disabled:opacity-70"
+      >
+        <div className="text-[13px] font-bold">{meta.icon} {meta.label}</div>
+        <div className="absolute inset-0 grid place-items-center bg-surface/60 backdrop-blur-[6px]">
+          <div className="text-[18px]">🔒</div>
+          <div className="text-[11.5px] font-semibold text-navy-soft">
+            {busy ? "열람 중…" : isMember ? "클릭해 열람" : "로그인"}
+          </div>
+        </div>
+      </button>
+    );
+  }
+  const dir = directionLabel(rate.direction);
+  const hasScore = rate.data_status !== "missing" && rate.score != null;
+  return (
+    <div className="card p-3 text-center">
+      <div className="text-[13px] font-bold">{meta.icon} {meta.label}</div>
+      {hasScore ? (
+        <>
+          <div className="mt-1 text-[26px] font-extrabold leading-none">{rate.score}</div>
+          <span className={`pill ${tone(dir.tone)} mt-2 inline-block`} style={{ padding: "2px 8px", fontSize: 11 }}>
+            {dir.label}
+          </span>
+        </>
+      ) : (
+        <div className="mt-3 text-[12px] text-muted">데이터 수집 전</div>
+      )}
+    </div>
   );
 }
 

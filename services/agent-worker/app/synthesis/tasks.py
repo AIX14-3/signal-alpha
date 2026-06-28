@@ -70,6 +70,9 @@ class SynthesizeTaskHandler:
         # 소스별 6 + 통합 1 = 7개 예측률(주가 BASE ⊕ 대체데이터). RETURN_COMBINE 이 final_signals 에
         # 적재한 값(P3) → web 표시값과 동일. LLM 은 이 수치를 바꾸지 않고 설명만 한다(C안 P4).
         source_predictions = _loads_breakdown(final_signal.get("source_predictions"))
+        # last-known 재사용 신선도 — score_breakdown 의 data_age_days>0 인 소스(직전 분석 재사용).
+        # LLM 이 "최종 업데이트 N일 전" 으로 서술하는 근거(수치 불변, 설명만).
+        source_freshness = _source_freshness(final_signal.get("score_breakdown"))
 
         events = (
             [dict(row) for row in await self._normalization.list_signal_events_by_ids(signal_event_ids)]
@@ -104,6 +107,7 @@ class SynthesizeTaskHandler:
             price_prediction=price_prediction,
             report_valuation=report_valuation,
             source_predictions=source_predictions,
+            source_freshness=source_freshness,
             evidence=evidence,
         )
 
@@ -175,8 +179,36 @@ def _llm_context(report: RiskReport) -> dict[str, Any]:
         "report_valuation": report.report_valuation,
         # 7개 예측률(주가 BASE ⊕ 대체데이터) — 있을 때만 컨텍스트에 포함(없으면 기존과 동일).
         **({"source_predictions": report.source_predictions} if report.source_predictions else {}),
+        # last-known 재사용 신선도 — 재사용된 소스가 있을 때만(LLM 이 "최종 업데이트 N일 전" 서술).
+        **({"source_freshness": report.source_freshness} if report.source_freshness else {}),
         "evidence": report.evidence,
     }
+
+
+def _source_freshness(score_breakdown: Any) -> dict[str, int]:
+    """score_breakdown 에서 직전 분석을 재사용한 소스의 나이(일)를 추출.
+
+    ``data_age_days>0`` (그날 갱신 없이 유효기간 내 직전 결과 재사용)이고 데이터가 있는
+    (missing 아님) 소스만 ``{source: age_days}`` 로 반환. LLM/리포트가 "최종 업데이트 N일 전"
+    표기에 쓴다. 모두 당일(0)이면 빈 dict.
+    """
+    breakdown = _loads_breakdown(score_breakdown)
+    if breakdown is None:
+        return {}
+    freshness: dict[str, int] = {}
+    for source, detail in breakdown.items():
+        if not isinstance(detail, dict):
+            continue
+        if str(detail.get("data_status") or "") in {"missing", "failed"}:
+            continue
+        age = detail.get("data_age_days")
+        try:
+            age_int = int(age)
+        except (TypeError, ValueError):
+            continue
+        if age_int > 0:
+            freshness[str(source)] = age_int
+    return freshness
 
 
 def _report_valuation(score_breakdown: Any) -> dict[str, Any] | None:
@@ -259,6 +291,12 @@ def _deterministic_narrative(report: RiskReport) -> RiskNarrative:
     caution_points: list[str] = []
     if report.vetoed and report.veto_keywords:
         caution_points.append("리스크 veto: " + ", ".join(report.veto_keywords))
+    # last-known 재사용 소스의 신선도를 "최종 업데이트 N일 전" 으로 안내.
+    if report.source_freshness:
+        stale = ", ".join(
+            f"{source} {age}일 전" for source, age in sorted(report.source_freshness.items())
+        )
+        caution_points.append(f"일부 데이터 재사용(최종 업데이트): {stale}")
     if report.needs_review:
         caution_points.append("검토 필요(needs_review)")
     if not report.is_published:
