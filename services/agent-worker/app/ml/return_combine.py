@@ -21,6 +21,19 @@ from app.ml.source_inference import DEFAULT_HORIZON
 from app.ml.source_models import SOURCE_MODELS, SOURCE_RUN_KEY
 from app.orchestrator.queue.context import parse_task_context
 
+# 주가 BASE 앵커 모델. 모든 소스별 예측률은 이 값을 앵커로 포함해 융합한다(C안).
+PRICE_MODEL = "src_price"
+# 소스별 융합 결과(주가 BASE ⊕ 소스) run_key. 통합은 SOURCE_RUN_KEY("SRC").
+PER_SOURCE_RUN_KEY: dict[str, str] = {
+    "src_price": "SRC_PRICE",
+    "src_datalab": "SRC_DATALAB",
+    "src_hiring": "SRC_HIRING",
+    "src_dart": "SRC_DART",
+    "src_patent": "SRC_PATENT",
+}
+# Report 는 base 모델 없이 메타러너 피처(D1) → 주가 ⊕ Report 피처로 융합.
+REPORT_RUN_KEY = "SRC_REPORT"
+
 
 class ReturnCombineTaskHandler:
     def __init__(
@@ -78,45 +91,83 @@ class ReturnCombineTaskHandler:
         }
 
         report_features = await self._report_features(stock_id, as_of)
-        result = combine_return(
-            base_predictions,
-            report_features=report_features,
-            model=self._return_model,
+        price_pred = base_predictions.get(PRICE_MODEL)
+
+        # ── 소스별 예측률(주가 BASE ⊕ 소스) ── 주가가 항상 앵커로 포함된다(C안). 의미 없는
+        # (예측 None) 결과는 적재하지 않는다. 주가 단독은 6개 중 하나로 직접 노출.
+        per_source: list[tuple[str, Any]] = []
+        if price_pred is not None:
+            per_source.append(
+                (PER_SOURCE_RUN_KEY[PRICE_MODEL], combine_return({PRICE_MODEL: price_pred}, model=self._return_model))
+            )
+        for model_name, run_key in PER_SOURCE_RUN_KEY.items():
+            if model_name == PRICE_MODEL:
+                continue
+            src_pred = base_predictions.get(model_name)
+            if src_pred is None:
+                continue
+            fused = self._fuse_with_price(price_pred, {model_name: src_pred})
+            if fused.final_score is not None:
+                per_source.append((run_key, fused))
+        if report_features:
+            report_fused = self._fuse_with_price(price_pred, {}, report_features=report_features)
+            if report_fused.final_score is not None:
+                per_source.append((REPORT_RUN_KEY, report_fused))
+
+        # ── 통합 예측률 = 전 소스(주가 포함) + Report 피처 결합 ──
+        integrated = combine_return(
+            base_predictions, report_features=report_features, model=self._return_model
         )
 
-        await self._meta.upsert_meta_signal(
-            stock_id=stock_id,
-            run_key=self._run_key,
-            asof_date=as_of,
-            horizon=horizon,
-            combined_vol=None,  # return 채널 행 — vol 채널 불변(D4)
-            confidence=result.confidence,
-            method=result.method,
-            model_count=result.model_count,
-            weight_breakdown=result.weight_breakdown,
-            final_score=result.final_score,
-            direction=result.direction,
-        )
-        # 소비처(백엔드/프론트) 노출: 현재 발행 신호에 return 채널을 오버레이(api.signals_current
-        # 가 final_signals.* 를 노출하므로 자동 전파). 신호 미생성 시 no-op(다음 사이클에 채움).
+        # 소스별 6개 + 통합 1개를 meta_signals(per-source run_key)로 멱등 적재(combined_vol=NULL, D4).
+        for run_key, res in [*per_source, (self._run_key, integrated)]:
+            await self._meta.upsert_meta_signal(
+                stock_id=stock_id,
+                run_key=run_key,
+                asof_date=as_of,
+                horizon=horizon,
+                combined_vol=None,
+                confidence=res.confidence,
+                method=res.method,
+                model_count=res.model_count,
+                weight_breakdown=res.weight_breakdown,
+                final_score=res.final_score,
+                direction=res.direction,
+            )
+        # 발행 신호 오버레이는 **통합 예측률** 기준(기존 동작 유지 — api.signals_current 자동 전파).
         overlaid = await self._analysis.update_final_signal_return_channel(
             stock_id=stock_id,
-            ml_final_score=result.final_score,
-            ml_direction=result.direction,
-            ml_confidence=result.confidence,
+            ml_final_score=integrated.final_score,
+            ml_direction=integrated.direction,
+            ml_confidence=integrated.confidence,
         )
         return {
             "stock_id": stock_id,
             "run_key": self._run_key,
             "asof_date": as_of.isoformat(),
             "horizon": horizon,
-            "final_score": result.final_score,
-            "direction": result.direction,
-            "confidence": result.confidence,
-            "method": result.method,
-            "model_count": result.model_count,
+            "final_score": integrated.final_score,
+            "direction": integrated.direction,
+            "confidence": integrated.confidence,
+            "method": integrated.method,
+            "model_count": integrated.model_count,
+            "per_source": {run_key: res.final_score for run_key, res in per_source},
             "final_signal_overlaid": overlaid is not None,
         }
+
+    def _fuse_with_price(
+        self,
+        price_pred: float | None,
+        extra: Mapping[str, float],
+        *,
+        report_features: Mapping[str, float | None] | None = None,
+    ) -> Any:
+        """주가 BASE 를 앵커로 포함해 소스 예측/피처와 융합. 주가 부재 시 소스만으로 강등(graceful)."""
+        inputs: dict[str, float] = {}
+        if price_pred is not None:
+            inputs[PRICE_MODEL] = price_pred
+        inputs.update(extra)
+        return combine_return(inputs, report_features=report_features, model=self._return_model)
 
     async def _report_features(self, stock_id: int, as_of: date) -> dict | None:
         """Report 정형 피처(D1: base 모델 없이 메타러너 피처 직접). PIT 어셈블."""

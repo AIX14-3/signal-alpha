@@ -61,6 +61,7 @@ class SrcInferTaskHandler:
         datalab_loader: Any | None = None,
         hiring_loader: Any | None = None,
         dart_loader: Any | None = None,
+        patent_loader: Any | None = None,
         market_data: Any | None = None,
         models: list[SourceModel] | None = None,
         inferences: Any | None = None,
@@ -97,6 +98,7 @@ class SrcInferTaskHandler:
             datalab_loader is None
             or hiring_loader is None
             or dart_loader is None
+            or patent_loader is None
             or market_data is None
             or inferences is None
             or queue is None
@@ -123,6 +125,10 @@ class SrcInferTaskHandler:
                 from app.evidence_loaders.dart_loader import DartEvidenceLoader
 
                 dart_loader = DartEvidenceLoader(repo, lookback_days=loader_lookback)
+            if patent_loader is None:
+                from app.evidence_loaders.patent_loader import PatentEvidenceLoader
+
+                patent_loader = PatentEvidenceLoader(repo, lookback_days=loader_lookback)
             if inferences is None:
                 inferences = MlInferenceRepository(connection)
             if queue is None:
@@ -131,6 +137,7 @@ class SrcInferTaskHandler:
         self._datalab_loader = datalab_loader
         self._hiring_loader = hiring_loader
         self._dart_loader = dart_loader
+        self._patent_loader = patent_loader
         self._market_data = market_data
         self._inferences = inferences
         self._queue = queue
@@ -151,6 +158,7 @@ class SrcInferTaskHandler:
         datalab_rows = await self._rows(self._datalab_loader, stock_id, stock_code, as_of)
         hiring_rows, sector_demand = await self._hiring(stock_id, stock_code, as_of)
         dart_rows = await self._rows(self._dart_loader, stock_id, stock_code, as_of)
+        patent_rows = await self._rows(self._patent_loader, stock_id, stock_code, as_of)
         price_rows = await self._price_rows(stock_id)
 
         predictions = predict_sources(
@@ -160,6 +168,7 @@ class SrcInferTaskHandler:
             hiring_rows=hiring_rows,
             dart_rows=dart_rows,
             price_rows=price_rows,
+            patent_rows=patent_rows,
             lookback_days=self._feature_lookback,
             sector_demand=sector_demand,
         )

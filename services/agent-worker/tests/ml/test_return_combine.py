@@ -77,12 +77,15 @@ def test_return_combine_persists_return_columns():
     assert result["direction"] == "positive"
     assert result["confidence"] == 1.0
 
-    assert len(meta.calls) == 1
-    call = meta.calls[0]
-    assert call["run_key"] == "SRC"
-    assert call["combined_vol"] is None  # vol 채널 불변(D4)
-    assert call["final_score"] == 0.04
-    assert call["direction"] == "positive"
+    # 소스별 예측률 + 통합(SRC) 적재. 주가(src_price) 부재 → datalab/hiring 단독.
+    by_run = {c["run_key"]: c for c in meta.calls}
+    integrated = by_run["SRC"]
+    assert integrated["combined_vol"] is None  # vol 채널 불변(D4)
+    assert integrated["final_score"] == 0.04
+    assert integrated["direction"] == "positive"
+    assert {"SRC_DATALAB", "SRC_HIRING"} <= set(by_run)
+    assert by_run["SRC_DATALAB"]["final_score"] == 0.03
+    assert by_run["SRC_HIRING"]["final_score"] == 0.05
 
     # final_signals 에 return 채널 오버레이.
     assert len(analysis.calls) == 1
@@ -171,6 +174,41 @@ def test_return_combine_uses_report_features_with_linear_model():
     # peer_gap_avg = implied(12) - applied(10) = 2 → final = 0.1 - 2.0 = -1.9
     assert result["final_score"] == -1.9
     assert result["direction"] == "negative"
+
+
+def test_per_source_fusion_anchors_price():
+    # C안 핵심: 주가 BASE 가 각 소스에 앵커로 포함된다(주가 ⊕ 소스). 주가 단독도 6개 중 하나.
+    inferences = _FakeInferences(
+        [_inf("src_price", 0.02), _inf("src_datalab", 0.04), _inf("src_patent", -0.01)]
+    )
+    meta = _FakeMeta()
+    handler = ReturnCombineTaskHandler(
+        connection=object(),
+        inferences=inferences,
+        meta=meta,
+        collection=_FakeCollection(),
+        analysis=_FakeAnalysis(),
+        return_model=None,  # 폴백: 균등 평균
+    )
+
+    result = asyncio.run(handler({"stock_id": 4, "task_context": {"as_of": "2026-06-01"}}))
+
+    by_run = {c["run_key"]: c for c in meta.calls}
+    assert {"SRC_PRICE", "SRC_DATALAB", "SRC_PATENT", "SRC"} <= set(by_run)
+    # 주가 단독 = src_price 만(앵커 자기 자신).
+    assert by_run["SRC_PRICE"]["final_score"] == 0.02
+    assert by_run["SRC_PRICE"]["model_count"] == 1
+    # datalab 예측률 = 주가 ⊕ datalab → (0.02+0.04)/2 = 0.03, base 2개.
+    assert by_run["SRC_DATALAB"]["final_score"] == 0.03
+    assert by_run["SRC_DATALAB"]["model_count"] == 2
+    # patent 예측률 = 주가 ⊕ patent → (0.02-0.01)/2 = 0.005.
+    assert by_run["SRC_PATENT"]["final_score"] == 0.005
+    assert by_run["SRC_PATENT"]["model_count"] == 2
+    # 통합 = 주가+datalab+patent (base 3개).
+    assert by_run["SRC"]["model_count"] == 3
+    # result 최상위 = 통합, per_source 요약 노출.
+    assert result["per_source"]["SRC_PRICE"] == 0.02
+    assert result["per_source"]["SRC_DATALAB"] == 0.03
 
 
 def test_return_combine_requires_asof():
