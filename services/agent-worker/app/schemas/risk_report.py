@@ -34,6 +34,10 @@ class RiskReport:
     # 점수에 산입하지 않고(점수=주가 ML/DL), 끝단 LLM이 "이 점수가 나온 이유"를 설명할 때
     # DART 공시(evidence)와 함께 근거로 정제·서술한다. {target_price, ...} or None.
     report_valuation: dict[str, Any] | None = None
+    # 소스별 6개(주가/datalab/특허/채용/DART/리포트) + 통합 1개 = 7개 예측률(C안 P3/P4).
+    # 주가 BASE 앵커 ⊕ 각 대체데이터로 메타러너/융합이 낸 수치(LLM 불변, 설명만).
+    # {run_key: {final_score, direction, confidence, model_count}} or None.
+    source_predictions: dict[str, Any] | None = None
     evidence: list[dict[str, Any]] = field(default_factory=list)
     # --- LLM 설명 필드(또는 결정론 폴백) ---
     headline: str = ""
@@ -43,7 +47,7 @@ class RiskReport:
     narrative_source: str = "deterministic"  # 'llm' | 'deterministic' | 'llm_fallback'
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        data = {
             "stock_id": self.stock_id,
             "stock_code": self.stock_code,
             "signal_date": self.signal_date,
@@ -67,3 +71,7 @@ class RiskReport:
                 "source": self.narrative_source,
             },
         }
+        # 7개 예측률은 있을 때만 노출 — 없을 땐 기존 출력과 동일(하위호환).
+        if self.source_predictions is not None:
+            data["source_predictions"] = self.source_predictions
+        return data

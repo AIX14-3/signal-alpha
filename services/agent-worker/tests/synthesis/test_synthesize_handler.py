@@ -60,6 +60,24 @@ class _BoomSynth:
         raise RuntimeError("llm down")
 
 
+class _CapturingSynth:
+    """LLM 컨텍스트를 기록해 검증."""
+
+    def __init__(self):
+        self.context = None
+
+    async def synthesize(self, context):
+        self.context = context
+        return RiskNarrative(headline="h", narrative="n", key_points=["p"], caution_points=["c"])
+
+
+_SOURCE_PREDICTIONS = {
+    "SRC": {"final_score": 0.03, "direction": "positive", "confidence": 0.6, "model_count": 3},
+    "SRC_PRICE": {"final_score": 0.02, "direction": "positive", "confidence": 0.5, "model_count": 1},
+    "SRC_DATALAB": {"final_score": 0.04, "direction": "positive", "confidence": 1.0, "model_count": 2},
+}
+
+
 class SynthesizeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
     async def _run(self, connection, synthesizer):
         handler = SynthesizeTaskHandler(connection, settings=None, synthesizer=synthesizer)
@@ -190,6 +208,32 @@ class SynthesizeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         connection = _FakeConnection(final, list(_EVENTS))
         result = await self._run(connection, synthesizer=None)
         self.assertIsNone(result["report"]["report_valuation"])
+
+    async def test_source_predictions_surfaced_in_report_and_context(self):
+        # 7개 예측률(주가 BASE ⊕ 대체데이터)이 리포트 JSON + LLM 컨텍스트에 노출(수치 불변, C안 P4).
+        final = {**_FINAL, "source_predictions": dict(_SOURCE_PREDICTIONS)}
+        synth = _CapturingSynth()
+        connection = _FakeConnection(final, list(_EVENTS))
+        result = await self._run(connection, synthesizer=synth)
+        self.assertEqual(result["report"]["source_predictions"]["SRC"]["direction"], "positive")
+        self.assertIn("source_predictions", synth.context)
+        self.assertEqual(synth.context["source_predictions"]["SRC_DATALAB"]["final_score"], 0.04)
+        # 수치/판정은 여전히 결정론 값(불변).
+        self.assertEqual(result["report"]["final_score"], 22.0)
+
+    async def test_source_predictions_absent_keeps_legacy_output(self):
+        # 없으면 리포트/컨텍스트에 키가 없다(하위호환 — 기존 출력과 동일).
+        synth = _CapturingSynth()
+        connection = _FakeConnection(dict(_FINAL), list(_EVENTS))
+        result = await self._run(connection, synthesizer=synth)
+        self.assertNotIn("source_predictions", result["report"])
+        self.assertNotIn("source_predictions", synth.context)
+
+    async def test_source_predictions_in_deterministic_narrative(self):
+        final = {**_FINAL, "source_predictions": dict(_SOURCE_PREDICTIONS)}
+        connection = _FakeConnection(final, list(_EVENTS))
+        result = await self._run(connection, synthesizer=None)
+        self.assertTrue(any("메타예측" in p for p in result["report"]["narrative"]["key_points"]))
 
     async def test_requires_final_signal_id(self):
         connection = _FakeConnection(dict(_FINAL), [])
