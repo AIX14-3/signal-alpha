@@ -526,6 +526,48 @@ class AlternativeAnalyzeHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["analyzed_count"], 2)
         self.assertEqual(result["available_sources"], ["HIRING"])  # DATALAB failed → excluded
 
+    async def test_isolates_save_failure_per_source(self):
+        # A persistence/publish failure for ONE source (here DATALAB's
+        # final_signals insert blows up) must not sink the others — HIRING still
+        # publishes, and DATALAB is recorded data_status="failed".
+        class _FailDatalabFinal(FakeConnection):
+            def _maybe_boom(self, sql, args):
+                if "INSERT INTO final_signals" in sql and "DATALAB" in args:
+                    raise RuntimeError("save boom")
+
+            async def fetchrow(self, sql, *args):
+                self._maybe_boom(sql, args)
+                return await super().fetchrow(sql, *args)
+
+            async def fetchval(self, sql, *args):
+                self._maybe_boom(sql, args)
+                return await super().fetchval(sql, *args)
+
+            async def execute(self, sql, *args):
+                self._maybe_boom(sql, args)
+                return await super().execute(sql, *args)
+
+        conn = _FailDatalabFinal()
+        handler = AlternativeAnalyzeTaskHandler(
+            conn,
+            registrations=[
+                _registration("HIRING", "positive", 0.5),
+                _registration("DATALAB", "negative", -0.4),
+            ],
+        )
+
+        result = await handler(
+            {"id": 4, "stock_id": 1, "task_context": {"as_of": "2026-06-16", "stock_code": "005930"}}
+        )
+
+        # HIRING published despite DATALAB's save raising; DATALAB marked failed.
+        self.assertEqual(result["analyzed_count"], 2)
+        self.assertEqual(result["available_sources"], ["HIRING"])
+        datalab = next(s for s in result["sources"] if s["source"] == "DATALAB")
+        self.assertEqual(datalab["data_status"], "failed")
+        self.assertIsNone(datalab["final_signal_id"])
+        self.assertTrue([c for c in conn._inserts("final_signals") if c[2][3] == "HIRING"])
+
 
 class _RichAnalyzer:
     """Analyzer returning a fully-populated SourceResult (evidence_items,
