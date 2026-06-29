@@ -172,24 +172,23 @@ class UserBillingRepository:
             email,
         )
 
-    async def soft_delete_user(self, *, user_id: int) -> None:
-        """회원탈퇴(soft delete). 활성 phone 유니크가 해제되어 동일 번호 재가입 가능.
+    async def hard_delete_user(self, *, user_id: int) -> str:
+        """회원 영구 삭제(hard delete). users 행을 DELETE 하면 FK ON DELETE 규칙으로
+        소유 자식(portone_verifications/signal_journals/signal_subscriptions/
+        terms_agreements/user_signal_reads/watchlists/payments/report_issuances/
+        social_accounts/user_sessions)은 CASCADE 로 함께 삭제되고, analysis_requests 는
+        SET NULL 로 분리된다(공용 시그널 보존).
+        (마이그레이션 20260626_0244_user_owned_fks_on_delete_cascade_for_hard_delete.sql)
 
-        deleted_at(탈퇴 시각)과 status='deleted'(회원 상태)를 함께 기록한다.
+        반환: asyncpg 명령 상태 문자열(예: 'DELETE 1' / 'DELETE 0').
         """
-        await self._connection.execute(
-            """
-            UPDATE users
-            SET deleted_at = NOW(),
-                status = 'deleted'
-            WHERE id = $1
-              AND deleted_at IS NULL
-            """,
+        return await self._connection.execute(
+            "DELETE FROM users WHERE id = $1",
             user_id,
         )
 
     async def set_user_status(self, *, user_id: int, status: str) -> Any:
-        """회원 상태 변경(active/suspended). 탈퇴(deleted)는 soft_delete_user 사용."""
+        """회원 상태 변경(active/suspended). 탈퇴는 hard_delete_user(hard delete) 사용."""
         return await self._connection.fetchrow(
             """
             UPDATE users
