@@ -10,6 +10,7 @@ synthesizer 의 법적 금지단어 필터(``_reject_investment_advice``)뿐 —
 from __future__ import annotations
 
 import json
+import logging
 import os
 from collections.abc import Mapping
 from typing import Any
@@ -21,6 +22,8 @@ from app.orchestrator.queue.context import (
 )
 from app.schemas.risk_report import RiskReport
 from app.synthesis.synthesizer import RiskNarrative, Synthesizer
+
+logger = logging.getLogger("synthesize")
 
 
 class SynthesizeTaskHandler:
@@ -73,6 +76,15 @@ class SynthesizeTaskHandler:
         # last-known 재사용 신선도 — score_breakdown 의 data_age_days>0 인 소스(직전 분석 재사용).
         # LLM 이 "최종 업데이트 N일 전" 으로 서술하는 근거(수치 불변, 설명만).
         source_freshness = _source_freshness(final_signal.get("score_breakdown"))
+
+        # 소스별 LLM 서술 라인(독립) — 파싱데이터 + 예측률을 묶어 읽기 쉬운 한국어 서술을
+        # score_breakdown.{SRC}.summary 에 병합한다(수치 불변). 플래그 OFF/실패 시 기존 요약 유지.
+        await self._narrate_sources(
+            stock_id=stock_id,
+            stock_code=stock_code,
+            signal_date=final_signal.get("signal_date"),
+            source_predictions=source_predictions,
+        )
 
         events = (
             [dict(row) for row in await self._normalization.list_signal_events_by_ids(signal_event_ids)]
@@ -158,6 +170,86 @@ class SynthesizeTaskHandler:
             except Exception:  # noqa: BLE001 — any LLM/parse/safety failure → deterministic fallback
                 return _deterministic_narrative(report), "llm_fallback"
         return _deterministic_narrative(report), "deterministic"
+
+    async def _narrate_sources(
+        self,
+        *,
+        stock_id: int,
+        stock_code: str,
+        signal_date: Any,
+        source_predictions: dict[str, Any] | None,
+    ) -> None:
+        """소스별 독립 LLM 서술 라인. 현재 DART(추후 REPORT/PRICE 동일 인터페이스 추가).
+
+        각 소스는 플래그로 개별 게이팅하며, 실패해도 발행을 막지 않는다(기존 요약 유지).
+        """
+        if self._settings is None:
+            return
+        if _dart_narrate_enabled(self._settings):
+            try:
+                await self._narrate_dart(stock_id, stock_code, signal_date, source_predictions)
+            except Exception:  # noqa: BLE001 — 서술 실패가 발행을 막지 않음
+                logger.exception("DART narrate 실패 — 기존 요약 유지 (stock_id=%s)", stock_id)
+
+    async def _narrate_dart(
+        self,
+        stock_id: int,
+        stock_code: str,
+        signal_date: Any,
+        source_predictions: dict[str, Any] | None,
+    ) -> None:
+        from app.narrate.base import build_narrate_client
+        from app.narrate.dart import DartNarrator, select_narrate_events
+
+        settings = self._settings
+        client = build_narrate_client(
+            getattr(settings, "dart_llm_provider", "gemini"), settings=settings
+        )
+        model = str(getattr(settings, "dart_llm_model", "") or "")
+        if client is None or not model:
+            return
+        rows = await self._normalization.list_recent_source_events(
+            stock_id=stock_id, source_type="DART", as_of=signal_date, limit=20
+        )
+        events = [dict(row) for row in rows]
+        if not events:
+            return
+        picked = select_narrate_events(events, limit=12)
+        pred = (source_predictions or {}).get("SRC_DART")
+        narrator = DartNarrator(
+            client=client,
+            model=model,
+            timeout_seconds=float(getattr(settings, "dart_llm_timeout_seconds", 20.0)),
+        )
+        narrative = await narrator.narrate(
+            stock_code=stock_code, events=picked, prediction_rate=pred
+        )
+        await self._analysis.update_source_narrative(
+            stock_id=stock_id,
+            source="DART",
+            summary=narrative.summary,
+            narrative_points=narrative.key_facts,
+        )
+        logger.info(
+            "DART narrate 적용 stock_id=%s events=%d facts=%d",
+            stock_id,
+            len(picked),
+            len(narrative.key_facts),
+        )
+
+
+def _dart_narrate_enabled(settings: Any) -> bool:
+    """DART 서술 LLM 구성 여부 — DART_USE_LLM + 모델 + provider 키. (부작용 없는 게이트.)"""
+    if settings is None or not getattr(settings, "dart_use_llm", False):
+        return False
+    if not getattr(settings, "dart_llm_model", ""):
+        return False
+    provider = (getattr(settings, "dart_llm_provider", "gemini") or "gemini").strip().lower()
+    if provider == "gemini":
+        return bool(getattr(settings, "gemini_api_key", None))
+    if provider == "openai":
+        return bool(getattr(settings, "openai_api_key", None))
+    return False
 
 
 def _llm_context(report: RiskReport) -> dict[str, Any]:

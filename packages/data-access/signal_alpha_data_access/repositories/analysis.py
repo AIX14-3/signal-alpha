@@ -567,6 +567,66 @@ class AnalysisRepository:
             bear_point,
         )
 
+    async def update_source_narrative(
+        self,
+        *,
+        stock_id: int,
+        source: str,
+        summary: str,
+        narrative_points: Any = None,
+        mark_narrated: bool = True,
+    ) -> Any:
+        """소스별 LLM 서술(summary/narrative_points)을 ``score_breakdown.{SOURCE}`` 에 병합한다.
+
+        C안 정합: 방향/점수/score_100 등 **수치 필드는 불변**(서술만). ``jsonb_set`` 으로 해당 소스
+        객체에 ``summary``·``narrative_points``·``narrated`` 플래그만 덮어쓴다(소스 객체가 없으면 생성).
+        ``mark_narrated`` 시 ``data_status`` 가 'missing' 이면 'ok' 로 올려, 서술이 있는데도 카드가
+        "데이터 수집 전"으로 보이는 표시 불일치를 막는다(표시 상태만 보정, 점수/방향 불변). 현재 발행
+        신호(is_current)에 적용 — 체인 순서상 아직 없으면 no-op(다음 사이클).
+        """
+        merge_obj = {
+            "summary": summary,
+            "narrative_points": narrative_points if narrative_points is not None else [],
+            "narrated": True,
+        }
+        if mark_narrated:
+            # data_status 가 'missing' 일 때만 'ok' 로 보정(이미 ok/no_signal/partial 이면 보존).
+            return await self._connection.fetchrow(
+                """
+                UPDATE final_signals
+                SET score_breakdown = jsonb_set(
+                    COALESCE(score_breakdown, '{}'::jsonb),
+                    ARRAY[$2],
+                    COALESCE(score_breakdown -> $2, '{}'::jsonb)
+                        || $3::jsonb
+                        || CASE WHEN COALESCE(score_breakdown -> $2 ->> 'data_status', 'missing') = 'missing'
+                                THEN jsonb_build_object('data_status', 'ok') ELSE '{}'::jsonb END,
+                    TRUE
+                )
+                WHERE stock_id = $1 AND is_current = TRUE
+                RETURNING id
+                """,
+                stock_id,
+                source,
+                _jsonb(merge_obj),
+            )
+        return await self._connection.fetchrow(
+            """
+            UPDATE final_signals
+            SET score_breakdown = jsonb_set(
+                COALESCE(score_breakdown, '{}'::jsonb),
+                ARRAY[$2],
+                COALESCE(score_breakdown -> $2, '{}'::jsonb) || $3::jsonb,
+                TRUE
+            )
+            WHERE stock_id = $1 AND is_current = TRUE
+            RETURNING id
+            """,
+            stock_id,
+            source,
+            _jsonb(merge_obj),
+        )
+
     async def update_final_signal_return_channel(
         self,
         *,

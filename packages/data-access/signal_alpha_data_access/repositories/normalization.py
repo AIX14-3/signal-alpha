@@ -259,6 +259,49 @@ class NormalizationRepository:
             signal_event_ids,
         )
 
+    async def list_recent_source_events(
+        self,
+        *,
+        stock_id: int,
+        source_type: str,
+        as_of: Any = None,
+        limit: int = 20,
+    ) -> list[Any]:
+        """종목+소스의 최근 이벤트 — 임팩트(high>medium>low) 우선, 최신순, 상한 limit.
+
+        LLM 서술 입력용. ``as_of`` 지정 시 그 날짜 이하만(PIT 안전). 미지정 시 전체 최신.
+        """
+        return await self._connection.fetch(
+            """
+            SELECT
+                signal_events.*,
+                source_documents.source_name,
+                source_documents.source_url,
+                source_documents.published_at,
+                source_documents.reliability_level,
+                source_documents.is_official
+            FROM signal_events
+            INNER JOIN source_documents
+                ON source_documents.id = signal_events.source_document_id
+            WHERE signal_events.stock_id = $1
+              AND signal_events.source_type = $2
+              AND ($3::DATE IS NULL OR signal_events.event_date <= $3::DATE)
+            ORDER BY
+                CASE signal_events.impact_level
+                    WHEN 'high' THEN 0
+                    WHEN 'medium' THEN 1
+                    ELSE 2
+                END,
+                signal_events.event_date DESC,
+                signal_events.id DESC
+            LIMIT $4
+            """,
+            stock_id,
+            source_type,
+            as_of,
+            int(limit),
+        )
+
     async def list_signal_events_for_stock_date(
         self,
         *,
