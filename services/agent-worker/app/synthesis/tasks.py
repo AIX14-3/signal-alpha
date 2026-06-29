@@ -86,6 +86,7 @@ class SynthesizeTaskHandler:
             source_predictions=source_predictions,
             price_prediction=price_prediction,
             report_valuation=report_valuation,
+            score_breakdown=_loads_breakdown(final_signal.get("score_breakdown")),
         )
 
         events = (
@@ -182,22 +183,24 @@ class SynthesizeTaskHandler:
         source_predictions: dict[str, Any] | None,
         price_prediction: dict[str, Any] | None = None,
         report_valuation: dict[str, Any] | None = None,
+        score_breakdown: dict[str, Any] | None = None,
     ) -> None:
         """소스별 독립 LLM 서술 라인(DART/PRICE/REPORT). 각 소스는 플래그로 개별 게이팅하며,
-        실패해도 발행을 막지 않는다(기존 요약 유지)."""
+        실패해도 발행을 막지 않는다(기존 요약 유지). 이미 ``narrated`` 인 소스는 LLM 재호출 없이
+        skip(멱등) — AGGREGATE 가 score_breakdown 을 재생성하면 플래그가 사라져 자동 재서술."""
         if self._settings is None:
             return
-        if _source_narrate_enabled(self._settings, "DART"):
+        if _source_narrate_enabled(self._settings, "DART") and not _already_narrated(score_breakdown, "DART"):
             try:
                 await self._narrate_dart(stock_id, stock_code, signal_date, source_predictions)
             except Exception:  # noqa: BLE001 — 서술 실패가 발행을 막지 않음
                 logger.exception("DART narrate 실패 — 기존 요약 유지 (stock_id=%s)", stock_id)
-        if _source_narrate_enabled(self._settings, "PRICE"):
+        if _source_narrate_enabled(self._settings, "PRICE") and not _already_narrated(score_breakdown, "PRICE"):
             try:
                 await self._narrate_price(stock_id, stock_code, price_prediction, source_predictions)
             except Exception:  # noqa: BLE001
                 logger.exception("PRICE narrate 실패 — 기존 요약 유지 (stock_id=%s)", stock_id)
-        if _source_narrate_enabled(self._settings, "REPORT"):
+        if _source_narrate_enabled(self._settings, "REPORT") and not _already_narrated(score_breakdown, "REPORT"):
             try:
                 await self._narrate_report(
                     stock_id, stock_code, signal_date, report_valuation, source_predictions
@@ -325,6 +328,15 @@ class SynthesizeTaskHandler:
             len(picked),
             len(narrative.key_facts),
         )
+
+
+def _already_narrated(score_breakdown: dict[str, Any] | None, source: str) -> bool:
+    """해당 소스가 이미 서술됨(narrated=True) — 재SYNTHESIZE 시 LLM 재호출 skip(멱등).
+    AGGREGATE 가 score_breakdown 을 재생성하면 narrated 가 사라져 다음 사이클에 자동 재서술된다."""
+    if not isinstance(score_breakdown, dict):
+        return False
+    entry = score_breakdown.get(source)
+    return isinstance(entry, dict) and bool(entry.get("narrated"))
 
 
 def _source_narrate_enabled(settings: Any, source_key: str) -> bool:

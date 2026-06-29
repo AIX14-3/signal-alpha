@@ -21,6 +21,16 @@ from app.narrate.base import (
 PROMPT_VERSION = "dart-narrate-v1"
 _PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "dart_narrate_v1.md"
 _MAX_EVENTS = 12
+# 본문 상한 — 사업보고서 등 evidence_text 가 수 MB 인 경우 _event_payload 의 재무지표 추출/정규식
+# 스캔이 무거워지므로(SYNTHESIZE 핫패스), 추출 전에 절단한다(LLM 입력은 어차피 2500자 발췌).
+_MAX_EVIDENCE_CHARS = 20000
+
+
+def _cap_evidence(event: dict[str, Any]) -> dict[str, Any]:
+    text = event.get("evidence_text")
+    if isinstance(text, str) and len(text) > _MAX_EVIDENCE_CHARS:
+        return {**event, "evidence_text": text[:_MAX_EVIDENCE_CHARS]}
+    return event
 
 
 class DartNarrator:
@@ -44,7 +54,7 @@ class DartNarrator:
         payload = {
             "stock_code": stock_code,
             "prediction_rate": compact_prediction_rate(prediction_rate),
-            "events": [_event_payload(event) for event in events],
+            "events": [_event_payload(_cap_evidence(event)) for event in events],
         }
         prompt = build_prompt(_PROMPT_PATH, payload)
         response_text = await self._client.complete(
