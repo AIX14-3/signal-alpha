@@ -13,6 +13,8 @@ metadata:
     argocd.argoproj.io/sync-wave: "2"
 spec:
   replicas: 1                  # advisory lock — 다중 기동해도 1개만 수집(중복 방지)
+  strategy:
+    type: Recreate             # 롤아웃 중 가격 데몬 2중기동 방지
   selector:
     matchLabels:
       app.kubernetes.io/name: collector
@@ -22,6 +24,7 @@ spec:
         app.kubernetes.io/part-of: signal-alpha
         app.kubernetes.io/name: collector
     spec:
+      terminationGracePeriodSeconds: 60
       containers:
         - name: collector
           image: signal-alpha-agent-worker   # worker 이미지 재사용, command 만 교체

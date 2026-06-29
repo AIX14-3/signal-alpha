@@ -54,6 +54,19 @@ kubectl apply -f deploy/argocd/project.yaml -f deploy/argocd/application.yaml
 Argo CD 가 `deploy/k8s/` 를 동기화: Postgres ×2(wave 0) → 마이그 Job ×2(wave 1, Sync 훅) →
 앱(wave 2) → Ingress(wave 3). 이후 매니페스트를 Git 에 push 하면 자동 sync.
 
+## 리포트 저장 백엔드 (local → gcs)
+초기 인클러스터 브링업은 `configmap.yaml` `REPORT_STORAGE_BACKEND: local` + agent-worker 의
+RWO PVC(`agent-worker-reports`, `/data/report-storage`)를 쓴다. GKE 에는 Cloud Run/GCE 같은
+attached service account 가 없어 `storage.Client()` ADC 가 인증되지 않기 때문이다.
+리포트 외부 서빙이 필요한 컷오버 시점에 `gcs` 로 전환:
+1. configmap `REPORT_STORAGE_BACKEND: gcs`,
+2. GSA 에 버킷 `roles/storage.objectAdmin` 부여,
+3. agent-worker KSA ↔ GSA **Workload Identity** 바인딩(ADC 동작 재현). 코드 변경 없음.
+
+## 워커류 단일기동 보강
+`agent-worker`·`collector` 는 advisory lock 단일 소비 데몬이라 `strategy: Recreate` +
+`terminationGracePeriodSeconds: 60` 을 둔다(기본 RollingUpdate 면 롤아웃 중 데몬이 순간 2개).
+
 ## 로컬 렌더 검증(클러스터 불요)
 ```bash
 kubectl kustomize deploy/k8s | kubectl apply --dry-run=client -f -
