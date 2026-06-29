@@ -1,0 +1,19 @@
+# Argo CD AppProject — signal-alpha 배포 경계(레포/네임스페이스 화이트리스트).
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: signal-alpha
+  namespace: argocd
+spec:
+  description: signal-alpha 5-유닛 + 2 DB GitOps 배포
+  sourceRepos:
+    - https://github.com/AIX14-3/signal-alpha.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: signal-alpha
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"

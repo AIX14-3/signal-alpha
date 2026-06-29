@@ -1,0 +1,31 @@
+# 외부 노출 — /api/* → main-server(8000), 그 외 → web(3000).
+# ingressClassName 은 클러스터에 맞게(예: gce, nginx). host 는 실제 도메인/IP 로 교체.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: signal-alpha
+  namespace: signal-alpha
+  labels:
+    app.kubernetes.io/part-of: signal-alpha
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  # ingressClassName: gce        # GKE 기본 / nginx-ingress 설치 시 nginx
+  rules:
+    - host: signal-alpha.example.com   # 실제 호스트로 교체
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: main-server
+                port:
+                  number: 8000
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  number: 3000

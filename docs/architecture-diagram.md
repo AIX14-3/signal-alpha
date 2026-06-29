@@ -30,7 +30,8 @@ flowchart LR
     end
 
     subgraph COL["수집기 유닛"]
-        col["collector<br/>run_collector_instance.py<br/>실시간 가격(Kiwoom) 데몬 · run_collectors(patent/datalab)"]
+        col["collector (상시 데몬)<br/>run_collector_instance.py<br/>실시간 가격(Kiwoom) · 시장시간 게이트"]
+        altcron["alt-data CronJob<br/>run_collectors.py · patent/datalab<br/>매일 04:30 KST"]
     end
 
     subgraph WK["워커 유닛"]
@@ -61,7 +62,8 @@ flowchart LR
     ms -- "스케줄 제어 DML · collection_schedules" --> bsched
     sch -. "config 폴링·상태기록 · BACKEND_DATABASE_URL" .-> bsched
     sch -- "HTTP POST /internal/{schedules/dart,price}/collect" --> aw
-    col -- "DML(원천 수집) · signal_worker" --> cwt
+    col -- "DML(실시간 가격) · signal_worker" --> cwt
+    altcron -- "DML(patent/datalab) · signal_worker" --> cwt
     aw -- "drain(processing_queue) DML · signal_worker" --> cwt
     aw -- "publish(PUBLISH_SIGNALS) · BACKEND_DATABASE_URL" --> bpub
     mig -- "DDL + 롤/grant" --> CDB
@@ -75,7 +77,7 @@ flowchart LR
     class web fe;
     class ms be;
     class aw wk;
-    class col,sch sd;
+    class col,altcron,sch sd;
     class cwt,cv,bt,bpub,bv,bsched db;
 ```
 
@@ -90,6 +92,17 @@ flowchart LR
 > **어드민 제어 평면**: 스케줄 on/off·시각·대상·수동 실행은 웹 어드민 → `main-server`(`/api/admin/schedules*`,
 > `signal_backend` DML) → `collection_schedules` 쓰기로 이뤄지고, 워커측 스케줄러가 같은 행을 폴링해 따른다.
 > `main-server` 는 워커를 직접 호출하지 않고 **공유 config 행으로만** 신호한다(경계 유지).
+
+> **수집기 연결점**: collector 는 **인바운드 트리거가 없는 상시 데몬**이 정상이다 — 시장시간(평일
+> 09:00–15:30 KST) 게이트로 스스로 폴링하며 advisory lock 으로 단일 수집을 보장한다. 가격은 두 경로로
+> 수집 DB 에 적재된다: (1) **collector** = 장중 실시간 OHLCV/스냅샷, (2) **scheduler 04:30** → 워커
+> `/internal/price/collect` = 전일 확정 flows 정산+종가. patent/datalab 은 **alt-data CronJob**(매일 04:30)이
+> 적재한다. 5-유닛 분리 배포에선 worker `PRICE_COLLECTOR_ENABLED=false`(가격 데몬은 collector 전담).
+
+> **배포 토폴로지**: 이 5 유닛 + 2 DB 는 **GKE + Argo CD(GitOps)** 매니페스트로 배포한다 —
+> `deploy/k8s/`(kustomize: web·main-server·agent-worker·collector·scheduler Deployment + alt-data CronJob +
+> Postgres ×2 StatefulSet + 마이그 Job ×2) / `deploy/argocd/`(Application). 가이드: [deploy/README.md](../deploy/README.md),
+> [k8s-argocd-deployment.md](./k8s-argocd-deployment.md).
 
 > 다이어그램에 **없는 화살표가 곧 경계**입니다: `main-server`는 `agent-worker`를 런타임에 직접
 > 호출하지 않고(워커 산출물은 `api.*` view로만 읽음), worker base 테이블(`final_signals` 등)에
