@@ -9,13 +9,38 @@ warnings.filterwarnings(
 )
 from starlette.testclient import TestClient
 
+from app.api.routes.health import get_database_pool
 from app.core.rate_limit import FixedWindowLimiter, LoginLockout
 from app.main import app
 
 
+class _FakeConnection:
+    async def fetchval(self, *args, **kwargs):
+        return 1
+
+
+class _FakeAcquire:
+    async def __aenter__(self) -> "_FakeConnection":
+        return _FakeConnection()
+
+    async def __aexit__(self, *args) -> bool:
+        return False
+
+
+class _FakePool:
+    def acquire(self) -> _FakeAcquire:
+        return _FakeAcquire()
+
+
 class SecurityHeadersTest(unittest.TestCase):
     def setUp(self):
+        # /health 는 DB 연결을 검증한다 → 도달 가능한 풀을 주입해야 200 이 떨어진다.
+        # 보안 헤더는 상태코드와 무관하게 모든 응답에 붙지만, 200 경로에서 함께 검증한다.
+        app.dependency_overrides[get_database_pool] = lambda: _FakePool()
         self.client = TestClient(app)
+
+    def tearDown(self):
+        app.dependency_overrides.pop(get_database_pool, None)
 
     def test_security_headers_present(self):
         res = self.client.get("/health")
