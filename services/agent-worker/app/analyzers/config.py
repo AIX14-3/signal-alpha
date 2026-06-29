@@ -106,15 +106,18 @@ class DataLabRuleConfig:
     attention_z_caution: float = 1.5  # 정상→주의 boundary
     attention_z_watch: float = 2.5  # 주의→주목 boundary
     attention_z_surge: float = 3.5  # 주목→급증 boundary
-    # z→magnitude multiplier table. PROVISIONAL placeholders (None) — the evidence
-    # text cites numbers only once these are populated by the daily re-calibration
-    # follow-up (calibrate_attention_flag.py). None ⇒ qualitative neutral wording.
-    attention_vol_mult_caution: float | None = None
-    attention_vol_mult_watch: float | None = None
-    attention_vol_mult_surge: float | None = None
-    attention_volume_mult_caution: float | None = None
-    attention_volume_mult_watch: float | None = None
-    attention_volume_mult_surge: float | None = None
+    # z→magnitude multiplier table — calibrated on DAILY KOSDAQ-46 (29,479
+    # stock-days, h=5 forward) via calibrate_attention_flag.py (2026-06-29).
+    # vol_mult = forward realized-vol ÷ baseline; volume_mult = forward 5d volume ÷
+    # the stock's trailing-60d "평소" (so "거래량 평소 N배"). NON-DIRECTIONAL.
+    # ⚠️ KOSDAQ small-caps see larger relative volume jumps than large-caps — refine
+    # on broad-250 daily after the DataLab quota resets; all env-overridable.
+    attention_vol_mult_caution: float | None = 1.25  # z 1.5~2.5
+    attention_vol_mult_watch: float | None = 1.37  # z 2.5~3.5
+    attention_vol_mult_surge: float | None = 1.53  # z >3.5
+    attention_volume_mult_caution: float | None = 2.42
+    attention_volume_mult_watch: float | None = 3.34
+    attention_volume_mult_surge: float | None = 6.29
 
     @classmethod
     def from_env(cls) -> "DataLabRuleConfig":

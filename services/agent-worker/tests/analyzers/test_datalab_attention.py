@@ -82,11 +82,24 @@ class ComputeAttentionSpikeTest(unittest.TestCase):
         self.assertEqual(spike.attention_tier, "정상")
 
     def test_evidence_text_qualitative_when_multipliers_absent(self):
+        # A tier whose multipliers were never calibrated → qualitative wording.
+        config = replace(
+            CONFIG, attention_vol_mult_surge=None, attention_volume_mult_surge=None
+        )
         series = _series(85.0)
-        spike = compute_attention_spike(series, as_of=_as_of(series), config=CONFIG)
+        spike = compute_attention_spike(series, as_of=_as_of(series), config=config)
         self.assertIn("향후 거래량·변동성 증가 예상", spike.evidence_text)
         self.assertNotIn("배 예상", spike.evidence_text)
         self.assertIsNone(spike.expected_fwd_volume_mult)
+
+    def test_default_config_is_calibrated_and_cites_numbers(self):
+        # Defaults are now calibrated (daily KOSDAQ): 급증 → 거래량 6.3배·변동성 1.5배.
+        series = _series(85.0)
+        spike = compute_attention_spike(series, as_of=_as_of(series), config=CONFIG)
+        self.assertEqual(spike.expected_fwd_volume_mult, 6.29)
+        self.assertEqual(spike.expected_fwd_vol_mult, 1.53)
+        self.assertIn("6.3배", spike.evidence_text)
+        self.assertIn("1.5배", spike.evidence_text)
 
     def test_evidence_text_cites_numbers_when_calibrated(self):
         config = replace(
