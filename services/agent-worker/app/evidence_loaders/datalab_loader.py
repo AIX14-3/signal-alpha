@@ -7,6 +7,7 @@ weight the analyzer uses to blend category trends into a stock-level signal.
 
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import date, timedelta
 from typing import Any
 
@@ -16,9 +17,15 @@ from app.schemas.evidence import RawEvidence
 class DataLabEvidenceLoader:
     source = "DATALAB"
 
-    def __init__(self, repository: Any, *, lookback_days: int) -> None:
+    def __init__(
+        self, repository: Any, *, lookback_days: int, attention_window_days: int = 180
+    ) -> None:
         self._repository = repository
         self._lookback_days = lookback_days
+        # Wider window (calendar days) for the neutral attention_spike rolling-z.
+        # Fetched separately so the directional ``rows`` (lookback_days) stay
+        # byte-identical — widening the directional window would change features.
+        self._attention_window_days = max(attention_window_days, lookback_days)
 
     async def load(
         self,
@@ -33,7 +40,14 @@ class DataLabEvidenceLoader:
         }
         category_ids = list(weight_by_category)
 
-        since = as_of - timedelta(days=self._lookback_days)
+        # One wider fetch serves both consumers: the attention rolling-z uses the
+        # full window, and the directional ``rows`` are the same fetch filtered to
+        # ``lookback_days``. The repo query is ``observed_date >= since ORDER BY
+        # observed_date DESC``, so filtering the wider result to the narrow window
+        # yields rows byte-identical to a standalone narrow query (same WHERE, same
+        # order) — without a second round-trip (the loader is also used in the ML
+        # training/inference loop, where doubling DB reads would compound).
+        since = as_of - timedelta(days=self._attention_window_days)
         records = (
             await self._repository.list_datalab_details_by_category(
                 category_ids=category_ids,
@@ -42,8 +56,16 @@ class DataLabEvidenceLoader:
             if category_ids
             else []
         )
-        rows = [_row(record, weight_by_category) for record in records]
+        attention_series = _blend_daily_series(records, weight_by_category)
+
+        lookback_since = as_of - timedelta(days=self._lookback_days)
+        rows = [
+            _row(record, weight_by_category)
+            for record in records
+            if record["observed_date"] is not None and record["observed_date"] >= lookback_since
+        ]
         latest = rows[0]["observed_date"] if rows else None
+
         metadata: dict[str, Any] = {
             "rows": rows,
             "as_of": as_of.isoformat(),
@@ -51,6 +73,7 @@ class DataLabEvidenceLoader:
             "count": len(rows),
             "category_ids": category_ids,
             "source_name": "NAVER_DATALAB",
+            "attention_series": attention_series,
         }
         return [
             RawEvidence(
@@ -62,6 +85,29 @@ class DataLabEvidenceLoader:
                 metadata=metadata,
             )
         ]
+
+
+def _blend_daily_series(
+    records: list[Any], weight_by_category: dict[int, float]
+) -> list[list[Any]]:
+    """Weight-blend search_index across categories per observed_date.
+
+    Returns ``[[iso_date, value], ...]`` sorted ascending — a stock-level PIT
+    search series for the attention rolling-z. Records with no date/index are
+    skipped; a date's value is the category-weighted mean of that day's indices.
+    """
+    numer: dict[str, float] = defaultdict(float)
+    denom: dict[str, float] = defaultdict(float)
+    for record in records:
+        observed_date = record["observed_date"]
+        search_index = _to_float(record["search_index"])
+        if observed_date is None or search_index is None:
+            continue
+        weight = weight_by_category.get(int(record["category_id"]), 1.0)
+        key = observed_date.isoformat()
+        numer[key] += search_index * weight
+        denom[key] += weight
+    return [[key, numer[key] / denom[key]] for key in sorted(numer) if denom[key] > 0]
 
 
 def _row(record: Any, weight_by_category: dict[int, float]) -> dict[str, Any]:

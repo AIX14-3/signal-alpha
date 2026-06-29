@@ -135,6 +135,10 @@ def _evidence(result: SourceResult) -> tuple[list[str], list[str]]:
         positive.append(f"{result.source}: {head}")
     elif result.direction == "negative":
         caution.append(f"{result.source}: {head}")
+    # Neutral attention-spike note is a "주의 근거" regardless of direction (it is
+    # not a buy/sell call) — surface it even when the source has no verdict.
+    if result.attention_note:
+        caution.append(f"{result.source}: {result.attention_note}")
     for flag in result.risk_flags:
         if flag in _FLAG_CAUTIONS:
             caution.append(f"{result.source}: {_FLAG_CAUTIONS[flag]}")

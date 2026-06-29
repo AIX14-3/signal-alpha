@@ -107,7 +107,9 @@ def build_registry(
             run_key=RUN_KEYS["DATALAB"],
             analyzer=DataLabAnalyzer(datalab_config),
             loader_factory=lambda repo, cfg=datalab_config: DataLabEvidenceLoader(
-                repo, lookback_days=cfg.lookback_days
+                repo,
+                lookback_days=cfg.lookback_days,
+                attention_window_days=cfg.attention_window_days,
             ),
         ),
     ]
