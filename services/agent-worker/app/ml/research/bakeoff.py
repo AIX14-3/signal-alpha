@@ -52,6 +52,7 @@ def run_permutation(
     n_perm: int = 200,
     n_folds: int = 5,
     seed: int = 42,
+    exclude: set[str] | None = None,
 ) -> list[tuple[str, float, float, float]]:
     """Label-shuffle permutation test of rank-IC significance, per model.
 
@@ -61,10 +62,16 @@ def run_permutation(
     re-evaluating on the SAME folds. The one-sided p-value is the fraction of the
     null at least as large as observed. Returns (name, observed, p_value, null_mean),
     sorted by p-value. Compare p against a multiple-testing-corrected threshold
-    (e.g. 0.05 / (n_models × n_horizons)) before calling anything a signal.
+    (Bonferroni or Benjamini-Hochberg over models × horizons) before calling
+    anything a signal.
+
+    ``exclude`` drops models from the test by name — use it for O(n^3) estimators
+    (``gaussian_process``) that are impractical to permute at panel scale.
     """
     folds = walk_forward_folds(dates, n_folds=n_folds)
     registry = build_classifier_registry(seed=seed)
+    if exclude:
+        registry = {k: v for k, v in registry.items() if k not in exclude}
     rng = np.random.default_rng(seed)
     n = len(y)
     results: list[tuple[str, float, float, float]] = []
@@ -91,13 +98,28 @@ def run_permutation(
 
 
 def render_permutation(results, n_perm: int, n_models: int, n_tests: int = 0) -> str:
-    """Pretty-print the permutation table with a Bonferroni reference threshold."""
+    """Pretty-print the permutation table with Bonferroni AND Benjamini-Hochberg refs.
+
+    The within-table BH is computed over THIS run's models; for the full family use
+    the cross-horizon aggregator on the ``--permute-csv`` rows (the proper scope).
+    """
+    from .stats import benjamini_hochberg
+
+    pvals = [pval for _, _, pval, _ in results]
+    bh = benjamini_hochberg(pvals, alpha=0.05)
     lines = [f"\n[permutation] n_perm={n_perm} per model - one-sided p(rankIC)"]
-    lines.append(f"  {'model':>18}  {'obs_rankIC':>10}  {'null_mean':>9}  {'p-value':>7}")
-    for name, obs, pval, null_mean in results:
-        lines.append(f"  {name:>18}  {obs:>+10.3f}  {null_mean:>+9.3f}  {pval:>7.3f}")
+    lines.append(
+        f"  {'model':>18}  {'obs_rankIC':>10}  {'null_mean':>9}  {'p-value':>7}  "
+        f"{'BH_q':>6}  {'BH?':>3}"
+    )
+    for (name, obs, pval, null_mean), q, rej in zip(results, bh.qvalues, bh.rejected):
+        lines.append(
+            f"  {name:>18}  {obs:>+10.3f}  {null_mean:>+9.3f}  {pval:>7.3f}  "
+            f"{q:>6.3f}  {'YES' if rej else '':>3}"
+        )
     thr = 0.05 / max(1, (n_tests or n_models))
-    lines.append(f"  (Bonferroni ref: 0.05 / {n_tests or n_models} ~= {thr:.4f})")
+    lines.append(f"  (Bonferroni ref: 0.05 / {n_tests or n_models} ~= {thr:.4f}; "
+                 f"BH rejected={bh.n_rejected} within this run)")
     return "\n".join(lines)
 
 
@@ -207,6 +229,11 @@ def _load_hiring_db(args):
     if not database_url:
         raise SystemExit("DATABASE_URL is required for --source hiring-db")
     tickers = [t.strip() for t in args.tickers.split(",") if t.strip()]
+    # hiring feature sets: volume | duty | volume+duty. The shared --feature-set
+    # default is 'all' (a patent term) -> treat as the hiring default 'volume'.
+    fs = getattr(args, "feature_set", "all")
+    if fs not in ("volume", "duty", "volume+duty"):
+        fs = "volume"
     ds = asyncio.run(
         load_from_env(
             database_url=database_url,
@@ -221,6 +248,7 @@ def _load_hiring_db(args):
             signal_step=args.signal_step,
             min_observations=args.min_obs,
             precise_rematch=args.precise_rematch,
+            feature_set=fs,
         )
     )
     up_rate = ds.y.mean() if len(ds) else 0.0
@@ -393,15 +421,23 @@ def main(argv: list[str] | None = None) -> int:
                         help="permutation test: label-shuffle iterations per model for a "
                              "rank-IC p-value (0=off; ~200 for a confirmatory run)")
     parser.add_argument("--permute-tests", type=int, default=0,
-                        help="total comparisons for the Bonferroni reference (e.g. models×horizons); "
+                        help="total comparisons for the Bonferroni/BH reference (e.g. models×horizons); "
                              "0 = use model count")
-    # patent-db knobs (cross-sectional hygiene)
+    parser.add_argument("--permute-exclude", type=str, default="",
+                        help="comma-separated model names to skip in the permutation test "
+                             "(e.g. 'gaussian_process' — O(n^3), impractical at panel scale)")
+    parser.add_argument("--permute-csv", type=str, default=None,
+                        help="append permutation rows (horizon,model,obs_rankIC,p_value,null_mean) "
+                             "here for cross-horizon BH-FDR aggregation")
+    # patent-db / hiring-db knobs (cross-sectional hygiene; feature selection)
     parser.add_argument("--xs-normalize", choices=["none", "rank", "zscore"], default="none",
                         help="patent-db: neutralize size-confounded count features within each "
                              "date (rank=percentile, zscore). Prevents models reading stock size.")
-    parser.add_argument("--feature-set", choices=["all", "count", "count+llm"], default="all",
-                        help="patent-db: 'count' drops mostly-empty LLM/near-constant columns for a "
-                             "clean count-only test; 'count+llm' keeps significance/novelty (needs enrich)")
+    parser.add_argument("--feature-set",
+                        choices=["all", "count", "count+llm", "volume", "duty", "volume+duty"],
+                        default="all",
+                        help="patent-db: 'count'/'count+llm'. hiring-db: 'volume' (default), 'duty' "
+                             "(tech-mix only), or 'volume+duty'.")
     parser.add_argument("--fusion-sources", type=str, default="patent,hiring,datalab",
                         help="comma-separated sources to inner-join for --source fusion")
     parser.add_argument("--csv", type=str, default=None, help="write full metrics CSV here")
@@ -424,10 +460,24 @@ def main(argv: list[str] | None = None) -> int:
     print(render_table(reports))
 
     if args.permute > 0:
+        exclude = {s.strip() for s in args.permute_exclude.split(",") if s.strip()}
         perm = run_permutation(
-            X, y, excess, dates, n_perm=args.permute, n_folds=args.folds, seed=args.seed
+            X, y, excess, dates, n_perm=args.permute, n_folds=args.folds,
+            seed=args.seed, exclude=exclude,
         )
         print(render_permutation(perm, args.permute, len(perm), args.permute_tests))
+        if args.permute_csv:
+            import csv as _csv
+            import os as _os
+            new = not _os.path.exists(args.permute_csv)
+            with open(args.permute_csv, "a", newline="", encoding="utf-8") as fh:
+                w = _csv.writer(fh)
+                if new:
+                    w.writerow(["horizon", "model", "obs_rankIC", "p_value", "null_mean"])
+                for name, obs, pval, null_mean in perm:
+                    w.writerow([args.horizon, name, f"{obs:.6f}", f"{pval:.6f}",
+                                f"{null_mean:.6f}"])
+            print(f"[permute-csv] appended {len(perm)} rows -> {args.permute_csv}")
 
     if args.csv:
         with open(args.csv, "w", newline="", encoding="utf-8") as fh:

@@ -58,7 +58,26 @@ def unique_norm_map(rows) -> dict[str, int]:
     return {k: next(iter(v)) for k, v in norm_to_ids.items() if len(v) == 1}
 
 
-async def _fetch(database_url: str, tickers: list[str], *, precise: bool = False):
+def _as_duty_list(raw: Any) -> list[str]:
+    """Normalize a JSONB ``duty_groups`` value (asyncpg may hand it back as text)."""
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        import json
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            return []
+    return [str(x) for x in raw] if isinstance(raw, list) else []
+
+
+async def _fetch(
+    database_url: str,
+    tickers: list[str],
+    *,
+    precise: bool = False,
+    with_duty: bool = False,
+):
     """Return (id_by_ticker, hiring_rows_by_stock) from prod (read-only).
 
     Default (``precise=False``): group postings by the stored ``stock_id`` (the broad
@@ -68,8 +87,16 @@ async def _fetch(database_url: str, tickers: list[str], *, precise: bool = False
     **exact normalized** ``source_name`` match (precision-first). Postings whose
     normalized name doesn't uniquely match exactly one universe name/short_name are
     dropped, so mis-attributed rows (e.g. SKC코오롱PI booked under SKC) are excluded.
+
+    ``with_duty=True``: also pull each posting's ``duty_groups`` (job-function names)
+    from ``hiring_raw_details.extra_payload`` for the duty-mix features.
     """
     import asyncpg
+
+    duty_sel = ", d.extra_payload->'duty_groups' AS duty_groups" if with_duty else ""
+    duty_join = (
+        "LEFT JOIN hiring_raw_details d ON d.raw_document_id = r.id" if with_duty else ""
+    )
 
     conn = await asyncpg.connect(database_url)
     try:
@@ -84,21 +111,27 @@ async def _fetch(database_url: str, tickers: list[str], *, precise: bool = False
         if not stock_ids:
             return id_by_ticker, hiring_rows_by_stock
 
+        def _row(r) -> dict:
+            row = {"observed_date": r["observed_date"]}
+            if with_duty:
+                row["duty_groups"] = _as_duty_list(r["duty_groups"])
+            return row
+
         if not precise:
             hrows = await conn.fetch(
-                """
-                SELECT stock_id,
-                       (published_at AT TIME ZONE 'Asia/Seoul')::date AS observed_date
-                FROM raw_documents
-                WHERE source_type = 'HIRING' AND stock_id = ANY($1::bigint[])
-                ORDER BY published_at
+                f"""
+                SELECT r.stock_id,
+                       (r.published_at AT TIME ZONE 'Asia/Seoul')::date AS observed_date
+                       {duty_sel}
+                FROM raw_documents r
+                {duty_join}
+                WHERE r.source_type = 'HIRING' AND r.stock_id = ANY($1::bigint[])
+                ORDER BY r.published_at
                 """,
                 stock_ids,
             )
             for r in hrows:
-                hiring_rows_by_stock[int(r["stock_id"])].append(
-                    {"observed_date": r["observed_date"]}
-                )
+                hiring_rows_by_stock[int(r["stock_id"])].append(_row(r))
             return id_by_ticker, hiring_rows_by_stock
 
         # precise rematch — build a normalized name→stock_id map, dropping ambiguous keys.
@@ -107,12 +140,14 @@ async def _fetch(database_url: str, tickers: list[str], *, precise: bool = False
         )
 
         hrows = await conn.fetch(
-            """
-            SELECT source_name,
-                   (published_at AT TIME ZONE 'Asia/Seoul')::date AS observed_date
-            FROM raw_documents
-            WHERE source_type = 'HIRING'
-            ORDER BY published_at
+            f"""
+            SELECT r.source_name,
+                   (r.published_at AT TIME ZONE 'Asia/Seoul')::date AS observed_date
+                   {duty_sel}
+            FROM raw_documents r
+            {duty_join}
+            WHERE r.source_type = 'HIRING'
+            ORDER BY r.published_at
             """,
         )
         matched = dropped = 0
@@ -121,7 +156,7 @@ async def _fetch(database_url: str, tickers: list[str], *, precise: bool = False
             if sid is None:
                 dropped += 1
                 continue
-            hiring_rows_by_stock[sid].append({"observed_date": r["observed_date"]})
+            hiring_rows_by_stock[sid].append(_row(r))
             matched += 1
         print(f"[hiring-db precise] rematched {matched} postings to "
               f"{len(hiring_rows_by_stock)} universe stocks; dropped {dropped} "
@@ -145,6 +180,7 @@ async def load_from_env(
     signal_step: int = 20,
     min_observations: int = 2,
     precise_rematch: bool = False,
+    feature_set: str = "volume",
 ) -> Any:
     """Fetch hiring postings (DB) + prices (CSV) and build a Dataset.
 
@@ -155,12 +191,16 @@ async def load_from_env(
     ``precise_rematch`` re-attributes postings to the universe by exact normalized
     ``source_name`` match (precision) instead of the stored stock_id — use it for the
     expanded universe where the broad insert-gate may have mis-attributed names.
+
+    ``feature_set`` selects ``volume`` (default), ``duty``, or ``volume+duty``; the
+    duty variants additionally pull ``duty_groups`` for the tech-mix features.
     """
     if not prices_csv:
         raise SystemExit("--prices-csv is required for --source hiring-db (run scripts/backfill_prices_fdr.py)")
 
     id_by_ticker, hiring_rows_by_stock = await _fetch(
-        database_url, tickers, precise=precise_rematch
+        database_url, tickers, precise=precise_rematch,
+        with_duty=feature_set in ("duty", "volume+duty"),
     )
     missing = [t for t in tickers if t not in id_by_ticker]
     if missing:
@@ -190,4 +230,5 @@ async def load_from_env(
         horizon_sessions=horizon_sessions,
         neutral_band_pct=neutral_band_pct,
         min_observations=min_observations,
+        feature_set=feature_set,
     )

@@ -26,7 +26,6 @@ transformation is deterministic and unit-testable without a DB.
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass
 from datetime import date, timedelta
 
 import numpy as np
@@ -37,6 +36,90 @@ from .features import feature_matrix
 from .labels import make_label
 
 _YEAR_DAYS = 365
+
+# Explicit set of jasoseol duty-group names that are software / data / hardware
+# R&D / engineering roles (the "what are they building" signal). Curated by exact
+# name from the 145-name taxonomy so it is transparent and defensible; borderline
+# sales/design roles (e.g. IT·솔루션·기술영업, UI·UX디자인) are deliberately
+# excluded to keep "tech" = product-building.
+TECH_DUTIES: frozenset[str] = frozenset({
+    "게임개발", "SW·솔루션·ERP", "네트워크·보안·운영", "웹개발",
+    "데이터엔지니어·분석·DBA", "서버·백엔드개발", "빅데이터·AI(인공지능)",
+    "데이터분석", "HW·임베디드", "데이터엔지니어", "DBA", "시스템프로그래머",
+    "응용프로그래머", "앱개발", "프론트엔드개발", "안드로이드개발", "iOS개발",
+    "HTML·퍼블리싱", "QA", "통신기술·네트워크 구축", "전기·전자·제어",
+    "기계설계·CAD·CAM", "반도체·디스플레이", "전기·통신",
+})
+
+VOLUME_FEATURES = (
+    "hiring__deseason_momentum",
+    "hiring__yoy_change",
+    "hiring__days_since_latest",
+)
+DUTY_FEATURES = (
+    "hiring__tech_share",
+    "hiring__tech_share_yoy",
+    "hiring__tech_share_mom",
+)
+
+
+def duty_tally(names: list[str] | None) -> tuple[int, int]:
+    """(tech-duty count, total-duty count) for one posting's duty-group names."""
+    if not names:
+        return 0, 0
+    uniq = list(dict.fromkeys(names))  # collector dedups already; be defensive
+    tech = sum(1 for n in uniq if n in TECH_DUTIES)
+    return tech, len(uniq)
+
+
+def _pooled_tech_share(window: list[tuple[date, int, int]]) -> float:
+    """Pooled tech share over postings in a window: sum(tech)/sum(total)."""
+    tech = sum(t for _, t, _ in window)
+    tot = sum(c for _, _, c in window)
+    return tech / tot if tot > 0 else float("nan")
+
+
+def duty_features(
+    duty_postings: list[tuple[date, int, int]],
+    *,
+    as_of: date,
+    lookback_days: int,
+) -> dict[str, float]:
+    """Point-in-time duty-mix features at ``as_of``.
+
+    ``duty_postings`` is one stock's ``(date, n_tech, n_total)`` tallies ascending.
+    All windows use only postings with ``date <= as_of`` (knowledge time), the same
+    leakage guard as the volume features.
+
+      hiring__tech_share      pooled tech share in the lookback window
+      hiring__tech_share_yoy  window tech share minus the same window one year prior
+      hiring__tech_share_mom  recent-half minus prior-half tech share (mix momentum)
+    """
+    lo = as_of - timedelta(days=lookback_days)
+    window = [(d, t, c) for (d, t, c) in duty_postings if lo < d <= as_of and c > 0]
+    share = _pooled_tech_share(window)
+
+    y_lo = as_of - timedelta(days=_YEAR_DAYS + lookback_days)
+    y_hi = as_of - timedelta(days=_YEAR_DAYS)
+    prev = [(d, t, c) for (d, t, c) in duty_postings if y_lo < d <= y_hi and c > 0]
+    prev_share = _pooled_tech_share(prev)
+    yoy = (
+        (share - prev_share)
+        if (share == share and prev_share == prev_share)
+        else float("nan")
+    )
+
+    mid = lo + (as_of - lo) / 2
+    recent = [p for p in window if p[0] > mid]
+    prior = [p for p in window if p[0] <= mid]
+    rs, ps = _pooled_tech_share(recent), _pooled_tech_share(prior)
+    mom = (rs - ps) if (rs == rs and ps == ps) else float("nan")
+
+    return {
+        "hiring__tech_share": share,
+        "hiring__tech_share_yoy": yoy,
+        "hiring__tech_share_mom": mom,
+    }
 
 
 def seasonal_index(observed_dates: list[date]) -> dict[int, float]:
@@ -122,6 +205,7 @@ def build_dataset(
     neutral_band_pct: float = 0.3,
     min_observations: int = 2,
     seasonal: dict[int, float] | None = None,
+    feature_set: str = "volume",
 ) -> Dataset:
     """Assemble per-(stock, signal-date) hiring feature rows + forward-return labels.
 
@@ -129,13 +213,39 @@ def build_dataset(
     postings AND a valid forward return AND a non-neutral direction; every drop is
     counted in ``Dataset.dropped`` so a tiny surviving sample can't pass silently.
     The seasonal index is estimated once from ALL supplied postings (pooled).
+
+    ``feature_set`` selects which features to emit:
+      * ``"volume"``       — the 3 de-seasonalized posting-flow features (default).
+      * ``"duty"``         — the 3 duty-mix (tech-share) features only.
+      * ``"volume+duty"``  — all 6.
+    Duty features require each row to carry ``duty_groups`` (a list of duty names);
+    rows without it tally as zero duties (NaN share -> imputed/dropped downstream).
     """
+    if feature_set not in ("volume", "duty", "volume+duty"):
+        raise ValueError(f"unknown feature_set: {feature_set!r}")
+    want_volume = feature_set in ("volume", "volume+duty")
+    want_duty = feature_set in ("duty", "volume+duty")
+
     # Parse + sort each stock's posting dates once; pool all for the seasonal index.
+    # When duty features are requested, also build per-stock (date, n_tech, n_total)
+    # tallies (point-in-time windows are sliced later, in duty_features).
     dates_by_stock: dict[int, list[date]] = {}
+    duty_by_stock: dict[int, list[tuple[date, int, int]]] = {}
     pooled: list[date] = []
     for stock_id, rows in hiring_rows_by_stock.items():
-        ds = sorted(d for r in rows if (d := _as_date(r.get("observed_date"))) is not None)
+        ds: list[date] = []
+        tallies: list[tuple[date, int, int]] = []
+        for r in rows:
+            d = _as_date(r.get("observed_date"))
+            if d is None:
+                continue
+            ds.append(d)
+            if want_duty:
+                tech, tot = duty_tally(r.get("duty_groups"))
+                tallies.append((d, tech, tot))
+        ds.sort()
         dates_by_stock[stock_id] = ds
+        duty_by_stock[stock_id] = sorted(tallies, key=lambda t: t[0])
         pooled.extend(ds)
     factors = seasonal if seasonal is not None else seasonal_index(pooled)
 
@@ -148,17 +258,27 @@ def build_dataset(
 
     for stock_id, signal_dates in signal_dates_by_stock.items():
         dates_sorted = dates_by_stock.get(stock_id, [])
+        duty_sorted = duty_by_stock.get(stock_id, [])
         prices = prices_by_stock.get(stock_id)
         if prices is None:
             dropped["no_price_series"] += len(signal_dates)
             continue
         for as_of in signal_dates:
-            features, n = hiring_features(
+            vol_features, n = hiring_features(
                 dates_sorted, as_of=as_of, lookback_days=lookback_days, factors=factors
             )
             if n < min_observations:
                 dropped["too_few_observations"] += 1
                 continue
+            features: dict[str, float] = {}
+            if want_volume:
+                features.update(vol_features)
+            if want_duty:
+                features.update(
+                    duty_features(
+                        duty_sorted, as_of=as_of, lookback_days=lookback_days
+                    )
+                )
             stock_ret = prices.forward_return_pct(as_of, horizon_sessions)
             if stock_ret is None:
                 dropped["no_forward_price"] += 1
@@ -199,6 +319,11 @@ def build_dataset(
 __all__ = [
     "build_dataset",
     "hiring_features",
+    "duty_features",
+    "duty_tally",
     "seasonal_index",
     "weekly_signal_dates",
+    "TECH_DUTIES",
+    "VOLUME_FEATURES",
+    "DUTY_FEATURES",
 ]
