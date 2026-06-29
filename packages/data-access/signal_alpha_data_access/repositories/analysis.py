@@ -627,6 +627,39 @@ class AnalysisRepository:
             _jsonb(merge_obj),
         )
 
+    async def attach_evidence_events(
+        self,
+        *,
+        stock_id: int,
+        event_ids: list[int],
+    ) -> Any:
+        """현재 발행 신호(is_current)의 분석결과에 근거 signal_event id 를 합집합 추가한다.
+
+        리포트 소스 상세의 근거 목록(api.signal_detail.signal_events)은
+        ``analysis_results.source_signal_event_ids`` 로 해석된다. 서술(narrate)이 사용한 소스
+        이벤트를 그 배열에 멱등 합집합으로 더해, 집계에 소스 분석이 빠져 근거가 비던 화면을 채운다.
+        점수/방향 등 다른 필드는 불변.
+        """
+        if not event_ids:
+            return None
+        return await self._connection.execute(
+            """
+            UPDATE analysis_results ar
+            SET source_signal_event_ids = (
+                SELECT array_agg(DISTINCT x)
+                FROM unnest(
+                    COALESCE(ar.source_signal_event_ids, '{}'::bigint[]) || $2::bigint[]
+                ) AS x
+            )
+            FROM final_signals fs
+            WHERE fs.analysis_result_id = ar.id
+              AND fs.stock_id = $1
+              AND fs.is_current = TRUE
+            """,
+            stock_id,
+            [int(e) for e in event_ids],
+        )
+
     async def update_final_signal_return_channel(
         self,
         *,
