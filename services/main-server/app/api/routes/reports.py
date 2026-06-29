@@ -21,9 +21,10 @@ from signal_alpha_data_access.backend import (
 router = APIRouter(prefix="/api/reports", tags=["reports"])
 
 # 연결점 → score_breakdown 키 / signal_events.source_type 매핑.
-# REPORT 는 임베딩/RAG 분석 제거로 점수를 산출하지 않으므로 사용자 노출 소스에서 제외
-# (집계 SOURCE_ORDER 와 일치). 리포트 원본은 수집/파싱/정규화로 DB 에는 계속 적재된다.
-ALL_SOURCES = ("price", "dart", "hiring", "datalab")
+# REPORT/PATENT 도 사용자 노출 소스에 포함한다. REPORT 는 점수(score_100)를 산출하지 않지만
+# 방향(투자의견 컨센서스)·밸류에이션(목표주가)·발행 리포트 목록을 상세로 노출한다. 집계
+# SOURCE_ORDER(DART/PRICE/REPORT/HIRING/PATENT/DATALAB)와 정렬한다.
+ALL_SOURCES = ("price", "dart", "hiring", "datalab", "patent", "report")
 PUBLIC_SOURCES = {"dart", "datalab"}  # 비회원 공개
 # 대체데이터는 소스별 독립 점수(C안 Phase 2)라 score_breakdown 에 HIRING/DATALAB 가
 # top-level 평탄 키로 들어온다(과거 ALTERNATIVE 중첩 폐기).
@@ -32,12 +33,16 @@ _SOURCE_TO_BREAKDOWN = {
     "dart": "DART",
     "hiring": "HIRING",
     "datalab": "DATALAB",
+    "patent": "PATENT",
+    "report": "REPORT",
 }
 _SOURCE_TO_EVENT_TYPE = {
     "price": "PRICE",
     "dart": "DART",
     "hiring": "HIRING",
     "datalab": "DATALAB",
+    "patent": "PATENT",
+    "report": "REPORT",
 }
 # 메타러너 소스별 예측률(주가 BASE ⊕ 각 공공데이터). 통합(SRC)은 헤드라인(score/direction)으로
 # 이미 노출되므로 여기선 주가 1 + 공공데이터 5 = 6개 per-source 만 사용자에게 따로 보여준다.
@@ -198,6 +203,8 @@ async def get_source_detail(
         "score": block.get("score"),
         "data_status": block.get("data_status"),
         "summary": block.get("summary"),
+        # REPORT 는 밸류에이션 fact(목표주가/방법론 등)를 추가 노출. 그 외 소스는 None.
+        "valuation": _report_valuation(breakdown) if source == "report" else None,
         "items": items,
         "notice": NOTICE,
     }
@@ -278,6 +285,15 @@ def _source_block(source: str, breakdown: dict[str, Any], *, locked: bool) -> di
         "summary": detail.get("summary"),
         "locked": False,
     }
+
+
+def _report_valuation(breakdown: dict[str, Any]) -> dict[str, Any] | None:
+    """score_breakdown.REPORT.valuation(목표주가/방법론/배수 등)을 그대로 노출. 없으면 None."""
+    report = breakdown.get("REPORT")
+    if not isinstance(report, dict):
+        return None
+    valuation = report.get("valuation")
+    return valuation if isinstance(valuation, dict) else None
 
 
 def _prediction_rate_block(

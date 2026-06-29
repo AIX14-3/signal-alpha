@@ -94,13 +94,14 @@ export const SOURCE_META: Record<
   report: { label: "증권사 리포트", icon: "🏦", hint: "애널리스트 의견" },
 };
 
-export const SOURCE_ORDER: ("price" | "dart" | "hiring" | "datalab" | "report")[] = [
-  "price",
-  "dart",
-  "hiring",
-  "datalab",
-  "report",
-];
+export const SOURCE_ORDER: (
+  | "price"
+  | "dart"
+  | "hiring"
+  | "datalab"
+  | "patent"
+  | "report"
+)[] = ["price", "dart", "hiring", "datalab", "patent", "report"];
 
 /** AI 예측률 카드 순서 — 주가 1 + 공공데이터 5(DART·증권사리포트·채용·특허·네이버데이터랩). */
 export const PREDICTION_RATE_ORDER: (
