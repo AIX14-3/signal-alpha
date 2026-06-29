@@ -10,6 +10,7 @@ synthesizer 의 법적 금지단어 필터(``_reject_investment_advice``)뿐 —
 from __future__ import annotations
 
 import json
+import logging
 import os
 from collections.abc import Mapping
 from typing import Any
@@ -21,6 +22,8 @@ from app.orchestrator.queue.context import (
 )
 from app.schemas.risk_report import RiskReport
 from app.synthesis.synthesizer import RiskNarrative, Synthesizer
+
+logger = logging.getLogger("synthesize")
 
 
 class SynthesizeTaskHandler:
@@ -73,6 +76,18 @@ class SynthesizeTaskHandler:
         # last-known 재사용 신선도 — score_breakdown 의 data_age_days>0 인 소스(직전 분석 재사용).
         # LLM 이 "최종 업데이트 N일 전" 으로 서술하는 근거(수치 불변, 설명만).
         source_freshness = _source_freshness(final_signal.get("score_breakdown"))
+
+        # 소스별 LLM 서술 라인(독립) — 파싱데이터 + 예측률을 묶어 읽기 쉬운 한국어 서술을
+        # score_breakdown.{SRC}.summary 에 병합한다(수치 불변). 플래그 OFF/실패 시 기존 요약 유지.
+        await self._narrate_sources(
+            stock_id=stock_id,
+            stock_code=stock_code,
+            signal_date=final_signal.get("signal_date"),
+            source_predictions=source_predictions,
+            price_prediction=price_prediction,
+            report_valuation=report_valuation,
+            score_breakdown=_loads_breakdown(final_signal.get("score_breakdown")),
+        )
 
         events = (
             [dict(row) for row in await self._normalization.list_signal_events_by_ids(signal_event_ids)]
@@ -158,6 +173,186 @@ class SynthesizeTaskHandler:
             except Exception:  # noqa: BLE001 — any LLM/parse/safety failure → deterministic fallback
                 return _deterministic_narrative(report), "llm_fallback"
         return _deterministic_narrative(report), "deterministic"
+
+    async def _narrate_sources(
+        self,
+        *,
+        stock_id: int,
+        stock_code: str,
+        signal_date: Any,
+        source_predictions: dict[str, Any] | None,
+        price_prediction: dict[str, Any] | None = None,
+        report_valuation: dict[str, Any] | None = None,
+        score_breakdown: dict[str, Any] | None = None,
+    ) -> None:
+        """소스별 독립 LLM 서술 라인(DART/PRICE/REPORT). 각 소스는 플래그로 개별 게이팅하며,
+        실패해도 발행을 막지 않는다(기존 요약 유지). 이미 ``narrated`` 인 소스는 LLM 재호출 없이
+        skip(멱등) — AGGREGATE 가 score_breakdown 을 재생성하면 플래그가 사라져 자동 재서술."""
+        if self._settings is None:
+            return
+        if _source_narrate_enabled(self._settings, "DART") and not _already_narrated(score_breakdown, "DART"):
+            try:
+                await self._narrate_dart(stock_id, stock_code, signal_date, source_predictions)
+            except Exception:  # noqa: BLE001 — 서술 실패가 발행을 막지 않음
+                logger.exception("DART narrate 실패 — 기존 요약 유지 (stock_id=%s)", stock_id)
+        if _source_narrate_enabled(self._settings, "PRICE") and not _already_narrated(score_breakdown, "PRICE"):
+            try:
+                await self._narrate_price(stock_id, stock_code, price_prediction, source_predictions)
+            except Exception:  # noqa: BLE001
+                logger.exception("PRICE narrate 실패 — 기존 요약 유지 (stock_id=%s)", stock_id)
+        if _source_narrate_enabled(self._settings, "REPORT") and not _already_narrated(score_breakdown, "REPORT"):
+            try:
+                await self._narrate_report(
+                    stock_id, stock_code, signal_date, report_valuation, source_predictions
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception("REPORT narrate 실패 — 기존 요약 유지 (stock_id=%s)", stock_id)
+
+    def _narrate_client(self, source_key: str) -> tuple[Any, str, float] | None:
+        """소스별 LLM 클라이언트/모델/타임아웃 — 키 없으면 None. ({SRC}_LLM_PROVIDER/MODEL env)."""
+        from app.narrate.base import build_narrate_client
+
+        provider = (os.getenv(f"{source_key}_LLM_PROVIDER") or "gemini").strip().lower()
+        model = str(os.getenv(f"{source_key}_LLM_MODEL") or "")
+        if not model:
+            return None
+        client = build_narrate_client(provider, settings=self._settings)
+        if client is None:
+            return None
+        timeout = float(os.getenv(f"{source_key}_LLM_TIMEOUT_SECONDS") or 30.0)
+        return client, model, timeout
+
+    async def _narrate_price(
+        self,
+        stock_id: int,
+        stock_code: str,
+        price_prediction: dict[str, Any] | None,
+        source_predictions: dict[str, Any] | None,
+    ) -> None:
+        from app.narrate.price import PriceNarrator
+
+        built = self._narrate_client("PRICE")
+        if built is None:
+            return
+        client, model, timeout = built
+        pred = (source_predictions or {}).get("SRC_PRICE")
+        narrator = PriceNarrator(client=client, model=model, timeout_seconds=timeout)
+        narrative = await narrator.narrate(
+            stock_code=stock_code, analysis=price_prediction, prediction_rate=pred
+        )
+        await self._analysis.update_source_narrative(
+            stock_id=stock_id, source="PRICE",
+            summary=narrative.summary, narrative_points=narrative.key_facts,
+        )
+        logger.info("PRICE narrate 적용 stock_id=%s facts=%d", stock_id, len(narrative.key_facts))
+
+    async def _narrate_report(
+        self,
+        stock_id: int,
+        stock_code: str,
+        signal_date: Any,
+        report_valuation: dict[str, Any] | None,
+        source_predictions: dict[str, Any] | None,
+    ) -> None:
+        from app.narrate.report import ReportNarrator
+
+        built = self._narrate_client("REPORT")
+        if built is None:
+            return
+        client, model, timeout = built
+        rows = await self._normalization.list_recent_source_events(
+            stock_id=stock_id, source_type="REPORT", as_of=signal_date, limit=12
+        )
+        events = [dict(r) for r in rows]
+        if not report_valuation and not events:
+            return  # REPORT 원천 미적재 — no-op
+        pred = (source_predictions or {}).get("SRC_REPORT")
+        narrator = ReportNarrator(client=client, model=model, timeout_seconds=timeout)
+        narrative = await narrator.narrate(
+            stock_code=stock_code, valuation=report_valuation,
+            prediction_rate=pred, events=events,
+        )
+        await self._analysis.update_source_narrative(
+            stock_id=stock_id, source="REPORT",
+            summary=narrative.summary, narrative_points=narrative.key_facts,
+        )
+        if events:
+            await self._analysis.attach_evidence_events(
+                stock_id=stock_id,
+                event_ids=[int(e["id"]) for e in events if e.get("id") is not None],
+            )
+        logger.info("REPORT narrate 적용 stock_id=%s facts=%d", stock_id, len(narrative.key_facts))
+
+    async def _narrate_dart(
+        self,
+        stock_id: int,
+        stock_code: str,
+        signal_date: Any,
+        source_predictions: dict[str, Any] | None,
+    ) -> None:
+        from app.narrate.dart import DartNarrator, select_narrate_events
+
+        built = self._narrate_client("DART")
+        if built is None:
+            return
+        client, model, timeout = built
+        rows = await self._normalization.list_recent_source_events(
+            stock_id=stock_id, source_type="DART", as_of=signal_date, limit=20
+        )
+        events = [dict(row) for row in rows]
+        if not events:
+            return
+        picked = select_narrate_events(events, limit=12)
+        pred = (source_predictions or {}).get("SRC_DART")
+        narrator = DartNarrator(
+            client=client,
+            model=model,
+            timeout_seconds=timeout,
+        )
+        narrative = await narrator.narrate(
+            stock_code=stock_code, events=picked, prediction_rate=pred
+        )
+        await self._analysis.update_source_narrative(
+            stock_id=stock_id,
+            source="DART",
+            summary=narrative.summary,
+            narrative_points=narrative.key_facts,
+        )
+        # 근거(공시 목록) 노출 — 서술에 쓴 DART 이벤트를 현재 신호의 분석결과 근거에 합집합 추가.
+        await self._analysis.attach_evidence_events(
+            stock_id=stock_id, event_ids=[int(e["id"]) for e in picked if e.get("id") is not None]
+        )
+        logger.info(
+            "DART narrate 적용 stock_id=%s events=%d facts=%d",
+            stock_id,
+            len(picked),
+            len(narrative.key_facts),
+        )
+
+
+def _already_narrated(score_breakdown: dict[str, Any] | None, source: str) -> bool:
+    """해당 소스가 이미 서술됨(narrated=True) — 재SYNTHESIZE 시 LLM 재호출 skip(멱등).
+    AGGREGATE 가 score_breakdown 을 재생성하면 narrated 가 사라져 다음 사이클에 자동 재서술된다."""
+    if not isinstance(score_breakdown, dict):
+        return False
+    entry = score_breakdown.get(source)
+    return isinstance(entry, dict) and bool(entry.get("narrated"))
+
+
+def _source_narrate_enabled(settings: Any, source_key: str) -> bool:
+    """소스별 서술 LLM 구성 여부 — {SRC}_USE_LLM + {SRC}_LLM_MODEL + provider 키. (부작용 없는 게이트.)"""
+    if settings is None:
+        return False
+    if str(os.getenv(f"{source_key}_USE_LLM") or "").strip().lower() not in {"1", "true", "yes", "on"}:
+        return False
+    if not os.getenv(f"{source_key}_LLM_MODEL"):
+        return False
+    provider = (os.getenv(f"{source_key}_LLM_PROVIDER") or "gemini").strip().lower()
+    if provider == "gemini":
+        return bool(getattr(settings, "gemini_api_key", None))
+    if provider == "openai":
+        return bool(getattr(settings, "openai_api_key", None))
+    return False
 
 
 def _llm_context(report: RiskReport) -> dict[str, Any]:

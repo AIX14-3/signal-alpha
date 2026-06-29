@@ -567,6 +567,99 @@ class AnalysisRepository:
             bear_point,
         )
 
+    async def update_source_narrative(
+        self,
+        *,
+        stock_id: int,
+        source: str,
+        summary: str,
+        narrative_points: Any = None,
+        mark_narrated: bool = True,
+    ) -> Any:
+        """소스별 LLM 서술(summary/narrative_points)을 ``score_breakdown.{SOURCE}`` 에 병합한다.
+
+        C안 정합: 방향/점수/score_100 등 **수치 필드는 불변**(서술만). ``jsonb_set`` 으로 해당 소스
+        객체에 ``summary``·``narrative_points``·``narrated`` 플래그만 덮어쓴다(소스 객체가 없으면 생성).
+        ``mark_narrated`` 시 ``data_status`` 가 'missing' 이면 'ok' 로 올려, 서술이 있는데도 카드가
+        "데이터 수집 전"으로 보이는 표시 불일치를 막는다(표시 상태만 보정, 점수/방향 불변). 현재 발행
+        신호(is_current)에 적용 — 체인 순서상 아직 없으면 no-op(다음 사이클).
+        """
+        merge_obj = {
+            "summary": summary,
+            "narrative_points": narrative_points if narrative_points is not None else [],
+            "narrated": True,
+        }
+        if mark_narrated:
+            # data_status 가 'missing' 일 때만 'ok' 로 보정(이미 ok/no_signal/partial 이면 보존).
+            return await self._connection.fetchrow(
+                """
+                UPDATE final_signals
+                SET score_breakdown = jsonb_set(
+                    COALESCE(score_breakdown, '{}'::jsonb),
+                    ARRAY[$2],
+                    COALESCE(score_breakdown -> $2, '{}'::jsonb)
+                        || $3::jsonb
+                        || CASE WHEN COALESCE(score_breakdown -> $2 ->> 'data_status', 'missing') = 'missing'
+                                THEN jsonb_build_object('data_status', 'ok') ELSE '{}'::jsonb END,
+                    TRUE
+                )
+                WHERE stock_id = $1 AND is_current = TRUE
+                RETURNING id
+                """,
+                stock_id,
+                source,
+                _jsonb(merge_obj),
+            )
+        return await self._connection.fetchrow(
+            """
+            UPDATE final_signals
+            SET score_breakdown = jsonb_set(
+                COALESCE(score_breakdown, '{}'::jsonb),
+                ARRAY[$2],
+                COALESCE(score_breakdown -> $2, '{}'::jsonb) || $3::jsonb,
+                TRUE
+            )
+            WHERE stock_id = $1 AND is_current = TRUE
+            RETURNING id
+            """,
+            stock_id,
+            source,
+            _jsonb(merge_obj),
+        )
+
+    async def attach_evidence_events(
+        self,
+        *,
+        stock_id: int,
+        event_ids: list[int],
+    ) -> Any:
+        """현재 발행 신호(is_current)의 분석결과에 근거 signal_event id 를 합집합 추가한다.
+
+        리포트 소스 상세의 근거 목록(api.signal_detail.signal_events)은
+        ``analysis_results.source_signal_event_ids`` 로 해석된다. 서술(narrate)이 사용한 소스
+        이벤트를 그 배열에 멱등 합집합으로 더해, 집계에 소스 분석이 빠져 근거가 비던 화면을 채운다.
+        점수/방향 등 다른 필드는 불변.
+        """
+        if not event_ids:
+            return None
+        return await self._connection.execute(
+            """
+            UPDATE analysis_results ar
+            SET source_signal_event_ids = (
+                SELECT array_agg(DISTINCT x)
+                FROM unnest(
+                    COALESCE(ar.source_signal_event_ids, '{}'::bigint[]) || $2::bigint[]
+                ) AS x
+            )
+            FROM final_signals fs
+            WHERE fs.analysis_result_id = ar.id
+              AND fs.stock_id = $1
+              AND fs.is_current = TRUE
+            """,
+            stock_id,
+            [int(e) for e in event_ids],
+        )
+
     async def update_final_signal_return_channel(
         self,
         *,
