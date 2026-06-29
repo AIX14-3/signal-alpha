@@ -103,14 +103,12 @@ def compute_attention_spike(
     feed mean/stdev, and any point dated after ``as_of`` is dropped upstream.
     """
     pairs = _parse_series(series, as_of)
+    # Need the latest point + at least ``attention_min_history`` prior points.
     if len(pairs) < config.attention_min_history + 1:
         return None
 
     latest_value = pairs[-1][1]
     prior = [value for _, value in pairs[:-1]]
-    if len(prior) < config.attention_min_history:
-        return None
-
     window = prior[-config.attention_window :]
     mu = statistics.mean(window)
     sd = statistics.pstdev(window)  # population stdev — matches research rolling_z

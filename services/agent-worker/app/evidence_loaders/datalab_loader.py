@@ -40,7 +40,14 @@ class DataLabEvidenceLoader:
         }
         category_ids = list(weight_by_category)
 
-        since = as_of - timedelta(days=self._lookback_days)
+        # One wider fetch serves both consumers: the attention rolling-z uses the
+        # full window, and the directional ``rows`` are the same fetch filtered to
+        # ``lookback_days``. The repo query is ``observed_date >= since ORDER BY
+        # observed_date DESC``, so filtering the wider result to the narrow window
+        # yields rows byte-identical to a standalone narrow query (same WHERE, same
+        # order) — without a second round-trip (the loader is also used in the ML
+        # training/inference loop, where doubling DB reads would compound).
+        since = as_of - timedelta(days=self._attention_window_days)
         records = (
             await self._repository.list_datalab_details_by_category(
                 category_ids=category_ids,
@@ -49,20 +56,15 @@ class DataLabEvidenceLoader:
             if category_ids
             else []
         )
-        rows = [_row(record, weight_by_category) for record in records]
-        latest = rows[0]["observed_date"] if rows else None
+        attention_series = _blend_daily_series(records, weight_by_category)
 
-        # Separate, wider PIT series for the neutral attention_spike rolling-z.
-        attention_since = as_of - timedelta(days=self._attention_window_days)
-        attention_records = (
-            await self._repository.list_datalab_details_by_category(
-                category_ids=category_ids,
-                since_date=attention_since,
-            )
-            if category_ids
-            else []
-        )
-        attention_series = _blend_daily_series(attention_records, weight_by_category)
+        lookback_since = as_of - timedelta(days=self._lookback_days)
+        rows = [
+            _row(record, weight_by_category)
+            for record in records
+            if record["observed_date"] is not None and record["observed_date"] >= lookback_since
+        ]
+        latest = rows[0]["observed_date"] if rows else None
 
         metadata: dict[str, Any] = {
             "rows": rows,
