@@ -60,8 +60,9 @@ flowchart LR
     ms -- "SELECT · signal_backend" --> bv
     ms -- "DML · signal_backend" --> bt
     ms -- "스케줄 제어 DML · collection_schedules" --> bsched
-    sch -. "config 폴링·상태기록 · BACKEND_DATABASE_URL" .-> bsched
-    sch -- "HTTP POST /internal/{schedules/dart,price}/collect" --> aw
+    bsched -. "config 지시(읽기): enabled·시각·대상" .-> sch
+    sch -. "상태기록(쓰기): last/next run · BACKEND_DATABASE_URL" .-> bsched
+    sch -- "발화: HTTP POST /internal/{schedules/dart,price}/collect" --> aw
     col -- "DML(실시간 가격) · signal_worker" --> cwt
     altcron -- "DML(patent/datalab) · signal_worker" --> cwt
     aw -- "drain(processing_queue) DML · signal_worker" --> cwt
