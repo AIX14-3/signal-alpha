@@ -18,8 +18,8 @@ name: AltData Pipeline
 #   KIPRIS_API_KEY / GOOGLE_CLOUD_PROJECT(특허 수집 — BigQuery ADC 별도 설정 필요할 수 있음)
 #   COLLECTOR_VERSION                    (선택)
 #
-# ⚠️ schedule 은 운영 DB 에 자동 적재한다 → workflow_dispatch 로 충분히 검증한 뒤
-#    아래 schedule 주석을 해제할 것.
+# ⚠️ schedule 은 운영 DB 에 자동 적재한다(매일 06:30 KST). 활성 상태.
+#    수동 검증이 필요하면 workflow_dispatch 로 ticker 1개만 지정해 먼저 돌려볼 것.
 
 on:
   workflow_dispatch:
@@ -28,8 +28,8 @@ on:
         description: "단일 종목만 처리(비우면 전체 활성 종목)"
         required: false
         default: ""
-  # schedule:
-  #   - cron: "30 21 * * *" # 06:30 KST — datalab-daily(06:00 수집) 직후 정규화+분석
+  schedule:
+    - cron: "30 21 * * *" # 06:30 KST — datalab-daily(06:00 수집) 직후 정규화+분석
 
 concurrency:
   group: altdata-pipeline
