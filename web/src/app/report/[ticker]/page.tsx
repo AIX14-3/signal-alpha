@@ -23,12 +23,19 @@ export default function ReportPage() {
   const router = useRouter();
 
   const user = useAuthStore((s) => s.user);
+  const status = useAuthStore((s) => s.status);
   const { report, quota, loading, issuing, error, load, issue, loadQuota } = useReportStore();
   const showToast = useToastStore((s) => s.show);
 
   useEffect(() => {
+    // 리포트(/api/reports/{code})는 공개 엔드포인트라 토큰이 없으면 401 이 아니라
+    // 200 + is_member=false(익명 뷰)를 돌려준다 → apiFetch 의 401 자동복구가 작동하지 않는다.
+    // 따라서 인메모리 access 토큰이 비어 있는 새로고침 직후 hydrate 완료 전에 로드하면
+    // 로그인 상태인데도 비회원으로 굳어진다. 인증 hydrate 가 확정(authenticated/anonymous)된
+    // 뒤에 로드해 토큰이 실리도록 한다.
+    if (status === "idle" || status === "loading") return;
     void load(ticker);
-  }, [ticker, load]);
+  }, [ticker, load, status]);
 
   useEffect(() => {
     if (user) void loadQuota();
@@ -48,7 +55,9 @@ export default function ReportPage() {
     }
   }
 
-  if (loading) return <p className="py-16 text-center text-muted">리포트를 불러오는 중…</p>;
+  // hydrate 가 끝나기 전(idle/loading)에는 아직 로드를 시작하지 않으므로 로딩 표시를 유지한다.
+  if (loading || status === "idle" || status === "loading")
+    return <p className="py-16 text-center text-muted">리포트를 불러오는 중…</p>;
   if (error && !report)
     return (
       <div className="py-16 text-center">
