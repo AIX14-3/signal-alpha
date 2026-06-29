@@ -1,0 +1,62 @@
+# hiring 크롤러 — 매일 04:30 KST CronJob (alt-data 04:30 과 통일).
+# Selenium+Chrome 의존이라 전용 이미지(signal-alpha-hiring-crawler = agent-worker + chromium)를 쓴다.
+# 나머지 유닛은 슬림 agent-worker 이미지를 그대로 쓰므로 chromium 비대화가 격리된다.
+# command 는 기존 래퍼(ops/run_hiring_daily.sh): flock 중복방지 + catch-up 멱등 + 실패 시 Discord →
+#   run_daily_hiring_pipeline.py(수집+OCR+레거시분석) && run_analyzers.py(신규 → final_signals 소스별 1행).
+# timeZone 은 k8s ≥1.27(GKE) 지원. 미지원 클러스터면 schedule 을 UTC(19:30)로.
+# observed_date 가 KST 자정 기준(#253)이라 자정 이후 04:30 실행이면 당일분이 잡힌다.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: hiring-crawl
+  namespace: signal-alpha
+  labels:
+    app.kubernetes.io/part-of: signal-alpha
+    app.kubernetes.io/name: hiring-crawl
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  schedule: "30 4 * * *"
+  timeZone: "Asia/Seoul"
+  concurrencyPolicy: Forbid          # 래퍼 flock 과 이중 안전 — 겹쳐 발화해도 1개만
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/part-of: signal-alpha
+            app.kubernetes.io/name: hiring-crawl
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: hiring-crawl
+              image: signal-alpha-hiring-crawler    # kustomization images: 에서 레지스트리/태그로 핀
+              # WORKDIR=/workspace/services/agent-worker (base 상속) → ops/ 상대경로 호출.
+              command: ["sh", "ops/run_hiring_daily.sh"]
+              envFrom:
+                - configMapRef: { name: signal-alpha-config }
+                - secretRef: { name: signal-alpha-secrets }
+              env:
+                - name: SERVICE_NAME
+                  value: hiring-crawl
+                - name: DATABASE_URL          # 수집 DB (hiring_raw_details 적재 대상)
+                  valueFrom: { secretKeyRef: { name: signal-alpha-secrets, key: WORKER_DATABASE_URL } }
+                # HIRING_DATALAB_CLIENT_ID/SECRET, DISCORD_WEBHOOK_URL 는 envFrom(secret)으로 주입.
+                # ⚠️ secret 에 해당 키가 있어야 함(secret.example.yaml placeholder 참조).
+                - name: HIRING_LOG_DIR        # k8s 는 stdout 캡처 — 임시 경로로(영속 불요)
+                  value: /tmp/hiring
+              resources:
+                requests: { cpu: "250m", memory: "512Mi" }
+                limits: { cpu: "1", memory: "1536Mi" }   # Chrome 크롤 시 +300~500MB 스파이크 대비
+              volumeMounts:
+                - name: dshm
+                  mountPath: /dev/shm
+          volumes:
+            # --disable-dev-shm-usage 로 /tmp 를 쓰지만, 일부 페이지에서 안전판으로 shm 메모리 백업.
+            - name: dshm
+              emptyDir:
+                medium: Memory
+                sizeLimit: 256Mi

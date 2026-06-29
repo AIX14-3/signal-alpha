@@ -19,10 +19,13 @@ deploy/
 | **collector** | `k8s/collector.yaml` | Kiwoom 실시간 데몬(`run_collector_instance.py`), Service 없음 |
 | **scheduler** | `k8s/scheduler.yaml` | `collection_schedules` 폴링(`run_scheduler_instance.py`) |
 | alt-data 배치 | `k8s/altdata-cronjob.yaml` | patent/datalab, 매일 04:30 KST |
+| **hiring 크롤 배치** | `k8s/hiring-cronjob.yaml` | Selenium+Chrome 크롤→분석, 매일 04:30 KST. **전용 이미지**(`hiring-crawler`) |
 | 수집 DB / 백엔드 DB | `k8s/postgres-collection.yaml` · `postgres-backend.yaml` | StatefulSet ×2 |
 | 마이그레이션 | `k8s/db-migrate-{collection,backend}-job.yaml` | `--target` 각각, Argo Sync 훅 |
 
 이미지(`agent-worker`)는 worker/collector/scheduler/alt-data 가 **공유**하고 command 만 다르다.
+**예외: hiring 크롤러**는 chromium 의존(수백 MB)을 격리하려 `agent-worker` 위에 chromium 을 얹은
+**별도 이미지(`hiring-crawler`, `Dockerfile.crawler`)**를 쓴다 — 나머지 유닛은 슬림 base 유지.
 
 ## 1) 이미지 빌드 & 푸시 (레포 루트에서, context=`.`)
 ```bash
@@ -32,9 +35,14 @@ docker build -f services/main-server/Dockerfile  -t $REG/main-server:TAG  .
 docker build -f web/Dockerfile --target runner \
   --build-arg NEXT_PUBLIC_MAIN_API_BASE_URL=https://<INGRESS_HOST> -t $REG/web:TAG ./web
 docker build -f database/Dockerfile -t $REG/db-migrate:TAG .
+# hiring 크롤러 전용 이미지 — agent-worker 빌드 후 그 위에 chromium 을 얹는다(FROM base).
+docker build -f services/agent-worker/Dockerfile.crawler -t $REG/hiring-crawler:TAG \
+  --build-arg BASE_IMAGE=$REG/agent-worker:TAG .
 docker push $REG/agent-worker:TAG && docker push $REG/main-server:TAG \
-  && docker push $REG/web:TAG && docker push $REG/db-migrate:TAG
+  && docker push $REG/web:TAG && docker push $REG/db-migrate:TAG \
+  && docker push $REG/hiring-crawler:TAG
 # k8s/kustomization.yaml 의 images: PROJECT_ID/newTag 를 위 값으로 핀
+# ⚠️ hiring-crawler 를 빌드/푸시하지 않으면 hiring-crawl CronJob 이 ImagePullBackOff 로 죽는다.
 ```
 
 ## 2) 비밀 생성 (out-of-band — 평문 커밋 금지)
