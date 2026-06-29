@@ -17,6 +17,9 @@ class Settings:
         # 백엔드(서비스) DB 발행용 DSN (#531 2-DB 물리 분리). 워커가 산출물을
         # 백엔드 DB로 publish 할 때만 사용. 미설정이면 발행 비활성(단일 DB 모드).
         self.backend_database_url = getenv("BACKEND_DATABASE_URL")
+        # /internal/* 호출 공유 시크릿. 설정 시 X-Internal-Token 헤더 일치 요구(스케줄러 등
+        # 신뢰된 호출자만 통과). 빈 값이면 검사 비활성(네트워크 격리에만 의존 — 기존 동작).
+        self.internal_api_token = getenv("INTERNAL_API_TOKEN", "")
         self.parsed_reports_path: Path = (
             Path(__file__).resolve().parents[4] / "data" / "parsed_reports.json"
         )

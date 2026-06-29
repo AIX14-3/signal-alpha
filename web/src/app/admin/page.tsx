@@ -5,13 +5,17 @@ import {
   adminCancelSubscription,
   adminDeleteUser,
   adminGetStats,
+  adminListSchedules,
   adminListUsers,
   adminLogin,
   adminLogout,
   adminMe,
   adminRefund,
   adminSetSubscription,
+  adminTriggerSchedule,
+  adminUpdateSchedule,
   adminUpdateUser,
+  type AdminSchedule,
   type AdminStats,
   type AdminUser,
 } from "@/lib/apiClient";
@@ -175,6 +179,8 @@ function AdminDashboard({ onLogout }: { onLogout: () => Promise<void> }) {
         </div>
       )}
 
+      <ScheduleCard onError={setError} />
+
       <div className="mt-10 flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-[18px] font-bold">회원 ({total})</h2>
         <input
@@ -257,5 +263,167 @@ function StatCard({ label, value }: { label: string; value: string }) {
       <div className="text-[12.5px] font-semibold text-muted">{label}</div>
       <div className="mt-1.5 text-[24px] font-extrabold">{value}</div>
     </div>
+  );
+}
+
+const ALL_TARGETS = ["price", "dart"] as const;
+const TARGET_LABEL: Record<string, string> = { price: "주식(가격)", dart: "DART 공시" };
+
+function fmtDateTime(value: string | null): string {
+  if (!value) return "-";
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? value : d.toLocaleString("ko-KR", { timeZone: "Asia/Seoul" });
+}
+
+function ScheduleCard({ onError }: { onError: (msg: string | null) => void }) {
+  const [schedule, setSchedule] = useState<AdminSchedule | null>(null);
+  const [runAt, setRunAt] = useState("04:30");
+  const [targets, setTargets] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const { items } = await adminListSchedules();
+      const first = items[0] ?? null;
+      setSchedule(first);
+      if (first) {
+        setRunAt(first.run_at_local ?? "04:30");
+        setTargets(first.targets ?? []);
+      }
+    } catch (err) {
+      onError((err as Error).message);
+    }
+  }, [onError]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  if (!schedule) return null;
+
+  async function save(body: Parameters<typeof adminUpdateSchedule>[1]) {
+    if (!schedule) return;
+    setBusy(true);
+    onError(null);
+    try {
+      const updated = await adminUpdateSchedule(schedule.id, body);
+      setSchedule(updated);
+      setRunAt(updated.run_at_local ?? "04:30");
+      setTargets(updated.targets ?? []);
+    } catch (err) {
+      onError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function trigger() {
+    if (!schedule) return;
+    if (!window.confirm("지금 즉시 수집을 1회 실행할까요? (워커 스케줄러가 다음 폴링에 발화)")) return;
+    setBusy(true);
+    onError(null);
+    try {
+      setSchedule(await adminTriggerSchedule(schedule.id));
+    } catch (err) {
+      onError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function toggleTarget(key: string) {
+    setTargets((prev) => (prev.includes(key) ? prev.filter((t) => t !== key) : [...prev, key]));
+  }
+
+  return (
+    <section className="card mt-8 p-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-[18px] font-bold">수집 스케줄</h2>
+          <p className="mt-0.5 text-[12.5px] text-muted">
+            매일 {schedule.timezone ?? "Asia/Seoul"} {schedule.run_at_local ?? "-"} 자동 수집 ·{" "}
+            {schedule.enabled ? "활성" : "비활성"}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => void save({ enabled: !schedule.enabled })}
+          disabled={busy}
+          className={`rounded-full px-4 py-2 text-[13.5px] font-semibold disabled:opacity-60 ${
+            schedule.enabled
+              ? "border border-line text-navy-soft hover:border-navy"
+              : "brand-grad text-white"
+          }`}
+        >
+          {schedule.enabled ? "비활성화" : "활성화"}
+        </button>
+      </div>
+
+      <div className="mt-5 grid gap-5 lg:grid-cols-2">
+        <div>
+          <label className="text-[12.5px] font-semibold text-muted">실행 시각 (KST)</label>
+          <div className="mt-2 flex items-center gap-2">
+            <input
+              type="time"
+              value={runAt}
+              onChange={(e) => setRunAt(e.target.value)}
+              className="card px-3 py-2 text-[14px] outline-none focus:border-sky"
+            />
+            <button
+              type="button"
+              onClick={() => void save({ run_at_local: runAt })}
+              disabled={busy || runAt === schedule.run_at_local}
+              className="text-[13px] font-semibold text-sky-deep disabled:opacity-50"
+            >
+              시각 저장
+            </button>
+          </div>
+
+          <label className="mt-4 block text-[12.5px] font-semibold text-muted">수집 대상</label>
+          <div className="mt-2 flex flex-wrap items-center gap-3">
+            {ALL_TARGETS.map((key) => (
+              <label key={key} className="flex items-center gap-1.5 text-[13.5px]">
+                <input type="checkbox" checked={targets.includes(key)} onChange={() => toggleTarget(key)} />
+                {TARGET_LABEL[key] ?? key}
+              </label>
+            ))}
+            <button
+              type="button"
+              onClick={() => void save({ targets })}
+              disabled={busy}
+              className="text-[13px] font-semibold text-sky-deep disabled:opacity-50"
+            >
+              대상 저장
+            </button>
+          </div>
+        </div>
+
+        <div className="rounded-xl bg-surface-2 p-4">
+          <div className="text-[12.5px] font-semibold text-muted">실행 상태</div>
+          <dl className="mt-2 space-y-1.5 text-[13px]">
+            <div className="flex justify-between gap-4">
+              <dt className="text-muted">마지막 실행</dt>
+              <dd className="font-medium">{fmtDateTime(schedule.last_run_at)}</dd>
+            </div>
+            <div className="flex justify-between gap-4">
+              <dt className="text-muted">결과</dt>
+              <dd className="font-medium">{schedule.last_status ?? "-"}</dd>
+            </div>
+            <div className="flex justify-between gap-4">
+              <dt className="text-muted">다음 예정</dt>
+              <dd className="font-medium">{fmtDateTime(schedule.next_run_at)}</dd>
+            </div>
+          </dl>
+          <button
+            type="button"
+            onClick={() => void trigger()}
+            disabled={busy}
+            className="brand-grad mt-4 w-full rounded-full py-2.5 text-[14px] font-bold text-white disabled:opacity-60"
+          >
+            지금 실행
+          </button>
+        </div>
+      </div>
+    </section>
   );
 }
