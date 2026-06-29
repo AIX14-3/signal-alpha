@@ -36,7 +36,8 @@ class Settings:
         ]
 
         # --- 신규 기획 ---
-        # 포트원 V2 REST API. api_secret 미설정 시 dev 모드(외부 호출 없이 결정적 모의값).
+        # 포트원 V2 REST API. **항상 real 모드**(과거 dev 폴백 제거 — app/core/portone.py 참조).
+        # api_secret 미설정 시 결제/본인인증 검증은 조용한 모의값이 아니라 명확한 오류로 실패한다.
         # 인증 헤더: `Authorization: PortOne {api_secret}` / 베이스: https://api.portone.io
         self.portone_api_base = getenv("PORTONE_API_BASE", "https://api.portone.io")
         self.portone_api_secret = getenv("PORTONE_API_SECRET")
@@ -69,6 +70,25 @@ class Settings:
             for provider in ("naver", "google", "kakao")
         }
 
+        # --- 보안 강화(Spring Security 대응) ---
+        # Host 헤더 허용목록(TrustedHost). 콤마구분. 기본=로컬/테스트. prod 는 실도메인 명시.
+        self.allowed_hosts = [
+            host.strip()
+            for host in getenv("ALLOWED_HOSTS", "localhost,127.0.0.1,testserver").split(",")
+            if host.strip()
+        ]
+        # 응답 보안 헤더(nosniff/X-Frame/Referrer/Permissions/CSP). HSTS 는 HTTPS(prod)에서만.
+        self.security_headers_enabled = getenv("SECURITY_HEADERS_ENABLED", "true").lower() in (
+            "1", "true", "yes"
+        )
+        self.hsts_enabled = self.app_env == "production"
+        # 브루트포스 방어: 인증 엔드포인트 IP 레이트리밋 + 관리자 로그인 연속실패 잠금.
+        self.rate_limit_enabled = getenv("RATE_LIMIT_ENABLED", "true").lower() in ("1", "true", "yes")
+        self.rate_limit_auth_max = int(getenv("RATE_LIMIT_AUTH_MAX", "60"))
+        self.rate_limit_auth_window_seconds = int(getenv("RATE_LIMIT_AUTH_WINDOW_SECONDS", "300"))
+        self.admin_login_max_failures = int(getenv("ADMIN_LOGIN_MAX_FAILURES", "10"))
+        self.admin_lockout_seconds = int(getenv("ADMIN_LOCKOUT_SECONDS", "900"))
+
         # 프로덕션 배포 안전장치(G5/G6). APP_ENV=production 일 때만 검증 — 잘못 배포되면
         # 부팅 시점에 즉시 실패(토큰 위조·CORS·쿠키 오설정으로 조용히 깨지는 것 방지).
         self._validate_production()
@@ -85,6 +105,9 @@ class Settings:
             problems.append("CORS_ALLOW_ORIGINS must list the frontend origin(s)")
         if "*" in self.cors_allow_origins:
             problems.append("CORS_ALLOW_ORIGINS must not contain '*' (invalid with credentials)")
+        # G7: Host 헤더 위조(host header injection) 방지 — prod 는 실도메인을 명시해야 한다.
+        if not self.allowed_hosts or "*" in self.allowed_hosts:
+            problems.append("ALLOWED_HOSTS must list explicit hostnames (no '*') in production")
         # G6: 교차도메인 쿠키(SameSite=None)는 Secure 가 없으면 브라우저가 거부.
         if self.cookie_samesite == "none" and not self.cookie_secure:
             problems.append("COOKIE_SECURE must be true when COOKIE_SAMESITE=none")

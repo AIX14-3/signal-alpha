@@ -49,6 +49,24 @@ cd web
 npm test
 ```
 
+## 로컬 브라우저 QA (browser-harness)
+
+웹 프론트엔드를 자연어 기반으로 E2E/QA 하는 자산은 [`web/qa/`](../web/qa/README.md) 에 있습니다.
+[browser-harness](https://github.com/browser-use/browser-harness)(LLM이 CDP로 실제 Chrome을 조종하는
+자가치유 하니스)로 구동하며, **로컬 전용**입니다(결정론적 회귀 게이트가 아님 → 필요 시 Playwright 별도).
+
+핵심 제약: PortOne는 프론트/백엔드 모두 **항상 real 모드**(실 SMS/실카드)라 로그인·결제 위젯은 자동화
+불가입니다. 그래서 인증 플로우는 **DB 시드 + `sa_refresh` 쿠키 주입**(앱 코드 무변경)으로 검증합니다.
+
+```powershell
+# 무료/구독 테스트 사용자 시드(로컬 DEV DB 전용)
+uv run --package signal-alpha-main-server python services/main-server/scripts/seed_e2e_user.py
+E2E_SUBSCRIBE=1 uv run --package signal-alpha-main-server python services/main-server/scripts/seed_e2e_user.py
+```
+
+출력 `refresh_token` 을 browser-harness로 `sa_refresh` 쿠키 주입 → 부팅 hydrate가 로그인 처리. 자세한
+절차/시나리오는 [`web/qa/README.md`](../web/qa/README.md) 참조.
+
 ## 데이터베이스
 
 스키마의 유일한 기준은 `database/migrations/`. 이미 적용된 migration은 수정하지 말고 새 번호로 추가합니다.

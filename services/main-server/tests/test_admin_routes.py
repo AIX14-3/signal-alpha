@@ -131,10 +131,11 @@ class FakeConnection:
         if "UPDATE admin_accounts" in sql and "last_login_at" in sql:
             self.last_login_updated.append(args[0])
             return "UPDATE 1"
-        if "UPDATE users" in sql and "deleted_at = NOW()" in sql:
-            # soft_delete_user
+        if "DELETE FROM users" in sql:
+            # hard_delete_user — FK CASCADE/SET NULL 은 DB가 처리(여기선 users 행만 제거)
+            existed = any(u["id"] == args[0] for u in self.users)
             self.users = [u for u in self.users if u["id"] != args[0]]
-            return "UPDATE 1"
+            return "DELETE 1" if existed else "DELETE 0"
         raise AssertionError(f"Unexpected execute SQL: {sql}")
 
 

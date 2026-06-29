@@ -7,7 +7,7 @@ from datetime import UTC, datetime, time, timedelta
 from typing import Any
 
 from asyncpg import UniqueViolationError
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 from pydantic import BaseModel
 
 from app.api.routes.admin_auth import (
@@ -20,7 +20,9 @@ from app.api.routes.admin_auth import (
 from app.core.config import Settings, get_settings
 from app.core.database import get_database_pool
 from app.core.portone import PortOneClient, PortOneError, get_portone_client
+from app.core.rate_limit import client_ip_from_scope
 from app.core.security import create_refresh_token, hash_password, verify_password
+from app.core.throttle import get_admin_login_lockout
 from signal_alpha_data_access.backend import (
     AdminRepository,
     CollectionScheduleRepository,
@@ -108,17 +110,28 @@ def _admin_email(value: str) -> str:
 @admin_router.post("/login")
 async def admin_login(
     payload: AdminLoginRequest,
+    request: Request,
     response: Response,
     pool: Any = Depends(get_database_pool),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
     email = payload.email.strip().lower()
+    # 브루트포스 방어: (이메일+IP) 연속 실패 누적 시 일정시간 잠금.
+    lockout = get_admin_login_lockout()
+    lock_key = f"{email}:{client_ip_from_scope(request.scope)}"
+    retry_after = lockout.retry_after(lock_key)
+    if retry_after:
+        raise admin_error(
+            429, "TOO_MANY_ATTEMPTS", f"로그인 시도가 많습니다. {retry_after}초 후 다시 시도해 주세요."
+        )
     async with pool.acquire() as connection:
         repository = AdminRepository(connection)
         admin_row = await repository.get_admin_by_email(email)
         admin = dict(admin_row) if admin_row is not None else None
         if admin is None or not verify_password(payload.password, admin.get("password_hash")):
+            lockout.record_failure(lock_key)
             raise admin_error(401, "INVALID_CREDENTIALS", "이메일 또는 비밀번호가 올바르지 않습니다.")
+        lockout.reset(lock_key)
         session_token = create_refresh_token()
         expires_at = datetime.now(UTC) + timedelta(hours=ADMIN_SESSION_HOURS)
         await repository.create_session(
@@ -282,11 +295,15 @@ async def delete_user(
     admin: dict[str, Any] = Depends(get_current_admin),
     pool: Any = Depends(get_database_pool),
 ) -> dict[str, Any]:
-    """회원 삭제(soft delete). 동일 휴대폰/이메일 재가입을 막지 않도록 deleted_at/status 만 기록."""
+    """회원 영구 삭제(hard delete). DELETE FROM users → FK CASCADE 로 소유 자식 정리,
+    analysis_requests 는 SET NULL 로 분리(공용 시그널 보존). 감사로그에 before 스냅샷을 남긴다.
+    동일 휴대폰/이메일 재가입은 행이 사라지므로 자연히 허용된다."""
     async with pool.acquire() as connection:
         admin_repo = AdminRepository(connection)
         before = await admin_repo.get_user_details(user_id=user_id)
-        await UserBillingRepository(connection).soft_delete_user(user_id=user_id)
+        if before is None:
+            raise admin_error(404, "USER_NOT_FOUND", "회원을 찾을 수 없습니다.")
+        await UserBillingRepository(connection).hard_delete_user(user_id=user_id)
         await admin_repo.record_audit_log(
             actor_admin_id=int(admin["admin_id"]),
             action="user.delete",
