@@ -1,0 +1,60 @@
+name: AltData Process
+
+# 대체데이터 '정규화 + 분석'만 담당(수집 안 함). altdata-collect.yml(06:30 KST)이 쌓은
+# NORMALIZE_* 큐를 비우고 final_signals 를 발행한다. 수집과 분리해 별도(긴) 타임아웃 예산을
+# 주는 이유: 정규화는 raw 행마다 순차 DB 업서트가 많아 느리고, 큐 전체(누적 백로그)를
+# 드레인하므로, 빠른 수집과 한 잡에 묶이면 서로를 굶긴다(45분 타임아웃에 걸려 수집·분석 동반 실패).
+#   run_normalizers.py → NORMALIZE_* 드레인 → source_documents/signal_events/signal_metrics
+#   run_analyzers.py   → ANALYZE_{DATALAB,HIRING,PATENT} enqueue+드레인 → final_signals(소스별 1행)
+#
+# ⚠️ 필요한 리포 Secrets: DATABASE_URL (필수). 정규화/분석은 외부 API·LLM 미사용.
+#
+# NOTE: 백로그가 크면 1회 90분으로 다 못 비울 수 있다(매일 반복 소화 설계). 그래도 부족하면
+#       후속으로 정규화 배치/동시화(tasks.py·normalization.py) 리팩터를 검토할 것.
+
+on:
+  schedule:
+    - cron: "0 22 * * *" # 07:00 KST — altdata-collect(06:30) 30분 뒤
+  workflow_dispatch:
+    inputs:
+      ticker:
+        description: "분석 단계만 단일 종목으로 제한(정규화는 큐 전체 드레인)"
+        required: false
+        default: ""
+
+concurrency:
+  group: altdata-process
+  cancel-in-progress: false
+
+jobs:
+  process:
+    name: Normalize + Analyze
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      COLLECTOR_VERSION: ${{ secrets.COLLECTOR_VERSION }}
+      TICKER_ARG: ${{ inputs.ticker && format('--ticker {0}', inputs.ticker) || '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install Python (from .python-version)
+        run: uv python install
+
+      - name: Sync dependencies
+        run: uv sync --all-packages --group dev
+
+      - name: Normalize — drain NORMALIZE_* queue
+        if: always()
+        working-directory: services/agent-worker
+        run: uv run python run_normalizers.py
+
+      - name: Analyze — publish final_signals
+        if: always()
+        working-directory: services/agent-worker
+        run: uv run python run_analyzers.py $TICKER_ARG

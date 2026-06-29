@@ -11,15 +11,16 @@ name: AltData Pipeline
 #   run_analyzers.py   → ANALYZE_{DATALAB,HIRING,PATENT} enqueue+드레인 → final_signals(소스별 1행)
 #
 # 활성화 전제 — 리포지토리 Secrets(Settings > Secrets and variables > Actions):
-#   DATABASE_URL                         (worker 롤 또는 owner)
-#   NAVER_DATALAB_CLIENT_ID / _SECRET    (DataLab 수집)
-#   HIRING_DATALAB_CLIENT_ID / _SECRET   (Hiring 기준선 — 별도 네이버 앱, 쿼터 분리)
-#   GEMINI_API_KEY                       (DataLab 키워드 생성 등)
-#   KIPRIS_API_KEY / GOOGLE_CLOUD_PROJECT(특허 수집 — BigQuery ADC 별도 설정 필요할 수 있음)
-#   COLLECTOR_VERSION                    (선택)
+#   DATABASE_URL                     (필수)
+#   NAVER_CLIENT_ID / _SECRET        (DataLab 수집 — 현재 등록됨)
+#   KIPRIS_API_KEY                   (특허 수집 — ⚠️ 현재 미등록. 없으면 특허 수집 0)
+#   GEMINI_API_KEY                   (선택)
+#   COLLECTOR_VERSION                (선택)
 #
-# ⚠️ schedule 은 운영 DB 에 자동 적재한다(매일 06:30 KST). 활성 상태.
-#    수동 검증이 필요하면 workflow_dispatch 로 ticker 1개만 지정해 먼저 돌려볼 것.
+# ⚠️ 정기 실행은 더 이상 이 워크플로가 아니다. 수집/처리를 분리해
+#    altdata-collect.yml(수집, 06:30 KST) + altdata-process.yml(정규화·분석, 07:00 KST)
+#    로 옮겼다(서로 다른 타임아웃 예산으로 굶김 방지). 이 워크플로는 수집→정규화→분석을
+#    한 번에 돌려보는 수동 디버그/일회 검증용(workflow_dispatch)으로만 유지한다.
 
 on:
   workflow_dispatch:
@@ -28,8 +29,7 @@ on:
         description: "단일 종목만 처리(비우면 전체 활성 종목)"
         required: false
         default: ""
-  schedule:
-    - cron: "30 21 * * *" # 06:30 KST — datalab-daily(06:00 수집) 직후 정규화+분석
+  # 정기 스케줄 없음 — altdata-collect.yml / altdata-process.yml 참조.
 
 concurrency:
   group: altdata-pipeline
@@ -45,10 +45,9 @@ jobs:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       KIPRIS_API_KEY: ${{ secrets.KIPRIS_API_KEY }}
       GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
-      NAVER_DATALAB_CLIENT_ID: ${{ secrets.NAVER_DATALAB_CLIENT_ID }}
-      NAVER_DATALAB_CLIENT_SECRET: ${{ secrets.NAVER_DATALAB_CLIENT_SECRET }}
-      HIRING_DATALAB_CLIENT_ID: ${{ secrets.HIRING_DATALAB_CLIENT_ID }}
-      HIRING_DATALAB_CLIENT_SECRET: ${{ secrets.HIRING_DATALAB_CLIENT_SECRET }}
+      # run_collectors.py 는 NAVER_CLIENT_ID/SECRET 을 읽는다(예전 NAVER_DATALAB_* 는 미등록 시크릿이라 빈 값이었음).
+      NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
+      NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
       COLLECTOR_VERSION: ${{ secrets.COLLECTOR_VERSION }}
       # workflow_dispatch 입력 → CLI 인자(비우면 전체 종목)
       TICKER_ARG: ${{ inputs.ticker && format('--ticker {0}', inputs.ticker) || '' }}
