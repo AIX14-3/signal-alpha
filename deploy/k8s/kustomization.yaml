@@ -13,6 +13,7 @@ resources:
   - collector.yaml
   - scheduler.yaml
   - altdata-cronjob.yaml
+  - hiring-cronjob.yaml
   - main-server.yaml
   - web.yaml
   - ingress.yaml
@@ -21,6 +22,11 @@ resources:
 images:
   - name: signal-alpha-agent-worker
     newName: asia-northeast3-docker.pkg.dev/PROJECT_ID/signal-alpha/agent-worker
+    newTag: latest
+  # hiring 크롤러 전용(agent-worker + chromium). Dockerfile.crawler 로 별도 빌드/푸시 필요 —
+  # 이 핀이 없거나 이미지 미푸시면 hiring-crawl CronJob 이 ImagePullBackOff.
+  - name: signal-alpha-hiring-crawler
+    newName: asia-northeast3-docker.pkg.dev/PROJECT_ID/signal-alpha/hiring-crawler
     newTag: latest
   - name: signal-alpha-main-server
     newName: asia-northeast3-docker.pkg.dev/PROJECT_ID/signal-alpha/main-server

@@ -81,6 +81,7 @@ git push 로 YAML 수정  →  Argo CD가 변경 감지  →  클러스터에 �
 | **collector** | **Deployment**(Service 없음) | `collector.yaml` | `run_collector_instance.py` — Kiwoom 실시간 데몬(advisory lock, replicas:1) |
 | **scheduler** | **Deployment** | `scheduler.yaml` | `run_scheduler_instance.py` — `BACKEND_DATABASE_URL` 로 `collection_schedules` 폴링 |
 | alt-data 배치 | **CronJob**(04:30 KST) | `altdata-cronjob.yaml` | `run_collectors.py` patent/datalab → 수집 DB |
+| hiring 크롤 배치 | **CronJob**(04:30 KST) | `hiring-cronjob.yaml` | `run_hiring_daily.sh`(Selenium+Chrome 크롤→분석). **전용 이미지 `hiring-crawler`**(Dockerfile.crawler) |
 | `main-server` | **Deployment + Service(8000)** | `main-server.yaml` | 백엔드 API. DB는 백엔드 인스턴스(`api.*` view + 소유 테이블) |
 | `web` | **Deployment + Service(3000)** | `web.yaml` | **Dockerfile `runner` 타깃** |
 | 외부 노출 | **Ingress** | `ingress.yaml` | `/api`→main-server, `/`→web |
@@ -109,13 +110,16 @@ git push 로 YAML 수정  →  Argo CD가 변경 감지  →  클러스터에 �
   `gcloud auth configure-docker`로 인증.
 
 ### Phase 2 — 이미지 빌드 & 푸시
-기존 Dockerfile 재사용(신규 작성 불필요):
-- `services/agent-worker/Dockerfile` (worker/scheduler/analyzer 공용, Tesseract 포함)
+기존 Dockerfile 재사용(대부분 신규 작성 불필요):
+- `services/agent-worker/Dockerfile` (worker/scheduler/analyzer/alt-data 공용, Tesseract 포함)
 - `services/main-server/Dockerfile`
 - `web/Dockerfile` (**프로덕션은 기본 타깃 `runner`로 빌드**)
 - `database/Dockerfile` (마이그레이션 전용 경량)
+- **`services/agent-worker/Dockerfile.crawler`** (hiring 크롤 전용 = agent-worker + chromium).
+  agent-worker 빌드 후 `--build-arg BASE_IMAGE=$REG/agent-worker:TAG` 로 빌드.
+  ⚠️ **이걸 빌드/푸시 안 하면 `hiring-crawl` CronJob 이 ImagePullBackOff** (kustomization 에 핀돼 있음).
 
-각 이미지를 빌드해 Artifact Registry에 태그/푸시.
+각 이미지를 빌드해 Artifact Registry에 태그/푸시(명령은 [deploy/README.md §1](../deploy/README.md) 참조).
 빌드 컨텍스트는 compose와 동일하게 **레포 루트(`context: .`)** — uv workspace 때문.
 
 ### Phase 3 — 매니페스트 (`deploy/k8s/`, 작성 완료)

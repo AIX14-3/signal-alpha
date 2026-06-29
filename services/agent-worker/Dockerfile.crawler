@@ -1,0 +1,31 @@
+# hiring 크롤러 전용 이미지 — agent-worker(슬림: app+uv+tesseract) 위에 chromium 계층만 얹는다.
+# datalab/patent/worker/scheduler 등 나머지 유닛은 base 이미지를 그대로 써 chromium 비대화(+수백 MB)를
+# 피한다(= archive 사이징의 "크롤러 worker 분리"). hiring CronJob 만 이 이미지를 쓴다.
+#
+# 2단계 빌드(레포 루트, context=.):
+#   docker build -f services/agent-worker/Dockerfile         -t $REG/agent-worker:TAG .
+#   docker build -f services/agent-worker/Dockerfile.crawler -t $REG/hiring-crawler:TAG \
+#       --build-arg BASE_IMAGE=$REG/agent-worker:TAG .
+ARG BASE_IMAGE=signal-alpha-agent-worker:latest
+FROM ${BASE_IMAGE}
+
+# Selenium 헤드리스 크롤용 chromium + 버전 정합 드라이버(데비안 패키지) + 한글 폰트(포스터/페이지 렌더)
+# + 래퍼(run_hiring_daily.sh) 의존 유틸(bash, flock=util-linux, curl=Discord 알림).
+# 변경 드문 시스템 의존성이라 별도 레이어로 둬 캐시 재사용.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       chromium chromium-driver fonts-nanum bash util-linux curl \
+    && rm -rf /var/lib/apt/lists/* \
+    # Selenium 기본 탐색명(google-chrome)이 데비안 chromium 을 가리키도록 심볼릭 링크 —
+    # driver_utils 를 수정하지 않고도 binary_location 기본값이 동작하게 한다.
+    && ln -sf /usr/bin/chromium /usr/bin/google-chrome \
+    && ln -sf /usr/bin/chromium /usr/bin/google-chrome-stable
+
+# 번들 chromium/드라이버를 쓰도록(런타임 webdriver_manager 다운로드 회피 — 잠긴 컨테이너 안전).
+# /usr/bin/chromedriver 가 PATH 에 있어 driver_utils 의 webdriver.Chrome 폴백이 이를 집는다.
+ENV CHROME_BIN=/usr/bin/chromium \
+    CHROMEDRIVER_PATH=/usr/bin/chromedriver
+
+# WORKDIR(/workspace/services/agent-worker)·엔트리포인트는 base 를 상속.
+# hiring CronJob 이 command 로 `sh ops/run_hiring_daily.sh` 를 지정해 수집→분석 체인을 1회 돈다.
+# (래퍼: flock 중복방지 + catch-up 멱등 + 실패 시 Discord. run_daily_hiring_pipeline.py && run_analyzers.py)
