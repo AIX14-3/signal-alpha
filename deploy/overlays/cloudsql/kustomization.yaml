@@ -1,0 +1,100 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Cloud SQL ×2 오버레이 — DB를 클러스터 밖 관리형 Cloud SQL 2대로 돌리는 변형.
+#
+# base(`deploy/k8s`)는 in-cluster Postgres(StatefulSet ×2)를 가정한다. 이 오버레이는
+# base를 그대로 참조하되:
+#   1) 두 Postgres StatefulSet+Service 를 렌더에서 제거(관리형 Cloud SQL 사용),
+#   2) 마이그레이션 Job 의 `wait-postgres` initContainer 제거
+#      (base 는 in-cluster Service 명 `postgres-collection`/`postgres-backend` 로 pg_isready
+#       하는데, Cloud SQL 전환 시 그 Service 가 없어 영원히 대기하게 됨),
+#   3) 이미지 핀을 여기서 덮어씀(base 의 PROJECT_ID placeholder 를 직접 수정하지 않기 위함).
+#
+# DB 접속(DSN)은 전부 Secret `signal-alpha-secrets` 로만 주입된다. 따라서 앱 매니페스트는
+# 손대지 않고, Secret 의 *_DATABASE_URL host 만 Cloud SQL Private IP 로 두면 된다(README 참조).
+# Secret 은 평문 커밋 금지 → out-of-band 로 `kubectl create secret` (deploy/k8s/secret.example.yaml).
+# ─────────────────────────────────────────────────────────────────────────────
+
+resources:
+  - ../../k8s
+
+# ① in-cluster Postgres 제거 — 관리형 Cloud SQL 로 대체.
+patches:
+  - patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: postgres-collection
+        namespace: signal-alpha
+  - patch: |-
+      $patch: delete
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: postgres-collection
+        namespace: signal-alpha
+  - patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: postgres-backend
+        namespace: signal-alpha
+  - patch: |-
+      $patch: delete
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: postgres-backend
+        namespace: signal-alpha
+
+  # ② 마이그 Job 의 wait-postgres initContainer 제거(Cloud SQL 은 상시 가동·Service 부재).
+  - target:
+      kind: Job
+      name: db-migrate-collection
+    patch: |-
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: db-migrate-collection
+        namespace: signal-alpha
+      spec:
+        template:
+          spec:
+            initContainers:
+              - name: wait-postgres
+                $patch: delete
+  - target:
+      kind: Job
+      name: db-migrate-backend
+    patch: |-
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: db-migrate-backend
+        namespace: signal-alpha
+      spec:
+        template:
+          spec:
+            initContainers:
+              - name: wait-postgres
+                $patch: delete
+
+# ③ 이미지 핀 — <PROJECT_ID> 를 실제 GCP 프로젝트로 교체하고 newTag 를 빌드 태그로.
+#    base 의 placeholder 를 직접 고치지 않기 위해 오버레이에서 덮어쓴다.
+images:
+  - name: signal-alpha-agent-worker
+    newName: asia-northeast3-docker.pkg.dev/PROJECT_ID/signal-alpha/agent-worker
+    newTag: latest
+  - name: signal-alpha-main-server
+    newName: asia-northeast3-docker.pkg.dev/PROJECT_ID/signal-alpha/main-server
+    newTag: latest
+  - name: signal-alpha-web
+    newName: asia-northeast3-docker.pkg.dev/PROJECT_ID/signal-alpha/web
+    newTag: latest
+  - name: signal-alpha-db-migrate
+    newName: asia-northeast3-docker.pkg.dev/PROJECT_ID/signal-alpha/db-migrate
+    newTag: latest
