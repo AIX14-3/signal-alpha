@@ -13,6 +13,7 @@ import asyncpg.exceptions  # type: ignore[import]
 
 from app.clients.kipris_client import KiprisClient, KiprisPatentRecord, _default_end_date, _default_start_date
 from app.collectors.patent.applicant_aliases import build_applicant_aliases as _build_applicant_aliases
+from app.collectors.patent.application_no import canonicalize_application_no
 from app.observability import calculate_run_status as _run_status
 from app.utils.hash_utils import make_source_hash
 from signal_alpha_data_access.repositories import ProcessingQueueRepository
@@ -156,8 +157,9 @@ class PatentCollector:
         seen: set[str] = set()
         collected: list[KiprisPatentRecord] = []
         for record in records:
-            if record.application_no and record.application_no not in seen:
-                seen.add(record.application_no)
+            key = canonicalize_application_no(record.application_no)
+            if key and key not in seen:
+                seen.add(key)
                 collected.append(record)
 
         async with self._pool.acquire() as conn:
@@ -252,13 +254,14 @@ class PatentCollector:
 
         ``source_name`` distinguishes the origin in ``raw_documents`` (default
         ``KIPRIS``; backfills from other registries, e.g. Google Patents via
-        BigQuery, pass their own). ``source_hash`` is always
-        ``PATENT|application_no``, so re-collecting the *same* source de-duplicates
-        on the UNIQUE constraint. (Cross-source dedup only holds when the sources
-        use the same application_no string — KIPRIS and BigQuery format it
-        differently, so they do not collapse against each other.)
+        BigQuery, pass their own). ``source_hash`` is
+        ``PATENT|canonicalize_application_no(application_no)`` — the canonical key
+        collapses the *same* patent across sources (KIPRIS' 13-digit form and
+        BigQuery's ``KR-...-A`` form reduce to the same key), so an overlapping
+        patent de-duplicates on the UNIQUE constraint regardless of which source
+        delivered it. ``external_id`` keeps the source-native string for traceback.
         """
-        source_hash = make_source_hash(SOURCE_TYPE, record.application_no)
+        source_hash = make_source_hash(SOURCE_TYPE, canonicalize_application_no(record.application_no))
         external_id = record.application_no
         application_date = _parse_date(record.application_date, application_no=record.application_no)
         tech_cat = _tech_category(record.ipc_code)
