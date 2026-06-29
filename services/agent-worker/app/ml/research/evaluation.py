@@ -94,6 +94,27 @@ def _safe_corr(fn, a: np.ndarray, b: np.ndarray) -> float:
         return float("nan")
 
 
+def _xs_rank_ic(
+    scores: np.ndarray, returns: np.ndarray, dates: np.ndarray
+) -> float:
+    """Mean of per-DATE cross-sectional rank-ICs (the textbook quant IC).
+
+    The pooled ``rank_ic`` correlates score vs return over a whole multi-date test
+    chunk, mixing the cross-sectional question ("which stock outperforms today?")
+    with time-series drift. Here we instead compute one Spearman per date across
+    that date's stocks, then average — so the metric answers the cross-sectional
+    question cleanly. Dates with <3 stocks or no score/return variance are skipped;
+    nan if none qualify.
+    """
+    ics: list[float] = []
+    for d in np.unique(dates):
+        m = dates == d
+        ic = _safe_corr(spearmanr, scores[m], returns[m])
+        if not np.isnan(ic):
+            ics.append(ic)
+    return float(np.mean(ics)) if ics else float("nan")
+
+
 def _decile_spread(scores: np.ndarray, returns: np.ndarray) -> float:
     """Mean excess return of the top-decile minus the bottom-decile by score.
 
@@ -120,6 +141,7 @@ class FoldMetrics:
     roc_auc: float
     ic: float
     rank_ic: float
+    rank_ic_xs: float
     decile_spread: float
 
 
@@ -145,6 +167,7 @@ class ModelReport:
             "roc_auc",
             "ic",
             "rank_ic",
+            "rank_ic_xs",
             "decile_spread",
         ):
             mean, std = self._agg(attr)
@@ -160,8 +183,14 @@ def evaluate_model(
     y: np.ndarray,
     excess_returns: np.ndarray,
     folds: list[WalkForwardSplit],
+    dates: np.ndarray | None = None,
 ) -> ModelReport:
-    """Run one model across all walk-forward folds and collect per-fold metrics."""
+    """Run one model across all walk-forward folds and collect per-fold metrics.
+
+    ``dates`` (optional, row-aligned ordinals) enables the per-date cross-sectional
+    rank-IC (``rank_ic_xs``); without it that metric is nan but everything else is
+    unchanged, keeping older callers working.
+    """
     report = ModelReport(name=name)
     for fold in folds:
         Xtr, ytr = X[fold.train_idx], y[fold.train_idx]
@@ -176,6 +205,11 @@ def evaluate_model(
         pred = est.predict(Xte)
         score = _bullish_score(est, Xte)
         both_classes = len(np.unique(yte)) == 2
+        rank_ic_xs = (
+            _xs_rank_ic(score, ret_te, dates[fold.test_idx])
+            if dates is not None
+            else float("nan")
+        )
         report.folds.append(
             FoldMetrics(
                 n_test=len(yte),
@@ -186,6 +220,7 @@ def evaluate_model(
                 roc_auc=roc_auc_score(yte, score) if both_classes else float("nan"),
                 ic=_safe_corr(pearsonr, score, ret_te),
                 rank_ic=_safe_corr(spearmanr, score, ret_te),
+                rank_ic_xs=rank_ic_xs,
                 decile_spread=_decile_spread(score, ret_te),
             )
         )

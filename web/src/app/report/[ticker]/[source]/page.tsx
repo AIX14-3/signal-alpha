@@ -4,7 +4,10 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ApiError, getSourceDetail, type SourceDetail, type SourceKey } from "@/lib/apiClient";
-import { directionLabel, SOURCE_META } from "@/lib/format";
+import { DirectionBadge } from "@/components/signal/DirectionBadge";
+import { Skeleton } from "@/components/signal/Skeleton";
+import { Timeline, type TimelinePoint } from "@/components/signal/Timeline";
+import { SOURCE_META } from "@/lib/format";
 
 const VALID: SourceKey[] = ["price", "dart", "hiring", "datalab", "report"];
 
@@ -53,7 +56,20 @@ export default function SourceDetailPage() {
       <Link href={`/report/${encodeURIComponent(ticker)}`} className="text-[13px] text-sky-deep">← 리포트로</Link>
       <h1 className="my-2 text-[28px] font-extrabold">{meta.icon} {meta.label} 상세</h1>
 
-      {state === "loading" && <p className="py-10 text-center text-muted">불러오는 중…</p>}
+      {state === "loading" && (
+        <div className="mt-4 space-y-4">
+          <div className="card space-y-3 p-6">
+            <Skeleton className="h-6 w-24" />
+            <Skeleton className="h-4 w-full" />
+            <Skeleton className="h-4 w-2/3" />
+          </div>
+          <div className="card space-y-3 p-6">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <Skeleton key={i} className="h-5 w-full" />
+            ))}
+          </div>
+        </div>
+      )}
 
       {state === "locked" && (
         <div className="card mt-4 p-8 text-center">
@@ -70,12 +86,27 @@ export default function SourceDetailPage() {
       {state === "ready" && detail && (
         <>
           <div className="card mt-4 p-6">
-            <span className={`pill ${directionLabel(detail.direction).tone}`} style={{ padding: "5px 11px" }}>
-              {directionLabel(detail.direction).label}
-            </span>
+            <DirectionBadge direction={detail.direction} />
             <span className="ml-2 text-[13px] text-muted">점수 {detail.score ?? "–"} · {detail.data_status ?? "—"}</span>
             <p className="mt-3 text-navy-soft">{detail.summary ?? "요약이 없습니다."}</p>
           </div>
+
+          {(() => {
+            const points: TimelinePoint[] = detail.items
+              .filter((it) => it.event_date)
+              .slice(0, 8)
+              .map((it) => ({
+                label: (it.source_name ?? it.title ?? "근거").slice(0, 8),
+                time: (it.event_date ?? "").slice(5, 10),
+                up: null,
+              }));
+            return points.length >= 2 ? (
+              <div className="card mt-4 p-5">
+                <div className="text-[13px] font-semibold text-navy-soft">최근 근거 타임라인</div>
+                <Timeline points={points} />
+              </div>
+            ) : null;
+          })()}
 
           <div className="card mt-4 overflow-hidden">
             <table className="w-full text-[13.5px]">

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useEffect } from "react";
 import type { ReactNode } from "react";
 import { Toaster } from "@/components/Toaster";
@@ -17,12 +18,23 @@ export function AppShell({ children }: { children: ReactNode }) {
   const status = useAuthStore((state) => state.status);
   const hydrate = useAuthStore((state) => state.hydrate);
   const logout = useAuthStore((state) => state.logout);
+  const pathname = usePathname();
 
   useEffect(() => {
     if (status === "idle") {
       void hydrate();
     }
   }, [status, hydrate]);
+
+  // /dashboard/* 는 #335 대시보드 자체 셸(DashboardShell)을 쓰므로 메인 nav/footer 를 건너뛴다.
+  if (pathname?.startsWith("/dashboard")) {
+    return (
+      <>
+        {children}
+        <Toaster />
+      </>
+    );
+  }
 
   return (
     <div className="relative flex min-h-screen flex-col">

@@ -38,9 +38,67 @@ def run_bakeoff(
     reports: list[ModelReport] = []
     for name, model in registry.items():
         reports.append(
-            evaluate_model(name, model, X, y, excess_returns, folds)
+            evaluate_model(name, model, X, y, excess_returns, folds, dates)
         )
     return reports
+
+
+def run_permutation(
+    X: np.ndarray,
+    y: np.ndarray,
+    excess_returns: np.ndarray,
+    dates: np.ndarray,
+    *,
+    n_perm: int = 200,
+    n_folds: int = 5,
+    seed: int = 42,
+) -> list[tuple[str, float, float, float]]:
+    """Label-shuffle permutation test of rank-IC significance, per model.
+
+    For each model we compute the observed walk-forward cross-sectional rank-IC
+    (``rank_ic_xs`` — the per-date metric we judge on), then rebuild a null
+    distribution by shuffling (y, excess_returns) together ``n_perm`` times and
+    re-evaluating on the SAME folds. The one-sided p-value is the fraction of the
+    null at least as large as observed. Returns (name, observed, p_value, null_mean),
+    sorted by p-value. Compare p against a multiple-testing-corrected threshold
+    (e.g. 0.05 / (n_models × n_horizons)) before calling anything a signal.
+    """
+    folds = walk_forward_folds(dates, n_folds=n_folds)
+    registry = build_classifier_registry(seed=seed)
+    rng = np.random.default_rng(seed)
+    n = len(y)
+    results: list[tuple[str, float, float, float]] = []
+    for name, model in registry.items():
+        obs = evaluate_model(
+            name, model, X, y, excess_returns, folds, dates
+        )._agg("rank_ic_xs")[0]
+        if np.isnan(obs):
+            results.append((name, obs, float("nan"), float("nan")))
+            continue
+        null: list[float] = []
+        for _ in range(n_perm):
+            p = rng.permutation(n)
+            r = evaluate_model(
+                name, model, X, y[p], excess_returns[p], folds, dates
+            )._agg("rank_ic_xs")[0]
+            if not np.isnan(r):
+                null.append(r)
+        arr = np.array(null)
+        pval = float((arr >= obs).mean()) if len(arr) else float("nan")
+        results.append((name, obs, pval, float(arr.mean()) if len(arr) else float("nan")))
+    results.sort(key=lambda t: (t[2] if t[2] == t[2] else 1.0))
+    return results
+
+
+def render_permutation(results, n_perm: int, n_models: int, n_tests: int = 0) -> str:
+    """Pretty-print the permutation table with a Bonferroni reference threshold."""
+    lines = [f"\n[permutation] n_perm={n_perm} per model - one-sided p(rankIC)"]
+    lines.append(f"  {'model':>18}  {'obs_rankIC':>10}  {'null_mean':>9}  {'p-value':>7}")
+    for name, obs, pval, null_mean in results:
+        lines.append(f"  {name:>18}  {obs:>+10.3f}  {null_mean:>+9.3f}  {pval:>7.3f}")
+    thr = 0.05 / max(1, (n_tests or n_models))
+    lines.append(f"  (Bonferroni ref: 0.05 / {n_tests or n_models} ~= {thr:.4f})")
+    return "\n".join(lines)
 
 
 def _load_synthetic(args):
@@ -130,13 +188,175 @@ def _load_datalab_db(args):
     return ds.X, ds.y, ds.excess_returns, ds.dates
 
 
+def _load_hiring_db(args):
+    """Load a real HIRING dataset from the DB (needs DATABASE_URL + --prices-csv)."""
+    import asyncio
+    import os
+    from datetime import date
+
+    from .hiring_db import load_from_env
+
+    try:  # let a repo-root .env supply DATABASE_URL without manual export
+        from dotenv import find_dotenv, load_dotenv
+
+        load_dotenv(find_dotenv(usecwd=True))
+    except ImportError:
+        pass
+
+    database_url = os.environ.get("DATABASE_URL")
+    if not database_url:
+        raise SystemExit("DATABASE_URL is required for --source hiring-db")
+    tickers = [t.strip() for t in args.tickers.split(",") if t.strip()]
+    ds = asyncio.run(
+        load_from_env(
+            database_url=database_url,
+            tickers=tickers,
+            start=date.fromisoformat(args.start),
+            end=date.fromisoformat(args.end),
+            benchmark_ticker=args.benchmark,
+            prices_csv=args.prices_csv,
+            lookback_days=args.lookback,
+            horizon_sessions=args.horizon,
+            neutral_band_pct=args.band,
+            signal_step=args.signal_step,
+            min_observations=args.min_obs,
+            precise_rematch=args.precise_rematch,
+        )
+    )
+    up_rate = ds.y.mean() if len(ds) else 0.0
+    print(
+        f"[hiring-db] samples={len(ds)}  features={len(ds.feature_names)}  "
+        f"stocks={len(np.unique(ds.stock_ids)) if len(ds) else 0}  "
+        f"dates={len(np.unique(ds.dates)) if len(ds) else 0}  "
+        f"up-rate={up_rate:.2f}\n  dropped={dict(ds.dropped)}\n  features={ds.feature_names}\n"
+    )
+    if len(ds) == 0:
+        raise SystemExit(
+            "No samples built — is 2016-2023 HIRING loaded for these tickers and "
+            f"--prices-csv valid? dropped={dict(ds.dropped)}"
+        )
+    return ds.X, ds.y, ds.excess_returns, ds.dates
+
+
+def _load_patent_db(args):
+    """Load a real PATENT dataset from the DB (needs DATABASE_URL + loaded/enriched patents)."""
+    import asyncio
+    import os
+    from datetime import date
+
+    from .patent_db import load_from_env
+
+    try:
+        from dotenv import find_dotenv, load_dotenv
+
+        load_dotenv(find_dotenv(usecwd=True))
+    except ImportError:
+        pass
+
+    database_url = os.environ.get("DATABASE_URL")
+    if not database_url:
+        raise SystemExit("DATABASE_URL is required for --source patent-db")
+    tickers = [t.strip() for t in args.tickers.split(",") if t.strip()]
+    # 'count' drops the LLM significance trio (mostly-empty -> median-imputed into a
+    # stock-identity proxy) and the near-constant new-category count.
+    _COUNT_ONLY_DROP = frozenset(
+        {
+            "patent__llm_enriched_count",
+            "patent__mean_significance",
+            "patent__max_significance",
+            "patent__new_category_count",
+        }
+    )
+    exclude = _COUNT_ONLY_DROP if getattr(args, "feature_set", "all") == "count" else frozenset()
+    ds = asyncio.run(
+        load_from_env(
+            database_url=database_url,
+            tickers=tickers,
+            start=date.fromisoformat(args.start),
+            end=date.fromisoformat(args.end),
+            benchmark_ticker=args.benchmark,
+            prices_csv=args.prices_csv,
+            lookback_days=args.lookback,
+            horizon_sessions=args.horizon,
+            neutral_band_pct=args.band,
+            signal_step=args.signal_step,
+            xs_normalize=getattr(args, "xs_normalize", "none"),
+            exclude_features=exclude,
+        )
+    )
+    up_rate = ds.y.mean() if len(ds) else 0.0
+    print(
+        f"[patent-db] samples={len(ds)}  features={len(ds.feature_names)}  "
+        f"stocks={len(np.unique(ds.stock_ids)) if len(ds) else 0}  "
+        f"dates={len(np.unique(ds.dates)) if len(ds) else 0}  "
+        f"up-rate={up_rate:.2f}\n  dropped={dict(ds.dropped)}\n  features={ds.feature_names}\n"
+    )
+    if len(ds) == 0:
+        raise SystemExit(
+            "No samples built — are patents loaded+enriched (publication_date) for these tickers? "
+            f"dropped={dict(ds.dropped)}"
+        )
+    return ds.X, ds.y, ds.excess_returns, ds.dates
+
+
+def _load_fusion(args):
+    """Load a multi-source FUSION dataset (patent+hiring+datalab joined on stock-date)."""
+    import asyncio
+    import os
+    from datetime import date
+
+    from .fusion_db import load_fusion
+
+    try:
+        from dotenv import find_dotenv, load_dotenv
+
+        load_dotenv(find_dotenv(usecwd=True))
+    except ImportError:
+        pass
+
+    database_url = os.environ.get("DATABASE_URL")
+    if not database_url:
+        raise SystemExit("DATABASE_URL is required for --source fusion")
+    tickers = [t.strip() for t in args.tickers.split(",") if t.strip()]
+    sources = [s.strip() for s in args.fusion_sources.split(",") if s.strip()]
+    ds = asyncio.run(
+        load_fusion(
+            database_url=database_url,
+            tickers=tickers,
+            start=date.fromisoformat(args.start),
+            end=date.fromisoformat(args.end),
+            sources=sources,
+            benchmark_ticker=args.benchmark,
+            prices_csv=args.prices_csv,
+            lookback_days=args.lookback,
+            horizon_sessions=args.horizon,
+            neutral_band_pct=args.band,
+            signal_step=args.signal_step,
+            xs_normalize=getattr(args, "xs_normalize", "rank"),
+        )
+    )
+    up_rate = ds.y.mean() if len(ds) else 0.0
+    print(
+        f"[fusion {'+'.join(sources)}] samples={len(ds)}  features={len(ds.feature_names)}  "
+        f"stocks={len(np.unique(ds.stock_ids)) if len(ds) else 0}  "
+        f"dates={len(np.unique(ds.dates)) if len(ds) else 0}  "
+        f"up-rate={up_rate:.2f}\n  dropped={dict(ds.dropped)}\n  features={ds.feature_names}\n"
+    )
+    if len(ds) == 0:
+        raise SystemExit(
+            "No joined samples — do all requested sources share (stock,date) rows? "
+            f"Check signal-step/window. dropped={dict(ds.dropped)}"
+        )
+    return ds.X, ds.y, ds.excess_returns, ds.dates
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Alternative-data ML model bake-off")
     parser.add_argument(
         "--source",
-        choices=["synthetic", "datalab-demo", "datalab-db"],
+        choices=["synthetic", "datalab-demo", "datalab-db", "patent-db", "hiring-db", "fusion"],
         default="synthetic",
-        help="synthetic matrix, the real DataLab pipeline on demo rows, or live DB",
+        help="synthetic, DataLab demo/DB, Patent DB, Hiring DB, or multi-source fusion",
     )
     parser.add_argument("--folds", type=int, default=5, help="walk-forward folds")
     parser.add_argument("--seed", type=int, default=42, help="model/data seed")
@@ -161,10 +381,39 @@ def main(argv: list[str] | None = None) -> int:
                         help="benchmark ticker for excess return (e.g. KOSPI 'KS11')")
     parser.add_argument("--prices-csv", type=str, default=None,
                         help="local ticker,date,close CSV for prices (skips ohlcv_data)")
+    # hiring-db knobs (sparse, event-like data)
+    parser.add_argument("--signal-step", type=int, default=20,
+                        help="trading-day spacing between signal dates (hiring-db; ~20=monthly, curbs overlap)")
+    parser.add_argument("--min-obs", type=int, default=2,
+                        help="min postings in the lookback window to keep a sample (hiring-db)")
+    parser.add_argument("--precise-rematch", action="store_true",
+                        help="hiring-db: re-attribute postings by exact source_name match to the "
+                             "universe (precision; drops ambiguous/mis-attributed names)")
+    parser.add_argument("--permute", type=int, default=0,
+                        help="permutation test: label-shuffle iterations per model for a "
+                             "rank-IC p-value (0=off; ~200 for a confirmatory run)")
+    parser.add_argument("--permute-tests", type=int, default=0,
+                        help="total comparisons for the Bonferroni reference (e.g. models×horizons); "
+                             "0 = use model count")
+    # patent-db knobs (cross-sectional hygiene)
+    parser.add_argument("--xs-normalize", choices=["none", "rank", "zscore"], default="none",
+                        help="patent-db: neutralize size-confounded count features within each "
+                             "date (rank=percentile, zscore). Prevents models reading stock size.")
+    parser.add_argument("--feature-set", choices=["all", "count", "count+llm"], default="all",
+                        help="patent-db: 'count' drops mostly-empty LLM/near-constant columns for a "
+                             "clean count-only test; 'count+llm' keeps significance/novelty (needs enrich)")
+    parser.add_argument("--fusion-sources", type=str, default="patent,hiring,datalab",
+                        help="comma-separated sources to inner-join for --source fusion")
     parser.add_argument("--csv", type=str, default=None, help="write full metrics CSV here")
     args = parser.parse_args(argv)
 
-    if args.source == "datalab-db":
+    if args.source == "fusion":
+        X, y, excess, dates = _load_fusion(args)
+    elif args.source == "hiring-db":
+        X, y, excess, dates = _load_hiring_db(args)
+    elif args.source == "patent-db":
+        X, y, excess, dates = _load_patent_db(args)
+    elif args.source == "datalab-db":
         X, y, excess, dates = _load_datalab_db(args)
     elif args.source == "datalab-demo":
         X, y, excess, dates = _load_datalab_demo(args)
@@ -173,6 +422,12 @@ def main(argv: list[str] | None = None) -> int:
 
     reports = run_bakeoff(X, y, excess, dates, n_folds=args.folds, seed=args.seed)
     print(render_table(reports))
+
+    if args.permute > 0:
+        perm = run_permutation(
+            X, y, excess, dates, n_perm=args.permute, n_folds=args.folds, seed=args.seed
+        )
+        print(render_permutation(perm, args.permute, len(perm), args.permute_tests))
 
     if args.csv:
         with open(args.csv, "w", newline="", encoding="utf-8") as fh:

@@ -57,6 +57,18 @@ TICKER_BQ_PATTERNS: dict[str, list[str]] = {
     "035420": ["%NAVER%"],                # NAVER
 }
 
+# Universe expansion: a reviewed JSON config (built by scripts/build_patent_patterns.py,
+# human-checked for subsidiary/namesake contamination) is merged over the hardcoded
+# anchors so adding stocks needs no code edit. Missing file → just the anchors above.
+_PATTERNS_JSON = Path(__file__).resolve().parent / "patent_assignee_patterns.json"
+if _PATTERNS_JSON.exists():
+    try:
+        _extra = json.loads(_PATTERNS_JSON.read_text(encoding="utf-8"))
+        if isinstance(_extra, dict):
+            TICKER_BQ_PATTERNS.update({str(k): list(v) for k, v in _extra.items() if v})
+    except (json.JSONDecodeError, OSError):
+        pass
+
 
 def _like_predicate(pattern: str) -> Callable[[str], bool]:
     """Translate a SQL ``LIKE`` pattern (our patterns use only ``%`` wildcards on

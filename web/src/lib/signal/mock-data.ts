@@ -1,0 +1,397 @@
+import type {
+  AgentHubItem,
+  DiffCard,
+  JournalEntry,
+  MarketIndex,
+  MockAlert,
+  NavItem,
+  SourceRow,
+  StockData,
+  StoryItem,
+} from '@/types/signal';
+
+export const STOCK_DATA_TEMPLATES: Record<string, StockData> = {
+  '000660': {
+    name: 'SK하이닉스',
+    code: '000660',
+    score: 87,
+    direction: 'POSITIVE',
+    consistency: 'HIGH',
+    summary:
+      'HBM3E 양산화 가속에 따라 핵심 Alternative Data(채용공고, 특허)가 매우 강력한 선행 성장을 암시하고 있습니다.',
+    quote: {
+      nameEn: 'SK hynix Inc.',
+      asOf: '2026-06-04 15:30 KST',
+      price: 2388000,
+      change: 28000,
+      changePct: 1.19,
+      open: 2370000,
+      high: 2410000,
+      low: 2355000,
+      prevClose: 2360000,
+      volume: '482만주',
+      marketCap: '169.5조',
+      per: 22.8,
+      week52High: 2407000,
+      week52Low: 1620000,
+      sourcesAgree: '4/5',
+      intraday: [2370000, 2378000, 2385000, 2392000, 2398000, 2395000, 2389000, 2388000],
+    },
+    dart: {
+      score: 85,
+      direction: 'POSITIVE',
+      disclosures: [
+        {
+          date: '2026-05-28',
+          type: '단기공시',
+          title: '신규 패키징 설비 투자 결정의 건',
+          impact: 'POSITIVE',
+          link: 'https://dart.fss.or.kr',
+        },
+        {
+          date: '2026-05-15',
+          type: '분기보고',
+          title: '제78기 분기보고서',
+          impact: 'POSITIVE',
+          link: 'https://dart.fss.or.kr',
+        },
+      ],
+      surprise: { actual: 2.88, consensus: 2.15, unit: '조 원' },
+    },
+    report: {
+      score: 82,
+      direction: 'POSITIVE',
+      opinions: [
+        { firm: '메리츠증권', rating: 'BUY', target: '2,550,000', date: '2026-06-01' },
+        { firm: 'KB증권', rating: 'BUY', target: '2,620,000', date: '2026-05-29' },
+      ],
+      conflict: false,
+      trend: [2200000, 2280000, 2320000, 2388000],
+    },
+    alt: {
+      score: 93,
+      direction: 'POSITIVE',
+      hiring: { pct: 240 },
+      patent: { growth: 85 },
+      datalab: { trend: [45, 52, 68, 92] },
+    },
+    debate: {
+      bull: ['HBM3E 수율 압도적 우위', 'eSSD 수요 폭발'],
+      bear: ['HBM 편중 리스크'],
+      judge: '긍정 기류가 강하게 우세합니다.',
+    },
+  },
+  '005930': {
+    name: '삼성전자',
+    code: '005930',
+    score: 58,
+    direction: 'MIXED',
+    consistency: 'MED',
+    summary: 'HBM 벤더 테스트 루머가 엇갈리며 증권사 의견 대립이 관찰됩니다.',
+    quote: {
+      nameEn: 'Samsung Electronics',
+      asOf: '2026-06-04 15:30 KST',
+      price: 363400,
+      change: 2900,
+      changePct: 0.8,
+      open: 361000,
+      high: 368000,
+      low: 359500,
+      prevClose: 360500,
+      volume: '1,821만주',
+      marketCap: '212.5조',
+      per: 29.1,
+      week52High: 370000,
+      week52Low: 155000,
+      sourcesAgree: '3/5',
+      intraday: [361000, 362500, 364000, 365500, 367000, 366000, 364500, 363400],
+    },
+    dart: {
+      score: 62,
+      direction: 'MIXED',
+      disclosures: [
+        {
+          date: '2026-05-15',
+          type: '분기보고',
+          title: '제57기 분기보고서',
+          impact: 'POSITIVE',
+          link: 'https://dart.fss.or.kr',
+        },
+      ],
+      surprise: { actual: 6.61, consensus: 6.24, unit: '조 원' },
+    },
+    report: {
+      score: 45,
+      direction: 'MIXED',
+      opinions: [
+        { firm: '신한투자', rating: 'BUY', target: '400,000', date: '2026-06-01' },
+        { firm: 'NH투자', rating: 'HOLD', target: '380,000', date: '2026-05-28' },
+      ],
+      conflict: true,
+      trend: [340000, 352000, 358000, 363400],
+    },
+    alt: {
+      score: 67,
+      direction: 'POSITIVE',
+      hiring: { pct: 12 },
+      patent: { growth: 24 },
+      datalab: { trend: [62, 58, 60, 65] },
+    },
+    debate: {
+      bull: ['GAA 공정 수율 안정화'],
+      bear: ['HBM 검증 연기 우려'],
+      judge: '추가 직접 실사가 필요한 시점입니다.',
+    },
+  },
+  '035420': {
+    name: '네이버',
+    code: '035420',
+    score: 42,
+    direction: 'NEGATIVE',
+    consistency: 'LOW',
+    summary: '채용·특허 모멘텀 하강, 다각도 주의 필요.',
+    quote: {
+      nameEn: 'NAVER Corp.',
+      asOf: '2026-06-04 15:30 KST',
+      price: 278800,
+      change: -1700,
+      changePct: -0.61,
+      open: 281000,
+      high: 283500,
+      low: 277500,
+      prevClose: 280500,
+      volume: '112만주',
+      marketCap: '45.8조',
+      per: 24.2,
+      week52High: 295000,
+      week52Low: 165000,
+      sourcesAgree: '2/5',
+      intraday: [281000, 280200, 279500, 279000, 278500, 278200, 278600, 278800],
+    },
+    dart: {
+      score: 48,
+      direction: 'NEGATIVE',
+      disclosures: [
+        {
+          date: '2026-05-15',
+          type: '분기보고',
+          title: 'AI 인프라 투자 비용 급증',
+          impact: 'NEGATIVE',
+          link: 'https://dart.fss.or.kr',
+        },
+      ],
+      surprise: { actual: 4.39, consensus: 4.58, unit: '천억 원' },
+    },
+    report: {
+      score: 38,
+      direction: 'NEGATIVE',
+      opinions: [{ firm: '다올투자', rating: 'SELL', target: '265,000', date: '2026-05-29' }],
+      conflict: true,
+      trend: [292000, 285000, 282000, 278800],
+    },
+    alt: {
+      score: 40,
+      direction: 'NEGATIVE',
+      hiring: { pct: -35 },
+      patent: { growth: -12 },
+      datalab: { trend: [55, 48, 42, 39] },
+    },
+    debate: {
+      bull: ['B2B API 매출 반등'],
+      bear: ['광고 단가 경쟁 심화'],
+      judge: '보수 전략 필요.',
+    },
+  },
+};
+
+export const NAV_ITEMS: NavItem[] = [
+  { label: '주요기능', pageId: 'features', href: '/dashboard/features' },
+  { label: '에이전트', pageId: 'agents', href: '/dashboard/agents' },
+  { label: '증권사 리포트', pageId: 'reports', href: '/dashboard/reports' },
+  { label: '성장스토리', pageId: 'stories', href: '/dashboard/stories' },
+  { label: '종목시세', pageId: 'quote', href: '/dashboard/quote' },
+  { label: '저널', pageId: 'journal', href: '/dashboard/journal' },
+];
+
+export const MARKET_INDICES: MarketIndex[] = [
+  { name: 'KOSPI', value: '8,724.56', chg: 0.82, up: true, spark: [40, 42, 41, 44, 45, 47, 48] },
+  { name: 'KOSDAQ', value: '2,341.88', chg: -0.34, up: false, spark: [50, 49, 48, 47, 46, 45, 44] },
+  { name: 'NASDAQ', value: '18,502.11', chg: 1.12, up: true, spark: [38, 40, 39, 42, 44, 45, 47] },
+  { name: 'S&P 500', value: '5,284.22', chg: 0.56, up: true, spark: [42, 43, 42, 44, 45, 46, 47] },
+  { name: 'DOW', value: '38,996.39', chg: -0.18, up: false, spark: [46, 45, 45, 44, 43, 43, 42] },
+];
+
+export const STORY_ITEMS: StoryItem[] = [
+  {
+    name: 'SK하이닉스',
+    code: '000660',
+    score: 87,
+    direction: 'POSITIVE',
+    growth: 150,
+    consistency: 'HIGH',
+    summary: 'HBM 채용·특허·공시 3축 일치',
+    dart: 85,
+    report: 82,
+    alt: 93,
+    timeline: [
+      { label: '채용 급증', time: 'T-4주', up: true },
+      { label: '특허 출원', time: 'T-2주', up: true },
+      { label: 'CAPEX 공시', time: 'T', up: true },
+      { label: '목표가 상향', time: 'T+2주', up: true },
+    ],
+  },
+  {
+    name: '삼성전자',
+    code: '005930',
+    score: 58,
+    direction: 'MIXED',
+    growth: 12,
+    consistency: 'MED',
+    summary: 'HBM 루머 vs 리포트 충돌',
+    dart: 62,
+    report: 45,
+    alt: 67,
+    timeline: [
+      { label: '채용 소폭↑', time: 'T-4주', up: true },
+      { label: '특허 보통', time: 'T-2주', up: null },
+      { label: '분기보고', time: 'T', up: true },
+      { label: '의견 분열', time: 'T+2주', up: null },
+    ],
+  },
+  {
+    name: '네이버',
+    code: '035420',
+    score: 42,
+    direction: 'NEGATIVE',
+    growth: -18,
+    consistency: 'LOW',
+    summary: 'Alt 데이터 전반 하락',
+    dart: 48,
+    report: 38,
+    alt: 40,
+    timeline: [
+      { label: '채용↓', time: 'T-4주', up: false },
+      { label: 'DataLab↓', time: 'T-2주', up: false },
+      { label: '비용 공시', time: 'T', up: false },
+      { label: '목표가 하향', time: 'T+2주', up: false },
+    ],
+  },
+];
+
+export const DIFF_CARDS: DiffCard[] = [
+  {
+    icon: 'trending-up',
+    title: '선행 지표 타임라인',
+    desc: '채용·특허가 공시보다 2~4주 앞서는 성장 신호를 시각화합니다.',
+  },
+  {
+    icon: 'git-merge',
+    title: '교차 검증',
+    desc: 'DART · 리포트 · 대체 데이터 3축이 같은 방향을 가리키는지 자동 대조합니다.',
+  },
+  {
+    icon: 'scale',
+    title: '토론 Aggregation',
+    desc: 'Bull vs Bear 에이전트 토론 후 Judge가 종합 신뢰 점수를 산출합니다.',
+  },
+  {
+    icon: 'eye',
+    title: '근거 투명성',
+    desc: '점수마다 원천 데이터 드릴다운 — 공시·리포트·Alt 지표를 카드로 확인.',
+  },
+  {
+    icon: 'book-open',
+    title: 'Signal Journal',
+    desc: '시그널 확인 시점의 나의 판단·매매 여부를 기록해 자기 검열합니다.',
+  },
+  {
+    icon: 'shield-off',
+    title: '매수/매도 없음',
+    desc: '"여러 소스가 같은 방향을 가리킵니다" — 투자 권유가 아닌 정보 제공만 합니다.',
+  },
+];
+
+export const SOURCE_TABLE: SourceRow[] = [
+  { name: 'DART 전자공시', type: '공식', method: 'API + 크롤링', cost: '무료', trust: 5 },
+  { name: '증권사 리포트', type: '리서치', method: 'RAG 벡터 검색', cost: '구독', trust: 4 },
+  { name: '채용 공고', type: '대체', method: '웹 크롤링', cost: '중', trust: 4 },
+  { name: '특허 출원', type: '대체', method: 'KIPRIS API', cost: '중', trust: 4 },
+  { name: 'DataLab 검색', type: '대체', method: '트렌드 API', cost: '저', trust: 3 },
+];
+
+export const AGENT_HUB: Record<string, AgentHubItem> = {
+  dart: {
+    label: 'DART Watcher',
+    icon: 'file-text',
+    role: '전자공시 실시간 수집·어닝 서프라이즈·BEAT/MISS 분류',
+    methods: ['DART Open API', '공시 XML 파싱'],
+    logic: ['최근 90일 공시 필터', '임팩트 NLP 분류', '서프라이즈 actual vs consensus'],
+    mock: { score: 78, signal: 'BEAT +12.3%', field: 'earnings_surprise: BEAT' },
+    json: '{ "score": 78, "direction": "POSITIVE", "earnings_surprise": "BEAT", "surprise_pct": 12.3 }',
+    owner: '성진',
+  },
+  report: {
+    label: 'Report RAG',
+    icon: 'database',
+    role: '증권사 리포트 RAG — 목표가·의견·충돌 감지',
+    methods: ['벡터 DB 검색', 'PDF 텍스트 추출'],
+    logic: ['컨센서스 평균 목표가', 'BUY/HOLD/SELL 집계', 'conflict_detected 플래그'],
+    mock: { score: 85, signal: 'upside 31.8%', field: 'conflict: false' },
+    json: '{ "score": 85, "avg_target": 246250, "upside_pct": 31.8, "conflict_detected": false }',
+    owner: '은진',
+  },
+  alt: {
+    label: 'Alternative Signal',
+    icon: 'activity',
+    role: '채용·특허·DataLab 선행 지표',
+    methods: ['채용 크롤링', 'KIPRIS', 'DataLab API'],
+    logic: ['YoY 채용 증감', '특허 카테고리 NEW', '검색 트렌드 지수'],
+    mock: { score: 93, signal: 'hiring +240%', field: 'patent: NEW HBM' },
+    json: '{ "score": 93, "hiring_pct": 240, "patent_growth": 85, "datalab_index": 92 }',
+    owner: '이슬',
+  },
+  debate: {
+    label: 'Debate Aggregation',
+    icon: 'scale',
+    role: 'Bull/Bear 토론 후 가중 합의·confidence',
+    methods: ['LLM Debate', '가중 평균'],
+    logic: ['DART 35% + Report 40% + Alt 25%', 'confidence < 60 → HITL', 'needs_review 플래그'],
+    mock: { score: 87, signal: 'HIGH 일치', field: 'needs_review: false' },
+    json: '{ "final_score": 87, "confidence": "HIGH", "direction": "POSITIVE", "needs_review": false }',
+    owner: '광현',
+  },
+};
+
+export const MOCK_ALERTS: MockAlert[] = [
+  { id: 1, name: '삼성전자', msg: '신뢰도 58→43 (−15)', time: '2시간 전', read: false },
+  { id: 2, name: 'SK하이닉스', msg: '신뢰도 82→87 (+5)', time: '1일 전', read: true },
+];
+
+export const INITIAL_JOURNAL: JournalEntry[] = [
+  {
+    id: 1,
+    name: '삼성전자',
+    code: '005930',
+    score: 58,
+    direction: 'MIXED',
+    date: '2026-06-02',
+    trade: false,
+    note: 'HBM 벤더 통과 여부 지연 우려에 매수 보류.',
+  },
+  {
+    id: 2,
+    name: 'SK하이닉스',
+    code: '000660',
+    score: 87,
+    direction: 'POSITIVE',
+    date: '2026-05-15',
+    trade: true,
+    note: 'HBM 채용 지표 폭증 확인 후 분할 매수.',
+  },
+];
+
+export const DRILLDOWN_LABELS: Record<string, string> = {
+  dart: 'DART Watcher',
+  report: 'Report RAG',
+  alt: 'Alternative Signal',
+};

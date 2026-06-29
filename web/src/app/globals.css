@@ -21,6 +21,37 @@
   --ease-out: cubic-bezier(0.22, 0.61, 0.36, 1);
 
   --shadow-card: 0 1px 2px rgba(15, 27, 51, 0.04), 0 8px 24px rgba(15, 27, 51, 0.06);
+
+  /* ---- #335 대시보드 이식 토큰 (primary=sky 팔레트 + shadcn 시맨틱) ----
+     주의: --color-muted 는 기존 앱이 text-muted(회색 텍스트)로 쓰므로 덮어쓰지 않고,
+     #335 가 쓰는 muted-foreground 만 별도 추가한다. */
+  --color-primary-50: #f0f9ff;
+  --color-primary-100: #e0f2fe;
+  --color-primary-200: #bae6fd;
+  --color-primary-300: #7dd3fc;
+  --color-primary-400: #38bdf8;
+  --color-primary-500: #0ea5e9;
+  --color-primary-600: #0284c7;
+  --color-primary-700: #0369a1;
+  --color-primary-800: #075985;
+  --color-primary-900: #0c4a6e;
+
+  --color-background: hsl(0 0% 100%);
+  --color-foreground: hsl(222.2 84% 4.9%);
+  --color-card: hsl(0 0% 100%);
+  --color-card-foreground: hsl(222.2 84% 4.9%);
+  --color-popover: hsl(0 0% 100%);
+  --color-popover-foreground: hsl(222.2 84% 4.9%);
+  --color-secondary: hsl(210 40% 96.1%);
+  --color-secondary-foreground: hsl(222.2 47.4% 11.2%);
+  --color-muted-foreground: hsl(215.4 16.3% 46.9%);
+  --color-accent: hsl(210 40% 96.1%);
+  --color-accent-foreground: hsl(222.2 47.4% 11.2%);
+  --color-destructive: hsl(0 84.2% 60.2%);
+  --color-destructive-foreground: hsl(210 40% 98%);
+  --color-border: hsl(214.3 31.8% 91.4%);
+  --color-input: hsl(214.3 31.8% 91.4%);
+  --color-ring: hsl(199 89% 48%);
 }
 
 :root {
@@ -153,4 +184,185 @@ button,
 textarea,
 select {
   font-family: inherit;
+}
+
+/* ========== #335 대시보드 이식: 헬퍼 클래스/키프레임 (오렌지 액센트 계열) ========== */
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in {
+  animation: fade-in 0.6s ease-out forwards;
+}
+
+.gradient-orange {
+  background: linear-gradient(135deg, #c2410c 0%, #ea580c 35%, #f97316 70%, #fb923c 100%);
+}
+.brand-mark {
+  background: linear-gradient(135deg, #ea580c, #f97316);
+}
+.card-white,
+.card-light {
+  background: #fff;
+  color: #171717;
+  border: 1px solid #e5e5e5;
+}
+.card-orange {
+  background: linear-gradient(145deg, #ea580c, #f97316);
+  color: #fff;
+}
+.header-solid {
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid #e5e5e5;
+}
+.btn-orange {
+  background: linear-gradient(135deg, #ea580c, #f97316);
+  color: #fff;
+  border: none;
+}
+.btn-orange:hover { filter: brightness(1.08); }
+.btn-outline {
+  border: 1px solid #d4d4d4;
+  color: #404040;
+  background: #fff;
+}
+.btn-outline:hover { border-color: #ea580c; color: #ea580c; }
+.nav-active {
+  color: #ea580c;
+  font-weight: 600;
+  border-bottom: 2px solid #ea580c;
+  padding-bottom: 2px;
+}
+.period-tab-active {
+  background: #eff6ff;
+  color: #2563eb;
+  border-color: #93c5fd;
+  font-weight: 600;
+}
+.donut-ring {
+  background: conic-gradient(#3b82f6 0 var(--pct), #e5e7eb var(--pct) 100%);
+}
+.home-hero {
+  background:
+    linear-gradient(
+      to right,
+      rgba(8, 12, 20, 0.9) 0%,
+      rgba(8, 12, 20, 0.72) 38%,
+      rgba(8, 12, 20, 0.42) 68%,
+      rgba(8, 12, 20, 0.28) 100%
+    ),
+    url('/assets/hero-intelligence-visual.png');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+.home-glow-ring {
+  width: 280px;
+  height: 280px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 50% 45%,
+    rgba(249, 115, 22, 0.55) 0%,
+    rgba(234, 88, 12, 0.15) 40%,
+    transparent 70%
+  );
+  box-shadow: 0 0 80px rgba(234, 88, 12, 0.35);
+}
+.home-gradient-panel {
+  background: linear-gradient(135deg, #fff7ed 0%, #ffedd5 35%, #fed7aa 100%);
+}
+.home-stat-num {
+  font-size: clamp(2.5rem, 6vw, 4rem);
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+::selection {
+  background: rgba(249, 115, 22, 0.25);
+}
+
+/* ========== 메인 홈 랜딩 (파랑→보라 계열, #335 디자인 재색칠) ========== */
+/* 가로 full-bleed: AppShell 의 max-w 컨테이너를 뚫고 화면 전체 폭으로. */
+.full-bleed {
+  width: 100vw;
+  margin-left: calc(50% - 50vw);
+}
+.gradient-indigo {
+  background: linear-gradient(135deg, #4f46e5 0%, #6d5ae6 50%, #7c3aed 100%);
+}
+.brand-mark-indigo {
+  background: linear-gradient(135deg, #4f46e5, #7c3aed);
+}
+.btn-indigo {
+  background: linear-gradient(135deg, #4f46e5, #7c3aed);
+  color: #fff;
+  border: none;
+}
+.btn-indigo:hover {
+  filter: brightness(1.08);
+}
+/* 다크 히어로: 어두운 그라데이션 + 인텔리전스 비주얼 위에 보라 틴트. */
+.home-hero-indigo {
+  background:
+    linear-gradient(
+      to right,
+      rgba(15, 12, 41, 0.92) 0%,
+      rgba(28, 18, 64, 0.78) 38%,
+      rgba(40, 22, 90, 0.5) 68%,
+      rgba(49, 27, 110, 0.32) 100%
+    ),
+    url('/assets/hero-intelligence-visual.png');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+.home-dark-indigo {
+  background: #0e0b1f;
+  color: #fff;
+}
+.home-glow-indigo {
+  width: 280px;
+  height: 280px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 50% 45%,
+    rgba(124, 58, 237, 0.55) 0%,
+    rgba(79, 70, 229, 0.18) 40%,
+    transparent 70%
+  );
+  box-shadow: 0 0 80px rgba(99, 102, 241, 0.4);
+}
+.home-panel-indigo {
+  background: linear-gradient(135deg, #eef2ff 0%, #e9e5ff 35%, #ddd6fe 100%);
+}
+.home-dark {
+  background: #111111;
+  color: #fff;
+}
+.agent-tab-active {
+  background: #fff7ed;
+  border-color: #ea580c;
+  color: #ea580c;
+  font-weight: 600;
+}
+.json-sample {
+  background: #f5f5f5;
+  border: 1px solid #e5e5e5;
+  border-radius: 0.75rem;
+  padding: 1rem;
+  font-size: 0.7rem;
+  line-height: 1.5;
+  overflow-x: auto;
+}
+.quote-chart-line {
+  fill: none;
+  stroke: #3b82f6;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.quote-chart-area {
+  fill: url(#quoteGrad);
+  opacity: 0.35;
 }

@@ -41,7 +41,11 @@ from pathlib import Path
 # agent-worker 루트를 path 에 (app.* import)
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.collectors.hiring.base_collector import BaseCollector, get_target_companies  # noqa: E402
+from app.collectors.hiring.base_collector import (  # noqa: E402
+    BaseCollector,
+    get_all_company_names,
+    get_target_companies,
+)
 from app.collectors.hiring.sites import jasoseol as J  # noqa: E402
 
 logger = logging.getLogger("backfill_jasoseol")
@@ -82,16 +86,25 @@ def run_backfill(
     *,
     until: str | None = None,
     only_company: str | None = None,
+    match_universe: str = "target",
     start_id: int | None,
     max_requests: int | None,
     pause: float,
     batch_size: int,
     dry_run: bool,
 ) -> None:
-    # 종목: --company 로 단일 지정 시 그것만, 아니면 DB is_target 전체(하드코딩 아님).
-    names = [only_company] if only_company else get_target_companies(db_url)
+    # 종목 사전필터 후보:
+    #   --company 단일 지정 → 그것만
+    #   --match-universe target(기본) → DB is_target=TRUE (기존 동작)
+    #   --match-universe all → DB stocks 전체(유니버스 확장 1회 전수 스캔용)
+    if only_company:
+        names = [only_company]
+    elif match_universe == "all":
+        names = get_all_company_names(db_url)
+    else:
+        names = get_target_companies(db_url)
     if not names:
-        raise SystemExit("수집 대상 종목이 없습니다(--company 또는 DB is_target 확인).")
+        raise SystemExit("수집 대상 종목이 없습니다(--company/--match-universe 또는 DB stocks 확인).")
     # --until 지정 시 그 날짜 직전까지로 스캔 상한(연도 한정 backfill).
     max_id = None
     if until:
@@ -149,7 +162,9 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="자소설닷컴 과거 공고 깊은 backfill")
     ap.add_argument("--since", default=_DEFAULT_SINCE, help=f"수집 시작일(YYYY-MM-DD, 기본 {_DEFAULT_SINCE})")
     ap.add_argument("--until", default=None, help="수집 종료일(YYYY-MM-DD, 미만까지) — 연도 한정용")
-    ap.add_argument("--company", default=None, help="단일 종목명만 수집(미지정 시 DB is_target 전체)")
+    ap.add_argument("--company", default=None, help="단일 종목명만 수집(미지정 시 --match-universe 따름)")
+    ap.add_argument("--match-universe", choices=["target", "all"], default="target",
+                    help="사전필터 대상: target=DB is_target=TRUE(기본) / all=stocks 전체(유니버스 확장)")
     ap.add_argument("--start-id", type=int, default=None, help="재개용 시작 id(미지정 시 경계 자동탐색)")
     ap.add_argument("--max-requests", type=int, default=None, help="이번 실행 최대 상세요청 수(시범/안전상한)")
     ap.add_argument("--pause", type=float, default=0.3, help="요청 간 대기초(기본 0.3, 예의 rate-limit)")
@@ -163,7 +178,7 @@ def main() -> None:
 
     run_backfill(
         db_url, args.since,
-        until=args.until, only_company=args.company,
+        until=args.until, only_company=args.company, match_universe=args.match_universe,
         start_id=args.start_id, max_requests=args.max_requests,
         pause=args.pause, batch_size=args.batch_size, dry_run=args.dry_run,
     )

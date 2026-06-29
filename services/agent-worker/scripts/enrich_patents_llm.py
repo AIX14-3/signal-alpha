@@ -192,14 +192,26 @@ async def _run(argv: list[str] | None = None) -> int:
         if done % 250 == 0:
             print(f"  ...{done}/{len(patents)}  ok={tally['success']} fail={tally['failed']}", flush=True)
 
-    await asyncio.gather(*(worker(p) for p in patents))
+    # Process in chunks and COMMIT each chunk, so an interrupted run (timeout /
+    # background kill on long jobs) keeps its finished work — a re-run skips it via
+    # the llm_status='pending' filter. A single end-of-run commit would lose
+    # everything on any interruption.
+    _PERSIST_CHUNK = 500
 
-    # 4) persist features
-    async with pool.acquire() as conn:
-        await conn.executemany(
-            "UPDATE patent_raw_details SET llm_features = $2::jsonb, llm_status = $3 WHERE raw_document_id = $1",
-            writes,
-        )
+    async def _flush() -> None:
+        if not writes:
+            return
+        batch = writes[:]
+        writes.clear()
+        async with pool.acquire() as conn:
+            await conn.executemany(
+                "UPDATE patent_raw_details SET llm_features = $2::jsonb, llm_status = $3 WHERE raw_document_id = $1",
+                batch,
+            )
+
+    for i in range(0, len(patents), _PERSIST_CHUNK):
+        await asyncio.gather(*(worker(p) for p in patents[i : i + _PERSIST_CHUNK]))
+        await _flush()
     cost = tally["in_tok"] * PRICE_IN_PER_M / 1e6 + tally["out_tok"] * PRICE_OUT_PER_M / 1e6
     print(f"[enrich] success={tally['success']} failed={tally['failed']} skipped={tally['skipped']}")
     print(f"[cost] in_tok={tally['in_tok']:,} out_tok={tally['out_tok']:,}  measured ${cost:.4f}")

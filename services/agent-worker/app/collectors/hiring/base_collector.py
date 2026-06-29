@@ -88,6 +88,36 @@ def _to_kst_date(value: datetime.date | datetime.datetime | str) -> datetime.dat
 logger = logging.getLogger(__name__)
 
 
+def _fetch_company_names(database_url: str, where_sql: str, label: str) -> list[str]:
+    """stocks 에서 name+short_name 을 조회해 순서 보존 dedup 한 리스트로 반환(사전필터용).
+
+    where_sql 은 호출부가 주는 **고정 상수**(사용자 입력 아님). name 과 short_name 을
+    함께 풀어 담는다 — insert 게이트(_match_stock_row)가 둘 다로 매칭하므로 사전필터가
+    name 만 쓰면 게이트보다 엄격해져 유효 공고가 유실된다(#176).
+    """
+    engine = create_engine(database_url, echo=False, future=True)
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text(f"SELECT name, short_name FROM stocks WHERE {where_sql} ORDER BY name")
+            ).fetchall()
+        if rows:
+            names: list[str] = []
+            for row in rows:
+                for val in (row[0], row[1]):
+                    if val and val not in names:
+                        names.append(val)
+            logger.info("🎯 사전필터 대상 %d개 기업 (%s, name+short_name)", len(rows), label)
+            return names
+        logger.warning("⚠️  조회된 기업이 없습니다 (%s).", label)
+        return []
+    except Exception as exc:
+        logger.error("❌ 수집 대상 기업 조회 실패 (%s): %s", label, exc)
+        return []
+    finally:
+        engine.dispose()
+
+
 def get_target_companies(database_url: str) -> list[str]:
     """
     DB의 is_target=TRUE 기업 목록을 동적으로 반환 (Single Source of Truth).
@@ -99,34 +129,19 @@ def get_target_companies(database_url: str) -> list[str]:
     기업 추가/제거는 SQL UPDATE 한 줄이면 충분하고 코드 수정이 불필요하다.
     (stocks 초기 데이터: database/migrations/016_seed_stocks_targets.sql)
 
-    name 과 함께 short_name(약칭)도 반환한다. 수집/backfill 의 사전필터가 이 목록으로
-    후보를 거르는데, insert 게이트(_match_stock_row)는 name·short_name 둘 다로 매칭하므로
-    사전필터가 name 만 쓰면 게이트보다 엄격해져 유효 공고가 유실된다(#176). 대표 사례:
-    공고 회사명 '네이버' ↔ stocks.name 'NAVER'(영문)·short_name '네이버' — name 만으로는
-    한글 공고가 사전필터에서 전량 누락된다. 사전필터는 관대해야 안전하다(권위 판정은 게이트).
+    name 과 함께 short_name(약칭)도 반환한다. 사전필터는 관대해야 안전하다(권위 판정은 게이트).
     """
-    engine = create_engine(database_url, echo=False, future=True)
-    try:
-        with engine.connect() as conn:
-            rows = conn.execute(
-                text("SELECT name, short_name FROM stocks WHERE is_target = TRUE ORDER BY name")
-            ).fetchall()
-        if rows:
-            # name + short_name(비어있지 않은 것)을 순서 보존하며 dedup.
-            names: list[str] = []
-            for row in rows:
-                for val in (row[0], row[1]):
-                    if val and val not in names:
-                        names.append(val)
-            logger.info("🎯 수집 대상 %d개 기업 (DB is_target=TRUE, name+short_name)", len(rows))
-            return names
-        logger.warning("⚠️  is_target=TRUE 기업이 DB에 없습니다. 016_seed_stocks_targets.sql 을 실행하세요.")
-        return []
-    except Exception as exc:
-        logger.error("❌ 수집 대상 기업 조회 실패: %s", exc)
-        return []
-    finally:
-        engine.dispose()
+    return _fetch_company_names(database_url, "is_target = TRUE", "DB is_target=TRUE")
+
+
+def get_all_company_names(database_url: str) -> list[str]:
+    """DB stocks 전체(is_target 무관) name+short_name 목록 — 유니버스 확장 backfill 사전필터용.
+
+    유니버스 확장(KOSPI200 등)은 후보를 is_target=FALSE 로 시드하므로 get_target_companies
+    로는 잡히지 않는다. 1회 전수 스캔에서 후보 전부를 사전필터로 통과시키되, 최종 종목 귀속은
+    insert 게이트(_match_stock_row, 전 stocks 매칭)가 그대로 담당한다(recall=broad, precision=ML층).
+    """
+    return _fetch_company_names(database_url, "TRUE", "DB stocks 전체")
 
 
 @dataclass(frozen=True)

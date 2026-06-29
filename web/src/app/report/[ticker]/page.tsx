@@ -5,7 +5,9 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { ApiError, type ReportSource } from "@/lib/apiClient";
 import { WatchlistButton } from "@/components/WatchlistButton";
-import { directionLabel, SOURCE_META, SOURCE_ORDER, sourceLabel } from "@/lib/format";
+import { DirectionBadge } from "@/components/signal/DirectionBadge";
+import { ReportSkeleton } from "@/components/signal/Skeleton";
+import { SOURCE_META, SOURCE_ORDER, sourceLabel } from "@/lib/format";
 import { useAuthStore } from "@/stores/authStore";
 import { useReportStore } from "@/stores/reportStore";
 import { useToastStore } from "@/stores/toastStore";
@@ -41,7 +43,7 @@ export default function ReportPage() {
     }
   }
 
-  if (loading) return <p className="py-16 text-center text-muted">리포트를 불러오는 중…</p>;
+  if (loading) return <ReportSkeleton />;
   if (error && !report)
     return (
       <div className="py-16 text-center">
@@ -51,7 +53,6 @@ export default function ReportPage() {
     );
   if (!report) return null;
 
-  const dir = directionLabel(report.direction);
   const unlocked = report.access.unlocked;
   const isMember = report.access.is_member;
   const byKey = new Map(report.sources.map((s) => [s.source, s] as const));
@@ -102,7 +103,7 @@ export default function ReportPage() {
               </div>
             </div>
             <div className="flex-1 min-w-[240px]">
-              <span className={`pill ${tone(dir.tone)}`} style={{ padding: "5px 11px" }}>{dir.label}</span>
+              <DirectionBadge direction={report.direction} />
               <p className="mt-3 text-navy-soft">{report.summary ?? "요약이 없습니다."}</p>
             </div>
           </>
@@ -182,20 +183,15 @@ function SourceCard({
       </button>
     );
   }
-  const dir = directionLabel(src.direction);
   return (
     <Link href={`/report/${encodeURIComponent(ticker)}/${sourceKey}`} className="card block p-5 transition hover:shadow-lg">
       <div className="flex items-center gap-2 font-bold">
         {meta.icon} {meta.label}
-        <span className={`pill ${tone(dir.tone)} ml-auto`} style={{ padding: "3px 9px", fontSize: 12 }}>{dir.label}</span>
+        <DirectionBadge direction={src.direction} className="ml-auto" />
       </div>
       <p className="mt-2 min-h-[38px] text-[13.5px] text-navy-soft">{src.summary ?? sourceLabel(sourceKey) + " 데이터 요약"}</p>
       <div className="mt-2 text-[12px] text-muted">점수 {src.score ?? "–"} · {src.data_status ?? "—"}</div>
       <div className="mt-2 text-[13px] font-semibold text-sky-deep">상세 보기 →</div>
     </Link>
   );
-}
-
-function tone(t: "up" | "down" | "flat"): string {
-  return t === "up" ? "up" : t === "down" ? "down" : "flat";
 }

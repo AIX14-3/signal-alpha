@@ -26,8 +26,9 @@ _COLUMNS = [
     ("f1", "f1_mean", 7),
     ("roc_auc", "roc_auc_mean", 8),
     ("IC", "ic_mean", 7),
-    ("sd_IC", "ic_std", 7),
     ("rankIC", "rank_ic_mean", 8),
+    ("rankIC_xs", "rank_ic_xs_mean", 9),
+    ("sd_xs", "rank_ic_xs_std", 7),
     ("dec_sprd", "decile_spread_mean", 9),
 ]
 
@@ -41,10 +42,11 @@ def _rows(reports: list[ModelReport]) -> list[dict[str, float]]:
         s["model"] = name
         s["_acc_delta"] = s["accuracy_mean"] - base_acc
         rows.append(s)
-    # Sort by Rank-IC desc, keeping baselines visible at the bottom on ties.
+    # Sort by cross-sectional Rank-IC desc (the metric we judge on), keeping
+    # baselines visible at the bottom on ties.
     rows.sort(
         key=lambda r: (
-            -1e9 if r["model"].startswith("baseline") else _nan_to_neg(r["rank_ic_mean"])
+            -1e9 if r["model"].startswith("baseline") else _nan_to_neg(r["rank_ic_xs_mean"])
         ),
         reverse=True,
     )
