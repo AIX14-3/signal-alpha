@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 import secrets
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 from typing import Any
 
 from asyncpg import UniqueViolationError
@@ -21,7 +21,16 @@ from app.core.config import Settings, get_settings
 from app.core.database import get_database_pool
 from app.core.portone import PortOneClient, PortOneError, get_portone_client
 from app.core.security import create_refresh_token, hash_password, verify_password
-from signal_alpha_data_access.backend import AdminRepository, UserBillingRepository
+from signal_alpha_data_access.backend import (
+    AdminRepository,
+    CollectionScheduleRepository,
+    UserBillingRepository,
+    parse_schedule_row,
+)
+
+# 수집 스케줄 제어 허용값.
+_SCHEDULE_TARGETS = {"price", "dart", "report"}
+_SCHEDULE_PRICE_MODES = {"flows", "snapshot"}
 
 
 admin_router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -50,6 +59,17 @@ class UpdateSubscriptionRequest(BaseModel):
 class UpdateUserRequest(BaseModel):
     nickname: str | None = None
     email: str | None = None
+
+
+class UpdateScheduleRequest(BaseModel):
+    """수집 스케줄 config 수정(보낸 필드만 변경)."""
+
+    enabled: bool | None = None
+    run_at_local: str | None = None  # "HH:MM"
+    timezone: str | None = None
+    targets: list[str] | None = None
+    dart_limit: int | None = None
+    price_modes: list[str] | None = None
 
 
 # member_code = 영문 대문자 4 + 숫자 4 (혼동 문자 I/O/0/1 제외). auth._new_member_code 와 동일 규칙.
@@ -408,6 +428,137 @@ async def get_stats(
         "by_plan": {row["plan_type"]: int(row["count"]) for row in by_plan_rows},
         # 실 PG 결제 이력 적재 후 월별 매출 시계열 채움(현재 빈 배열).
         "revenue_monthly": [],
+    }
+
+
+# ── 수집 스케줄 제어 (collection_schedules) ──────────────────────────────────
+# 어드민이 백엔드 DB 의 단일 config 행을 읽고/쓰면, 워커측 스케줄러가 폴링해 발화한다
+# (main-server → worker 직접 호출 없음). 상태(last/next run)는 스케줄러가 기록한다.
+
+
+@admin_router.get("/schedules")
+async def list_schedules(
+    _admin: dict[str, Any] = Depends(get_current_admin),
+    pool: Any = Depends(get_database_pool),
+) -> dict[str, Any]:
+    async with pool.acquire() as connection:
+        rows = await CollectionScheduleRepository(connection).list_all()
+    return {"items": [_schedule_row(parse_schedule_row(row)) for row in rows]}
+
+
+@admin_router.put("/schedules/{schedule_id}")
+async def update_schedule(
+    schedule_id: int,
+    payload: UpdateScheduleRequest,
+    admin: dict[str, Any] = Depends(get_current_admin),
+    pool: Any = Depends(get_database_pool),
+) -> dict[str, Any]:
+    run_at = _parse_schedule_time(payload.run_at_local) if payload.run_at_local is not None else None
+    targets = _validate_targets(payload.targets) if payload.targets is not None else None
+    price_modes = (
+        _validate_price_modes(payload.price_modes) if payload.price_modes is not None else None
+    )
+    if payload.dart_limit is not None and not (1 <= payload.dart_limit <= 1000):
+        raise admin_error(400, "INVALID_DART_LIMIT", "dart_limit 은 1~1000 이어야 합니다.")
+    async with pool.acquire() as connection:
+        repo = CollectionScheduleRepository(connection)
+        before = await repo.get_by_id(schedule_id)
+        if before is None:
+            raise admin_error(404, "SCHEDULE_NOT_FOUND", "스케줄을 찾을 수 없습니다.")
+        updated = await repo.update_config(
+            schedule_id=schedule_id,
+            enabled=payload.enabled,
+            run_at_local=run_at,
+            timezone=payload.timezone,
+            targets=targets,
+            dart_limit=payload.dart_limit,
+            price_modes=price_modes,
+            updated_by=str(admin.get("admin_email") or admin.get("admin_id")),
+        )
+        await AdminRepository(connection).record_audit_log(
+            actor_admin_id=int(admin["admin_id"]),
+            action="schedule.update",
+            target_type="schedule",
+            target_id=schedule_id,
+            before=_audit_json(parse_schedule_row(before)),
+            after=_audit_json(parse_schedule_row(updated)),
+        )
+    return _schedule_row(parse_schedule_row(updated))
+
+
+@admin_router.post("/schedules/{schedule_id}/trigger")
+async def trigger_schedule(
+    schedule_id: int,
+    admin: dict[str, Any] = Depends(get_current_admin),
+    pool: Any = Depends(get_database_pool),
+) -> dict[str, Any]:
+    """'지금 실행' — manual_trigger 표시. 워커 스케줄러가 다음 폴링에 발화한다."""
+    async with pool.acquire() as connection:
+        repo = CollectionScheduleRepository(connection)
+        updated = await repo.request_manual_trigger(
+            schedule_id=schedule_id,
+            updated_by=str(admin.get("admin_email") or admin.get("admin_id")),
+        )
+        if updated is None:
+            raise admin_error(404, "SCHEDULE_NOT_FOUND", "스케줄을 찾을 수 없습니다.")
+        await AdminRepository(connection).record_audit_log(
+            actor_admin_id=int(admin["admin_id"]),
+            action="schedule.trigger",
+            target_type="schedule",
+            target_id=schedule_id,
+        )
+    return _schedule_row(parse_schedule_row(updated))
+
+
+def _parse_schedule_time(value: str) -> time:
+    try:
+        hour, minute = value.strip().split(":")
+        return time(int(hour), int(minute))
+    except (ValueError, AttributeError):
+        raise admin_error(400, "INVALID_TIME", "시각 형식(HH:MM)이 올바르지 않습니다.") from None
+
+
+def _validate_targets(targets: list[str]) -> list[str]:
+    cleaned = [t.strip().lower() for t in targets if t and t.strip()]
+    invalid = [t for t in cleaned if t not in _SCHEDULE_TARGETS]
+    if invalid:
+        raise admin_error(400, "INVALID_TARGETS", f"허용되지 않은 대상: {invalid}")
+    return cleaned
+
+
+def _validate_price_modes(modes: list[str]) -> list[str]:
+    cleaned = [m.strip().lower() for m in modes if m and m.strip()]
+    invalid = [m for m in cleaned if m not in _SCHEDULE_PRICE_MODES]
+    if invalid:
+        raise admin_error(400, "INVALID_PRICE_MODES", f"허용되지 않은 모드: {invalid}")
+    return cleaned
+
+
+def _schedule_row(row: dict[str, Any] | None) -> dict[str, Any]:
+    row = row or {}
+    run_at = row.get("run_at_local")
+    detail = row.get("last_detail")
+    if isinstance(detail, str):
+        try:
+            detail = json.loads(detail)
+        except (ValueError, TypeError):
+            pass
+    return {
+        "id": row.get("id"),
+        "name": row.get("name"),
+        "enabled": row.get("enabled"),
+        "run_at_local": run_at.strftime("%H:%M") if hasattr(run_at, "strftime") else run_at,
+        "timezone": row.get("timezone"),
+        "targets": row.get("targets") or [],
+        "dart_limit": row.get("dart_limit"),
+        "price_modes": row.get("price_modes") or [],
+        "last_run_at": _timestamp(row.get("last_run_at")),
+        "last_status": row.get("last_status"),
+        "last_detail": detail,
+        "next_run_at": _timestamp(row.get("next_run_at")),
+        "manual_trigger_requested_at": _timestamp(row.get("manual_trigger_requested_at")),
+        "updated_by": row.get("updated_by"),
+        "updated_at": _timestamp(row.get("updated_at")),
     }
 
 
