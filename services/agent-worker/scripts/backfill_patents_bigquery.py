@@ -11,10 +11,14 @@ assignee matches a target company, attributes each row to a stock, and persists
 through ``PatentCollector.ingest_records`` — the *same* DB contract as the live
 KIPRIS collector (collector_runs + raw_documents + patent_raw_details +
 processing_queue, F1 re-enqueue safety net). ``source_name='GOOGLE_PATENTS'``
-marks the origin. ``application_no`` is stored in BigQuery's native form
-(``KR-YYYYNNNNNNN-A``), which differs from KIPRIS' 13-digit format — so re-running
-this backfill is idempotent, but the same patent later collected via KIPRIS will
-NOT collapse against the BigQuery row (different application_no → different hash).
+marks the origin. The query/attribution logic lives in
+``app/collectors/patent/bigquery_source.py`` so it can be reused by automation.
+
+Cross-source dedup: ``source_hash`` is built from
+``canonicalize_application_no(application_no)``, so the same patent later collected
+via KIPRIS (13-digit form) collapses against the BigQuery row (``KR-...-A`` form)
+on the ``source_hash`` UNIQUE constraint — re-running is idempotent within *and*
+across sources.
 
 Prerequisites:
   - gcloud ADC: ``gcloud auth application-default login`` (project patent-bq-reader).
@@ -36,159 +40,20 @@ import asyncio
 import json
 import os
 import sys
-from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 
 # Make ``app`` importable when run as ``python scripts/backfill_patents_bigquery.py``
 # (Python puts scripts/ on sys.path, not the service root). parents[1] = agent-worker.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-BQ_TABLE = "patents-public-data.patents.publications"
-DEFAULT_BQ_PROJECT = "patent-bq-reader"
-SOURCE_NAME = "GOOGLE_PATENTS"
-
-# Ticker -> BigQuery assignee_harmonized.name UPPER LIKE patterns. Mirrors
-# DEFAULT_COMPANIES.bq_like in scripts/patent_source_audit.py. ASCII-only so the
-# same patterns are safe in the BigQuery console too.
-TICKER_BQ_PATTERNS: dict[str, list[str]] = {
-    "005930": ["%SAMSUNG ELECTRONICS%"],  # 삼성전자 (Samsung Electronics only — not SDI/Display/SDS)
-    "000660": ["%SK HYNIX%"],             # SK하이닉스
-    "035420": ["%NAVER%"],                # NAVER
-}
-
-
-def _like_predicate(pattern: str) -> Callable[[str], bool]:
-    """Translate a SQL ``LIKE`` pattern (our patterns use only ``%`` wildcards on
-    the ends) into a Python predicate over an already-upper-cased string."""
-    p = pattern.upper()
-    core = p.strip("%")
-    starts, ends = p.startswith("%"), p.endswith("%")
-    if starts and ends:
-        return lambda s: core in s
-    if starts:
-        return lambda s: s.endswith(core)
-    if ends:
-        return lambda s: s.startswith(core)
-    return lambda s: s == core
-
-
-def _fmt_yyyymmdd(value: Any) -> str | None:
-    """BigQuery dates are INT64 ``YYYYMMDD``. Return an 8-char string with any
-    ``00`` month/day clamped to ``01`` (some records carry a zero day), or None."""
-    if not value:
-        return None
-    s = str(int(value))
-    if len(s) != 8:
-        return None
-    y, m, d = s[:4], s[4:6], s[6:8]
-    if m == "00":
-        m = "01"
-    if d == "00":
-        d = "01"
-    return f"{y}{m}{d}"
-
-
-def _bq_rows(*, start_year: int, end_year: int, patterns: list[str], project: str) -> list[dict]:
-    """Fetch one row per (matching) publication across all target patterns in a
-    single scan. Attribution to a specific stock happens later in Python."""
-    try:
-        from google.cloud import bigquery  # type: ignore
-    except ImportError:
-        raise SystemExit(
-            "google-cloud-bigquery is not installed — run via "
-            "`uv run --with google-cloud-bigquery python scripts/backfill_patents_bigquery.py ...`"
-        )
-    try:
-        client = bigquery.Client(project=project)
-    except Exception as exc:  # DefaultCredentialsError 등
-        raise SystemExit(
-            f"BigQuery client init failed ({exc}).\n"
-            "Run `gcloud auth application-default login` (project patent-bq-reader) first."
-        )
-
-    sql = f"""
-    SELECT
-      application_number,
-      filing_date,
-      publication_number,
-      publication_date,
-      (SELECT t.text FROM UNNEST(title_localized) t
-         ORDER BY CASE LOWER(t.language) WHEN 'ko' THEN 0 WHEN 'en' THEN 1 ELSE 2 END
-         LIMIT 1) AS title,
-      (SELECT i.code FROM UNNEST(ipc) i LIMIT 1) AS ipc_code,
-      ARRAY(SELECT a.name FROM UNNEST(assignee_harmonized) a) AS assignees
-    FROM `{BQ_TABLE}`
-    WHERE country_code = 'KR'
-      AND filing_date BETWEEN @start AND @end
-      AND EXISTS (
-        SELECT 1 FROM UNNEST(assignee_harmonized) a, UNNEST(@patterns) p
-        WHERE UPPER(a.name) LIKE p
-      )
-    """.strip()
-    job_config = bigquery.QueryJobConfig(
-        query_parameters=[
-            bigquery.ArrayQueryParameter("patterns", "STRING", [p.upper() for p in patterns]),
-            bigquery.ScalarQueryParameter("start", "INT64", start_year * 10000 + 101),
-            bigquery.ScalarQueryParameter("end", "INT64", end_year * 10000 + 1231),
-        ]
-    )
-    rows = client.query(sql, job_config=job_config).result()
-    return [
-        {
-            "application_number": str(r["application_number"]),
-            "filing_date": r["filing_date"],
-            "publication_number": r["publication_number"],
-            "publication_date": r["publication_date"],
-            "title": r["title"],
-            "ipc_code": r["ipc_code"],
-            "assignees": list(r["assignees"] or []),
-        }
-        for r in rows
-    ]
-
-
-def _build_records(rows: list[dict], ticker: str):
-    """Attribute rows to ``ticker`` (assignee matches its patterns), de-dup by
-    application_no, and build KiprisPatentRecord objects for ingest_records."""
-    from app.clients.kipris_client import KiprisPatentRecord
-
-    preds = [_like_predicate(p) for p in TICKER_BQ_PATTERNS[ticker]]
-    seen: set[str] = set()
-    records: list[Any] = []
-    for row in rows:
-        assignees = row["assignees"]
-        matched = next((a for a in assignees if any(pred(a.upper()) for pred in preds)), None)
-        if matched is None:
-            continue
-        app_no = row["application_number"]
-        if not app_no or app_no in seen:
-            continue
-        seen.add(app_no)
-        records.append(
-            KiprisPatentRecord(
-                application_no=app_no,
-                invention_title=(row["title"] or app_no),
-                applicant_name=matched,
-                application_date=_fmt_yyyymmdd(row["filing_date"]),
-                ipc_code=row["ipc_code"],
-                open_date=_fmt_yyyymmdd(row["publication_date"]),
-                registration_number=None,
-                abstract=None,
-                raw={
-                    "source": "google_patents_bigquery",
-                    "bq_table": BQ_TABLE,
-                    "publication_number": row["publication_number"],
-                    "publication_date": _fmt_yyyymmdd(row["publication_date"]),
-                    "filing_date": _fmt_yyyymmdd(row["filing_date"]),
-                    "assignees": assignees,
-                    "ipc_code": row["ipc_code"],
-                    "title": row["title"],
-                    "matched_ticker": ticker,
-                },
-            )
-        )
-    return records
+from app.collectors.patent.bigquery_source import (  # noqa: E402  (after sys.path bootstrap)
+    BQ_TABLE,
+    DEFAULT_BQ_PROJECT,
+    SOURCE_NAME,
+    TICKER_BQ_PATTERNS,
+    bq_rows,
+    build_records,
+)
 
 
 def _chunks(items: list, size: int):
@@ -217,14 +82,14 @@ async def _run(argv: list[str] | None = None) -> int:
     all_patterns = [p for t in tickers for p in TICKER_BQ_PATTERNS[t]]
 
     print(f"[bq] querying {BQ_TABLE} (project={project}) filing {args.start_year}-{args.end_year}, tickers={tickers}")
-    rows = _bq_rows(
+    rows = bq_rows(
         start_year=args.start_year, end_year=args.end_year, patterns=all_patterns, project=project
     )
     print(f"[bq] {len(rows)} matching publication rows fetched")
 
     per_stock: dict[str, list] = {}
     for ticker in tickers:
-        records = _build_records(rows, ticker)
+        records = build_records(rows, ticker)
         if args.limit_per_stock is not None:
             records = records[: args.limit_per_stock]
         per_stock[ticker] = records
