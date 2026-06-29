@@ -1,0 +1,41 @@
+# 대체데이터(patent/datalab) 수집 — 매일 04:30 KST CronJob(run_collectors.py).
+# DART/price 는 scheduler→worker 경로지만, patent/datalab 은 worker 이미지로 직접 1회 배치.
+# timeZone 은 k8s ≥1.27(GKE) 지원. 미지원 클러스터면 schedule 을 UTC(19:30)로.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: altdata-collect
+  namespace: signal-alpha
+  labels:
+    app.kubernetes.io/part-of: signal-alpha
+    app.kubernetes.io/name: altdata-collect
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  schedule: "30 4 * * *"
+  timeZone: "Asia/Seoul"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/part-of: signal-alpha
+            app.kubernetes.io/name: altdata-collect
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: altdata
+              image: signal-alpha-agent-worker
+              command: ["python", "run_collectors.py"]   # patent + datalab (1 pass)
+              envFrom:
+                - configMapRef: { name: signal-alpha-config }
+                - secretRef: { name: signal-alpha-secrets }
+              env:
+                - name: SERVICE_NAME
+                  value: altdata-collect
+                - name: DATABASE_URL          # 수집 DB
+                  valueFrom: { secretKeyRef: { name: signal-alpha-secrets, key: WORKER_DATABASE_URL } }

@@ -1,0 +1,39 @@
+# 비밀이 아닌 공용 설정. 모든 유닛이 envFrom 으로 주입한다.
+# (DSN/비밀번호/API 키는 secret.example.yaml → Secret 으로 분리)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: signal-alpha-config
+  namespace: signal-alpha
+  labels:
+    app.kubernetes.io/part-of: signal-alpha
+data:
+  SERVICE_VERSION: "0.1.0"
+  # 워커 내부 URL — scheduler 가 수집 엔드포인트 호출 시 사용(클러스터 DNS).
+  WORKER_BASE_URL: "http://agent-worker:8011"
+  # 큐 드레인 데몬 순회 대기(초).
+  QUEUE_DRAIN_INTERVAL_SEC: "5"
+  # Kiwoom REST(가격 수집). 운영 키 발급 후 https://api.kiwoom.com 로 교체.
+  KIWOOM_API_BASE: "https://mockapi.kiwoom.com"
+  KIWOOM_MIN_REQUEST_INTERVAL_SEC: "0.25"
+  PRICE_POLL_INTERVAL_SEC: "60"
+  PRICE_FLOW_DELAY_AFTER_CLOSE_MIN: "30"
+  MARKET_OPEN: "09:00"
+  MARKET_CLOSE: "15:30"
+  # DART / LLM 비밀 아닌 설정.
+  DART_BASE_URL: "https://opendart.fss.or.kr/api"
+  DART_TIMEOUT_SECONDS: "10"
+  DART_PAGE_SIZE: "100"
+  DART_FETCH_DOCUMENTS: "true"
+  OPENAI_BASE_URL: "https://api.openai.com/v1"
+  GEMINI_BASE_URL: "https://generativelanguage.googleapis.com/v1beta"
+  # 끝단 종합 LLM(키 없으면 결정론 폴백).
+  SYNTHESIS_USE_LLM: "false"
+  # 리포트 저장 백엔드.
+  REPORT_STORAGE_BACKEND: "gcs"
+  GCS_REPORT_BUCKET: "signal-alpha-reports"
+  # ML_INFER 변동성 모델 화이트리스트.
+  ML_GATE_PASSED_MODELS: "ewma,har_rv,garch,tcn"
+  # Postgres DB/USER(비밀번호는 Secret). 2 인스턴스 공통 논리 DB/USER 명.
+  POSTGRES_DB: "signal_alpha"
+  POSTGRES_USER: "signal_alpha"

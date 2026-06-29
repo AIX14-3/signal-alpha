@@ -1,0 +1,31 @@
+# Argo CD Application — deploy/k8s 전체를 signal-alpha 네임스페이스로 자동 동기화.
+# 적용: kubectl apply -f deploy/argocd/project.yaml -f deploy/argocd/application.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: signal-alpha
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: signal-alpha
+  source:
+    repoURL: https://github.com/AIX14-3/signal-alpha.git
+    targetRevision: main          # 배포 브랜치(예: main 또는 deploy/*)
+    path: deploy/k8s              # kustomization.yaml 위치
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: signal-alpha
+  syncPolicy:
+    automated:
+      prune: true                 # Git 에서 지운 리소스 클러스터에서도 제거
+      selfHeal: true              # 수동 drift 자동 복원
+    syncOptions:
+      - CreateNamespace=true
+      - ApplyOutOfSyncOnly=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

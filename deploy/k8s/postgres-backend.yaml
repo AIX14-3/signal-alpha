@@ -1,0 +1,70 @@
+# 백엔드 DB — Postgres 인스턴스 ② (main-server 가 signal_backend 롤로 접근,
+# 워커가 발행 사본 기록, 스케줄러가 collection_schedules 폴링).
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-backend
+  namespace: signal-alpha
+  labels:
+    app.kubernetes.io/part-of: signal-alpha
+    app.kubernetes.io/name: postgres-backend
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: postgres-backend
+  ports:
+    - port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-backend
+  namespace: signal-alpha
+  labels:
+    app.kubernetes.io/part-of: signal-alpha
+    app.kubernetes.io/name: postgres-backend
+spec:
+  serviceName: postgres-backend
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgres-backend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: signal-alpha
+        app.kubernetes.io/name: postgres-backend
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              valueFrom: { configMapKeyRef: { name: signal-alpha-config, key: POSTGRES_DB } }
+            - name: POSTGRES_USER
+              valueFrom: { configMapKeyRef: { name: signal-alpha-config, key: POSTGRES_USER } }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: signal-alpha-secrets, key: POSTGRES_PASSWORD } }
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec: { command: ["pg_isready", "-U", "signal_alpha", "-d", "signal_alpha"] }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests: { cpu: "100m", memory: "256Mi" }
+            limits: { cpu: "1", memory: "1Gi" }
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi

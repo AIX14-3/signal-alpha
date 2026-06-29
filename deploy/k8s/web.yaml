@@ -1,0 +1,55 @@
+# web 유닛 — Next.js 대시보드(3000). web/Dockerfile 의 runner(프로덕션) 타깃 이미지.
+# NOTE: NEXT_PUBLIC_MAIN_API_BASE_URL 은 Next.js 가 빌드시 인라인하므로, 정확히는 이미지
+#   빌드 시 --build-arg 로 외부 접속 URL(Ingress 호스트)을 넣어야 한다. 아래 env 는 런타임
+#   참조용/문서용. 브라우저가 호출하므로 클러스터 내부 Service 가 아니라 외부 URL 이어야 한다.
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: signal-alpha
+  labels:
+    app.kubernetes.io/part-of: signal-alpha
+    app.kubernetes.io/name: web
+spec:
+  selector:
+    app.kubernetes.io/name: web
+  ports:
+    - port: 3000
+      targetPort: 3000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: signal-alpha
+  labels:
+    app.kubernetes.io/part-of: signal-alpha
+    app.kubernetes.io/name: web
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: signal-alpha
+        app.kubernetes.io/name: web
+    spec:
+      containers:
+        - name: web
+          image: signal-alpha-web
+          ports:
+            - containerPort: 3000
+          env:
+            - name: NEXT_PUBLIC_MAIN_API_BASE_URL
+              value: "http://REPLACE_WITH_INGRESS_HOST"
+          readinessProbe:
+            httpGet: { path: /, port: 3000 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests: { cpu: "50m", memory: "128Mi" }
+            limits: { cpu: "500m", memory: "512Mi" }
