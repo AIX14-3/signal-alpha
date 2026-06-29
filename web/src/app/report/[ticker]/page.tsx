@@ -209,7 +209,7 @@ function SourceCard({
   busy,
   onUnlock,
 }: {
-  sourceKey: "price" | "dart" | "hiring" | "datalab" | "report";
+  sourceKey: "price" | "dart" | "hiring" | "datalab" | "patent" | "report";
   src: ReportSource | undefined;
   ticker: string;
   isMember: boolean;

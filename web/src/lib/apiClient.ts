@@ -181,6 +181,20 @@ export type SourceDetailItem = {
   is_official?: boolean | null;
 };
 
+// 증권사 리포트 밸류에이션 fact(집계 score_breakdown.REPORT.valuation). REPORT 소스에만 존재.
+export type ReportValuation = {
+  target_price?: number | null;
+  methodology?: string | null;
+  applied_multiple?: number | null;
+  implied_multiple?: number | null;
+  implied_multiple_avg?: number | null;
+  forward_eps_est?: number | null;
+  eps_fy?: number | null;
+  peer_group?: unknown[] | null;
+  event_count?: number | null;
+  needs_review?: boolean | null;
+};
+
 export type SourceDetail = {
   stock: { stock_code: string; stock_name: string | null };
   source: SourceKey;
@@ -188,6 +202,7 @@ export type SourceDetail = {
   score: number | null;
   data_status?: string;
   summary: string | null;
+  valuation?: ReportValuation | null;
   items: SourceDetailItem[];
   notice: string;
 };

@@ -4,9 +4,9 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ApiError, getSourceDetail, type SourceDetail, type SourceKey } from "@/lib/apiClient";
-import { directionLabel, SOURCE_META } from "@/lib/format";
+import { directionLabel, SOURCE_META, won } from "@/lib/format";
 
-const VALID: SourceKey[] = ["price", "dart", "hiring", "datalab", "report"];
+const VALID: SourceKey[] = ["price", "dart", "hiring", "datalab", "patent", "report"];
 
 export default function SourceDetailPage() {
   const params = useParams<{ ticker: string; source: string }>();
@@ -77,13 +77,43 @@ export default function SourceDetailPage() {
             <p className="mt-3 text-navy-soft">{detail.summary ?? "요약이 없습니다."}</p>
           </div>
 
+          {source === "report" && detail.valuation && (
+            <div className="card mt-4 p-6">
+              <div className="text-[13px] font-semibold text-muted">밸류에이션 (집계)</div>
+              <div className="mt-3 grid grid-cols-2 gap-4 sm:grid-cols-4">
+                <div>
+                  <div className="text-[12px] text-muted">목표주가</div>
+                  <div className="text-[15px] font-bold">
+                    {detail.valuation.target_price != null ? won(detail.valuation.target_price) : "—"}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-[12px] text-muted">방법론</div>
+                  <div className="text-[15px] font-bold">{detail.valuation.methodology ?? "—"}</div>
+                </div>
+                <div>
+                  <div className="text-[12px] text-muted">적용 배수</div>
+                  <div className="text-[15px] font-bold">
+                    {detail.valuation.applied_multiple != null ? `${detail.valuation.applied_multiple}x` : "—"}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-[12px] text-muted">분석 리포트 수</div>
+                  <div className="text-[15px] font-bold">
+                    {detail.valuation.event_count != null ? `${detail.valuation.event_count}건` : "—"}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="card mt-4 overflow-hidden">
             <table className="w-full text-[13.5px]">
               <thead>
                 <tr className="text-muted">
-                  <th className="px-4 py-3 text-left font-semibold">제목</th>
-                  <th className="px-4 py-3 text-left font-semibold">날짜</th>
-                  <th className="px-4 py-3 text-left font-semibold">출처</th>
+                  <th className="px-4 py-3 text-left font-semibold">{source === "report" ? "리포트 제목" : "제목"}</th>
+                  <th className="px-4 py-3 text-left font-semibold">{source === "report" ? "발행일" : "날짜"}</th>
+                  <th className="px-4 py-3 text-left font-semibold">{source === "report" ? "증권사" : "출처"}</th>
                 </tr>
               </thead>
               <tbody>
