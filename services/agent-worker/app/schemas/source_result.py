@@ -69,3 +69,13 @@ class SourceResult:
     cause: Cause | None = None
     cause_rationale: str | None = None
     cause_source: str | None = None
+    # Neutral attention-spike layer (DATALAB only). A search-volume magnitude flag,
+    # NOT a direction/return signal — it never moves ``direction``/``score``.
+    # ``attention_note`` is the grounded "주의 근거" the aggregator routes into
+    # ``caution_evidence``; the rest are structured fields a future
+    # persistence/FE surface can render. All None outside the DataLab spike path.
+    attention_tier: str | None = None
+    attention_z: float | None = None
+    attention_note: str | None = None
+    expected_fwd_vol_mult: float | None = None
+    expected_fwd_volume_mult: float | None = None

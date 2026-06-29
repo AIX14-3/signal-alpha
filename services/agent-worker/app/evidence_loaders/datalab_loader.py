@@ -7,6 +7,7 @@ weight the analyzer uses to blend category trends into a stock-level signal.
 
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import date, timedelta
 from typing import Any
 
@@ -16,9 +17,15 @@ from app.schemas.evidence import RawEvidence
 class DataLabEvidenceLoader:
     source = "DATALAB"
 
-    def __init__(self, repository: Any, *, lookback_days: int) -> None:
+    def __init__(
+        self, repository: Any, *, lookback_days: int, attention_window_days: int = 180
+    ) -> None:
         self._repository = repository
         self._lookback_days = lookback_days
+        # Wider window (calendar days) for the neutral attention_spike rolling-z.
+        # Fetched separately so the directional ``rows`` (lookback_days) stay
+        # byte-identical — widening the directional window would change features.
+        self._attention_window_days = max(attention_window_days, lookback_days)
 
     async def load(
         self,
@@ -44,6 +51,19 @@ class DataLabEvidenceLoader:
         )
         rows = [_row(record, weight_by_category) for record in records]
         latest = rows[0]["observed_date"] if rows else None
+
+        # Separate, wider PIT series for the neutral attention_spike rolling-z.
+        attention_since = as_of - timedelta(days=self._attention_window_days)
+        attention_records = (
+            await self._repository.list_datalab_details_by_category(
+                category_ids=category_ids,
+                since_date=attention_since,
+            )
+            if category_ids
+            else []
+        )
+        attention_series = _blend_daily_series(attention_records, weight_by_category)
+
         metadata: dict[str, Any] = {
             "rows": rows,
             "as_of": as_of.isoformat(),
@@ -51,6 +71,7 @@ class DataLabEvidenceLoader:
             "count": len(rows),
             "category_ids": category_ids,
             "source_name": "NAVER_DATALAB",
+            "attention_series": attention_series,
         }
         return [
             RawEvidence(
@@ -62,6 +83,29 @@ class DataLabEvidenceLoader:
                 metadata=metadata,
             )
         ]
+
+
+def _blend_daily_series(
+    records: list[Any], weight_by_category: dict[int, float]
+) -> list[list[Any]]:
+    """Weight-blend search_index across categories per observed_date.
+
+    Returns ``[[iso_date, value], ...]`` sorted ascending — a stock-level PIT
+    search series for the attention rolling-z. Records with no date/index are
+    skipped; a date's value is the category-weighted mean of that day's indices.
+    """
+    numer: dict[str, float] = defaultdict(float)
+    denom: dict[str, float] = defaultdict(float)
+    for record in records:
+        observed_date = record["observed_date"]
+        search_index = _to_float(record["search_index"])
+        if observed_date is None or search_index is None:
+            continue
+        weight = weight_by_category.get(int(record["category_id"]), 1.0)
+        key = observed_date.isoformat()
+        numer[key] += search_index * weight
+        denom[key] += weight
+    return [[key, numer[key] / denom[key]] for key in sorted(numer) if denom[key] > 0]
 
 
 def _row(record: Any, weight_by_category: dict[int, float]) -> dict[str, Any]:

@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import date
 
 from app.analyzers.config import DataLabRuleConfig
+from app.analyzers.datalab.attention import compute_attention_spike
 from app.analyzers.datalab.indicators import compute_indicators
 from app.schemas.evidence import RawEvidence
 from app.schemas.source_result import EvidenceItem, SourceResult
@@ -65,24 +66,59 @@ class DataLabAnalyzer:
         )
         if llm_count:
             summary += f" (LLM 분류 키워드 {llm_count}건)"
+
+        # Neutral attention-spike layer: only fires when the loader supplied the
+        # wider PIT search series. Never touches direction/score (kept unknown/0).
+        evidence_items = [
+            EvidenceItem(
+                title=f"검색 트렌드 피처 {indicators.observations}건",
+                summary=f"{latest} 기준 검색 트렌드 지표(피처) 산출 결과",
+                published_at=latest,
+                source_name="NAVER_DATALAB",
+            )
+        ]
+        risk_flags: list[str] = []
+        attention = _attention(metadata, as_of, self._config)
+        if attention is not None and attention.risk_flag:
+            evidence_items.append(
+                EvidenceItem(
+                    title=attention.evidence_text,
+                    summary="검색 어텐션 급증(중립·주의 근거)",
+                    published_at=latest,
+                    source_name="NAVER_DATALAB",
+                )
+            )
+            risk_flags.append(attention.risk_flag)
+
         return SourceResult(
             source="DATALAB",
             stock_code=stock_code,
             direction="unknown",
             score=0.0,
             summary=summary,
-            evidence_items=[
-                EvidenceItem(
-                    title=f"검색 트렌드 피처 {indicators.observations}건",
-                    summary=f"{latest} 기준 검색 트렌드 지표(피처) 산출 결과",
-                    published_at=latest,
-                    source_name="NAVER_DATALAB",
-                )
-            ],
-            risk_flags=[],
+            evidence_items=evidence_items,
+            risk_flags=risk_flags,
             data_status="no_signal",
             llm_model=llm_model,
+            attention_tier=attention.attention_tier if attention else None,
+            attention_z=round(attention.attention_z, 3) if attention else None,
+            attention_note=attention.evidence_text if (attention and attention.risk_flag) else None,
+            expected_fwd_vol_mult=attention.expected_fwd_vol_mult if attention else None,
+            expected_fwd_volume_mult=attention.expected_fwd_volume_mult if attention else None,
         )
+
+
+def _attention(metadata: dict, as_of: date, config: DataLabRuleConfig):
+    """Compute the neutral attention spike from the loader's wider PIT series.
+
+    Returns None when no ``attention_series`` was supplied (e.g. legacy callers /
+    unit tests that only pass ``rows``) or history is too short — so the feature
+    is strictly additive and never changes the directional/feature output.
+    """
+    series = metadata.get("attention_series")
+    if not series:
+        return None
+    return compute_attention_spike(series, as_of=as_of, config=config)
 
 
 def _extract_rows(evidence: list[RawEvidence]) -> list[dict]:
