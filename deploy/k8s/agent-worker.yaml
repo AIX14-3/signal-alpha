@@ -1,5 +1,21 @@
 # agent-worker 유닛 — FastAPI(8011) + 큐 드레인 데몬. 분석·정규화·집계·LLM 종합·발행.
 # 가격 데몬은 collector 유닛으로 분리되었으므로 PRICE_COLLECTOR_ENABLED=false.
+# 리포트 저장(local 백엔드)용 PVC — 워커가 단일 writer 이고 main-server 는 DB api.* view 로
+# 읽으므로 RWO 로 충분(RWX/Filestore 불필요). gcs 컷오버 시 이 PVC 는 미사용이 된다.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: agent-worker-reports
+  namespace: signal-alpha
+  labels:
+    app.kubernetes.io/part-of: signal-alpha
+    app.kubernetes.io/name: agent-worker
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 5Gi
+---
 apiVersion: v1
 kind: Service
 metadata:
@@ -27,6 +43,8 @@ metadata:
     argocd.argoproj.io/sync-wave: "2"
 spec:
   replicas: 1                  # 큐 드레인은 advisory lock 으로 단일 소비 — replicas 확장 시 주의
+  strategy:
+    type: Recreate             # 롤아웃 중 데몬 2중기동 방지: 구 Pod 완전 종료 후 신 Pod 기동
   selector:
     matchLabels:
       app.kubernetes.io/name: agent-worker
@@ -36,6 +54,11 @@ spec:
         app.kubernetes.io/part-of: signal-alpha
         app.kubernetes.io/name: agent-worker
     spec:
+      terminationGracePeriodSeconds: 60   # SIGTERM→lifespan finally(데몬 cancel→pool.close)
+      volumes:
+        - name: report-storage
+          persistentVolumeClaim:
+            claimName: agent-worker-reports
       containers:
         - name: agent-worker
           image: signal-alpha-agent-worker
@@ -63,6 +86,9 @@ spec:
             httpGet: { path: /health, port: 8011 }
             initialDelaySeconds: 20
             periodSeconds: 20
+          volumeMounts:
+            - name: report-storage
+              mountPath: /data/report-storage   # REPORT_LOCAL_STORAGE_DIR 와 일치
           resources:
             requests: { cpu: "100m", memory: "256Mi" }
             limits: { cpu: "1", memory: "1Gi" }

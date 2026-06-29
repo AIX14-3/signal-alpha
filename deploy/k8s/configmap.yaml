@@ -29,8 +29,10 @@ data:
   GEMINI_BASE_URL: "https://generativelanguage.googleapis.com/v1beta"
   # 끝단 종합 LLM(키 없으면 결정론 폴백).
   SYNTHESIS_USE_LLM: "false"
-  # 리포트 저장 백엔드.
-  REPORT_STORAGE_BACKEND: "gcs"
+  # 리포트 저장 백엔드. 초기 인클러스터 브링업은 local(PVC) — GCS ADC 는 GKE 에서
+  # Workload Identity 가 있어야 인증되므로, 외부 서빙이 필요한 컷오버 시점에 gcs 로 전환한다.
+  REPORT_STORAGE_BACKEND: "local"
+  REPORT_LOCAL_STORAGE_DIR: "/data/report-storage"
   GCS_REPORT_BUCKET: "signal-alpha-reports"
   # ML_INFER 변동성 모델 화이트리스트.
   ML_GATE_PASSED_MODELS: "ewma,har_rv,garch,tcn"

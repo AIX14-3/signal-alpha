@@ -12,6 +12,8 @@ metadata:
     argocd.argoproj.io/sync-wave: "2"
 spec:
   replicas: 1
+  strategy:
+    type: Recreate             # 일관성: 롤아웃 중 스케줄러 중복 호출 방지(인큐는 멱등이나 깔끔히 0→1)
   selector:
     matchLabels:
       app.kubernetes.io/name: scheduler
