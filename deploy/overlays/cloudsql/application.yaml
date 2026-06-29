@@ -1,0 +1,35 @@
+# Argo CD Application — Cloud SQL ×2 변형(앱만 GKE, DB는 관리형 Cloud SQL).
+# base 의 `deploy/argocd/application.yaml`(in-cluster Postgres) 대신 **이 파일을 적용**한다.
+# 둘 다 name=signal-alpha 이므로 동시에 적용하지 말 것(택1).
+#   kubectl apply -f deploy/argocd/project.yaml -f deploy/overlays/cloudsql/application.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: signal-alpha
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: signal-alpha
+  source:
+    repoURL: https://github.com/AIX14-3/signal-alpha.git
+    # 병합 전 검증/배포 시엔 작업 브랜치(feat/deploy-cloudsql-overlay)로,
+    # main 병합 후엔 main 으로 둔다.
+    targetRevision: main
+    path: deploy/overlays/cloudsql   # ← Cloud SQL 오버레이(kustomize)
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: signal-alpha
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ApplyOutOfSyncOnly=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

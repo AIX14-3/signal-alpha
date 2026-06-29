@@ -137,10 +137,10 @@ cd services/agent-worker
 Notes:
 
 - The worker must be running at `-WorkerBaseUrl`; tasks only call its HTTP endpoints.
-- Publishing needs a scoring source. `REPORT` is not a scoring source
-  (`SCORING_SOURCES = {DART, ALTERNATIVE}` in `aggregation/tasks.py`), so the
-  `DartCollectDrain` task must stay enabled for `final_signals.is_published` to
-  become true.
+- Publishing needs a scoring source. `REPORT`/`PRICE` are not scoring sources
+  (`SCORING_SOURCES = {DART, HIRING, PATENT, DATALAB}` in `aggregation/tasks.py`),
+  so at least one of DART/hiring/patent/datalab must produce a result for
+  `final_signals.is_published` to become true.
 - DART collection requires the `dart_corp_codes` mapping. The script runs an
   initial `POST /internal/dart/corp-codes/sync` on registration (skip with
   `-SkipInitialSync`) and re-syncs weekly via the `CorpCodeSync` task; without

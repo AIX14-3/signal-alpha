@@ -90,6 +90,7 @@ export const SOURCE_META: Record<
   dart: { label: "DART", icon: "📑", hint: "전자공시" },
   hiring: { label: "채용공고", icon: "🧑‍💼", hint: "채용 동향" },
   datalab: { label: "네이버 키워드", icon: "🔎", hint: "검색 관심도" },
+  patent: { label: "특허", icon: "💡", hint: "특허 출원 동향" },
   report: { label: "증권사 리포트", icon: "🏦", hint: "애널리스트 의견" },
 };
 
@@ -100,6 +101,16 @@ export const SOURCE_ORDER: ("price" | "dart" | "hiring" | "datalab" | "report")[
   "datalab",
   "report",
 ];
+
+/** AI 예측률 카드 순서 — 주가 1 + 공공데이터 5(DART·증권사리포트·채용·특허·네이버데이터랩). */
+export const PREDICTION_RATE_ORDER: (
+  | "price"
+  | "dart"
+  | "datalab"
+  | "hiring"
+  | "patent"
+  | "report"
+)[] = ["price", "dart", "datalab", "hiring", "patent", "report"];
 
 export function sourceLabel(source: string): string {
   return SOURCE_META[source]?.label ?? source;

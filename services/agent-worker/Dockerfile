@@ -38,6 +38,16 @@ COPY services/agent-worker/run_collectors.py \
      services/agent-worker/run_altdata_pipeline.sh \
      ./
 
+# 인스턴스 분리 엔트리포인트(collector/scheduler/단발 드레인) + 공용 부트스트랩 모듈.
+# 이 이미지를 command 만 바꿔 collector(run_collector_instance) · scheduler
+# (run_scheduler_instance) 유닛으로도 기동한다. 세 스크립트는 mvp_runtime 를 import 하므로
+# 함께 COPY 해야 이미지에서 실행된다(미포함 시 ModuleNotFoundError).
+COPY services/agent-worker/mvp_runtime.py \
+     services/agent-worker/run_collector_instance.py \
+     services/agent-worker/run_scheduler_instance.py \
+     services/agent-worker/run_worker_drain.py \
+     ./
+
 EXPOSE 8011
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8011"]

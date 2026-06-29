@@ -1,0 +1,68 @@
+name: AltData Collect
+
+# 대체데이터 '수집'만 담당(특허 + DataLab). 정규화/분석은 altdata-process.yml(07:00 KST)이,
+# DataLab 키워드 생성은 datalab-daily.yml 이 담당한다(역할 분리로 서로 굶김 방지).
+#   run_collectors.py --patent-only   → KIPRIS 로 특허 raw_documents + NORMALIZE_PATENT enqueue
+#   run_collectors.py --datalab-only  → Naver DataLab raw + NORMALIZE_DATALAB enqueue
+#
+# ⚠️ 필요한 리포 Secrets(Settings > Secrets and variables > Actions) — run_collectors.py 가
+#    실제로 읽는 env 이름과 일치해야 한다:
+#   DATABASE_URL          (필수)
+#   NAVER_CLIENT_ID / NAVER_CLIENT_SECRET   (DataLab 수집 — 현재 등록됨)
+#   KIPRIS_API_KEY        (특허 수집 — ⚠️ 현재 미등록. 없으면 특허는 빈 키로 돌아 수집 0)
+#   COLLECTOR_VERSION     (선택)
+# (특허 BigQuery 백필은 별도 스크립트/ADC 경로이며 이 워크플로와 무관 — GOOGLE_CLOUD_PROJECT 불필요)
+
+on:
+  schedule:
+    - cron: "30 21 * * *" # 06:30 KST — datalab-daily 06:00 키워드 생성 직후
+  workflow_dispatch:
+    inputs:
+      ticker:
+        description: "단일 종목만 처리(비우면 전체 활성 종목)"
+        required: false
+        default: ""
+
+concurrency:
+  group: altdata-collect
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    name: Collect patent + datalab
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      KIPRIS_API_KEY: ${{ secrets.KIPRIS_API_KEY }}
+      NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
+      NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
+      COLLECTOR_VERSION: ${{ secrets.COLLECTOR_VERSION }}
+      TICKER_ARG: ${{ inputs.ticker && format('--ticker {0}', inputs.ticker) || '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install Python (from .python-version)
+        run: uv python install
+
+      - name: Sync dependencies
+        run: uv sync --all-packages --group dev
+
+      # 특허/DataLab 은 서로 독립. 한 소스의 API 키 누락·쿼터 소진(429)이 다른 소스를
+      # 막지 않도록 각 스텝 continue-on-error. (실제 적재 여부는 스텝 로그의 inserted/skipped 확인)
+      - name: Collect — patent
+        if: always()
+        continue-on-error: true
+        working-directory: services/agent-worker
+        run: uv run python run_collectors.py --patent-only $TICKER_ARG
+
+      - name: Collect — datalab
+        if: always()
+        continue-on-error: true
+        working-directory: services/agent-worker
+        run: uv run python run_collectors.py --datalab-only $TICKER_ARG

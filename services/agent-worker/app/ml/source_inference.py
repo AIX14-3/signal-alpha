@@ -32,6 +32,8 @@ from app.orchestrator.queue.task_types import RETURN_COMBINE
 DEFAULT_HORIZON = 20
 # DB 조회 윈도우(일) — 피처 recent/prior 윈도우를 모두 덮도록 피처 lookback 보다 길게.
 DEFAULT_LOADER_LOOKBACK_DAYS = 60
+# 주가 BASE 피처용 OHLCV 세션 수 — sma60 + 여유. PIT 게이트가 as_of 초과 행을 제거한다.
+DEFAULT_PRICE_LOOKBACK_SESSIONS = 80
 # 학습된 base 모델 아티팩트 디렉터리(파일명 = f"{model_name}.txt", LightGBM Booster 저장형식).
 DEFAULT_ARTIFACT_DIR = Path(__file__).resolve().parent / "artifacts" / "source_models"
 
@@ -59,11 +61,14 @@ class SrcInferTaskHandler:
         datalab_loader: Any | None = None,
         hiring_loader: Any | None = None,
         dart_loader: Any | None = None,
+        patent_loader: Any | None = None,
+        market_data: Any | None = None,
         models: list[SourceModel] | None = None,
         inferences: Any | None = None,
         queue: Any | None = None,
         loader_lookback_days: int | None = None,
         feature_lookback_days: int | None = None,
+        price_lookback_sessions: int | None = None,
         run_key: str = SOURCE_RUN_KEY,
         horizon: int | None = None,
         artifact_dir: str | Path | None = None,
@@ -71,6 +76,12 @@ class SrcInferTaskHandler:
         self._connection = connection
         self._run_key = run_key
         self._horizon = horizon if horizon is not None else _int_env("SRC_HORIZON", DEFAULT_HORIZON)
+        # 주가 BASE 피처용 OHLCV 조회 세션 수(sma60 + 버퍼). PIT 게이트가 as_of 초과분을 잘라낸다.
+        self._price_lookback = (
+            price_lookback_sessions
+            if price_lookback_sessions is not None
+            else _int_env("SRC_PRICE_LOOKBACK_SESSIONS", DEFAULT_PRICE_LOOKBACK_SESSIONS)
+        )
         self._feature_lookback = (
             feature_lookback_days
             if feature_lookback_days is not None
@@ -87,16 +98,21 @@ class SrcInferTaskHandler:
             datalab_loader is None
             or hiring_loader is None
             or dart_loader is None
+            or patent_loader is None
+            or market_data is None
             or inferences is None
             or queue is None
         ):
             from signal_alpha_data_access.repositories import (
+                MarketDataRepository,
                 MlInferenceRepository,
                 ProcessingQueueRepository,
                 RawDetailRepository,
             )
 
             repo = RawDetailRepository(connection)
+            if market_data is None:
+                market_data = MarketDataRepository(connection)
             if datalab_loader is None:
                 from app.evidence_loaders.datalab_loader import DataLabEvidenceLoader
 
@@ -109,6 +125,10 @@ class SrcInferTaskHandler:
                 from app.evidence_loaders.dart_loader import DartEvidenceLoader
 
                 dart_loader = DartEvidenceLoader(repo, lookback_days=loader_lookback)
+            if patent_loader is None:
+                from app.evidence_loaders.patent_loader import PatentEvidenceLoader
+
+                patent_loader = PatentEvidenceLoader(repo, lookback_days=loader_lookback)
             if inferences is None:
                 inferences = MlInferenceRepository(connection)
             if queue is None:
@@ -117,6 +137,8 @@ class SrcInferTaskHandler:
         self._datalab_loader = datalab_loader
         self._hiring_loader = hiring_loader
         self._dart_loader = dart_loader
+        self._patent_loader = patent_loader
+        self._market_data = market_data
         self._inferences = inferences
         self._queue = queue
         self._models = (
@@ -136,6 +158,8 @@ class SrcInferTaskHandler:
         datalab_rows = await self._rows(self._datalab_loader, stock_id, stock_code, as_of)
         hiring_rows, sector_demand = await self._hiring(stock_id, stock_code, as_of)
         dart_rows = await self._rows(self._dart_loader, stock_id, stock_code, as_of)
+        patent_rows = await self._rows(self._patent_loader, stock_id, stock_code, as_of)
+        price_rows = await self._price_rows(stock_id)
 
         predictions = predict_sources(
             as_of,
@@ -143,6 +167,8 @@ class SrcInferTaskHandler:
             datalab_rows=datalab_rows,
             hiring_rows=hiring_rows,
             dart_rows=dart_rows,
+            price_rows=price_rows,
+            patent_rows=patent_rows,
             lookback_days=self._feature_lookback,
             sector_demand=sector_demand,
         )
@@ -187,6 +213,14 @@ class SrcInferTaskHandler:
             "succeeded": succeeded,
             "return_combine_task_id": return_combine_task_id,
         }
+
+    async def _price_rows(self, stock_id: int) -> list[dict]:
+        """주가 BASE 피처용 최근 OHLCV(체결일·종가·거래량·외국인/기관 순매수). 어셈블러가
+        ``trade_date <= as_of`` PIT 게이트를 적용하므로 최근 세션을 넉넉히 읽어도 안전하다."""
+        records = await self._market_data.list_recent_ohlcv(
+            stock_id=stock_id, limit=self._price_lookback
+        )
+        return [dict(record) for record in records]
 
     async def _rows(self, loader: Any, stock_id: int, stock_code: str, as_of: date) -> list[dict]:
         evidence = await loader.load(stock_id=stock_id, stock_code=stock_code, as_of=as_of)

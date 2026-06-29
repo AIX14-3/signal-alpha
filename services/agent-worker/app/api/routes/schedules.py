@@ -14,7 +14,9 @@ router = APIRouter(prefix="/internal/schedules", tags=["schedules"])
 
 
 class ScheduleDartCollectionRequest(BaseModel):
-    limit: int = Field(default=100, ge=1, le=1000)
+    # DART 수집은 종목당 무겁다(공시리스트+문서 fetch). 한 회차 인큐를 작게 잡아 워커 독점을
+    # 막는다(공정 drain=run-cycle 와 함께). 더 자주 실행해 전 종목을 점진 수집한다.
+    limit: int = Field(default=10, ge=1, le=1000)
     end_de: str | None = None
     priority: Literal["batch", "immediate"] = "batch"
 

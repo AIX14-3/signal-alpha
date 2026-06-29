@@ -38,9 +38,11 @@ SOURCE_RUN_KEY = "SRC"
 # src_dart = DART 임원·주요주주 지분변동(event-study) base 모델. 저빈도 재무·임직원은 base 없이
 # 메타러너 피처(D1)라 여기 없음.
 SOURCE_MODELS: dict[str, str] = {
+    "src_price": "price",  # 주가 BASE 앵커(스케일-프리 OHLCV+수급 피처) → forward return
     "src_datalab": "datalab",
     "src_hiring": "hiring",
     "src_dart": "dart",
+    "src_patent": "patent",  # 특허 출원 모멘텀/신규분야 → forward return
 }
 
 # 피처 순서 파생용 기준일(0행 indicator 호출 → 데이터와 무관하게 동일 키셋이 나온다).
@@ -109,6 +111,8 @@ def predict_sources(
     datalab_rows: Sequence[Mapping[str, Any]] = (),
     hiring_rows: Sequence[Mapping[str, Any]] = (),
     dart_rows: Sequence[Mapping[str, Any]] = (),
+    price_rows: Sequence[Mapping[str, Any]] = (),
+    patent_rows: Sequence[Mapping[str, Any]] = (),
     lookback_days: int | None = None,
     sector_demand: dict | None = None,
 ) -> dict[str, float | None]:
@@ -120,6 +124,8 @@ def predict_sources(
         "datalab_rows": datalab_rows,
         "hiring_rows": hiring_rows,
         "dart_rows": dart_rows,
+        "price_rows": price_rows,
+        "patent_rows": patent_rows,
         "sector_demand": sector_demand,
     }
     if lookback_days is not None:

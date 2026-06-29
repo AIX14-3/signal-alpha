@@ -23,6 +23,12 @@ def _int(name: str, default: int) -> int:
     return int(raw) if raw not in (None, "") else default
 
 
+def _float_opt(name: str, default: float | None) -> float | None:
+    """Like ``_float`` but preserves a ``None`` default (env unset → stays None)."""
+    raw = getenv(name)
+    return float(raw) if raw not in (None, "") else default
+
+
 @dataclass(frozen=True)
 class PatentRuleConfig:
     """Scoring parameters for the Patent analyzer."""
@@ -89,6 +95,27 @@ class DataLabRuleConfig:
     positive_threshold: float = 0.2
     negative_threshold: float = -0.2
 
+    # --- attention_spike (neutral magnitude flag) -------------------------------
+    # NEUTRAL "주목/주의" layer: search-volume rolling-z → expected future
+    # volume/volatility magnitude. NOT a direction/return signal (the directional
+    # search→price hypothesis was rejected). Ported from the research finding
+    # search→magnitude IC +0.37; see docs/attention-spike-flag-design.md.
+    attention_window_days: int = 180  # loader fetch window (calendar) for the series
+    attention_window: int = 60  # trailing points used as the rolling-z baseline
+    attention_min_history: int = 30  # min prior points before a z is computed
+    attention_z_caution: float = 1.5  # 정상→주의 boundary
+    attention_z_watch: float = 2.5  # 주의→주목 boundary
+    attention_z_surge: float = 3.5  # 주목→급증 boundary
+    # z→magnitude multiplier table. PROVISIONAL placeholders (None) — the evidence
+    # text cites numbers only once these are populated by the daily re-calibration
+    # follow-up (calibrate_attention_flag.py). None ⇒ qualitative neutral wording.
+    attention_vol_mult_caution: float | None = None
+    attention_vol_mult_watch: float | None = None
+    attention_vol_mult_surge: float | None = None
+    attention_volume_mult_caution: float | None = None
+    attention_volume_mult_watch: float | None = None
+    attention_volume_mult_surge: float | None = None
+
     @classmethod
     def from_env(cls) -> "DataLabRuleConfig":
         return cls(
@@ -108,6 +135,30 @@ class DataLabRuleConfig:
             change_weight=_float("DATALAB_CHANGE_WEIGHT", cls.change_weight),
             positive_threshold=_float("DATALAB_POSITIVE_THRESHOLD", cls.positive_threshold),
             negative_threshold=_float("DATALAB_NEGATIVE_THRESHOLD", cls.negative_threshold),
+            attention_window_days=_int("DATALAB_ATTENTION_WINDOW_DAYS", cls.attention_window_days),
+            attention_window=_int("DATALAB_ATTENTION_WINDOW", cls.attention_window),
+            attention_min_history=_int("DATALAB_ATTENTION_MIN_HISTORY", cls.attention_min_history),
+            attention_z_caution=_float("DATALAB_ATTENTION_Z_CAUTION", cls.attention_z_caution),
+            attention_z_watch=_float("DATALAB_ATTENTION_Z_WATCH", cls.attention_z_watch),
+            attention_z_surge=_float("DATALAB_ATTENTION_Z_SURGE", cls.attention_z_surge),
+            attention_vol_mult_caution=_float_opt(
+                "DATALAB_ATTENTION_VOL_MULT_CAUTION", cls.attention_vol_mult_caution
+            ),
+            attention_vol_mult_watch=_float_opt(
+                "DATALAB_ATTENTION_VOL_MULT_WATCH", cls.attention_vol_mult_watch
+            ),
+            attention_vol_mult_surge=_float_opt(
+                "DATALAB_ATTENTION_VOL_MULT_SURGE", cls.attention_vol_mult_surge
+            ),
+            attention_volume_mult_caution=_float_opt(
+                "DATALAB_ATTENTION_VOLUME_MULT_CAUTION", cls.attention_volume_mult_caution
+            ),
+            attention_volume_mult_watch=_float_opt(
+                "DATALAB_ATTENTION_VOLUME_MULT_WATCH", cls.attention_volume_mult_watch
+            ),
+            attention_volume_mult_surge=_float_opt(
+                "DATALAB_ATTENTION_VOLUME_MULT_SURGE", cls.attention_volume_mult_surge
+            ),
         )
 
 

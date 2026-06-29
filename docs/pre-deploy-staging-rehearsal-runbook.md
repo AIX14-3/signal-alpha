@@ -44,7 +44,11 @@
 - 체크섬 원장(`schema_migrations`) 확인. 롤백은 forward-only(스테이징 DB drop→재적용) 1회 드릴.
 - CRLF 함정 주의: SQL은 LF(`.gitattributes`), 체크섬 깨짐 방지.
 
-## Phase 3 — 4컴포넌트 합치기 (prod 이미지 + 실배선)
+## Phase 3 — 컴포넌트 합치기 (prod 이미지 + 실배선)
+
+> (#11 업데이트) 운영 토폴로지는 frontend/backend/worker/collector/scheduler **5 컴퓨트 유닛 + DB 2 인스턴스**
+> (수집/백엔드)다. 스테이징 리허설은 아래처럼 `agent-worker`를 **단일 통합 기동**(워커 드레인 데몬 + 가격 수집
+> 내장)으로 묶어 검증한다. 유닛 분리 토폴로지는 [architecture-diagram.md](./architecture-diagram.md) 참조.
 ```bash
 docker compose --profile prod up -d postgres   # staging은 DATABASE_URL로 대체(이 postgres 미사용)
 docker compose run --rm migrate                # 또는 Phase 1에서 이미 적용
@@ -71,7 +75,7 @@ docker compose --profile prod up -d web-prod   # NEXT_PUBLIC_MAIN_API_BASE_URL b
 
 ## 완료 기준 (Go 체크)
 - [ ] zero-drift + schema.sql 스냅샷 + 소유권 문서
-- [ ] 빈 DB→마이그레이션 init-step→4컴포넌트 기동 무에러
+- [ ] 빈 DB→마이그레이션 init-step→컴포넌트 기동 무에러(단일 통합 워커 기준)
 - [ ] DART 실데이터가 웹 발행까지 도달
 - [ ] PortOne 실 결제+취소 1사이클
 - [ ] LLM synthesis 실키 narrative

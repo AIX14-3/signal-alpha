@@ -10,7 +10,9 @@ from app.core.database import get_database_pool
 from signal_alpha_data_access.backend import SignalRepository, UserSignalRepository
 
 
-SOURCE_ORDER = ("DART", "PRICE", "REPORT", "ALTERNATIVE")
+# 대체데이터(HIRING/PATENT/DATALAB)는 소스별 독립 점수(C안 Phase 2)라 score_breakdown 에
+# 각 top-level 키로 들어온다(과거 단일 ALTERNATIVE 폐기). worker breakdown 키와 1:1.
+SOURCE_ORDER = ("DART", "PRICE", "REPORT", "HIRING", "PATENT", "DATALAB")
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
@@ -131,7 +133,9 @@ def _source_item(source: str, detail: Any) -> dict[str, Any]:
     return {
         "source": source,
         "direction": detail.get("direction", "unknown"),
-        "score": _number(detail.get("score")),
+        # worker breakdown 은 score(부호 -1~1) 와 score_100(0~100) 을 함께 싣는다.
+        # 사용자 노출은 0~100 스케일이라 score_100 을 우선한다(reports/signals 와 동일).
+        "score": _number(detail.get("score_100", detail.get("score"))),
         "data_status": detail.get("data_status", "ok"),
     }
 
@@ -146,7 +150,14 @@ def _score_breakdown(signal: dict[str, Any] | None) -> dict[str, Any]:
 
 
 def _source_count(score_breakdown: dict[str, Any]) -> int:
-    return sum(1 for source in SOURCE_ORDER if isinstance(score_breakdown.get(source), dict))
+    # worker breakdown 은 미산출 소스도 data_status="missing" placeholder dict 로 싣으므로
+    # dict 존재만으로 세면 항상 전체 소스 수가 된다 — 실제 기여한 소스만 센다.
+    return sum(
+        1
+        for source in SOURCE_ORDER
+        if isinstance(score_breakdown.get(source), dict)
+        and score_breakdown[source].get("data_status") != "missing"
+    )
 
 
 def _alignment_rate(consensus_score: Any) -> float | None:

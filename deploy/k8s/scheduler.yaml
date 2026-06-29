@@ -1,0 +1,42 @@
+# scheduler 유닛 — 백엔드 DB collection_schedules config 폴링(run_scheduler_instance.py).
+# 매일 run_at_local(기본 04:30 KST)에 워커 수집 엔드포인트(price·dart)를 호출. HTTP 서버 없음.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scheduler
+  namespace: signal-alpha
+  labels:
+    app.kubernetes.io/part-of: signal-alpha
+    app.kubernetes.io/name: scheduler
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate             # 일관성: 롤아웃 중 스케줄러 중복 호출 방지(인큐는 멱등이나 깔끔히 0→1)
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: scheduler
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: signal-alpha
+        app.kubernetes.io/name: scheduler
+    spec:
+      containers:
+        - name: scheduler
+          image: signal-alpha-agent-worker   # worker 이미지 재사용, command 만 교체
+          command: ["python", "run_scheduler_instance.py"]
+          envFrom:
+            - configMapRef: { name: signal-alpha-config }
+            - secretRef: { name: signal-alpha-secrets }
+          env:
+            - name: SERVICE_NAME
+              value: scheduler
+            # config 폴링 대상 = 백엔드 DB. envFrom 으로 BACKEND_DATABASE_URL 주입됨.
+            - name: DATABASE_URL          # 폴백(단일 DB 모드 대비)
+              valueFrom: { secretKeyRef: { name: signal-alpha-secrets, key: WORKER_DATABASE_URL } }
+            # WORKER_BASE_URL·INTERNAL_API_TOKEN 은 envFrom(config/secret).
+          resources:
+            requests: { cpu: "25m", memory: "128Mi" }
+            limits: { cpu: "250m", memory: "256Mi" }

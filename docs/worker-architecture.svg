@@ -1,199 +1,228 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1480" height="1140" viewBox="0 0 1480 1140" font-family="'Segoe UI','Malgun Gothic','Noto Sans KR',sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" width="1480" height="1180" viewBox="0 0 1480 1180" font-family="'Segoe UI','Malgun Gothic','Noto Sans KR',sans-serif">
   <defs>
-    <marker id="arr" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
-      <path d="M0,0 L7,3 L0,6 Z" fill="#475569"/>
+    <marker id="arr" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#475569"/>
     </marker>
-    <marker id="arrL" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
-      <path d="M0,0 L7,3 L0,6 Z" fill="#a855f7"/>
+    <marker id="arrP" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#9333ea"/>
+    </marker>
+    <marker id="arrG" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#94a3b8"/>
     </marker>
     <style>
-      .t{font-weight:700;}
-      .h{font-size:13px;font-weight:700;}
-      .s{font-size:10.5px;fill:#475569;}
-      .c{font-family:'Consolas','D2Coding',monospace;font-size:10.5px;}
-      .lbl{font-size:9.5px;fill:#64748b;}
-      .box{rx:8;}
+      text{fill:#0f172a;}
+      .title{font-size:23px;font-weight:700;}
+      .sub{font-size:12px;fill:#475569;}
+      .sec{font-size:15px;font-weight:700;fill:#0f172a;}
+      .h{font-size:13.5px;font-weight:700;}
+      .s{font-size:11px;fill:#334155;}
+      .c{font-family:'Consolas','D2Coding',monospace;font-size:11px;}
+      .lbl{font-size:10.5px;fill:#64748b;}
+      .albl{font-size:10.5px;fill:#475569;font-weight:600;}
+      .badge{font-size:11px;font-weight:700;}
     </style>
   </defs>
 
-  <rect x="0" y="0" width="1480" height="1140" fill="#ffffff"/>
+  <rect x="0" y="0" width="1480" height="1180" fill="#ffffff"/>
 
-  <!-- Header -->
-  <text x="40" y="38" font-size="22" class="t" fill="#0f172a">Signal α — agent-worker 설계도 (게이트형 큐 드레인)</text>
-  <text x="40" y="60" font-size="12" fill="#475569">github.com/AIX14-3/signal-alpha · services/agent-worker · DB 롤 signal_worker (public DML) · backend는 worker 산출물을 api.* 읽기 view로만 조회</text>
+  <!-- ============ HEADER ============ -->
+  <text x="40" y="40" class="title" fill="#0f172a">Signal α — agent-worker 설계도</text>
+  <text x="40" y="62" class="sub">services/agent-worker 한 코드베이스 → worker · collector · scheduler 3 유닛 기동 · DB 2 인스턴스(수집/백엔드, #531) · 워커 드레인 데몬이 큐를 발행까지 연속 소비(#11)</text>
 
-  <!-- Top band: API + daemons -->
-  <rect x="40" y="82" width="690" height="78" rx="8" fill="#eef6ff" stroke="#3b82f6"/>
-  <text x="56" y="103" class="h" fill="#1e40af">FastAPI 내부 API · app/main.py</text>
-  <text x="56" y="124" class="s">라우트: health · tasks · queue · dart · price · schedules · dead_letter · observability</text>
-  <text x="56" y="143" class="s">사용자(web/main-server)는 호출하지 않음 — 내부 운영/수집·분석 트리거 전용</text>
+  <!-- ============ ① 배포 토폴로지 ============ -->
+  <text x="40" y="98" class="sec">① 배포 토폴로지 — 5 컴퓨트 유닛 + DB 2 인스턴스</text>
+  <rect x="40" y="110" width="1400" height="150" rx="10" fill="#f8fafc" stroke="#e2e8f0"/>
 
-  <rect x="750" y="82" width="690" height="78" rx="8" fill="#fff7ed" stroke="#ea580c"/>
-  <text x="766" y="103" class="h" fill="#9a3412">런타임 데몬 (큐 드레인 / 배치)</text>
-  <text x="766" y="124" class="s">run_collectors · run_normalizers · run_analyzers · run_pipeline(E2E) · run_recommend</text>
-  <text x="766" y="143" class="s">run_baseline · daily_keyword_pipeline — analyzer 서비스는 run_analyzers --loop</text>
+  <!-- Scheduler -->
+  <rect x="64" y="134" width="226" height="104" rx="9" fill="#fef3c7" stroke="#d97706" stroke-width="1.5"/>
+  <text x="80" y="159" class="h" fill="#92400e">스케줄러 유닛</text>
+  <text x="80" y="180" class="c" fill="#7c2d12">run_scheduler_instance.py</text>
+  <text x="80" y="200" class="s">워커 /internal/schedules/*</text>
+  <text x="80" y="217" class="s">주기 HTTP 호출(수집 스케줄)</text>
+  <text x="80" y="232" class="lbl">로직 없음 — 엔드포인트만 호출</text>
 
-  <!-- Section label: sources -->
-  <text x="40" y="196" class="h" fill="#0f172a">① 소스 파이프라인 — 소스별 수집→정규화→(보강)→분석 (collectors · analyzers, 큐 task_type)</text>
+  <!-- Collector -->
+  <rect x="316" y="134" width="226" height="104" rx="9" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="332" y="159" class="h" fill="#166534">수집기 유닛</text>
+  <text x="332" y="180" class="c" fill="#14532d">run_collector_instance.py</text>
+  <text x="332" y="200" class="s">키움 실시간 가격 데몬</text>
+  <text x="332" y="217" class="s">run_collectors(patent/datalab)</text>
+  <text x="332" y="232" class="lbl">원천 수집 → 수집 DB write</text>
 
-  <!-- Source columns -->
-  <!-- DART -->
-  <rect x="40" y="208" width="218" height="158" rx="8" fill="#dbeafe" stroke="#3b82f6"/>
-  <text x="52" y="228" class="h" fill="#1e40af">DART 공시</text>
-  <text x="52" y="244" class="lbl">외부: DART OpenAPI</text>
-  <line x1="52" y1="252" x2="246" y2="252" stroke="#93c5fd"/>
-  <text x="52" y="270" class="c" fill="#1e3a8a">collect_dart</text>
-  <text x="52" y="290" class="c" fill="#1e3a8a">normalize_dart</text>
-  <text x="52" y="310" class="c" fill="#1e3a8a">analyze_dart</text>
-  <text x="52" y="333" class="lbl">L1 공시 · L2 지분/내부자 · L3 임직원</text>
-  <text x="52" y="349" class="lbl">→ signal_events</text>
+  <!-- Worker -->
+  <rect x="568" y="134" width="300" height="104" rx="9" fill="#ffedd5" stroke="#ea580c" stroke-width="2"/>
+  <text x="586" y="159" class="h" fill="#9a3412">워커 유닛 (uvicorn + 큐 드레인 데몬)</text>
+  <text x="586" y="180" class="s">API 8라우트 · 분석·정규화·집계·LLM 종합</text>
+  <text x="586" y="199" class="c" fill="#7c2d12">QUEUE_DRAIN_DAEMON_ENABLED=true</text>
+  <text x="586" y="216" class="s">processing_queue → 발행까지 연속 소비</text>
+  <text x="586" y="231" class="lbl">advisory-lock 단일 기동 · 단발검증 run_worker_drain.py</text>
 
-  <!-- Report -->
-  <rect x="270" y="208" width="218" height="158" rx="8" fill="#dbeafe" stroke="#3b82f6"/>
-  <text x="282" y="228" class="h" fill="#1e40af">증권사 리포트</text>
-  <text x="282" y="244" class="lbl">외부: 리포트 PDF</text>
-  <line x1="282" y1="252" x2="476" y2="252" stroke="#93c5fd"/>
-  <text x="282" y="270" class="c" fill="#1e3a8a">collect_report</text>
-  <text x="282" y="288" class="c" fill="#1e3a8a">process_report</text>
-  <text x="282" y="306" class="c" fill="#1e3a8a">normalize_report</text>
-  <text x="282" y="324" class="c" fill="#1e3a8a">analyze_report</text>
-  <text x="282" y="346" class="lbl">Gemini PDF 파싱 → 밸류에이션</text>
+  <!-- 수집 DB -->
+  <rect x="894" y="134" width="258" height="104" rx="9" fill="#ede9fe" stroke="#7c3aed" stroke-width="1.5"/>
+  <text x="910" y="159" class="h" fill="#5b21b6">수집 DB — Postgres ①</text>
+  <text x="910" y="180" class="s">processing_queue · stocks · signal_events</text>
+  <text x="910" y="198" class="s">analysis_results · agent_results</text>
+  <text x="910" y="216" class="s">final_signals · ml_inferences · meta_signals</text>
+  <text x="910" y="232" class="lbl">롤 signal_worker (public DML)</text>
 
-  <!-- DataLab -->
-  <rect x="500" y="208" width="218" height="158" rx="8" fill="#dbeafe" stroke="#3b82f6"/>
-  <text x="512" y="228" class="h" fill="#1e40af">네이버 데이터랩</text>
-  <text x="512" y="244" class="lbl">외부: DataLab API</text>
-  <line x1="512" y1="252" x2="706" y2="252" stroke="#93c5fd"/>
-  <text x="512" y="270" class="c" fill="#1e3a8a">NORMALIZE_DATALAB</text>
-  <text x="512" y="290" class="c" fill="#1e3a8a">ANALYZE_ALTERNATIVE</text>
-  <text x="512" y="333" class="lbl">키워드 트렌드 · 채용 baseline</text>
-  <text x="512" y="349" class="lbl">(run_baseline)</text>
+  <!-- 백엔드 DB -->
+  <rect x="1176" y="134" width="240" height="104" rx="9" fill="#f3e8ff" stroke="#9333ea" stroke-width="1.5"/>
+  <text x="1192" y="159" class="h" fill="#6b21a8">백엔드 DB — Postgres ②</text>
+  <text x="1192" y="180" class="s">PUBLISHED 발행 사본</text>
+  <text x="1192" y="198" class="s">api.signals_current</text>
+  <text x="1192" y="216" class="s">+ BACKEND 15테이블(회원/결제…)</text>
+  <text x="1192" y="232" class="lbl">main-server 가 api.* 읽기</text>
 
-  <!-- Hiring -->
-  <rect x="730" y="208" width="218" height="158" rx="8" fill="#dbeafe" stroke="#3b82f6"/>
-  <text x="742" y="228" class="h" fill="#1e40af">채용공고</text>
-  <text x="742" y="244" class="lbl">외부: 잡코리아·사람인</text>
-  <line x1="742" y1="252" x2="936" y2="252" stroke="#93c5fd"/>
-  <text x="742" y="270" class="c" fill="#1e3a8a">NORMALIZE_HIRING</text>
-  <text x="742" y="290" class="c" fill="#7c3aed">ENRICH_HIRING</text>
-  <text x="742" y="306" class="lbl">Tesseract OCR → 기술스킬</text>
-  <text x="742" y="326" class="c" fill="#1e3a8a">ANALYZE_ALTERNATIVE</text>
-  <text x="742" y="349" class="lbl">Chromium 내장 크롤러</text>
+  <!-- topology arrows -->
+  <line x1="290" y1="172" x2="566" y2="172" stroke="#475569" stroke-width="1.6" marker-end="url(#arr)"/>
+  <text x="300" y="166" class="albl">HTTP POST /schedules/*</text>
+  <line x1="429" y1="238" x2="429" y2="252" stroke="#475569" stroke-width="1.6"/>
+  <path d="M429,252 L429,272 L1010,272 L1010,240" fill="none" stroke="#16a34a" stroke-width="1.6" marker-end="url(#arr)"/>
+  <text x="600" y="288" class="albl" fill="#166534">collector → 수집 DB (원천 적재)</text>
+  <line x1="868" y1="180" x2="892" y2="180" stroke="#475569" stroke-width="1.8" marker-end="url(#arr)"/>
+  <text x="700" y="200" class="albl" fill="#9a3412"> </text>
+  <line x1="1152" y1="200" x2="1174" y2="200" stroke="#9333ea" stroke-width="1.8" marker-end="url(#arrP)"/>
+  <text x="965" y="128" class="albl" fill="#7c3aed">worker → 수집DB: drain DML</text>
+  <text x="1158" y="128" class="albl" fill="#9333ea">publish</text>
 
-  <!-- Patent -->
-  <rect x="960" y="208" width="218" height="158" rx="8" fill="#dbeafe" stroke="#3b82f6"/>
-  <text x="972" y="228" class="h" fill="#1e40af">특허</text>
-  <text x="972" y="244" class="lbl">외부: KIPRIS</text>
-  <line x1="972" y1="252" x2="1166" y2="252" stroke="#93c5fd"/>
-  <text x="972" y="270" class="c" fill="#1e3a8a">NORMALIZE_PATENT</text>
-  <text x="972" y="290" class="c" fill="#7c3aed">ENRICH_PATENT</text>
-  <text x="972" y="306" class="lbl">Gemini 중요도 → llm_features</text>
-  <text x="972" y="326" class="c" fill="#1e3a8a">ANALYZE_ALTERNATIVE</text>
+  <!-- ============ ② 큐 드레인 파이프라인 ============ -->
+  <text x="40" y="318" class="sec">② 큐 드레인 파이프라인 — 워커 드레인 데몬이 processing_queue 를 체인 순서로 끝단(발행)까지 연속 소비</text>
+  <rect x="40" y="332" width="1400" height="92" rx="10" fill="#fff7ed" stroke="#fdba74"/>
 
-  <!-- Price -->
-  <rect x="1190" y="208" width="218" height="158" rx="8" fill="#dbeafe" stroke="#3b82f6"/>
-  <text x="1202" y="228" class="h" fill="#1e40af">가격</text>
-  <text x="1202" y="244" class="lbl">외부: 키움 mockapi</text>
-  <line x1="1202" y1="252" x2="1396" y2="252" stroke="#93c5fd"/>
-  <text x="1202" y="270" class="c" fill="#1e3a8a">collect_price</text>
-  <text x="1202" y="290" class="c" fill="#1e3a8a">analyze_price</text>
-  <text x="1202" y="333" class="lbl">일봉·장중 시세 · 변동성/거래량</text>
-  <text x="1202" y="349" class="lbl">(ML 라인 피처)</text>
+  <!-- chain boxes -->
+  <g>
+    <rect x="60" y="356" width="150" height="44" rx="7" fill="#dbeafe" stroke="#3b82f6"/>
+    <text x="135" y="376" text-anchor="middle" class="c" fill="#1e3a8a">COLLECT_*</text>
+    <text x="135" y="392" text-anchor="middle" class="lbl">dart · report</text>
 
-  <!-- arrows from sources to convergence -->
-  <g stroke="#475569" stroke-width="1.4" fill="none" marker-end="url(#arr)">
-    <path d="M149,366 L149,392 L724,392 L724,408"/>
-    <path d="M379,366 L379,388 L724,388"/>
-    <path d="M609,366 L609,392 L724,392" stroke="#94a3b8"/>
-    <path d="M839,366 L839,392 L726,392" stroke="#94a3b8"/>
-    <path d="M1069,366 L1069,396 L728,396"/>
-    <path d="M1299,366 L1299,400 L730,400"/>
+    <rect x="232" y="356" width="150" height="44" rx="7" fill="#dbeafe" stroke="#3b82f6"/>
+    <text x="307" y="376" text-anchor="middle" class="c" fill="#1e3a8a">NORMALIZE_*</text>
+    <text x="307" y="392" text-anchor="middle" class="lbl">signal_events</text>
+
+    <rect x="404" y="356" width="150" height="44" rx="7" fill="#dbeafe" stroke="#3b82f6"/>
+    <text x="479" y="376" text-anchor="middle" class="c" fill="#1e3a8a">ANALYZE_*</text>
+    <text x="479" y="392" text-anchor="middle" class="lbl">dart·report·price·alt</text>
+
+    <rect x="766" y="356" width="150" height="44" rx="7" fill="#f1f5f9" stroke="#475569"/>
+    <text x="841" y="376" text-anchor="middle" class="c" fill="#334155">AGGREGATE</text>
+    <text x="841" y="392" text-anchor="middle" class="lbl">7 예측률 · 무조건 발행</text>
+
+    <rect x="938" y="356" width="150" height="44" rx="7" fill="#ecfccb" stroke="#65a30d"/>
+    <text x="1013" y="376" text-anchor="middle" class="c" fill="#3f6212">SYNTHESIZE</text>
+    <text x="1013" y="392" text-anchor="middle" class="lbl">끝단 LLM · 법적 필터만</text>
+
+    <rect x="1272" y="356" width="148" height="44" rx="7" fill="#f3e8ff" stroke="#9333ea"/>
+    <text x="1346" y="376" text-anchor="middle" class="c" fill="#6b21a8">PUBLISH</text>
+    <text x="1346" y="392" text-anchor="middle" class="lbl">→ 백엔드 DB</text>
   </g>
+  <line x1="210" y1="378" x2="231" y2="378" stroke="#475569" stroke-width="1.6" marker-end="url(#arr)"/>
+  <line x1="382" y1="378" x2="403" y2="378" stroke="#475569" stroke-width="1.6" marker-end="url(#arr)"/>
+  <line x1="554" y1="378" x2="765" y2="378" stroke="#475569" stroke-width="1.6" marker-end="url(#arr)"/>
+  <line x1="916" y1="378" x2="937" y2="378" stroke="#475569" stroke-width="1.6" marker-end="url(#arr)"/>
+  <line x1="1088" y1="378" x2="1271" y2="378" stroke="#9333ea" stroke-width="1.8" marker-end="url(#arrP)"/>
 
-  <!-- Convergence -->
-  <rect x="430" y="408" width="620" height="50" rx="8" fill="#dcfce7" stroke="#22c55e"/>
-  <text x="450" y="430" class="h" fill="#15803d">소스 분석 산출물</text>
-  <text x="450" y="448" class="c" fill="#166534">signal_events · analysis_results · agent_results  (소스 방향성/근거/신뢰도)</text>
+  <!-- ============ ③ 소스 라우팅 ============ -->
+  <text x="40" y="478" class="sec">③ 소스별 라우팅(목표) — 주가 예측률 BASE ⊕ 대체데이터 → 7 예측률 무조건 발행 · 끝단 LLM 서술(법적 금지단어 필터만)</text>
+  <rect x="40" y="492" width="1400" height="300" rx="10" fill="#f8fafc" stroke="#e2e8f0"/>
 
-  <!-- Section label: gated tail -->
-  <text x="40" y="500" class="h" fill="#0f172a">② 결합 · 게이트 · 종합 — 게이트형 체인 (각 핸들러가 다음 stage를 enqueue)</text>
+  <!-- PRICE (score lane) -->
+  <rect x="64" y="516" width="300" height="96" rx="9" fill="#d1fae5" stroke="#059669" stroke-width="2"/>
+  <text x="80" y="540" class="h" fill="#065f46">PRICE — 주가 기술지표(규칙)</text>
+  <text x="80" y="561" class="s">analyzers/price · indicators/rules (ML/DL 아님)</text>
+  <text x="80" y="580" class="s">정량 예측 → score_breakdown.PRICE</text>
+  <text x="80" y="599" class="albl" fill="#047857">⇒ price_prediction · ML/DL 모델은 §4 src_price</text>
 
-  <!-- ML/DL line (feeds meta into aggregate) -->
-  <rect x="40" y="520" width="300" height="86" rx="8" fill="#ffe4e6" stroke="#f43f5e"/>
-  <text x="56" y="540" class="h" fill="#be123c">ML/DL 라인 (병렬)</text>
-  <text x="56" y="560" class="c" fill="#9f1239">ml_infer  → ml_inferences</text>
-  <text x="56" y="578" class="c" fill="#9f1239">meta_combine → meta_signals</text>
-  <text x="56" y="597" class="lbl">vol-benchmark 모델(게이트 통과)·메타러너 stacking</text>
+  <!-- alt sources combined into price prediction -->
+  <rect x="64" y="636" width="300" height="132" rx="9" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.5"/>
+  <text x="80" y="660" class="h" fill="#1e40af">대체데이터 → 주가 예측률에 가/감산</text>
+  <text x="80" y="682" class="s">DART 공시 · 증권사 리포트 · 채용 · 특허 · 데이터랩</text>
+  <text x="80" y="702" class="s">부정 → 예측률 ↓ · 긍정 → 예측률 ↑</text>
+  <text x="80" y="722" class="s">갱신 없으면 마지막 업데이트 기준(유효기간 표기)</text>
+  <text x="80" y="745" class="lbl">계약 method_detail{source,score,direction,data_status}</text>
+  <text x="80" y="761" class="lbl">검증기 aggregation/source_contract.py</text>
 
-  <!-- Aggregate (gate 2) -->
-  <rect x="372" y="520" width="240" height="86" rx="8" fill="#fae8ff" stroke="#a855f7"/>
-  <text x="388" y="540" class="h" fill="#7e22ce">aggregate_signal</text>
-  <text x="388" y="558" class="s">게이트② 발행 여부 결정</text>
-  <text x="388" y="576" class="lbl">소스 일치도 + meta_signal 결합</text>
-  <text x="388" y="596" class="c" fill="#6b21a8">→ final_signals</text>
+  <!-- AGGREGATE node (routing) -->
+  <rect x="430" y="560" width="250" height="150" rx="9" fill="#f1f5f9" stroke="#475569" stroke-width="1.5"/>
+  <text x="446" y="584" class="h" fill="#334155">AGGREGATE</text>
+  <text x="446" y="606" class="s">7 예측률 취합</text>
+  <text x="446" y="625" class="albl" fill="#334155">→ final_signals · meta_signals</text>
+  <text x="446" y="643" class="s">대체 5 + 주가 1 + 통합 1 = 7</text>
+  <text x="446" y="667" class="s">주가 매일 갱신 → 무조건 발행</text>
+  <text x="446" y="687" class="lbl">발행 판정·근거 게이트 없음</text>
 
-  <!-- Risk veto gate -->
-  <rect x="644" y="520" width="240" height="86" rx="8" fill="#fef9c3" stroke="#ca8a04"/>
-  <text x="660" y="540" class="h" fill="#a16207">risk_veto</text>
-  <text x="660" y="558" class="s">게이트: 치명 키워드 차단</text>
-  <text x="660" y="576" class="lbl">상장폐지·감사의견거절·횡령 등</text>
-  <text x="660" y="596" class="lbl">발행 보류(is_published=FALSE)·validation_logs</text>
+  <!-- SYNTHESIZE node -->
+  <rect x="748" y="560" width="300" height="150" rx="9" fill="#ecfccb" stroke="#65a30d" stroke-width="2"/>
+  <text x="764" y="584" class="h" fill="#3f6212">SYNTHESIZE — 끝단 LLM (temperature=0)</text>
+  <text x="764" y="608" class="s">입력: 7 예측률 (+ 마지막 업데이트 설명)</text>
+  <text x="764" y="628" class="albl" fill="#3f6212">7 예측률을 사용자에게 서술(설명 보강)</text>
+  <text x="764" y="650" class="s">유일 가드: 법적 금지단어 필터(투자/매수/매도…)</text>
+  <text x="764" y="673" class="lbl">prompts/synthesis_v1.md</text>
+  <text x="764" y="691" class="lbl">결정론 폴백(LLM 미설정 시)</text>
 
-  <!-- Synthesize (LLM) -->
-  <rect x="916" y="520" width="240" height="86" rx="8" fill="#cffafe" stroke="#06b6d4"/>
-  <text x="932" y="540" class="h" fill="#0e7490">synthesize</text>
-  <text x="932" y="558" class="s">끝단 LLM 종합 (Gemini)</text>
-  <text x="932" y="576" class="lbl">유일한 생성형 LLM · 수치 불변, 설명만</text>
-  <text x="932" y="596" class="lbl">→ RiskReport JSON</text>
+  <!-- result -->
+  <rect x="1116" y="560" width="300" height="150" rx="9" fill="#f3e8ff" stroke="#9333ea" stroke-width="1.5"/>
+  <text x="1132" y="584" class="h" fill="#6b21a8">final_signals + RiskReport(JSON)</text>
+  <text x="1132" y="607" class="s">source_predictions(7) · signal · narrative</text>
+  <text x="1132" y="626" class="s">무조건 발행(주가 매일)</text>
+  <text x="1132" y="649" class="albl" fill="#7c3aed">→ PUBLISH_SIGNALS → 백엔드 DB</text>
+  <text x="1132" y="671" class="s">→ api.signals_current → web 대시보드</text>
 
-  <!-- Recommend -->
-  <rect x="1188" y="520" width="220" height="86" rx="8" fill="#ecfccb" stroke="#65a30d"/>
-  <text x="1204" y="540" class="h" fill="#4d7c0f">run_recommend</text>
-  <text x="1204" y="558" class="s">결정론 추천 랭킹 (배치)</text>
-  <text x="1204" y="576" class="lbl">변동성 역가중 · final+meta</text>
-  <text x="1204" y="596" class="c" fill="#3f6212">→ recommendations</text>
+  <!-- routing arrows -->
+  <line x1="364" y1="564" x2="428" y2="600" stroke="#059669" stroke-width="1.8" marker-end="url(#arr)"/>
+  <text x="356" y="556" class="albl" fill="#047857">주가 BASE</text>
+  <line x1="364" y1="676" x2="428" y2="650" stroke="#475569" stroke-width="1.6" marker-end="url(#arr)"/>
+  <text x="360" y="640" class="albl">가/감산 결합</text>
+  <line x1="680" y1="635" x2="746" y2="635" stroke="#475569" stroke-width="1.8" marker-end="url(#arr)"/>
+  <line x1="1048" y1="635" x2="1114" y2="635" stroke="#9333ea" stroke-width="1.8" marker-end="url(#arrP)"/>
 
-  <!-- tail arrows -->
-  <g stroke="#a855f7" stroke-width="1.6" fill="none" marker-end="url(#arrL)">
-    <path d="M340,563 L372,563"/>
-  </g>
-  <g stroke="#475569" stroke-width="1.6" fill="none" marker-end="url(#arr)">
-    <path d="M740,458 L740,520"/>
-    <path d="M612,563 L644,563"/>
-    <path d="M884,563 L916,563"/>
-    <path d="M1156,563 L1188,563"/>
-  </g>
-  <text x="745" y="494" class="lbl">소스 산출물 → 결합</text>
+  <!-- ============ ④ 메타러너 라인 (배선됨) ============ -->
+  <text x="40" y="846" class="sec">④ 메타러너 + 대체데이터 → 예측 라인 (배선됨 · 아티팩트 학습 대기)</text>
+  <rect x="40" y="860" width="1400" height="190" rx="10" fill="#f9fafb" stroke="#d1d5db" stroke-dasharray="6 4"/>
+  <rect x="1218" y="872" width="202" height="30" rx="15" fill="#ecfdf5" stroke="#10b981"/>
+  <text x="1319" y="892" text-anchor="middle" class="badge" fill="#047857">✅ 배선됨 (학습 대기)</text>
 
-  <!-- Queue spine -->
-  <rect x="40" y="648" width="1368" height="92" rx="8" fill="#fff7ed" stroke="#ea580c" stroke-dasharray="5 3"/>
-  <text x="56" y="670" class="h" fill="#9a3412">③ 큐 인프라 · app/orchestrator/queue (게이트형 체인의 척추 — 위 모든 stage를 구동)</text>
-  <text x="56" y="692" class="s">processing_queue (claim/lease 원자적 점유) · task_types · handlers 레지스트리 — 각 핸들러가 성공 시 다음 stage task를 enqueue</text>
-  <text x="56" y="711" class="s">dead_letter_queue (DLQ) — 재시도 소진 task 격리 · /dead_letter · /observability 로 운영 모니터링</text>
-  <text x="56" y="730" class="lbl">메타러너 게이트: 검증 통과 모델만 ml_infer 추론에 사용 · LangSmith로 LLM(Gemini) 트레이싱</text>
+  <rect x="64" y="912" width="270" height="110" rx="9" fill="#f3f4f6" stroke="#9ca3af" stroke-dasharray="5 4"/>
+  <text x="80" y="936" class="h" fill="#4b5563">SRC_INFER (배선됨)</text>
+  <text x="80" y="958" class="s">소스 정형피처 → base 모델</text>
+  <text x="80" y="977" class="c" fill="#6b7280">src_datalab · src_hiring (LightGBM)</text>
+  <text x="80" y="996" class="lbl">아티팩트: app/ml/artifacts/source_models/*.txt</text>
+  <text x="80" y="1012" class="lbl">ANALYZE_PRICE 가 SRC_INFER 인큐(#579)</text>
 
-  <!-- DB panel -->
-  <rect x="40" y="762" width="900" height="150" rx="8" fill="#f1f5f9" stroke="#64748b"/>
-  <text x="56" y="784" class="h" fill="#334155">④ DB 적재 (PostgreSQL · public 스키마 · signal_worker 롤 DML)</text>
-  <text x="56" y="806" class="s">원천/정규화</text>
-  <text x="56" y="824" class="c" fill="#334155">raw_documents · source_documents · {dart,report,hiring,patent,datalab}_raw_details</text>
-  <text x="56" y="846" class="s">신호/분석</text>
-  <text x="56" y="864" class="c" fill="#334155">signal_events · analysis_results · agent_results · final_signals</text>
-  <text x="56" y="886" class="s">ML·추천·큐</text>
-  <text x="56" y="904" class="c" fill="#334155">ml_inferences · meta_signals · recommendations · processing_queue · dead_letter_queue · stocks</text>
+  <rect x="402" y="912" width="270" height="110" rx="9" fill="#f3f4f6" stroke="#9ca3af" stroke-dasharray="5 4"/>
+  <text x="418" y="936" class="h" fill="#4b5563">RETURN_COMBINE</text>
+  <text x="418" y="958" class="s">src_* + Report 피처 결합</text>
+  <text x="418" y="977" class="s">→ forward-return 예측</text>
+  <text x="418" y="1000" class="lbl">app/ml/return_combine.py</text>
 
-  <!-- Read contract / observability panel -->
-  <rect x="956" y="762" width="452" height="150" rx="8" fill="#eefbf0" stroke="#22c55e"/>
-  <text x="972" y="784" class="h" fill="#15803d">읽기 계약 &amp; 관측 (backend 분리)</text>
-  <text x="972" y="806" class="s">backend(main-server)는 worker base 테이블 직접 권한 없음.</text>
-  <text x="972" y="824" class="s">worker 산출물은 api.* 읽기전용 view로만 노출:</text>
-  <text x="972" y="843" class="c" fill="#166534">api.signals_current · api.signal_detail</text>
-  <text x="972" y="861" class="c" fill="#166534">api.stocks · api.analysis_pipeline_status</text>
-  <line x1="972" y1="872" x2="1392" y2="872" stroke="#86efac"/>
-  <text x="972" y="892" class="s">관측: app/observability — langsmith · alerting · stats · ops_daemon</text>
+  <rect x="740" y="912" width="270" height="110" rx="9" fill="#f3f4f6" stroke="#9ca3af" stroke-dasharray="5 4"/>
+  <text x="756" y="936" class="h" fill="#4b5563">meta_signals(run_key=SRC)</text>
+  <text x="756" y="958" class="s">return: final_score/direction</text>
+  <text x="756" y="977" class="s">/confidence</text>
+  <text x="756" y="1000" class="lbl">run_key=SRC 분리 적재 (vol 채널 제거됨)</text>
 
-  <!-- legend / footer -->
-  <text x="40" y="952" class="lbl">범례:  파랑=소스 파이프라인(수집/정규화/분석)   보라=결합·발행 게이트   노랑=리스크 veto 게이트   하늘=끝단 LLM(Gemini)   분홍=ML/DL 라인   회색=DB</text>
-  <text x="40" y="972" class="lbl">원칙:  Collector는 LLM 미호출 · Analyzer는 DB만 읽음 · 생성형 LLM은 끝단 synthesize 1곳 · 수치는 결정론, LLM은 설명/보강만 · 실패 시 결정론 fallback</text>
-  <text x="40" y="992" class="lbl">기준: origin/main (services/agent-worker, app/orchestrator/queue/task_types.py · handlers.py · gates/risk_veto.py)</text>
+  <rect x="1078" y="912" width="338" height="110" rx="9" fill="#fffbeb" stroke="#d97706" stroke-dasharray="5 4"/>
+  <text x="1094" y="936" class="h" fill="#92400e">남은 작업 (실값화)</text>
+  <text x="1094" y="957" class="s">✓ 라인 배선(ANALYZE_PRICE→SRC_INFER) · ✓ source_predictions 합류</text>
+  <text x="1094" y="975" class="s">▶ base 모델 아티팩트 학습(train_source_models.py)</text>
+  <text x="1094" y="993" class="s">  — src_price 만 학습됨, 나머지는 실적재·학습 대기</text>
+  <text x="1094" y="1013" class="lbl">문서 docs/spec/worker-design-and-handoff.md</text>
+
+  <line x1="334" y1="967" x2="400" y2="967" stroke="#94a3b8" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#arrG)"/>
+  <line x1="672" y1="967" x2="738" y2="967" stroke="#94a3b8" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#arrG)"/>
+  <line x1="1010" y1="967" x2="1076" y2="967" stroke="#94a3b8" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#arrG)"/>
+
+  <!-- ============ LEGEND ============ -->
+  <text x="40" y="1090" class="sec">범례</text>
+  <rect x="40" y="1102" width="20" height="14" rx="3" fill="#d1fae5" stroke="#059669"/>
+  <text x="66" y="1113" class="s">주가 예측률 BASE</text>
+  <rect x="230" y="1102" width="20" height="14" rx="3" fill="#dbeafe" stroke="#3b82f6"/>
+  <text x="256" y="1113" class="s">대체데이터(가/감산)</text>
+  <rect x="400" y="1102" width="20" height="14" rx="3" fill="#ecfccb" stroke="#65a30d"/>
+  <text x="426" y="1113" class="s">끝단 LLM 종합</text>
+  <rect x="560" y="1102" width="20" height="14" rx="3" fill="#f3e8ff" stroke="#9333ea"/>
+  <text x="586" y="1113" class="s">발행/백엔드</text>
+  <rect x="710" y="1102" width="20" height="14" rx="3" fill="#f3f4f6" stroke="#9ca3af" stroke-dasharray="4 3"/>
+  <text x="736" y="1113" class="s">메타러너 라인(배선됨·학습 대기)</text>
+  <line x1="980" y1="1109" x2="1010" y2="1109" stroke="#9333ea" stroke-width="1.8" marker-end="url(#arrP)"/>
+  <text x="1016" y="1113" class="s">publish 경계</text>
 </svg>

@@ -8,10 +8,11 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
-from app.core.config import get_settings
-from app.orchestrator.queue.task_types import PUBLISH_SIGNALS, SYNTHESIZE
+from app.ml.meta_learner import return_to_score_100
+from app.orchestrator.queue.task_types import SYNTHESIZE
 from signal_alpha_data_access.repositories import (
     AnalysisRepository,
+    MetaSignalRepository,
     NormalizationRepository,
     ProcessingQueueRepository,
 )
@@ -19,18 +20,20 @@ from signal_alpha_data_access.repositories import (
 
 AGGREGATE_RUN_KEY = "AGGREGATED"
 AGGREGATE_VERSION = "final-agg-v1"
-# REPORT 는 deterministic valuation 근거 소스로 수용하지만 점수 산정에는 넣지 않는다.
-SOURCE_ORDER = ("DART", "PRICE", "REPORT", "ALTERNATIVE")
-SCORING_SOURCES = {"DART", "ALTERNATIVE"}
+# 통합 SRC 예측(메타러너 return 채널)의 meta_signals run_key. RETURN_COMBINE 이 적재한다.
+SRC_RUN_KEY = "SRC"
+# 대체데이터(HIRING/PATENT/DATALAB)는 서로 다른 신호라 묶지 않고 **각자 독립 소스**로 점수에 넣는다
+# (ALTERNATIVE 로 collapse 안 함). PRICE/REPORT 는 근거 소스로 수용하되 점수 산정에는 넣지 않는다.
+SOURCE_ORDER = ("DART", "PRICE", "REPORT", "HIRING", "PATENT", "DATALAB")
+SCORING_SOURCES = {"DART", "HIRING", "PATENT", "DATALAB"}
 VALID_DIRECTIONS = {"positive", "negative", "neutral", "mixed"}
 SOURCE_ALIASES = {
     "DART": "DART",
     "PRICE": "PRICE",
     "REPORT": "REPORT",
-    "ALTERNATIVE": "ALTERNATIVE",
-    "HIRING": "ALTERNATIVE",
-    "PATENT": "ALTERNATIVE",
-    "DATALAB": "ALTERNATIVE",
+    "HIRING": "HIRING",
+    "PATENT": "PATENT",
+    "DATALAB": "DATALAB",
 }
 
 
@@ -48,12 +51,11 @@ class NormalizedSourceResult:
     summary: str | None
     source_signal_event_ids: list[int]
     valuation: dict[str, Any] | None
-    # The un-aliased source (HIRING/PATENT/DATALAB/DART/PRICE/REPORT). ``source``
-    # above is coarse (the alternative trio collapses to ALTERNATIVE for scoring);
-    # this preserves the individual collector so the report card per source can be
-    # nested under ALTERNATIVE in the breakdown. Defaults to "" so direct
-    # constructions in tests stay valid.
+    # un-aliased 소스(HIRING/PATENT/DATALAB/DART/PRICE/REPORT). 대체데이터 collapse 폐기 후
+    # ``source`` 와 동일하다(각 소스가 독립 peer). 하위호환·테스트 호환 위해 필드 유지(기본 "").
     fine_source: str = ""
+    # last-known 재사용 나이(일). 0=당일, N=직전 분석이 N일 전(유효기간 내 재사용). 표시·서술용.
+    data_age_days: int = 0
 
 
 class AggregateSignalTaskHandler:
@@ -61,6 +63,7 @@ class AggregateSignalTaskHandler:
         self._analysis_repository = AnalysisRepository(connection)
         self._normalization_repository = NormalizationRepository(connection)
         self._queue_repository = ProcessingQueueRepository(connection)
+        self._meta_repository = MetaSignalRepository(connection)
 
     async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
         stock_id = int(task["stock_id"])
@@ -111,20 +114,29 @@ class AggregateSignalTaskHandler:
             )
 
         signal_date = _signal_date(rows, task_context)
-        # Blend the alternative trio (HIRING/PATENT/DATALAB) into one ALTERNATIVE
-        # peer BEFORE scoring so the three don't outvote DART 3:1, then re-nest the
-        # individual collectors into the breakdown for per-source report cards.
+        # 소스별 독립 집계: 대체데이터(HIRING/PATENT/DATALAB)를 묶지 않고 각자 peer 로 점수화한다.
+        # _coalesce_by_source 는 같은 소스의 다중 행(예: DART 다중 이벤트 run_key)만 1 peer 로 합친다.
         coarse = _coalesce_by_source(normalized)
         aggregate = _aggregate(coarse)
-        aggregate["score_breakdown"] = _nest_alternatives(aggregate["score_breakdown"], normalized)
         source_signal_event_ids = _source_signal_event_ids(normalized)
         warning = "; ".join(aggregate["risk_flags"]) or None
+
+        # 발행 헤드라인 = 통합 SRC 예측(메타러너 return 채널). RETURN_COMBINE 이 meta_signals
+        # (run_key="SRC")에 적재한 통합 예측 수익률을 0-100 점수로 변환해 헤드라인(signal/final_score)
+        # 으로 쓴다. 결정론 SCORING_SOURCES 블렌드(_aggregate 의 signal/final_score)는 더 이상
+        # 헤드라인이 아니며 score_breakdown/warning 등 표시·경보 메타로만 남는다. SRC 가 아직 없으면
+        # (아티팩트 전무 또는 RETURN_COMBINE 미완) 중립(50)으로 발행하고, 다음 드레인에 SRC 가
+        # 채워지면 AGGREGATE 재실행이 헤드라인을 갱신한다(eventual consistency — meta_signals 는
+        # is_current 게이트가 없어 항상 읽힌다).
+        src_row = await self._meta_repository.latest_for_stock(stock_id=stock_id, run_key=SRC_RUN_KEY)
+        headline_signal, headline_score = _src_headline(src_row, signal_date)
+
         analysis_result = await self._analysis_repository.upsert_analysis_result(
             stock_id=stock_id,
             analysis_date=signal_date,
             run_key=AGGREGATE_RUN_KEY,
             source_signal_event_ids=source_signal_event_ids,
-            base_score=aggregate["final_score"],
+            base_score=headline_score,
             analysis_mode="full",
             warning=warning,
             version=AGGREGATE_VERSION,
@@ -135,9 +147,9 @@ class AggregateSignalTaskHandler:
             signal_date=signal_date,
             run_key=AGGREGATE_RUN_KEY,
             version=AGGREGATE_VERSION,
-            final_score=aggregate["final_score"],
+            final_score=headline_score,
             confidence=aggregate["consensus_score"],
-            signal=aggregate["signal"],
+            signal=headline_signal,
             source_agreement=aggregate["source_agreement"],
             warning_level=aggregate["warning_level"],
             score_breakdown=aggregate["score_breakdown"],
@@ -154,50 +166,39 @@ class AggregateSignalTaskHandler:
         priority = str(task_context.get("priority") or "batch")
         stock_code = task_context.get("stock_code")
 
-        # 선형 체인(게이트2 = 신호·모델 품질): ML_INFER→META_COMBINE이 앞단에서 끝나고
-        # 이 게이트가 발행 판정을 내린다. 발행분만 끝단 LLM 종합(SYNTHESIZE)으로 보내고,
-        # 리스크 veto는 종합 "뒤"에서 동작한다(SYNTHESIZE가 RISK_VETO를 인큐). 미발행/needs_review는
-        # 종합으로 보내지 않는다(버릴 게 아니라 처음부터 발행 대상이 아님).
-        synthesize_task_id: int | None = None
-        if aggregate["is_published"] and source_signal_event_ids:
-            synthesize_task_id = await self._queue_repository.enqueue(
-                stock_id=stock_id,
-                task_type=SYNTHESIZE,
-                priority=priority,
-                source_signal_event_ids=source_signal_event_ids,
-                task_context={
-                    "final_signal_id": int(final_signal["id"]),
-                    "stock_code": stock_code,
-                    "run_key": "ML",
-                },
-                dedupe=True,
-            )
-
-        # 물리 2-DB 발행(#11): 발행분에 한해 백엔드 DB로 산출물 복사를 인큐. BACKEND_DATABASE_URL
-        # 미설정(단일 DB)이면 인큐하지 않는다(핸들러도 no-op). 멱등 — 다음 사이클에 최신 반영.
-        publish_task_id: int | None = None
-        if aggregate["is_published"] and getattr(get_settings(), "backend_database_url", None):
-            publish_task_id = await self._queue_repository.enqueue(
-                stock_id=stock_id,
-                task_type=PUBLISH_SIGNALS,
-                priority=priority,
-                task_context={"stock_code": stock_code},
-                dedupe=True,
-            )
+        # 발행은 무조건. 모든 집계 신호를 끝단 LLM 종합(SYNTHESIZE)으로 보내고, SYNTHESIZE 가
+        # 법적 금지단어 필터만 거쳐 곧장 PUBLISH_SIGNALS 를 인큐한다(발행 차단 게이트 폐기).
+        # 근거 이벤트가 없어도 7예측률 서술은 가능하므로 SYNTHESIZE 로 보낸다. 발행 우선순위는
+        # 체인(SYNTHESIZE→PUBLISH) 끝까지 전파해 immediate 신호가 batch 로 강등되지 않게 한다.
+        synthesize_task_id = await self._queue_repository.enqueue(
+            stock_id=stock_id,
+            task_type=SYNTHESIZE,
+            priority=priority,
+            source_signal_event_ids=source_signal_event_ids,
+            task_context={
+                "final_signal_id": int(final_signal["id"]),
+                "stock_code": stock_code,
+                "run_key": "ML",
+                "priority": priority,
+            },
+            dedupe=True,
+        )
 
         return {
             "analysis_result_id": analysis_result["id"],
             "final_signal_id": final_signal["id"],
             "aggregated_count": len(normalized),
-            "signal": aggregate["signal"],
-            "final_score": aggregate["final_score"],
+            "signal": headline_signal,
+            "final_score": headline_score,
+            # 결정론 블렌드(표시·경보 메타) — 헤드라인이 아니라 참고용.
+            "deterministic_signal": aggregate["signal"],
+            "deterministic_score": aggregate["final_score"],
             "source_agreement": aggregate["source_agreement"],
             "consensus_score": aggregate["consensus_score"],
             "warning_level": aggregate["warning_level"],
             "needs_review": aggregate["needs_review"],
             "is_published": aggregate["is_published"],
             "synthesize_task_id": synthesize_task_id,
-            "publish_task_id": publish_task_id,
         }
 
 
@@ -234,7 +235,18 @@ def _normalize_source_result(row: dict[str, Any]) -> NormalizedSourceResult | No
         ),
         valuation=valuation,
         fine_source=_fine_source_from(row, detail) or source,
+        data_age_days=_data_age_days(row.get("data_age_days")),
     )
+
+
+def _data_age_days(value: Any) -> int:
+    """last-known 재사용 나이(일)를 안전 정수화(없으면 0=당일)."""
+    if value is None:
+        return 0
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
 
 
 # Source families recognized when un-aliasing a run_key/method_detail.source into
@@ -300,6 +312,8 @@ def _blend_group(source: str, group: list[NormalizedSourceResult]) -> Normalized
         source_signal_event_ids=sorted(set(event_ids)),
         valuation=next((r.valuation for r in group if r.valuation is not None), None),
         fine_source=source,
+        # 묶인 행 중 가장 오래된 나이(가장 보수적인 신선도)를 대표값으로.
+        data_age_days=max(r.data_age_days for r in group),
     )
 
 
@@ -309,39 +323,6 @@ def _blend_status(statuses: list[str]) -> str:
         if level in statuses:
             return level
     return "failed"
-
-
-def _nest_alternatives(
-    breakdown: dict[str, dict[str, Any]],
-    normalized: list[NormalizedSourceResult],
-) -> dict[str, dict[str, Any]]:
-    """Nest each individual alternative collector under breakdown["ALTERNATIVE"].
-
-    The report renders hiring/datalab as their own cards by reading
-    ``breakdown["ALTERNATIVE"][source]`` (reports.py). The coarse ALTERNATIVE entry
-    keeps its blended scoring fields; this only ADDS per-collector sub-entries.
-    """
-    alt_entry = breakdown.get("ALTERNATIVE")
-    if not isinstance(alt_entry, dict):
-        return breakdown
-    for result in normalized:
-        if result.source != "ALTERNATIVE":
-            continue
-        key = (result.fine_source or "").lower()
-        if not key or key == "alternative":
-            continue
-        alt_entry[key] = {
-            "direction": result.direction,
-            "score": result.score,
-            "score_100": result.score_100,
-            "data_status": result.data_status,
-            "needs_review": result.needs_review,
-            "analysis_result_id": result.analysis_result_id,
-            "agent_result_id": result.agent_result_id,
-            "risk_flags": result.risk_flags,
-            "summary": result.summary,
-        }
-    return breakdown
 
 
 def _aggregate(results: list[NormalizedSourceResult]) -> dict[str, Any]:
@@ -378,7 +359,9 @@ def _aggregate(results: list[NormalizedSourceResult]) -> dict[str, Any]:
     needs_review = warning_level in {"CAUTION", "WARNING"} or signal == "mixed" or any(
         result.needs_review for result in results
     )
-    is_published = warning_level != "WARNING"
+    # 발행은 무조건(7예측률 무조건 발행). warning_level/근거 유무로 발행을 막지 않는다 —
+    # warning_level/needs_review 는 표시용 메타로만 남는다(발행 차단 게이트 폐기).
+    is_published = True
     return {
         "signal": signal,
         "final_score": _to_100(aggregate_score),
@@ -439,6 +422,8 @@ def _score_breakdown(results: list[NormalizedSourceResult]) -> dict[str, dict[st
             "agent_result_id": result.agent_result_id,
             "risk_flags": result.risk_flags,
             "summary": result.summary,
+            # last-known 재사용 나이(일) — 0=당일. 리포트·LLM 서술이 "최종 업데이트 N일 전" 표기에 쓴다.
+            "data_age_days": result.data_age_days,
             **({"valuation": result.valuation} if result.valuation is not None else {}),
         }
     return breakdown
@@ -700,6 +685,28 @@ def _clamp_signed(value: float) -> float:
 
 def _to_100(score: float) -> float:
     return round(max(0.0, min(100.0, (score + 1.0) * 50.0)), 2)
+
+
+def _src_headline(src_row: Any, signal_date: date) -> tuple[str, float]:
+    """통합 SRC 예측(meta_signals run_key='SRC')을 발행 헤드라인(signal, 0-100 score)으로 변환.
+
+    SRC ``final_score`` 는 예측 '수익률'(작은 부호값)이라 tanh 로 0-100 'AI 예측 점수'에 매핑한다
+    (50=중립, 상승↑/하락↓). 해당 ``signal_date`` 의 SRC 가 없으면(아직 미계산) 중립(neutral, 50.0)
+    으로 둔다 — 다음 드레인에 SRC 가 채워지면 AGGREGATE 재실행이 갱신한다.
+    """
+    if not src_row:
+        return "neutral", 50.0
+    row = dict(src_row)
+    asof = row.get("asof_date")
+    final_score = row.get("final_score")
+    if asof is None or final_score is None or _to_date(asof) != signal_date:
+        return "neutral", 50.0
+    return _src_signal(row.get("direction")), return_to_score_100(_number(final_score))
+
+
+def _src_signal(direction: Any) -> str:
+    text = str(direction or "neutral").strip().lower()
+    return text if text in {"positive", "negative", "neutral"} else "neutral"
 
 
 def _dedupe(values: list[str]) -> list[str]:

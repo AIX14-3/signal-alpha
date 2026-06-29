@@ -109,9 +109,9 @@ def fetch_metadata() -> dict:
 
 
 @st.cache_data(ttl=300)
-def fetch_sample(table: str) -> pd.DataFrame:
+def fetch_sample(table: str, limit: int) -> pd.DataFrame:
     with get_engine().connect() as c:
-        return pd.read_sql(text(f'SELECT * FROM "{table}" LIMIT 20'), c)
+        return pd.read_sql(text(f'SELECT * FROM "{table}" LIMIT :n'), c, params={"n": int(limit)})
 
 
 # ── UI ───────────────────────────────────────────────────────────────────────
@@ -122,6 +122,9 @@ st.caption(f"라이브 적재현황 · 구조 상세 ERD는 `{ERD_DOC}` 참조 �
 if st.sidebar.button("🔄 메타 새로고침"):
     fetch_metadata.clear()
     fetch_sample.clear()
+
+# 데이터 샘플 표시 행 수(기본 200) — LIMIT 20 고정 시 큰 테이블이 잘려 보이던 문제 해소.
+row_limit = st.sidebar.number_input("표시 행 수", min_value=20, max_value=5000, value=200, step=20)
 
 meta = fetch_metadata()
 tdf = meta["tables"]
@@ -191,8 +194,9 @@ with tab1:
     if (n or 0) == 0:
         st.warning("⚠️ 빈 테이블 — 적재된 데이터가 없습니다 (다른 도메인/미래 영역이거나 미실행).")
     else:
-        sample = fetch_sample(table)
+        sample = fetch_sample(table, row_limit)
         st.dataframe(sample, use_container_width=True)
+        st.caption(f"표시 {len(sample)}행 (전체 {n:,}행 · 좌측에서 '표시 행 수' 조절)")
         jsonb_cols = meta["columns"].query("table_name == @table and data_type == 'jsonb'")["column_name"].tolist()
         if jsonb_cols and not sample.empty:
             with st.expander("🧩 JSONB 상세 보기 (트리)"):

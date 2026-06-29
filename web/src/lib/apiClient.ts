@@ -112,7 +112,7 @@ export type Stock = {
 
 export type WatchlistItem = { stock: Stock; created_at: string | null };
 
-export type SourceKey = "price" | "dart" | "hiring" | "datalab" | "report";
+export type SourceKey = "price" | "dart" | "hiring" | "datalab" | "patent" | "report";
 
 export type ReportSource = {
   source: SourceKey;
@@ -120,6 +120,16 @@ export type ReportSource = {
   score?: number | null;
   data_status?: string;
   summary?: string | null;
+  locked: boolean;
+};
+
+// 메타러너 소스별 예측률 — 주가 BASE ⊕ 각 공공데이터로 만든 0–100 'AI 예측 점수'.
+// 통합(SRC)은 Report.score(헤드라인)로 노출되고, 여기엔 per-source(주가 1 + 공공데이터 5)만 담긴다.
+export type PredictionRate = {
+  source: SourceKey;
+  score?: number | null; // 0–100 (score_100)
+  direction?: string | null; // positive | negative | neutral | unknown
+  data_status?: string;
   locked: boolean;
 };
 
@@ -155,6 +165,7 @@ export type Report = {
   summary: string | null;
   ml_return?: MlReturn | null;
   sources: ReportSource[];
+  prediction_rates?: PredictionRate[];
   access: ReportAccess;
   notice: string;
 };
@@ -517,4 +528,48 @@ export async function adminRefund(userId: number): Promise<{ status: string; use
 
 export async function adminGetStats(): Promise<AdminStats> {
   return apiFetch("/api/admin/stats", { auth: "admin" });
+}
+
+export type AdminSchedule = {
+  id: number;
+  name: string | null;
+  enabled: boolean;
+  run_at_local: string | null; // "HH:MM"
+  timezone: string | null;
+  targets: string[];
+  dart_limit: number | null;
+  price_modes: string[];
+  last_run_at: string | null;
+  last_status: string | null;
+  last_detail: unknown;
+  next_run_at: string | null;
+  manual_trigger_requested_at: string | null;
+  updated_by: string | null;
+  updated_at: string | null;
+};
+
+export async function adminListSchedules(): Promise<{ items: AdminSchedule[] }> {
+  return apiFetch("/api/admin/schedules", { auth: "admin" });
+}
+
+export async function adminUpdateSchedule(
+  scheduleId: number,
+  body: {
+    enabled?: boolean;
+    run_at_local?: string;
+    timezone?: string;
+    targets?: string[];
+    dart_limit?: number;
+    price_modes?: string[];
+  },
+): Promise<AdminSchedule> {
+  return apiFetch(`/api/admin/schedules/${scheduleId}`, {
+    method: "PUT",
+    auth: "admin",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function adminTriggerSchedule(scheduleId: number): Promise<AdminSchedule> {
+  return apiFetch(`/api/admin/schedules/${scheduleId}/trigger`, { method: "POST", auth: "admin" });
 }

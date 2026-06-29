@@ -10,7 +10,8 @@ signal-alpha/
   web/                    # Next.js 한국어 대시보드 (사용자 UI)
   services/
     main-server/          # FastAPI 사용자-facing API
-    agent-worker/         # FastAPI 내부 수집/정규화/분석 워커 + 가격 수집 데몬
+    agent-worker/         # 워커/수집기/스케줄러 3 유닛의 단일 코드베이스
+                          #   worker(uvicorn+큐 드레인 데몬) · run_collector_instance.py · run_scheduler_instance.py
   packages/
     signal-core/          # 공통 스키마·enum·도메인 타입·안전 규칙
     data-access/          # DB repository 계층 (SQL 캡슐화)
@@ -29,8 +30,10 @@ signal-alpha/
   (프론트엔드)         (백엔드)      api.* 읽기·발행 사본              (워커: 수집/분석)   base 테이블
 ```
 
-> 배포는 **db / worker / backend / frontend 4유닛**으로 분리하고, DB 는 **물리 인스턴스 2개**(수집/백엔드)
-> 입니다. backend와 worker는 런타임에 직접 호출하지 않고, 워커가 백엔드 DB 로 산출물을 **발행(publish)**
+> 배포는 **frontend / backend / worker / collector / scheduler 5 컴퓨트 유닛 + DB 2 인스턴스**(수집/백엔드)
+> 로 분리합니다(#11 워커 영역 완성: 수집기·스케줄러를 워커에서 분리). 수집기는 원천만 적재, 스케줄러는
+> `processing_queue` 에 작업을 주기 인큐, **워커는 큐 드레인 데몬으로 큐를 끝단(발행)까지 연속 소비**합니다.
+> backend와 worker는 런타임에 직접 호출하지 않고, 워커가 백엔드 DB 로 산출물을 **발행(publish)**
 > 하면 backend 는 백엔드 DB 의 `api.*` 읽기 계약으로 읽습니다. 토폴로지·DB 소유권 경계·마이그 타깃 규칙은
 > [architecture-diagram.md](./architecture-diagram.md),
 > [database/docs/migration_seed_targets.md](../database/docs/migration_seed_targets.md) 참고.
@@ -41,8 +44,14 @@ signal-alpha/
   `health, signals, watchlists, journals, dashboard, reports, auth, admin, admin_auth, analytics, payments, subscriptions`.
   수집/분석 로직은 직접 들고 있지 않으며, **`agent-worker`를 직접 호출하지 않고** worker 산출물을
   DB의 `api.*` 읽기전용 view(읽기 계약)로만 읽습니다(backend/worker 런타임 분리 → 독립 배포).
-- **`agent-worker`** 는 수집·정규화·분석·큐·선택적 LLM·키움 가격 수집 데몬을 담당합니다. 현재 라우트 그룹:
-  `health, tasks, queue, dart, price, schedules, dead_letter, observability`.
+- **`agent-worker`** 코드베이스는 세 유닛으로 기동됩니다(#11):
+  - **워커**: uvicorn FastAPI(라우트 `health, tasks, queue, dart, price, schedules, dead_letter, observability`)
+    + **큐 드레인 데몬**(`QUEUE_DRAIN_DAEMON_ENABLED`) — `processing_queue` 를 체인 순서로 끝단
+    (PUBLISH_SIGNALS 발행)까지 연속 소비. advisory-lock 단일 기동. 단발/CI 검증은 `run_worker_drain.py`.
+  - **수집기**: `run_collector_instance.py` — 키움 실시간 가격 데몬 + `run_collectors.py`(patent/datalab).
+  - **스케줄러**: `run_scheduler_instance.py` — 워커 `/internal/schedules/*` 를 주기 호출(수집 스케줄). 팀
+    스케줄러 경계("스케줄러는 엔드포인트만 호출")를 따른다(직접 DB 인큐 안 함). 인큐분은 드레인 데몬이 소비.
+  - 단일 통합 인스턴스(개발/소규모)로도 기동 가능(`PRICE_COLLECTOR_ENABLED` + 드레인 동시 on).
 - **`packages/data-access`** 는 재사용 가능한 repository 계층입니다. SQL을 여러 서비스에 흩뿌리지 말고
   repository를 우선 사용합니다.
 - **`packages/signal-core`** 는 서비스 간 공통 데이터 계약과 안전 규칙(금지 표현 등)을 일관되게 유지합니다.
@@ -63,6 +72,16 @@ signal-alpha/
         ↓
   최종: source alignment + evidence + needs_review  →  final_signals  →  web 대시보드
 ```
+
+> **소스별 라우팅(#11 결정)**: 주가(PRICE)는 `analyzers/price` 의 **기술지표 규칙**으로 `price_prediction`
+> 을 **별도 제공**합니다(ML/DL 주가 모델 `src_price` 는 메타러너 라인의 별개 채널). 집계 점수
+> (`final_score`)는 `SCORING_SOURCES`(`{DART, HIRING, PATENT, DATALAB}`, 대체데이터 소스별 독립) 기준을
+> **유지**합니다(뒤집지 않음). **PRICE·증권사 리포트·대안데이터는 근거**로 끝단 LLM 종합(SYNTHESIZE)이
+> 집계 점수·주가 예측과 함께 합칩니다(헤드라인 점수엔 메타러너 미사용 — 7예측률은 병행 노출). DART 는
+> LLM 정제(+`RISK_VETO` 결정론 룰), REPORT 는 투자의견(`signal_direction`) 컨센서스로 결정론 방향을 냅니다.
+> 발행(`PUBLISH_SIGNALS`)은 **`RISK_VETO` 게이트 통과 뒤**에 일어납니다(치명 신호 누수 방지). LLM 은 점수를
+> 바꾸지 않고 이유만 서술합니다(temperature=0). 소스 학습형 메타러너 채널(`SRC_INFER`)은 `ANALYZE_PRICE` 가
+> 인큐해 **배선됨**(아티팩트 학습 후 실값). 출력 계약 검증기는 `app/orchestrator/aggregation/source_contract.py`.
 
 소스별 수집기/분석기는 `agent-worker/app/collectors/*` 와 `analyzers/*` 아래에 소스 단위로 구성됩니다
 (`dart, report, price, datalab, hiring, patent, sec`). 작업 단계별 큐 모델과 테이블 흐름은

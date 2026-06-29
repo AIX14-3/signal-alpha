@@ -17,6 +17,9 @@ class Settings:
         # 백엔드(서비스) DB 발행용 DSN (#531 2-DB 물리 분리). 워커가 산출물을
         # 백엔드 DB로 publish 할 때만 사용. 미설정이면 발행 비활성(단일 DB 모드).
         self.backend_database_url = getenv("BACKEND_DATABASE_URL")
+        # /internal/* 호출 공유 시크릿. 설정 시 X-Internal-Token 헤더 일치 요구(스케줄러 등
+        # 신뢰된 호출자만 통과). 빈 값이면 검사 비활성(네트워크 격리에만 의존 — 기존 동작).
+        self.internal_api_token = getenv("INTERNAL_API_TOKEN", "")
         self.parsed_reports_path: Path = (
             Path(__file__).resolve().parents[4] / "data" / "parsed_reports.json"
         )
@@ -26,6 +29,11 @@ class Settings:
         self.dart_timeout_seconds = int(getenv("DART_TIMEOUT_SECONDS", "10"))
         self.dart_page_size = int(getenv("DART_PAGE_SIZE", "100"))
         self.dart_fetch_documents = _env_bool("DART_FETCH_DOCUMENTS", default=True)
+        # 한 collect_dart 회차당 본문 다운로드 상한 — 무거운 문서 fetch 로 워커가 분 단위로
+        # 묶이는 것을 막는다(작은 배치·공정 drain 과 병행). 상한 초과 공시는 메타데이터만 적재.
+        # 증분 수집(last_end_de 이후)이라 평상시 회차는 작고, 첫 회차/백필만 상한이 작동한다.
+        # 0 이하면 무제한(상한 없음).
+        self.dart_max_documents = int(getenv("DART_MAX_DOCUMENTS", "30"))
         self.dart_max_retries = int(getenv("DART_MAX_RETRIES", "2"))
         self.dart_retry_backoff_seconds = float(getenv("DART_RETRY_BACKOFF_SECONDS", "0.5"))
         # ── L1 정형 재무 수집 (fnlttSinglAcntAll → dart_financial_facts) ──

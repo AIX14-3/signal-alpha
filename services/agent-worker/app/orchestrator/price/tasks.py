@@ -19,9 +19,12 @@ from typing import Any
 
 from app.analyzers.price.analyzer import PriceAnalyzer
 from app.collectors.price.ohlcv_reader import OhlcvReader
+from app.orchestrator.queue.context import enqueue_aggregate
+from app.orchestrator.queue.task_types import SRC_INFER
 from signal_alpha_data_access.repositories import (
     AnalysisRepository,
     MarketDataRepository,
+    ProcessingQueueRepository,
     StockRepository,
 )
 
@@ -41,6 +44,7 @@ class PriceAnalyzeTaskHandler:
             stocks=StockRepository(connection),
             market_data=MarketDataRepository(connection),
         )
+        self._queue = ProcessingQueueRepository(connection)
         self._analyzer = PriceAnalyzer()
 
     async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
@@ -60,7 +64,11 @@ class PriceAnalyzeTaskHandler:
             run_key=PRICE_RUN_KEY,
             source_signal_event_ids=[],
             base_score=_to_db_score(result.score),
-            analysis_mode="price_only",
+            # analysis_mode 는 DB CHECK(analysis_results_analysis_mode_check) 상 {full,dart_only,quick}
+            # 만 허용한다 — REPORT/ALTERNATIVE 와 동일하게 "full" 사용(소스 식별은 run_key="PRICE" +
+            # method_detail.source="PRICE" 로 하므로 분석모드 값에 의존하지 않는다). 'price_only' 는
+            # 제약 위반이라 적재 자체가 실패했었다(Neon→GCP 덤프 배포에서 마이그레이션 없이 안전).
+            analysis_mode="full",
             warning="; ".join(result.risk_flags) or None,
             version=PRICE_VERSION,
         )
@@ -82,12 +90,38 @@ class PriceAnalyzeTaskHandler:
             evidence_quality=100 if result.data_status == "ok" else 0,
             prompt_ver=PRICE_VERSION,
         )
+        # 메타러너 SRC 라인 트리거(C안): 주가 BASE 앵커 ⊕ 대체데이터 → 소스별 7예측률.
+        # 주가는 매 종목마다 분석되므로 여기서 per-stock 1회 SRC_INFER 를 인큐한다. SRC_INFER 가
+        # base 모델로 추론(아티팩트 있는 소스만, 현재 src_price) → RETURN_COMBINE → meta_signals/
+        # final_signals.source_predictions. 아티팩트 전무면 예측 None 으로 안전 no-op(점수 불변).
+        priority = str(task_context.get("priority") or "batch")
+        src_infer_task_id = await self._queue.enqueue(
+            stock_id=stock_id,
+            task_type=SRC_INFER,
+            priority=priority,
+            task_context={"stock_code": stock_code, "as_of": analysis_date.isoformat()},
+            dedupe=True,
+        )
+        # 주가는 평일 매일 분석되므로 = 발행 하한선. 대체데이터가 그날 없는 단독 종목도 발행되도록
+        # 여기서 AGGREGATE_SIGNAL 을 인큐한다(fan-in: (stock_id, signal_date)로 모든 소스를 모음).
+        # 대체데이터가 같은 날 AGGREGATE 를 인큐해도 dedupe 로 한 번만 집계된다.
+        aggregate_task_id = await enqueue_aggregate(
+            self._queue,
+            stock_id=stock_id,
+            aggregate_ctx={
+                "signal_date": analysis_date.isoformat(),
+                "stock_code": stock_code,
+            },
+            priority=priority,
+        )
         return {
             "analysis_result_id": int(analysis_result["id"]),
             "agent_result_id": int(agent_result["id"]),
             "direction": result.direction,
             "score": result.score,
             "data_status": result.data_status,
+            "src_infer_task_id": src_infer_task_id,
+            "aggregate_task_id": aggregate_task_id,
         }
 
 

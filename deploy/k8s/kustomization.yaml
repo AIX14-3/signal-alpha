@@ -1,0 +1,39 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# secret.example.yaml 은 참고용 템플릿이므로 의도적으로 제외(비밀은 out-of-band 생성).
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - postgres-collection.yaml
+  - postgres-backend.yaml
+  - db-migrate-collection-job.yaml
+  - db-migrate-backend-job.yaml
+  - agent-worker.yaml
+  - collector.yaml
+  - scheduler.yaml
+  - altdata-cronjob.yaml
+  - hiring-cronjob.yaml
+  - main-server.yaml
+  - web.yaml
+  - ingress.yaml
+
+# 이미지 태그 핀(GitOps). <PROJECT_ID> 를 실제 GCP 프로젝트로 교체하고 newTag 를 빌드 태그로.
+images:
+  - name: signal-alpha-agent-worker
+    newName: asia-northeast3-docker.pkg.dev/PROJECT_ID/signal-alpha/agent-worker
+    newTag: latest
+  # hiring 크롤러 전용(agent-worker + chromium). Dockerfile.crawler 로 별도 빌드/푸시 필요 —
+  # 이 핀이 없거나 이미지 미푸시면 hiring-crawl CronJob 이 ImagePullBackOff.
+  - name: signal-alpha-hiring-crawler
+    newName: asia-northeast3-docker.pkg.dev/PROJECT_ID/signal-alpha/hiring-crawler
+    newTag: latest
+  - name: signal-alpha-main-server
+    newName: asia-northeast3-docker.pkg.dev/PROJECT_ID/signal-alpha/main-server
+    newTag: latest
+  - name: signal-alpha-web
+    newName: asia-northeast3-docker.pkg.dev/PROJECT_ID/signal-alpha/web
+    newTag: latest
+  - name: signal-alpha-db-migrate
+    newName: asia-northeast3-docker.pkg.dev/PROJECT_ID/signal-alpha/db-migrate
+    newTag: latest

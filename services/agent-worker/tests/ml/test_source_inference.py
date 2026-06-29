@@ -51,6 +51,16 @@ class _FakeQueue:
         return len(self.enqueued)
 
 
+class _FakeMarketData:
+    """MarketDataRepository 대역 — 최근 OHLCV 행을 그대로 돌려준다."""
+
+    def __init__(self, rows=()):
+        self._rows = list(rows)
+
+    async def list_recent_ohlcv(self, *, stock_id, limit):  # noqa: ANN001
+        return list(self._rows)
+
+
 def _dl_row(observed: str, index: float) -> dict:
     return {
         "observed_date": observed,
@@ -84,6 +94,8 @@ def test_src_infer_persists_predictions_under_src_run_key():
         datalab_loader=datalab_loader,
         hiring_loader=hiring_loader,
         dart_loader=_FakeLoader([]),
+        patent_loader=_FakeLoader([]),
+        market_data=_FakeMarketData(),
         inferences=inferences,
         queue=queue,
         models=models,
@@ -134,6 +146,8 @@ def test_src_infer_handles_no_models_loaded():
         datalab_loader=_FakeLoader([]),
         hiring_loader=_FakeLoader([]),
         dart_loader=_FakeLoader([]),
+        patent_loader=_FakeLoader([]),
+        market_data=_FakeMarketData(),
         inferences=inferences,
         queue=queue,
         models=[SourceModel("src_datalab"), SourceModel("src_hiring")],
@@ -147,6 +161,49 @@ def test_src_infer_handles_no_models_loaded():
     # 성공 예측이 없으면 return 채널 결합을 인큐하지 않는다.
     assert queue.enqueued == []
     assert result["return_combine_task_id"] is None
+
+
+def test_src_infer_persists_price_prediction_under_src_run_key():
+    # src_price BASE 모델이 최근 OHLCV(market_data)로 예측 → ml_inferences(run_key=SRC) 적재.
+    from datetime import timedelta
+
+    start = date(2026, 3, 1)
+    ohlcv = [
+        {
+            "trade_date": (start + timedelta(days=i)).isoformat(),
+            "close": 100.0 + i,
+            "volume": 1000,
+            "foreign_net": 10,
+            "institution_net": -5,
+        }
+        for i in range(65)
+    ]
+    inferences = _FakeInferences()
+    queue = _FakeQueue()
+    handler = SrcInferTaskHandler(
+        connection=object(),
+        datalab_loader=_FakeLoader([]),
+        hiring_loader=_FakeLoader([]),
+        dart_loader=_FakeLoader([]),
+        patent_loader=_FakeLoader([]),
+        market_data=_FakeMarketData(ohlcv),
+        inferences=inferences,
+        queue=queue,
+        models=[SourceModel("src_price").attach(_FakeBooster(0.0456))],
+    )
+
+    result = asyncio.run(
+        handler({"stock_id": 5, "task_context": {"stock_code": "005930", "as_of": "2026-06-01"}})
+    )
+
+    assert result["succeeded"] == ["src_price"]
+    by_model = {c["model_name"]: c for c in inferences.calls}
+    assert set(by_model) == {"src_price"}
+    assert by_model["src_price"]["run_key"] == "SRC"
+    assert by_model["src_price"]["pred_value"] == 0.0456
+    assert by_model["src_price"]["gate_passed"] is True
+    assert len(queue.enqueued) == 1
+    assert queue.enqueued[0]["task_type"] == "return_combine"
 
 
 def _dart_row(report_date: str, holder_type: str, shares_delta: float) -> dict:
@@ -176,6 +233,8 @@ def test_src_infer_persists_dart_prediction_under_src_run_key():
         datalab_loader=_FakeLoader([]),
         hiring_loader=_FakeLoader([]),
         dart_loader=dart_loader,
+        patent_loader=_FakeLoader([]),
+        market_data=_FakeMarketData(),
         inferences=inferences,
         queue=queue,
         models=[SourceModel("src_dart").attach(_FakeBooster(0.0234))],

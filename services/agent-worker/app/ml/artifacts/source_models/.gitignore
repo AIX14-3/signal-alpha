@@ -1,0 +1,4 @@
+# 학습 산출물(LightGBM Booster)은 환경·데이터별이라 커밋하지 않는다.
+# train_source_models / train_price_model 로 생성하면 런타임이 로드한다(부재 시 예측 None).
+*.txt
+!.gitignore

@@ -324,41 +324,73 @@ class ReportAnalyzeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["analyzed_count"], 1)
         self.assertEqual(result["analysis_result_id"], 901)
         self.assertEqual(result["agent_result_id"], 902)
-        self.assertEqual(result["ml_infer_task_id"], 701)
-        # Phase 0 (#525): 판정 제거 — 피처만. 방향 unknown, 점수 중립(50), AGGREGATE 제외.
-        self.assertEqual(result["direction"], "unknown")
-        self.assertEqual(result["analysis_source"], "features")
+        self.assertEqual(result["aggregate_task_id"], 701)
+        # 결정론 밸류에이션 신호: 투자의견(signal_direction="positive") 컨센서스 → positive, score 1.0.
+        self.assertEqual(result["direction"], "positive")
+        self.assertEqual(result["analysis_source"], "rules")
         self.assertFalse(result["needs_review"])
 
         analysis_call = conn._insert("analysis_results")
         self.assertEqual(analysis_call[2][2], date(2026, 6, 24))
         self.assertEqual(analysis_call[2][3], "REPORT_EVENT_801")
         self.assertEqual(analysis_call[2][4], [801])
-        self.assertEqual(analysis_call[2][5], 50.0)  # _score_to_100(0.0) = 중립
+        self.assertEqual(analysis_call[2][5], 100.0)  # _score_to_100(1.0) = 만장 긍정
         self.assertEqual(analysis_call[2][8], "full")
 
         agent_call = conn._insert("agent_results")
         self.assertEqual(agent_call[2][2], "D-1")
         self.assertEqual(agent_call[2][3], [801])
-        self.assertEqual(agent_call[2][5], "unknown")
+        self.assertEqual(agent_call[2][5], "positive")
         self.assertEqual(agent_call[2][10], "report-valuation-v1")
         method_detail = json.loads(agent_call[2][6])
         self.assertEqual(method_detail["source"], "REPORT")
-        self.assertEqual(method_detail["data_status"], "no_signal")
+        self.assertEqual(method_detail["data_status"], "ok")
         # 밸류에이션 피처는 보존된다(메타러너 입력, D1).
         self.assertEqual(method_detail["report_quant"]["valuation"]["target_price"], 90000)
         self.assertEqual(method_detail["report_quant"]["valuation"]["implied_multiple"], 15.0)
         self.assertEqual(method_detail["report_quant"]["valuation"]["needs_review"], False)
 
-        enqueue_call = conn._enqueue("ml_infer")
+        # 주가 변동성 ML 채널 제거(C안): 분석 → AGGREGATE 직결. aggregate_ctx 는 task_context 최상위,
+        # source_analysis_result_ids 는 enqueue 의 별도 컬럼으로 전달된다(레거시 단일 프로듀서 경로).
+        enqueue_call = conn._enqueue("aggregate_signal")
         self.assertEqual(enqueue_call[2][0], 1)
+        self.assertIn([901], enqueue_call[2])
         task_context = json.loads(enqueue_call[2][6])
         self.assertEqual(task_context["stock_code"], "005930")
-        self.assertEqual(task_context["run_key"], "ML")
-        aggregate_ctx = task_context["aggregate_ctx"]
-        self.assertEqual(aggregate_ctx["source_analysis_result_ids"], [901])
-        self.assertEqual(aggregate_ctx["signal_date"], "2026-06-24")
-        self.assertEqual(aggregate_ctx["run_key"], "AGGREGATED")
+        self.assertEqual(task_context["signal_date"], "2026-06-24")
+        self.assertEqual(task_context["run_key"], "AGGREGATED")
+
+
+class ReportConsensusDirectionTest(unittest.TestCase):
+    """결정론 밸류에이션 컨센서스 — 투자의견 분포 → (direction, score, data_status)."""
+
+    def _consensus(self, *directions):
+        events = [{"signal_direction": d} for d in directions]
+        return report_tasks._report_consensus_direction(events)
+
+    def test_all_positive_is_positive_full_score(self):
+        self.assertEqual(self._consensus("positive", "positive"), ("positive", 1.0, "ok"))
+
+    def test_net_negative_is_negative(self):
+        direction, score, status = self._consensus("negative", "negative", "positive")
+        self.assertEqual(direction, "negative")
+        self.assertEqual(status, "ok")
+        self.assertLess(score, 0)
+
+    def test_balanced_is_neutral(self):
+        direction, score, status = self._consensus("positive", "negative")
+        self.assertEqual(direction, "neutral")
+        self.assertEqual(score, 0.0)
+        self.assertEqual(status, "ok")
+
+    def test_no_opinion_falls_back_to_no_signal(self):
+        # 방향성 의견이 전혀 없으면 features-only 폴백(회귀 없음).
+        self.assertEqual(self._consensus("unknown", "unknown"), ("unknown", 0.0, "no_signal"))
+        self.assertEqual(self._consensus(), ("unknown", 0.0, "no_signal"))
+
+    def test_neutral_opinions_count_as_directional(self):
+        # 중립 의견은 방향성 건수에 포함되되 점수는 0 → neutral/ok.
+        self.assertEqual(self._consensus("neutral", "neutral"), ("neutral", 0.0, "ok"))
 
 
 # ── collect_report ───────────────────────────────────────────────

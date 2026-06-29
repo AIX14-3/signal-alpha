@@ -262,17 +262,27 @@ class AnalysisRepository:
         *,
         stock_id: int,
         analysis_date: Any,
+        long_window_days: int = 30,
+        short_window_days: int = 7,
     ) -> list[Any]:
-        """Fan-in: the latest per-source agent_result for one stock on one date.
+        """Fan-in: the latest per-source agent_result for one stock, within a window.
 
         Returns the same row shape as ``list_agent_results_for_aggregation`` so the
         aggregation handler can normalize either source identically. Unlike that
         method (which takes an explicit id list a single producer passes in), this
-        gathers EVERY independent source signal that exists for the stock/date —
+        gathers EVERY independent source signal that exists for the stock —
         DART/PRICE/REPORT/HIRING/PATENT/DATALAB each under their own run_key — and
         keeps the newest analysis_result per run_key (``DISTINCT ON``). The
         cross-source ``AGGREGATED`` / ``ML`` / ``META`` run_keys are excluded so the
         aggregate never folds a prior aggregate back into itself.
+
+        **Last-known reuse:** instead of an exact-date match, each source falls back
+        to its most recent result on or before ``analysis_date`` within a per-source
+        validity window — slow-moving sources (DART/PATENT/REPORT) reuse up to
+        ``long_window_days``, fast-moving ones (HIRING/DATALAB/PRICE) up to
+        ``short_window_days``. ``data_age_days`` exposes how stale each reused row is
+        (0 = same-day) so the aggregate/synthesis can surface "최종 업데이트 N일 전".
+        Rows older than their window are dropped (that source shows ``missing``).
         """
         return await self._connection.fetch(
             """
@@ -280,6 +290,7 @@ class AnalysisRepository:
                 analysis_results.id AS analysis_result_id,
                 analysis_results.stock_id,
                 analysis_results.analysis_date,
+                ($2::DATE - analysis_results.analysis_date) AS data_age_days,
                 analysis_results.run_key AS analysis_run_key,
                 analysis_results.analysis_mode,
                 analysis_results.version AS analysis_version,
@@ -298,7 +309,15 @@ class AnalysisRepository:
             INNER JOIN analysis_results
                 ON analysis_results.id = agent_results.result_id
             WHERE analysis_results.stock_id = $1
-              AND analysis_results.analysis_date = $2::DATE
+              AND analysis_results.analysis_date <= $2::DATE
+              AND analysis_results.analysis_date >= $2::DATE - (
+                    CASE
+                        WHEN analysis_results.run_key LIKE 'DART%'
+                          OR analysis_results.run_key LIKE 'PATENT%'
+                          OR analysis_results.run_key LIKE 'REPORT%' THEN $3::INT
+                        ELSE $4::INT
+                    END
+                  )
               AND (
                     analysis_results.run_key LIKE 'DART%'
                  OR analysis_results.run_key LIKE 'PRICE%'
@@ -309,12 +328,15 @@ class AnalysisRepository:
               )
             ORDER BY
                 analysis_results.run_key,
+                analysis_results.analysis_date DESC,
                 analysis_results.created_at DESC,
                 analysis_results.id DESC,
                 agent_results.id DESC
             """,
             stock_id,
             analysis_date,
+            long_window_days,
+            short_window_days,
         )
 
     async def list_agent_results_for_aggregation(self, analysis_result_ids: list[int]) -> list[Any]:
@@ -513,26 +535,6 @@ class AnalysisRepository:
         )
 
 
-    async def apply_risk_veto(self, *, final_signal_id: int) -> Any:
-        """리스크 veto — 치명 키워드 탐지 시 해당 final_signal 발행 보류.
-
-        점수/방향은 그대로 두고 발행 플래그만 차단(is_published=FALSE), 검토 필요 표시,
-        경보 WARNING 승격. veto 사유는 validation_logs에 별도 기록한다.
-        """
-        return await self._connection.fetchrow(
-            """
-            UPDATE final_signals
-            SET
-                is_published = FALSE,
-                published_at = NULL,
-                needs_review = TRUE,
-                warning_level = 'WARNING'
-            WHERE id = $1
-            RETURNING *
-            """,
-            final_signal_id,
-        )
-
     async def get_final_signal_by_id(self, *, final_signal_id: int) -> Any:
         """발행 여부와 무관하게 final_signal 1건 조회(끝단 종합은 vetoed/미발행도 설명)."""
         return await self._connection.fetchrow(
@@ -565,6 +567,99 @@ class AnalysisRepository:
             bear_point,
         )
 
+    async def update_source_narrative(
+        self,
+        *,
+        stock_id: int,
+        source: str,
+        summary: str,
+        narrative_points: Any = None,
+        mark_narrated: bool = True,
+    ) -> Any:
+        """소스별 LLM 서술(summary/narrative_points)을 ``score_breakdown.{SOURCE}`` 에 병합한다.
+
+        C안 정합: 방향/점수/score_100 등 **수치 필드는 불변**(서술만). ``jsonb_set`` 으로 해당 소스
+        객체에 ``summary``·``narrative_points``·``narrated`` 플래그만 덮어쓴다(소스 객체가 없으면 생성).
+        ``mark_narrated`` 시 ``data_status`` 가 'missing' 이면 'ok' 로 올려, 서술이 있는데도 카드가
+        "데이터 수집 전"으로 보이는 표시 불일치를 막는다(표시 상태만 보정, 점수/방향 불변). 현재 발행
+        신호(is_current)에 적용 — 체인 순서상 아직 없으면 no-op(다음 사이클).
+        """
+        merge_obj = {
+            "summary": summary,
+            "narrative_points": narrative_points if narrative_points is not None else [],
+            "narrated": True,
+        }
+        if mark_narrated:
+            # data_status 가 'missing' 일 때만 'ok' 로 보정(이미 ok/no_signal/partial 이면 보존).
+            return await self._connection.fetchrow(
+                """
+                UPDATE final_signals
+                SET score_breakdown = jsonb_set(
+                    COALESCE(score_breakdown, '{}'::jsonb),
+                    ARRAY[$2],
+                    COALESCE(score_breakdown -> $2, '{}'::jsonb)
+                        || $3::jsonb
+                        || CASE WHEN COALESCE(score_breakdown -> $2 ->> 'data_status', 'missing') = 'missing'
+                                THEN jsonb_build_object('data_status', 'ok') ELSE '{}'::jsonb END,
+                    TRUE
+                )
+                WHERE stock_id = $1 AND is_current = TRUE
+                RETURNING id
+                """,
+                stock_id,
+                source,
+                _jsonb(merge_obj),
+            )
+        return await self._connection.fetchrow(
+            """
+            UPDATE final_signals
+            SET score_breakdown = jsonb_set(
+                COALESCE(score_breakdown, '{}'::jsonb),
+                ARRAY[$2],
+                COALESCE(score_breakdown -> $2, '{}'::jsonb) || $3::jsonb,
+                TRUE
+            )
+            WHERE stock_id = $1 AND is_current = TRUE
+            RETURNING id
+            """,
+            stock_id,
+            source,
+            _jsonb(merge_obj),
+        )
+
+    async def attach_evidence_events(
+        self,
+        *,
+        stock_id: int,
+        event_ids: list[int],
+    ) -> Any:
+        """현재 발행 신호(is_current)의 분석결과에 근거 signal_event id 를 합집합 추가한다.
+
+        리포트 소스 상세의 근거 목록(api.signal_detail.signal_events)은
+        ``analysis_results.source_signal_event_ids`` 로 해석된다. 서술(narrate)이 사용한 소스
+        이벤트를 그 배열에 멱등 합집합으로 더해, 집계에 소스 분석이 빠져 근거가 비던 화면을 채운다.
+        점수/방향 등 다른 필드는 불변.
+        """
+        if not event_ids:
+            return None
+        return await self._connection.execute(
+            """
+            UPDATE analysis_results ar
+            SET source_signal_event_ids = (
+                SELECT array_agg(DISTINCT x)
+                FROM unnest(
+                    COALESCE(ar.source_signal_event_ids, '{}'::bigint[]) || $2::bigint[]
+                ) AS x
+            )
+            FROM final_signals fs
+            WHERE fs.analysis_result_id = ar.id
+              AND fs.stock_id = $1
+              AND fs.is_current = TRUE
+            """,
+            stock_id,
+            [int(e) for e in event_ids],
+        )
+
     async def update_final_signal_return_channel(
         self,
         *,
@@ -572,11 +667,14 @@ class AnalysisRepository:
         ml_final_score: float | None,
         ml_direction: str | None,
         ml_confidence: float | None,
+        source_predictions: Any = None,
     ) -> Any:
         """메타러너 return 채널(#525 WS-C)을 종목의 현재 신호에 오버레이.
 
-        결정론 집계 점수(final_score/signal/confidence)는 건드리지 않고 ml_* 컬럼만 갱신(D4).
-        현재 발행 신호(is_current)가 아직 없으면(체인 순서) no-op — 다음 사이클에 채워진다.
+        결정론 집계 점수(final_score/signal/confidence)는 건드리지 않고 ml_*/source_predictions
+        컬럼만 갱신(D4). ``source_predictions`` 는 소스별 6 + 통합 1 = 7개 예측률 JSONB(C안 P3,
+        ``{run_key: {final_score, direction, confidence, model_count}}``). 현재 발행 신호
+        (is_current)가 아직 없으면(체인 순서) no-op — 다음 사이클에 채워진다.
         """
         return await self._connection.fetchrow(
             """
@@ -584,7 +682,8 @@ class AnalysisRepository:
             SET
                 ml_final_score = $2,
                 ml_direction = $3,
-                ml_confidence = $4
+                ml_confidence = $4,
+                source_predictions = $5::jsonb
             WHERE stock_id = $1 AND is_current = TRUE
             RETURNING *
             """,
@@ -592,6 +691,7 @@ class AnalysisRepository:
             ml_final_score,
             ml_direction,
             ml_confidence,
+            _jsonb(source_predictions),
         )
 
 

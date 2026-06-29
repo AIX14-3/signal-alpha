@@ -1,5 +1,7 @@
 # DART → 소스별 ML/DL → 학습형 메타러너 합류 계획
 
+> ⚠️ **#11 업데이트**: DART/REPORT 판정 경로는 LLM/결정론으로 변경됨(메타러너 미사용). 워커는 큐 드레인 데몬으로 발행까지 연속 소비. 토폴로지는 [architecture-diagram.md](../architecture-diagram.md) 참조. 아래 `src_dart` 메타러너 합류(SRC_INFER return 채널)는 코드만 있고 라이브 미배선/dormant — 운영 경로에서 DART는 LLM 정제(+RISK_VETO 결정론 룰)로 끝단 SYNTHESIZE에 근거로만 합류한다.
+
 > 영역: agent-worker (+ 수집 DB). 상위 통합 계획 `docs/plan/db-split-and-ml-metalearner-fusion.md`
 > (#525+#531)의 **DART 편**. 그 계획 §8이 예약해 둔 `ml_inferences` `model_name=src_dart`
 > 인터페이스에 DART를 끼운다. 문서 전용(이 문서는 구현 계획이며, 코드 변경은 후속 PR로).

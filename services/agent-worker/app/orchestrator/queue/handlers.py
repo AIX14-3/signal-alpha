@@ -5,16 +5,16 @@ from typing import Any
 from app.core.config import get_settings
 from app.orchestrator.queue.task_types import (
     AGGREGATE_SIGNAL,
-    ANALYZE_ALTERNATIVE,
     ANALYZE_DART,
+    ANALYZE_DATALAB,
+    ANALYZE_HIRING,
+    ANALYZE_PATENT,
     ANALYZE_PRICE,
     ANALYZE_REPORT,
     COLLECT_DART,
     COLLECT_REPORT,
     ENRICH_HIRING,
     ENRICH_PATENT,
-    META_COMBINE,
-    ML_INFER,
     NORMALIZE_DART,
     NORMALIZE_DATALAB,
     NORMALIZE_HIRING,
@@ -23,7 +23,6 @@ from app.orchestrator.queue.task_types import (
     PROCESS_REPORT,
     PUBLISH_SIGNALS,
     RETURN_COMBINE,
-    RISK_VETO,
     SRC_INFER,
     SYNTHESIZE,
 )
@@ -31,6 +30,7 @@ from app.orchestrator.queue.tasks import TaskHandler
 
 
 def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
+    from app.analyzers.registry import registration_for
     from app.orchestrator.alternative.tasks import (
         AlternativeAnalyzeTaskHandler,
         DataLabNormalizeTaskHandler,
@@ -46,12 +46,9 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
     )
     from app.orchestrator.aggregation.tasks import AggregateSignalTaskHandler
     from app.orchestrator.price.tasks import PriceAnalyzeTaskHandler
-    from app.ml.inference import MlInferTaskHandler
-    from app.ml.meta_combine import MetaCombineTaskHandler
     from app.ml.return_combine import ReturnCombineTaskHandler
     from app.ml.source_inference import SrcInferTaskHandler
     from app.publish.publish_task import PublishSignalsTaskHandler
-    from app.gates.risk_veto import RiskVetoTaskHandler
     from app.synthesis.tasks import SynthesizeTaskHandler
 
     settings = get_settings()
@@ -79,8 +76,6 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
         ),
         ANALYZE_PRICE: PriceAnalyzeTaskHandler(connection),
         AGGREGATE_SIGNAL: AggregateSignalTaskHandler(connection),
-        ML_INFER: MlInferTaskHandler(connection),
-        META_COMBINE: MetaCombineTaskHandler(connection),
         # 소스별 base 모델 추론(#525 Phase 3). run_key=SRC 로 분리 적재(D4). 성공 예측이
         # 있으면 RETURN_COMBINE 을 인큐해 return 채널을 결합한다.
         SRC_INFER: SrcInferTaskHandler(connection),
@@ -88,7 +83,6 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
         RETURN_COMBINE: ReturnCombineTaskHandler(connection),
         # 발행(#11) — 종목 PUBLISHED 테이블을 백엔드 DB 로 복사. BACKEND_DATABASE_URL 없으면 no-op.
         PUBLISH_SIGNALS: PublishSignalsTaskHandler(connection, settings=settings),
-        RISK_VETO: RiskVetoTaskHandler(connection, settings=settings),
         SYNTHESIZE: SynthesizeTaskHandler(connection, settings=settings),
         COLLECT_REPORT: ReportCollectTaskHandler(connection=connection, settings=settings),
         PROCESS_REPORT: ReportProcessTaskHandler(connection=connection, settings=settings),
@@ -100,5 +94,16 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
         NORMALIZE_DATALAB: DataLabNormalizeTaskHandler(connection),
         ENRICH_PATENT: PatentEnrichTaskHandler(connection),
         ENRICH_HIRING: HiringSkillEnrichTaskHandler(connection),
-        ANALYZE_ALTERNATIVE: AlternativeAnalyzeTaskHandler(connection),
+        # Per-source analysis stages (C안 Phase 3) — one handler per source, each
+        # given its single-source registration so the shared handler analyzes ONE
+        # source and publishes its own run_key signal.
+        ANALYZE_HIRING: AlternativeAnalyzeTaskHandler(
+            connection, registrations=[registration_for("HIRING")]
+        ),
+        ANALYZE_PATENT: AlternativeAnalyzeTaskHandler(
+            connection, registrations=[registration_for("PATENT")]
+        ),
+        ANALYZE_DATALAB: AlternativeAnalyzeTaskHandler(
+            connection, registrations=[registration_for("DATALAB")]
+        ),
     }

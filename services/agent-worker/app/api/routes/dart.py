@@ -16,10 +16,8 @@ from app.orchestrator.queue.task_types import (
     AGGREGATE_SIGNAL,
     ANALYZE_DART,
     COLLECT_DART,
-    META_COMBINE,
-    ML_INFER,
     NORMALIZE_DART,
-    RISK_VETO,
+    PUBLISH_SIGNALS,
     SYNTHESIZE,
 )
 from app.orchestrator.queue.tasks import QueueTaskRunner, TaskHandler
@@ -175,26 +173,8 @@ async def run_e2e(
             request.max_analyze_runs,
             run_until_idle=request.run_until_idle,
         )
-        ml_infer_task_ids = _task_ids_from_results(analyze_results, "ml_infer_task_id")
-        ml_infer_results = await _run_task_ids(
-            runner,
-            ML_INFER,
-            ml_infer_task_ids,
-            request.max_downstream_runs,
-            run_until_idle=request.run_until_idle,
-        )
-        meta_combine_task_ids = _task_ids_from_results(ml_infer_results, "meta_combine_task_id")
-        meta_combine_results = await _run_task_ids(
-            runner,
-            META_COMBINE,
-            meta_combine_task_ids,
-            request.max_downstream_runs,
-            run_until_idle=request.run_until_idle,
-        )
-        aggregate_task_ids = [
-            *_task_ids_from_results(ml_infer_results, "aggregate_task_id"),
-            *_task_ids_from_results(meta_combine_results, "aggregate_task_id"),
-        ]
+        # 주가 변동성 ML 채널 제거(C안): 분석 → AGGREGATE 직결.
+        aggregate_task_ids = _task_ids_from_results(analyze_results, "aggregate_task_id")
         aggregate_results = await _run_task_ids(
             runner,
             AGGREGATE_SIGNAL,
@@ -210,11 +190,11 @@ async def run_e2e(
             request.max_downstream_runs,
             run_until_idle=request.run_until_idle,
         )
-        risk_veto_task_ids = _task_ids_from_results(synthesize_results, "risk_veto_task_id")
-        risk_veto_results = await _run_task_ids(
+        publish_task_ids = _task_ids_from_results(synthesize_results, "publish_task_id")
+        publish_results = await _run_task_ids(
             runner,
-            RISK_VETO,
-            risk_veto_task_ids,
+            PUBLISH_SIGNALS,
+            publish_task_ids,
             request.max_downstream_runs,
             run_until_idle=request.run_until_idle,
         )
@@ -237,16 +217,12 @@ async def run_e2e(
         normalize_results=normalize_results,
         analyze_task_ids=analyze_task_ids,
         analyze_results=analyze_results,
-        ml_infer_task_ids=ml_infer_task_ids,
-        ml_infer_results=ml_infer_results,
-        meta_combine_task_ids=meta_combine_task_ids,
-        meta_combine_results=meta_combine_results,
         aggregate_task_ids=aggregate_task_ids,
         aggregate_results=aggregate_results,
         synthesize_task_ids=synthesize_task_ids,
         synthesize_results=synthesize_results,
-        risk_veto_task_ids=risk_veto_task_ids,
-        risk_veto_results=risk_veto_results,
+        publish_task_ids=publish_task_ids,
+        publish_results=publish_results,
         max_normalize_runs=request.max_normalize_runs,
         max_analyze_runs=request.max_analyze_runs,
         max_downstream_runs=request.max_downstream_runs,
@@ -257,11 +233,9 @@ async def run_e2e(
         "collect": collect_result,
         "normalize": normalize_results,
         "analyze": analyze_results,
-        "ml_infer": ml_infer_results,
-        "meta_combine": meta_combine_results,
         "aggregate_signal": aggregate_results,
         "synthesize": synthesize_results,
-        "risk_veto": risk_veto_results,
+        "publish_signals": publish_results,
         "queue_summary": queue_summary,
         "analysis_results": {"count": len(items), "items": items},
         "final_signals": {"count": len(final_signal_items), "items": final_signal_items},
@@ -377,16 +351,12 @@ def _queue_summary(
     normalize_results: list[dict[str, Any]],
     analyze_task_ids: list[int],
     analyze_results: list[dict[str, Any]],
-    ml_infer_task_ids: list[int],
-    ml_infer_results: list[dict[str, Any]],
-    meta_combine_task_ids: list[int],
-    meta_combine_results: list[dict[str, Any]],
     aggregate_task_ids: list[int],
     aggregate_results: list[dict[str, Any]],
     synthesize_task_ids: list[int],
     synthesize_results: list[dict[str, Any]],
-    risk_veto_task_ids: list[int],
-    risk_veto_results: list[dict[str, Any]],
+    publish_task_ids: list[int],
+    publish_results: list[dict[str, Any]],
     max_normalize_runs: int,
     max_analyze_runs: int,
     max_downstream_runs: int,
@@ -406,17 +376,6 @@ def _queue_summary(
         "analyze_run_count": analyze_run_count,
         "analyze_pending_count": analyze_pending_count,
         "analyze_limit_reached": not run_until_idle and len(analyze_task_ids) > max_analyze_runs,
-        "ml_infer_total_count": len(ml_infer_task_ids),
-        "ml_infer_run_count": len(ml_infer_results),
-        "ml_infer_pending_count": max(0, len(ml_infer_task_ids) - len(ml_infer_results)),
-        "ml_infer_limit_reached": not run_until_idle and len(ml_infer_task_ids) > max_downstream_runs,
-        **_task_ids_summary(
-            "meta_combine",
-            meta_combine_task_ids,
-            meta_combine_results,
-            max_downstream_runs,
-            run_until_idle,
-        ),
         **_task_ids_summary(
             "aggregate_signal",
             aggregate_task_ids,
@@ -432,9 +391,9 @@ def _queue_summary(
             run_until_idle,
         ),
         **_task_ids_summary(
-            "risk_veto",
-            risk_veto_task_ids,
-            risk_veto_results,
+            "publish_signals",
+            publish_task_ids,
+            publish_results,
             max_downstream_runs,
             run_until_idle,
         ),

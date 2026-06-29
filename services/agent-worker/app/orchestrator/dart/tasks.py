@@ -12,9 +12,9 @@ from app.analyzers.dart.llm import DartLlmAnalyzer
 from app.analyzers.dart.rules import classify_dart_report, make_dart_event_hash
 from app.collectors.dart.disclosure import DartCollector, DartDisclosureClient
 from app.orchestrator.persistence import CollectionPersistence
+from app.orchestrator.queue.context import enqueue_aggregate
 from app.orchestrator.queue.task_types import (
     ANALYZE_DART,
-    ML_INFER,
     NORMALIZE_DART,
 )
 from signal_alpha_data_access.repositories import (
@@ -67,6 +67,7 @@ class DartCollectionTaskHandler:
             end_date=date_window["end_de"],
             page_size=self._settings.dart_page_size,
             fetch_documents=getattr(self._settings, "dart_fetch_documents", True),
+            max_documents=getattr(self._settings, "dart_max_documents", None),
         )
         evidence = await collector.collect(stock_code)
         result = await CollectionPersistence(self._connection).save_evidence_batch(
@@ -258,32 +259,22 @@ class DartAnalyzeTaskHandler:
             llm_model=result.llm_model,
             prompt_ver=result.prompt_ver,
         )
-        # 선형 파이프라인: 분석 → ML_INFER → META_COMBINE → 게이트2(AGGREGATE) → 종합 → veto.
-        # 게이트2가 메타러너의 모델 신뢰도까지 보고 발행 판정하도록 ML_INFER를 먼저 인큐한다.
+        # 선형 파이프라인: 분석 → 게이트2(AGGREGATE) → 종합 → veto. (주가 변동성 ML 채널 제거됨 — C안)
         # AGGREGATE는 fan-in 방식이라 DART 단일 분석결과 id 를 싣지 않는다 — (stock_id, signal_date)
         # 로 DART/PRICE/HIRING/PATENT/DATALAB/REPORT 의 최신 결과를 한꺼번에 모아 블렌드한다.
-        # signal_date·aggregation_key 만 ML→META 가 불투명하게 통과시킨다.
         aggregate_ctx = {
             "stock_code": task_context.get("stock_code"),
             "signal_date": analysis_date.isoformat(),
             "run_key": "AGGREGATED",
             "aggregation_key": f"AGGREGATED:{stock_id}:{analysis_date.isoformat()}:final-agg-v1",
         }
-        ml_infer_task_id = await self._queue_repository.enqueue(
-            stock_id=stock_id,
-            task_type=ML_INFER,
-            priority="batch",
-            task_context={
-                "stock_code": task_context.get("stock_code"),
-                "run_key": "ML",
-                "aggregate_ctx": aggregate_ctx,
-            },
-            dedupe=True,
+        aggregate_task_id = await enqueue_aggregate(
+            self._queue_repository, stock_id=stock_id, aggregate_ctx=aggregate_ctx, priority="batch"
         )
         return {
             "analysis_result_id": analysis_result["id"],
             "agent_result_id": agent_result["id"],
-            "ml_infer_task_id": ml_infer_task_id,
+            "aggregate_task_id": aggregate_task_id,
             "analyzed_count": len(events),
             "direction": result.direction,
             "score": result.score,

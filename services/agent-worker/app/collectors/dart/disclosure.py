@@ -195,6 +195,7 @@ class DartCollector:
         end_date: str | None = None,
         page_size: int = 100,
         fetch_documents: bool = True,
+        max_documents: int | None = None,
     ) -> None:
         if not api_key:
             raise DartApiError("DART API key is required.")
@@ -206,6 +207,8 @@ class DartCollector:
         self._end_date = end_date
         self._page_size = page_size
         self._fetch_documents = fetch_documents
+        # 한 회차 본문 다운로드 상한(시간 바운드). None/0 이하면 무제한.
+        self._max_documents = max_documents if (max_documents or 0) > 0 else None
 
     async def collect(self, stock_code: str) -> list[RawEvidence]:
         ticker = stock_code.strip()
@@ -239,8 +242,12 @@ class DartCollector:
             disclosures.extend(response.get("list", []))
 
         evidence = []
-        for item in disclosures:
-            document = await self._document_for_disclosure(item) if self._fetch_documents else None
+        for index, item in enumerate(disclosures):
+            # 본문 fetch 는 상한(_max_documents)까지만 — 초과분은 메타데이터만 적재해
+            # collect_dart 한 회차의 시간을 바운드한다(워커 독점 방지).
+            within_cap = self._max_documents is None or index < self._max_documents
+            fetch = self._fetch_documents and within_cap
+            document = await self._document_for_disclosure(item) if fetch else None
             evidence.append(_disclosure_to_evidence(ticker, corp_code, item, document=document))
         return evidence
 

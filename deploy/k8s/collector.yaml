@@ -1,0 +1,43 @@
+# collector 유닛 — Kiwoom 실시간 가격 수집 데몬(run_collector_instance.py).
+# 상시 기동, 시장시간(평일 09:00-15:30 KST) 게이트로 폴링. Postgres advisory lock 으로
+# 단일 인스턴스 보장(replicas:1 유지). HTTP 서버 없음 → Service 불필요.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: collector
+  namespace: signal-alpha
+  labels:
+    app.kubernetes.io/part-of: signal-alpha
+    app.kubernetes.io/name: collector
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  replicas: 1                  # advisory lock — 다중 기동해도 1개만 수집(중복 방지)
+  strategy:
+    type: Recreate             # 롤아웃 중 가격 데몬 2중기동 방지
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: collector
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: signal-alpha
+        app.kubernetes.io/name: collector
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: collector
+          image: signal-alpha-agent-worker   # worker 이미지 재사용, command 만 교체
+          command: ["python", "run_collector_instance.py"]
+          envFrom:
+            - configMapRef: { name: signal-alpha-config }
+            - secretRef: { name: signal-alpha-secrets }
+          env:
+            - name: SERVICE_NAME
+              value: collector
+            - name: DATABASE_URL          # 수집 DB
+              valueFrom: { secretKeyRef: { name: signal-alpha-secrets, key: WORKER_DATABASE_URL } }
+            # KIWOOM_APP_KEY/SECRET 는 envFrom(secret), KIWOOM_API_BASE·PRICE_* 는 envFrom(config).
+          resources:
+            requests: { cpu: "50m", memory: "128Mi" }
+            limits: { cpu: "500m", memory: "512Mi" }

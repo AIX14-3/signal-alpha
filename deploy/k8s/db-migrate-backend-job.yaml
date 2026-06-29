@@ -1,0 +1,34 @@
+# 백엔드 DB 마이그레이션 + 시드 (--target backend). database/Dockerfile 이미지.
+# migrate.py 는 --target backend 시 BACKEND_MIGRATE_DATABASE_URL → BACKEND_DATABASE_URL 순으로 DSN 해석.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: db-migrate-backend
+  namespace: signal-alpha
+  labels:
+    app.kubernetes.io/part-of: signal-alpha
+    app.kubernetes.io/name: db-migrate-backend
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  backoffLimit: 10
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: signal-alpha
+        app.kubernetes.io/name: db-migrate-backend
+    spec:
+      restartPolicy: Never
+      initContainers:
+        - name: wait-postgres
+          image: postgres:16
+          command: ["sh", "-c", "until pg_isready -h postgres-backend -U signal_alpha; do echo waiting; sleep 2; done"]
+      containers:
+        - name: migrate
+          image: signal-alpha-db-migrate
+          args: ["apply", "--seeds", "--target", "backend"]
+          env:
+            - name: BACKEND_MIGRATE_DATABASE_URL
+              valueFrom: { secretKeyRef: { name: signal-alpha-secrets, key: BACKEND_MIGRATE_DATABASE_URL } }

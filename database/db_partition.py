@@ -42,6 +42,8 @@ BACKEND_TABLES: frozenset[str] = frozenset(
         "signal_journals",
         "user_signal_reads",
         "report_issuances",
+        # 수집 스케줄 제어 평면 (어드민/MCP 가 쓰고 워커 스케줄러가 폴링). 백엔드 DB 보유.
+        "collection_schedules",
     }
 )
 

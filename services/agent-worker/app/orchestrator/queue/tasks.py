@@ -89,3 +89,91 @@ def _should_retry(task: Mapping[str, Any]) -> bool:
     retry_count = int(task.get("retry_count") or 0)
     max_retry_count = int(task.get("max_retry_count") or 0)
     return retry_count < max_retry_count
+
+
+# 공정 라운드로빈 drain 기본 계획 — task_type → 한 사이클당 최대 처리 수(캡).
+# 수집기 특성에 맞춘 차등: DART/Report 수집은 무거워 작게(2), PRICE/집계는 가벼워 크게.
+# 핵심: 어떤 한 task_type도 다른 type을 굶기지 못한다(한 패스에 type당 1개씩 순환).
+# Alternative(hiring/patent/datalab)는 수집은 독립 일배치이고 여기엔 분석/정규화 type만 편입.
+DEFAULT_CYCLE_PLAN: dict[str, int] = {
+    # 무거운 수집 — 작은 캡으로 throttle (collect_dart 는 문서 fetch 상한과 병행)
+    "collect_dart": 2,
+    "collect_report": 2,
+    # DART 후속 (가벼움)
+    "normalize_dart": 10,
+    "analyze_dart": 10,
+    # Report 후속
+    "process_report": 5,
+    "normalize_report": 10,
+    "analyze_report": 10,
+    # Alternative 정규화/보강/분석 (수집은 독립 일배치)
+    "NORMALIZE_HIRING": 10,
+    "NORMALIZE_PATENT": 10,
+    "NORMALIZE_DATALAB": 10,
+    "ENRICH_PATENT": 10,
+    "ENRICH_HIRING": 10,
+    # 대체데이터 소스별 분석 스테이지 (C안 Phase 3 — 1태스크=1소스)
+    "ANALYZE_DATALAB": 20,
+    "ANALYZE_HIRING": 20,
+    "ANALYZE_PATENT": 20,
+    # PRICE — 빠름(DB만 읽음), 큰 캡
+    "analyze_price": 50,
+    # ML/메타/집계/발행 (가벼움)
+    "src_infer": 20,
+    "return_combine": 20,
+    "aggregate_signal": 30,
+    "synthesize": 20,
+    "publish_signals": 20,
+}
+
+
+class QueueCycleRunner:
+    """task_type 간 공정 라운드로빈 drain.
+
+    한 "패스"마다 계획(plan)의 각 task_type 에서 **최대 1개**씩만 처리하고, 캡이 남은
+    type 이 더 있으면 다음 패스로 순환한다. 따라서 느린 type(collect_dart)이 한 번에
+    하나만 처리되어 다른 type 을 굶기지 못한다. 기존 "한 type 을 max_runs 까지 연속
+    처리(=큐가 빌 때까지)" 동작을 대체한다.
+
+    종료: 모든 type 이 idle 이거나 캡 소진(=진전 없는 패스) 또는 max_passes 도달.
+    """
+
+    def __init__(self, runner: QueueTaskRunner) -> None:
+        self._runner = runner
+
+    async def run_cycle(
+        self, plan: Mapping[str, int], *, max_passes: int = 10000
+    ) -> dict[str, Any]:
+        remaining: dict[str, int] = {t: int(c) for t, c in plan.items() if int(c) > 0}
+        counts: dict[str, int] = {t: 0 for t in remaining}
+        failures: dict[str, int] = {}
+        idle: set[str] = set()
+        passes = 0
+
+        while passes < max_passes:
+            passes += 1
+            progressed = False
+            for task_type in list(remaining.keys()):
+                if remaining[task_type] <= 0 or task_type in idle:
+                    continue
+                result = await self._runner.run_next(task_type)
+                status = result.get("status")
+                if status == "idle":
+                    idle.add(task_type)
+                    continue
+                # 처리됨(success/failed/skipped) — 캡 1 소모. failed 여도 사이클을 멈추지
+                # 않는다(다른 type 굶기지 않기 위해). run_next 가 이미 재시도/사장 처리.
+                remaining[task_type] -= 1
+                counts[task_type] += 1
+                progressed = True
+                if status == "failed":
+                    failures[task_type] = failures.get(task_type, 0) + 1
+            if not progressed:
+                break
+
+        return {
+            "passes": passes,
+            "total_runs": sum(counts.values()),
+            "counts": {t: c for t, c in counts.items() if c > 0},
+            "failures": failures,
+        }

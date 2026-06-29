@@ -18,6 +18,10 @@ from signal_alpha_data_access.backend.read_contract import (
     StockRepository,
 )
 from signal_alpha_data_access.repositories.admin import AdminRepository
+from signal_alpha_data_access.repositories.collection_schedules import (
+    CollectionScheduleRepository,
+    parse_schedule_row,
+)
 from signal_alpha_data_access.repositories.report_issuances import ReportIssuanceRepository
 from signal_alpha_data_access.repositories.signals import SignalRepository
 from signal_alpha_data_access.repositories.user_sessions import UserSessionRepository
@@ -26,6 +30,7 @@ from signal_alpha_data_access.repositories.users_billing import UserBillingRepos
 
 __all__ = [
     "AdminRepository",
+    "CollectionScheduleRepository",
     "ProcessingQueueRepository",
     "ReportIssuanceRepository",
     "SignalRepository",
@@ -33,4 +38,5 @@ __all__ = [
     "UserBillingRepository",
     "UserSessionRepository",
     "UserSignalRepository",
+    "parse_schedule_row",
 ]

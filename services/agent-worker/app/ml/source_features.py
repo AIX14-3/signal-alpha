@@ -25,6 +25,8 @@ from typing import Any, Mapping, Sequence
 from app.analyzers.dart.indicators import compute_indicators as dart_indicators
 from app.analyzers.datalab.indicators import compute_indicators as datalab_indicators
 from app.analyzers.hiring.indicators import compute_indicators as hiring_indicators
+from app.analyzers.patent.indicators import compute_indicators as patent_indicators
+from app.analyzers.price import indicators as price_ind
 from app.analyzers.report.valuation import build_valuation_summary
 
 # 소스별 known_at(시점 확정) 컬럼 — 이 날짜 <= asof 인 행만 피처에 반영(D3).
@@ -33,6 +35,8 @@ KNOWN_AT: dict[str, str] = {
     "hiring": "observed_date",  # 공고 관측일
     "report": "publish_date",  # 리포트 발행일
     "dart": "report_date",  # DART 이벤트 공시 접수일(=rcept_dt)
+    "price": "trade_date",  # OHLCV 체결일
+    "patent": "application_date",  # 특허 출원일(로더/분석기와 동일 기준)
 }
 
 DEFAULT_LOOKBACK_DAYS = 30
@@ -81,6 +85,84 @@ def _numeric(values: Mapping[str, Any]) -> dict[str, float | None]:
     return out
 
 
+# 주가 BASE 모델 피처 — **스케일-프리(비율)** 만 사용. 전 종목 패널 풀링(D1)이므로 절대가/절대
+# 거래량(sma·last_close·net 절대주수)은 종목 간 스케일이 달라 피처로 쓰면 누설/노이즈가 된다.
+# 기존 price/indicators 의 순수 함수(sma/rsi/volume_z/volatility/streak)를 재사용하되 비율로 변환.
+PRICE_FEATURE_KEYS: tuple[str, ...] = (
+    "ret_5d",
+    "ret_20d",
+    "close_sma20_gap",
+    "sma5_sma20_gap",
+    "sma20_sma60_gap",
+    "rsi14",
+    "volume_z",
+    "volatility20",
+    "golden_cross",
+    "dead_cross",
+    "foreign_streak",
+    "institution_streak",
+    "foreign_flow_ratio20",
+    "institution_flow_ratio20",
+)
+
+
+def _gap(numerator: float | None, denominator: float | None) -> float | None:
+    """``numerator/denominator - 1`` (비율 갭). 분모 0/결측이면 None."""
+    if numerator is None or not denominator:
+        return None
+    return numerator / denominator - 1.0
+
+
+def _return_over(closes: list[float], window: int) -> float | None:
+    """``window`` 세션 누적수익률. 과거가 부족하거나 기준가 0이면 None."""
+    if len(closes) <= window:
+        return None
+    base = closes[-window - 1]
+    return closes[-1] / base - 1.0 if base else None
+
+
+def price_features(rows: Sequence[Mapping[str, Any]]) -> dict[str, float | None]:
+    """OHLCV 행 → 스케일-프리 주가 피처 dict(항상 ``PRICE_FEATURE_KEYS`` 전체 키, 결측=None).
+
+    행 0개(저빈도/결측)면 전부 None 으로 안전 반환(``feature_order`` 안정성). 입력 행은
+    PIT 게이트(``trade_date <= asof``)를 통과한 것이어야 한다(어셈블러가 보장).
+    """
+    if not rows:
+        return {key: None for key in PRICE_FEATURE_KEYS}
+    closes = [float(row["close"]) for row in rows]
+    volumes = [float(row["volume"]) for row in rows]
+    foreign = [row.get("foreign_net") for row in rows]
+    institution = [row.get("institution_net") for row in rows]
+
+    sma5 = price_ind.sma(closes, 5)
+    sma20 = price_ind.sma(closes, 20)
+    sma60 = price_ind.sma(closes, 60)
+    golden, dead = price_ind.crossed(closes, short=5, long=20)
+    avg_volume20 = price_ind.sma(volumes, 20)
+    traded20 = avg_volume20 * 20 if avg_volume20 else None
+    foreign_sum = price_ind._net_sum(foreign)
+    institution_sum = price_ind._net_sum(institution)
+
+    return {
+        "ret_5d": _return_over(closes, 5),
+        "ret_20d": _return_over(closes, 20),
+        "close_sma20_gap": _gap(closes[-1], sma20),
+        "sma5_sma20_gap": _gap(sma5, sma20),
+        "sma20_sma60_gap": _gap(sma20, sma60),
+        "rsi14": price_ind.rsi(closes),
+        "volume_z": price_ind.volume_zscore(volumes),
+        "volatility20": price_ind.volatility(closes),
+        "golden_cross": float(golden),
+        "dead_cross": float(dead),
+        "foreign_streak": float(price_ind.net_buy_streak(foreign)),
+        "institution_streak": float(price_ind.net_buy_streak(institution)),
+        "foreign_flow_ratio20": (foreign_sum / traded20) if (foreign_sum is not None and traded20) else None,
+        "institution_flow_ratio20": (
+            (institution_sum / traded20) if (institution_sum is not None and traded20) else None
+        ),
+    }
+
+
 def assemble_features(
     asof: date,
     *,
@@ -88,6 +170,8 @@ def assemble_features(
     hiring_rows: Sequence[Mapping[str, Any]] = (),
     report_facts: Sequence[Mapping[str, Any]] = (),
     dart_rows: Sequence[Mapping[str, Any]] = (),
+    price_rows: Sequence[Mapping[str, Any]] = (),
+    patent_rows: Sequence[Mapping[str, Any]] = (),
     lookback_days: int = DEFAULT_LOOKBACK_DAYS,
     sector_demand: dict | None = None,
 ) -> dict[str, dict[str, float | None]]:
@@ -116,10 +200,19 @@ def assemble_features(
         as_of=asof,
         lookback_days=lookback_days,
     )
+    patent = patent_indicators(
+        pit_rows(patent_rows, asof, date_key=KNOWN_AT["patent"]),
+        as_of=asof,
+        lookback_days=lookback_days,
+    )
+    # 주가는 스케일-프리 비율 피처를 직접 산출(절대가 indicator 비사용). PIT 게이트는 trade_date.
+    price = price_features(pit_rows(price_rows, asof, date_key=KNOWN_AT["price"]))
 
     return {
         "datalab": _numeric(asdict(datalab)),
         "hiring": _numeric(asdict(hiring)),
         "report": _numeric(report),
         "dart": _numeric(asdict(dart)),
+        "patent": _numeric(asdict(patent)),
+        "price": price,
     }

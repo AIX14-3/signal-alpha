@@ -2,10 +2,10 @@
 
 Mirrors test_patent_enrich_task_handler — covers the two seams that put OCR
 enrichment *inside* the queue pipeline:
-  - HiringNormalizeTaskHandler enqueues ENRICH_HIRING (not ANALYZE_ALTERNATIVE)
+  - HiringNormalizeTaskHandler enqueues ENRICH_HIRING (not ANALYZE_HIRING)
     after normalizing, carrying the just-normalized raw_ids.
   - HiringSkillEnrichTaskHandler enriches only those raw_ids (poster image → OCR →
-    skill set cached on hiring_raw_details), then enqueues ANALYZE_ALTERNATIVE — and
+    skill set cached on hiring_raw_details), then enqueues ANALYZE_HIRING — and
     degrades gracefully (skips OCR, still enqueues analysis) when no OCR processor.
 
 DB is a recording fake; the OCR processor is injected.
@@ -22,7 +22,7 @@ from app.orchestrator.alternative.tasks import (
     HiringNormalizeTaskHandler,
     HiringSkillEnrichTaskHandler,
 )
-from app.orchestrator.queue.task_types import ANALYZE_ALTERNATIVE, ENRICH_HIRING
+from app.orchestrator.queue.task_types import ANALYZE_HIRING, ENRICH_HIRING
 
 
 class FakeConnection:
@@ -54,7 +54,7 @@ class FakeConnection:
         types = set()
         for args in self.fetchval_args():
             for value in args:
-                if value in (ENRICH_HIRING, ANALYZE_ALTERNATIVE):
+                if value in (ENRICH_HIRING, ANALYZE_HIRING):
                     types.add(value)
         return types
 
@@ -96,7 +96,7 @@ class HiringSkillEnrichTaskHandlerTests(unittest.IsolatedAsyncioTestCase):
         cache_writes = [c for c in conn.calls if c[0] == "execute" and "UPDATE hiring_raw_details" in c[1]]
         self.assertTrue(cache_writes)
         # … and handed off to analysis (not another enrich).
-        self.assertEqual(conn.enqueued_task_types(), {ANALYZE_ALTERNATIVE})
+        self.assertEqual(conn.enqueued_task_types(), {ANALYZE_HIRING})
         self.assertTrue(result["analysis_task_ids"])
 
     async def test_no_ocr_skips_but_still_enqueues_analysis(self):
@@ -111,7 +111,7 @@ class HiringSkillEnrichTaskHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result["ocr_skipped"])
         self.assertEqual(result["enriched"]["total"], 0)
         self.assertFalse(any("hiring_raw_details" in c[1] for c in conn.calls))
-        self.assertEqual(conn.enqueued_task_types(), {ANALYZE_ALTERNATIVE})
+        self.assertEqual(conn.enqueued_task_types(), {ANALYZE_HIRING})
 
     async def test_ocr_failure_marks_failed_but_continues(self):
         conn = FakeConnection(hiring_rows=[_PENDING_ROW])
@@ -124,7 +124,7 @@ class HiringSkillEnrichTaskHandlerTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(result["enriched"]["failed"], 1)
-        self.assertEqual(conn.enqueued_task_types(), {ANALYZE_ALTERNATIVE})
+        self.assertEqual(conn.enqueued_task_types(), {ANALYZE_HIRING})
 
 
 class HiringNormalizeFollowupTests(unittest.IsolatedAsyncioTestCase):
@@ -146,7 +146,7 @@ class HiringNormalizeFollowupTests(unittest.IsolatedAsyncioTestCase):
 
         await handler._enqueue_followups(stock_ids=[5], raw_document_ids=[], as_of="2026-06-17")
 
-        self.assertEqual(conn.enqueued_task_types(), {ANALYZE_ALTERNATIVE})
+        self.assertEqual(conn.enqueued_task_types(), {ANALYZE_HIRING})
 
 
 class EnricherUnitTests(unittest.IsolatedAsyncioTestCase):

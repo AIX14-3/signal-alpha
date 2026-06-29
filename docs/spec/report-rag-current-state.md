@@ -1,5 +1,7 @@
 # 증권사 리포트 수집/밸류에이션 현재 구현 상태
 
+> ⚠️ **#11 업데이트**: 주가(PRICE)는 기술지표 규칙으로 `RiskReport.price_prediction`을 **별도 제공**(ML/DL 주가는 `src_price` 별개; 집계 `final_score`는 `{DART, HIRING, PATENT, DATALAB}` 소스별 독립 유지, 뒤집지 않음). DART/REPORT=근거(LLM/결정론, 헤드라인 점수엔 메타러너 미사용). 발행은 `RISK_VETO` 게이트 뒤. 워커는 큐 드레인 데몬으로 발행까지 연속 소비. 상세 [architecture-diagram.md](../architecture-diagram.md).
+
 최종 갱신일: 2026-06-25
 
 ## 목적
@@ -29,7 +31,7 @@ Signal Alpha는 투자 추천 서비스가 아닙니다. 증권사 리포트 데
 - 구현된 런타임 경로는 `collect_report -> process_report -> normalize_report -> analyze_report`입니다.
 - `process_report`는 PDF 다운로드/저장, 텍스트 파싱, valuation fact 저장, `normalize_report` enqueue를 담당합니다.
 - `normalize_report`는 Report raw 문서를 `source_documents`, `signal_events`, `signal_metrics`로 승격하고 `analyze_report`를 등록합니다.
-- `analyze_report`는 Report 이벤트와 `report_valuation_facts`를 읽어 deterministic 분석 결과를 `analysis_results`, `agent_results`에 저장하고 `ml_infer`를 등록합니다.
+- `analyze_report`는 Report 이벤트와 `report_valuation_facts`를 읽어 deterministic 분석 결과를 `analysis_results`, `agent_results`에 저장합니다. (코드상 `ml_infer`를 등록하지만 **#11에서 메타러너는 라이브 미배선이며 REPORT는 끝단 LLM 종합(SYNTHESIZE)에 근거로 합류**한다.)
 - `report_valuation_facts`와 valuation summary/scenario band helper, 백테스트 fixture는 구현되어 있습니다.
 - `embed_report`, RAG retriever, Report Agent는 현재 코드에 없습니다.
 - Report 분석 결과 ID는 `aggregate_ctx.source_analysis_result_ids`를 통해 ML/Aggregator queue 입력으로 전달됩니다.
@@ -177,7 +179,7 @@ ReportAnalyzeTaskHandler
 - LLM을 호출하지 않고 결정론 규칙으로 데이터 방향성, 점수, 검토 필요 여부를 계산합니다.
 - `analysis_results`에 Report 분석 대표 row를 저장합니다.
 - `agent_results.method_detail.report_quant.valuation`에 목표가, EPS, 적용 배수, 내재 배수, 피어 그룹, extraction source, needs_review를 저장합니다.
-- `ML_INFER` 작업을 등록하고 `aggregate_ctx.source_analysis_result_ids`에 Report `analysis_result_id`를 담아 후속 ML/Aggregator queue 체인으로 넘깁니다.
+- `AGGREGATE_SIGNAL` 작업을 **직접 등록**하고 `aggregate_ctx.source_analysis_result_ids`에 Report `analysis_result_id`를 담아 후속 Aggregator queue 체인으로 넘깁니다. **(C안 Phase 1, #585)** 과거 경유하던 변동성 ML 채널(`ML_INFER`/`META_COMBINE`)은 제거됐고 `report/tasks.py`가 `enqueue_aggregate` 로 바로 넘긴다. REPORT는 점수가 아니라 끝단 LLM 종합(SYNTHESIZE)에 합류하는 근거이며, 방향은 투자의견 컨센서스 기반 결정론으로 산출한다.
 - 사용자-facing 최종 발행은 직접 하지 않고, 후속 Aggregator/gate 경로에 맡깁니다.
 
 현재 빈틈:

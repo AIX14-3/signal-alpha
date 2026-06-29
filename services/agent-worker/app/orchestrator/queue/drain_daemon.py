@@ -20,16 +20,16 @@ from app.orchestrator.queue.handlers import build_task_handlers
 from app.orchestrator.queue.tasks import QueueTaskRunner
 from app.orchestrator.queue.task_types import (
     AGGREGATE_SIGNAL,
-    ANALYZE_ALTERNATIVE,
     ANALYZE_DART,
+    ANALYZE_DATALAB,
+    ANALYZE_HIRING,
+    ANALYZE_PATENT,
     ANALYZE_PRICE,
     ANALYZE_REPORT,
     COLLECT_DART,
     COLLECT_REPORT,
     ENRICH_HIRING,
     ENRICH_PATENT,
-    META_COMBINE,
-    ML_INFER,
     NORMALIZE_DART,
     NORMALIZE_DATALAB,
     NORMALIZE_HIRING,
@@ -38,7 +38,6 @@ from app.orchestrator.queue.task_types import (
     PROCESS_REPORT,
     PUBLISH_SIGNALS,
     RETURN_COMBINE,
-    RISK_VETO,
     SRC_INFER,
     SYNTHESIZE,
 )
@@ -66,16 +65,16 @@ DRAIN_ORDER: tuple[str, ...] = (
     NORMALIZE_PATENT,
     ENRICH_PATENT,
     NORMALIZE_DATALAB,
-    ANALYZE_ALTERNATIVE,
+    # 대체데이터 소스별 분석 스테이지 (C안 Phase 3 — 1태스크=1소스)
+    ANALYZE_DATALAB,
+    ANALYZE_HIRING,
+    ANALYZE_PATENT,
     ANALYZE_PRICE,
-    # ML/DL 라인 (vol 채널 + 소스 return 채널)
-    ML_INFER,
-    META_COMBINE,
+    # 메타러너 예측 라인 (주가 BASE 앵커 + 소스 return 채널)
     SRC_INFER,
     RETURN_COMBINE,
-    # 집계 → 게이트 → 종합 → 발행
+    # 집계 → 종합 → 발행 (발행 차단 게이트 폐기 — 종합 결과를 곧장 발행)
     AGGREGATE_SIGNAL,
-    RISK_VETO,
     SYNTHESIZE,
     PUBLISH_SIGNALS,
 )

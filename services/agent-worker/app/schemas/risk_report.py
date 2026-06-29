@@ -30,6 +30,17 @@ class RiskReport:
     # final_score(대체데이터+주가가 LLM에서 합쳐지는 종합)와 별개로 사용자에게 따로 노출한다.
     # {direction, score_100(예측확률 proxy 0~100), score, data_status, summary} or None.
     price_prediction: dict[str, Any] | None = None
+    # 증권사 리포트(REPORT) 결정론 밸류에이션 facts — 목표주가/투자의견/컨센서스 등.
+    # 점수에 산입하지 않고(점수=주가 ML/DL), 끝단 LLM이 "이 점수가 나온 이유"를 설명할 때
+    # DART 공시(evidence)와 함께 근거로 정제·서술한다. {target_price, ...} or None.
+    report_valuation: dict[str, Any] | None = None
+    # 소스별 6개(주가/datalab/특허/채용/DART/리포트) + 통합 1개 = 7개 예측률(C안 P3/P4).
+    # 주가 BASE 앵커 ⊕ 각 대체데이터로 메타러너/융합이 낸 수치(LLM 불변, 설명만).
+    # {run_key: {final_score, direction, confidence, model_count}} or None.
+    source_predictions: dict[str, Any] | None = None
+    # last-known 재사용 신선도 — 그날 갱신 없이 직전 분석을 유효기간 내 재사용한 소스의 나이(일).
+    # {source: age_days} (age_days>0 인 소스만). LLM 이 "최종 업데이트 N일 전" 으로 서술하는 근거.
+    source_freshness: dict[str, int] = field(default_factory=dict)
     evidence: list[dict[str, Any]] = field(default_factory=list)
     # --- LLM 설명 필드(또는 결정론 폴백) ---
     headline: str = ""
@@ -39,7 +50,7 @@ class RiskReport:
     narrative_source: str = "deterministic"  # 'llm' | 'deterministic' | 'llm_fallback'
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        data = {
             "stock_id": self.stock_id,
             "stock_code": self.stock_code,
             "signal_date": self.signal_date,
@@ -53,6 +64,7 @@ class RiskReport:
             "veto_keywords": list(self.veto_keywords),
             "ml_risk": self.ml_risk,
             "price_prediction": self.price_prediction,
+            "report_valuation": self.report_valuation,
             "evidence": self.evidence,
             "narrative": {
                 "headline": self.headline,
@@ -62,3 +74,10 @@ class RiskReport:
                 "source": self.narrative_source,
             },
         }
+        # 7개 예측률은 있을 때만 노출 — 없을 땐 기존 출력과 동일(하위호환).
+        if self.source_predictions is not None:
+            data["source_predictions"] = self.source_predictions
+        # 재사용된 소스가 있을 때만 신선도 노출(하위호환).
+        if self.source_freshness:
+            data["source_freshness"] = dict(self.source_freshness)
+        return data
