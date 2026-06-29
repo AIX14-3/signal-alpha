@@ -266,8 +266,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="소스별 base 모델 학습 harness (#525 Phase 3)")
     parser.add_argument("--source", choices=[*MODEL_NAME_BY_SOURCE, "all"], default="all")
     parser.add_argument("--target", choices=LABEL_COLUMNS, default=DEFAULT_TARGET)
-    parser.add_argument("--asof-from", required=True, help="라벨 기간 시작 (YYYY-MM-DD)")
-    parser.add_argument("--asof-to", required=True, help="라벨 기간 끝 (YYYY-MM-DD)")
+    parser.add_argument(
+        "--asof-from", required=True, type=date.fromisoformat, help="라벨 기간 시작 (YYYY-MM-DD)"
+    )
+    parser.add_argument(
+        "--asof-to", required=True, type=date.fromisoformat, help="라벨 기간 끝 (YYYY-MM-DD)"
+    )
     parser.add_argument("--universe", default=DEFAULT_UNIVERSE, help="유니버스 스냅샷(생존편향 차단)")
     parser.add_argument("--out-dir", default=str(DEFAULT_ARTIFACT_DIR))
     parser.add_argument("--n-splits", type=int, default=4)
