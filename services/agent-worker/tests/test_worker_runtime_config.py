@@ -56,6 +56,9 @@ def test_worker_runbooks_match_current_queue_and_auth_contracts():
     assert "INTERNAL_API_TOKEN=" in gcp
     assert "SYNTHESIS_LLM_MODEL=gemini-2.5-flash" in staging
     assert "gemini-2.0-flash" not in staging
+    assert "runtime.publishing" in schedule
+    assert "single_db_noop" in gcp
+    assert "PUBLISH_SIGNALS tasks are skipped" in gcp
 
 
 def test_worker_specs_match_current_queue_auth_and_model_contracts():

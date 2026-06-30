@@ -28,6 +28,7 @@ async def health_check(
         "service": settings.service_name,
         "version": settings.version,
         "runtime": {
+            "publishing": _publishing_status(settings),
             "price_collector": {
                 "enabled": settings.price_collector_enabled,
                 "state": _task_state(getattr(request.app.state, "price_collector_task", None)),
@@ -44,6 +45,23 @@ async def health_check(
                 ),
             },
         },
+    }
+
+
+def _publishing_status(settings: Any) -> dict[str, Any]:
+    backend_configured = bool(getattr(settings, "backend_database_url", None))
+    if backend_configured:
+        return {
+            "backend_database_configured": True,
+            "mode": "backend_db",
+            "status": "ready",
+            "warning": None,
+        }
+    return {
+        "backend_database_configured": False,
+        "mode": "single_db_noop",
+        "status": "disabled",
+        "warning": "BACKEND_DATABASE_URL is not configured; PUBLISH_SIGNALS tasks are skipped.",
     }
 
 

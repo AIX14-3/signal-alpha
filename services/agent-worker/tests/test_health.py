@@ -91,6 +91,12 @@ class HealthCheckTest(unittest.TestCase):
                 "service": "agent-worker",
                 "version": "0.1.0",
                 "runtime": {
+                    "publishing": {
+                        "backend_database_configured": False,
+                        "mode": "single_db_noop",
+                        "status": "disabled",
+                        "warning": "BACKEND_DATABASE_URL is not configured; PUBLISH_SIGNALS tasks are skipped.",
+                    },
                     "price_collector": {"enabled": False, "state": "not_started"},
                     "hiring_ops_daemon": {"enabled": False, "state": "not_started"},
                     "queue_drain_daemon": {
@@ -133,6 +139,18 @@ class HealthCheckTest(unittest.TestCase):
         self.assertEqual(queue_runtime["cycles_completed"], 3)
         self.assertEqual(queue_runtime["last_cycle"]["total_runs"], 2)
         self.assertIsNone(queue_runtime["last_error"])
+
+    def test_health_reports_publish_backend_configuration(self) -> None:
+        app.dependency_overrides[get_database_pool] = lambda: _FakePool()
+        client = TestClient(app)
+
+        response = client.get("/health")
+
+        publishing = response.json()["runtime"]["publishing"]
+        self.assertEqual(publishing["status"], "disabled")
+        self.assertEqual(publishing["mode"], "single_db_noop")
+        self.assertFalse(publishing["backend_database_configured"])
+        self.assertIn("BACKEND_DATABASE_URL", publishing["warning"])
 
     def test_health_returns_503_when_db_unavailable(self) -> None:
         # DB 연결/쿼리 실패 → 503 (Cloud Run/GCE 헬스체크가 장애를 감지).

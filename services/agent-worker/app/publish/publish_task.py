@@ -12,6 +12,7 @@ PUBLISHED 테이블을 수집 DB → 백엔드 DB 로 복사한다(``signal_publ
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from typing import Any, Awaitable, Callable
 
@@ -20,6 +21,7 @@ from app.orchestrator.queue.context import parse_task_context
 from app.publish.signal_publisher import publish_stock
 
 BackendConnector = Callable[[str], Awaitable[Any]]
+logger = logging.getLogger(__name__)
 
 
 class PublishSignalsTaskHandler:
@@ -39,7 +41,21 @@ class PublishSignalsTaskHandler:
         backend_url = getattr(self._settings, "backend_database_url", None)
         if not backend_url:
             # 단일 DB 모드 — 발행 대상 없음.
-            return {"stock_id": stock_id, "skipped_reason": "no_backend_db"}
+            logger.warning(
+                "PUBLISH_SIGNALS skipped: BACKEND_DATABASE_URL is not configured "
+                "(stock_id=%s)",
+                stock_id,
+            )
+            return {
+                "stock_id": stock_id,
+                "publish_status": "disabled",
+                "backend_database_configured": False,
+                "skipped_reason": "no_backend_db",
+                "operator_hint": (
+                    "Set BACKEND_DATABASE_URL on agent-worker to enable publish_stock "
+                    "from the collection DB to the backend DB."
+                ),
+            }
 
         parse_task_context(task.get("task_context"))  # 컨텍스트 정규화(향후 확장 여지)
         backend = await self._backend_connector(backend_url)
