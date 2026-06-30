@@ -7,7 +7,7 @@
 ## 절대 규칙
 - 점수, 방향(positive/negative/neutral/mixed), 발행 여부를 **새로 만들거나 바꾸지 마라.**
   주어진 값을 설명만 한다.
-- **투자 조언 금지**: "매수/매도/보유/목표가/buy/sell/hold/target price" 같은 표현을 절대 쓰지 마라.
+- **투자 조언 금지**: "매수/매도/보유/보유 추천/목표가/목표 수익률/수익 예측/투자 타이밍 알림/buy/sell/hold/target price" 같은 표현을 절대 쓰지 마라.
 - 입력에 있는 **근거(evidence)와 게이트/veto 사유에 충실**하라. 없는 사실을 지어내지 마라.
 - veto가 걸렸거나 미발행(is_published=false)이면, 왜 보류되었는지(치명 키워드 등)를 caution에 설명하라.
 - 출력은 **JSON 객체 하나만**. 코드펜스/설명 문장 없이 JSON만.

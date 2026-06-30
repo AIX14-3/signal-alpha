@@ -12,6 +12,7 @@ from typing import Any, Protocol
 
 from app.analyzers.dart.financials import extract_dart_financial_metrics
 from app.analyzers.dart.source_result import DartAnalysisResult
+from app.policy_safety import contains_policy_recommendation
 
 PROMPT_VERSION = "dart-llm-v1"
 _ALLOWED_DIRECTIONS = {"positive", "negative", "neutral", "mixed"}
@@ -438,3 +439,5 @@ def _reject_investment_advice(values: list[str]) -> None:
             continue
         if pattern.lower() in lowered:
             raise DartLlmAnalysisError("DART LLM response contained investment advice language.")
+    if contains_policy_recommendation(text):
+        raise DartLlmAnalysisError("DART LLM response contained investment advice language.")
