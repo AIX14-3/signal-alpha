@@ -49,7 +49,7 @@ Signal Alpha가 아래 기능을 제공하는 것처럼 표현하면 안 됩니�
 ## DB 규칙
 
 - 스키마의 유일한 기준은 `database/migrations/`입니다.
-- 이미 적용된 migration은 절대 수정하지 말고 새 번호의 migration을 추가하세요.
+- 이미 적용된 migration은 절대 수정하지 말고 `python database/migrate.py new "..."`로 새 타임스탬프 migration을 추가하세요.
 - 애플리케이션 코드나 임시 setup 스크립트에서 테이블을 만들지 마세요.
 - DB 문서가 명시적으로 허용하지 않는 한 migration에서 `IF NOT EXISTS`를 사용하지 마세요.
 - seed는 `ON CONFLICT` 기반으로 재실행 가능하게 만드세요.

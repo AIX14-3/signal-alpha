@@ -51,7 +51,7 @@
 > 내장)으로 묶어 검증한다. 유닛 분리 토폴로지는 [architecture-diagram.md](./architecture-diagram.md) 참조.
 ```bash
 docker compose --profile prod up -d postgres   # staging은 DATABASE_URL로 대체(이 postgres 미사용)
-docker compose run --rm migrate                # 또는 Phase 1에서 이미 적용
+docker compose run --rm db-migrate apply --seeds # 또는 Phase 1에서 이미 적용
 docker compose up -d agent-worker main-server
 docker compose --profile prod up -d web-prod   # NEXT_PUBLIC_MAIN_API_BASE_URL build-arg!
 ```

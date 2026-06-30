@@ -50,7 +50,7 @@ ALTER append 위치인 테이블 끝에 배치, `hiring_signals`/`hiring_sources
 ```bash
 docker compose down -v          # 볼륨까지 삭제 (원장 초기화)
 docker compose up -d postgres
-docker compose run --rm migrate # 001_baseline.sql + seeds 재적용
+docker compose run --rm db-migrate apply --seeds # baseline + seeds 재적용
 ```
 
 운영/스테이징 DB에는 적용하지 않는다 (개발 단계 한정 작업).

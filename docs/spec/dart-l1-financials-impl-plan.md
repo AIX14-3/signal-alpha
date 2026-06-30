@@ -16,7 +16,7 @@
 - 내용: 스펙 §3 DDL 그대로. **`002_sec_filings.sql` 컨벤션 미러링** — BIGSERIAL PK, `stock_id BIGINT REFERENCES stocks(id)`, `fetched_at/created_at/updated_at TIMESTAMPTZ DEFAULT NOW()`, 부분 인덱스 `WHERE stock_id IS NOT NULL`.
 - 자연키(멱등): `UNIQUE (corp_code, bsns_year, reprt_code, fs_div, sj_div, account_id)` — 재수집/정정 시 갱신.
 - 인덱스: `(stock_id) WHERE NOT NULL`, `(corp_code, bsns_year)`, `(account_id)`.
-- 주의(레포 규칙): 이미 적용된 마이그레이션 수정 금지 → **새 번호로만** 추가. `IF NOT EXISTS` 사용 금지(DART 규칙). `.gitattributes`가 `*.sql eol=lf` 보장(checksum 안전).
+- 주의(레포 규칙): 이미 적용된 마이그레이션 수정 금지 → `python database/migrate.py new "..."`로 **새 타임스탬프 파일에만** 추가. `IF NOT EXISTS` 사용 금지(DART 규칙). `.gitattributes`가 `*.sql eol=lf` 보장(checksum 안전).
 
 ### Step 2 — ORM 리포지토리 🙋
 - 위치: `packages/data-access/signal_alpha_data_access/repositories/dart_financials.py` (신규, **`sec.py` `SecFilingRepository` 패턴 미러링**). 대안: 기존 `dart.py`에 메서드 추가 — 응집도상 신규 파일 권장.

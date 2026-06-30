@@ -207,7 +207,7 @@ def main() -> None:
             print(f"  {line}")
         print("\n해결: 새 마이그레이션 파일을 추가하거나, 개발 DB라면 재생성하세요.")
         print("  docker compose down -v && docker compose up -d postgres")
-        print("  docker compose run --rm migrate")
+        print("  docker compose run --rm db-migrate apply --seeds")
         sys.exit(1)
 
     print("\n드리프트 없음 — DB가 마이그레이션 정의와 일치합니다.")
