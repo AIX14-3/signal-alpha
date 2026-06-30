@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from app.analyzers.dart.llm import LlmClient
+from app.policy_safety import contains_policy_recommendation
 
 PROMPT_VERSION = "synthesis-v1"
 
@@ -152,3 +153,5 @@ def _reject_investment_advice(values: list[str]) -> None:
     for substring in _PROHIBITED_ADVICE_SUBSTRINGS:
         if substring in text:
             raise SynthesisError("Synthesis LLM response contained investment advice language.")
+    if contains_policy_recommendation(text):
+        raise SynthesisError("Synthesis LLM response contained investment advice language.")

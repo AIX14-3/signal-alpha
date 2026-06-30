@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from app.analyzers.dart.llm import _loads_json_object
+from app.policy_safety import contains_policy_recommendation
 
 
 class NarrateError(Exception):
@@ -62,6 +63,8 @@ def reject_advice(values: list[str]) -> None:
     for term in _ADVICE_TERMS:
         if term in text:
             raise NarrateError(f"narrate response contained advice term: {term}")
+    if contains_policy_recommendation(text):
+        raise NarrateError("narrate response contained investment advice language")
 
 
 def build_prompt(template_path: Path, payload: dict[str, Any]) -> str:
