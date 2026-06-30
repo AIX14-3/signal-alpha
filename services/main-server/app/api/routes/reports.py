@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -290,7 +291,9 @@ def _source_block(source: str, breakdown: dict[str, Any], *, locked: bool) -> di
         "direction": detail.get("direction", "unknown"),
         "score": _number(detail.get("score_100", detail.get("score"))),
         "data_status": detail.get("data_status", "missing"),
-        "summary": detail.get("summary"),
+        # 주가(PRICE)는 워커가 기계식 요약("… 방향 positive, 점수 +0.400.")만 남기는 경우가
+        # 있어, 그 패턴일 때만 사람이 읽기 쉬운 문장으로 풀어 쓴다(LLM 요약이 있으면 그대로 둠).
+        "summary": _humanize_price_summary(detail) if source == "price" else detail.get("summary"),
         "locked": False,
     }
 
@@ -306,34 +309,72 @@ def _narrative_points(source: str, breakdown: dict[str, Any]) -> list[str]:
     return [str(p) for p in points if isinstance(p, str) and p.strip()]
 
 
-_DIRECTION_KO = {
-    "positive": "긍정",
-    "negative": "부정",
-    "neutral": "중립",
-    "mixed": "혼조",
-    "unknown": "판단 보류",
+# 기계식 위험 플래그 → 일반 사용자가 이해할 수 있는 한국어 설명. 미정의 플래그는 원문 노출.
+_RISK_FLAG_KO = {
+    "high_volatility": "최근 주가 변동성이 평소보다 커서 가격 등락 폭이 크고, 그만큼 신호의 불확실성도 높은 편입니다.",
+    "stale_data": "최근 시세 데이터 일부가 지연되어 반영됐습니다 — 분석의 최신성이 다소 떨어질 수 있습니다.",
+    "low_liquidity": "거래량이 적어(유동성이 낮아) 가격 신호의 신뢰도가 낮을 수 있습니다.",
+    "insufficient_history": "분석에 활용할 과거 데이터가 충분하지 않습니다.",
+    "missing_source": "해당 데이터가 아직 충분히 수집되지 않았습니다.",
 }
+
+# 기계식 PRICE 요약("… 방향 positive, 점수 +0.400.") 판별용.
+_PRICE_TERSE_RE = re.compile(r"방향\s+\w+\s*,\s*점수")
+
+
+def _humanize_price_summary(detail: dict[str, Any]) -> str | None:
+    """주가 요약이 기계식 패턴일 때만 사람이 읽기 쉬운 문장으로 풀어 쓴다(앞의 날짜는 유지).
+    그 외(LLM 서술 등)에는 손대지 않고 원문을 그대로 돌려준다."""
+    summary = detail.get("summary")
+    if not isinstance(summary, str) or not summary.strip():
+        return summary if isinstance(summary, str) else None
+    if not _PRICE_TERSE_RE.search(summary):
+        return summary
+    phrase = {
+        "positive": "상승 쪽에 무게가 실리는 ‘긍정’",
+        "negative": "하락 쪽에 무게가 실리는 ‘부정’",
+        "neutral": "뚜렷한 방향이 없는 ‘중립’",
+        "mixed": "신호가 엇갈리는 ‘혼조’",
+    }.get(str(detail.get("direction") or "").lower(), "방향성 판단")
+    date_match = re.match(r"\s*(\d{4}-\d{2}-\d{2})", summary)
+    prefix = f"{date_match.group(1)} 기준 " if date_match else ""
+    return f"{prefix}최근 약 6개월(120영업일)간 주가 흐름과 거래 수급을 종합한 결과 {phrase} 신호입니다."
 
 
 def _derive_points(source: str, breakdown: dict[str, Any]) -> list[str]:
     """저장된 narrative_points/이벤트 근거가 모두 없는 소스(주가 등 문서 비기반)를 위해
-    발행된 score_breakdown 필드(방향·AI 예측 점수·데이터 상태·리스크 플래그)에서 근거 불릿을
-    파생한다. 새 값을 만들지 않고 이미 발행된 수치만 사람이 읽기 쉽게 풀어 쓴다."""
+    발행된 score_breakdown 필드(방향·AI 예측 점수·리스크 플래그)에서 사람이 읽기 쉬운 근거
+    불릿을 파생한다. 새 값을 만들지 않고 발행된 판정을 자연어로 풀어 쓴다."""
     detail = breakdown.get(_SOURCE_TO_BREAKDOWN[source])
     if not isinstance(detail, dict):
         return []
     points: list[str] = []
+    subject = "주가 흐름과 거래 수급이" if source == "price" else "수집된 데이터가"
     direction = str(detail.get("direction") or "").lower()
-    if direction and direction != "unknown":
-        points.append(f"데이터 방향성은 {_DIRECTION_KO.get(direction, direction)} 방향입니다.")
+    if direction == "positive":
+        points.append(f"{subject} 전반적으로 상승 쪽으로 기울어 방향을 ‘긍정’으로 판단했습니다.")
+    elif direction == "negative":
+        points.append(f"{subject} 전반적으로 하락 쪽으로 기울어 방향을 ‘부정’으로 판단했습니다.")
+    elif direction == "neutral":
+        points.append(f"{subject} 뚜렷한 방향성을 보이지 않아 ‘중립’으로 판단했습니다.")
     score_100 = _number(detail.get("score_100"))
     if score_100 is not None:
-        points.append(f"주가 BASE 기반 AI 예측 점수는 {score_100}점입니다(0–100, 50=중립).")
+        if score_100 > 50:
+            points.append(
+                f"AI 예측 점수는 100점 만점에 {score_100}점으로, 중간값보다 높아 상승(긍정) 신호로 해석됩니다."
+            )
+        elif score_100 < 50:
+            points.append(
+                f"AI 예측 점수는 100점 만점에 {score_100}점으로, 중간값보다 낮아 하락(부정) 신호로 해석됩니다."
+            )
+        else:
+            points.append(f"AI 예측 점수는 100점 만점에 {score_100}점으로 중립 수준입니다.")
     flags = detail.get("risk_flags")
-    if isinstance(flags, list) and flags:
-        joined = ", ".join(str(f) for f in flags if str(f).strip())
-        if joined:
-            points.append(f"유의 플래그: {joined}")
+    if isinstance(flags, list):
+        for flag in flags:
+            text = str(flag).strip()
+            if text:
+                points.append(_RISK_FLAG_KO.get(text, f"유의 사항: {text}"))
     return points
 
 
