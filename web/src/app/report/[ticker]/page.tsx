@@ -84,7 +84,7 @@ export default function ReportPage() {
   };
 
   return (
-    <div className="py-10">
+    <div className="py-10" data-page="report">
       {/* 헤더 */}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
