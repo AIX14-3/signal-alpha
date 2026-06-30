@@ -103,3 +103,16 @@ def test_non_public_schema_qualifier():
     """public 외 스키마 한정자도 테이블명만 캡처한다."""
     subjects, edges = ct.analyze_sql("CREATE TABLE app.user_sessions (id bigint);")
     assert subjects == {"user_sessions"}
+
+
+def test_apostrophe_in_comment_does_not_swallow_code():
+    """주석 속 ' (영어 소유격 등)가 뒤 코드를 가짜 문자열로 삼키지 않는다."""
+    sql = (
+        "-- worker's data goes here\n"
+        "ALTER TABLE analysis_requests ADD CONSTRAINT c "
+        "FOREIGN KEY (user_id) REFERENCES public.users(id);\n"
+        "SELECT 'x';"
+    )
+    subjects, edges = ct.analyze_sql(sql)
+    assert subjects == {"analysis_requests"}
+    assert ("analysis_requests", "users") in edges

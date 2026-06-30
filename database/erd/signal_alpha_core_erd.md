@@ -484,7 +484,7 @@ erDiagram
 erDiagram
     analysis_requests {
         BIGINT id PK "COL"
-        BIGINT user_id FK "nullable, SET NULL"
+        BIGINT user_id "nullable, no FK (cross-DB)"
         BIGINT stock_id FK
         VARCHAR status
         VARCHAR analysis_mode "full|dart_only|quick"
@@ -753,7 +753,7 @@ erDiagram
 - `patent_raw_details` ← `llm_features` JSONB, `llm_status` (019).
 - `hiring_raw_details` ← `observed_date` (014); `ocr_skills`·`ocr_status` (028).
 - `agent_results.method_signal` ← `'unknown'` 허용 (C안 abstain, `20260629_1217`).
-- `users` ← `phone` (025), `status`(active|suspended|deleted) (027). 사용자-소유 테이블의 `user_id` FK는 `ON DELETE CASCADE`(하드 삭제, `20260626_0244`), `analysis_requests.user_id`는 `ON DELETE SET NULL`.
+- `users` ← `phone` (025), `status`(active|suspended|deleted) (027). 사용자-소유(BACKEND) 테이블의 `user_id` FK는 `ON DELETE CASCADE`(하드 삭제, `20260626_0244`). `analysis_requests.user_id`(COLLECTION)는 `users`(BACKEND)와 cross-DB 라 **FK 없이 nullable 컬럼**으로 두고, 회원 삭제 시 분리는 앱레벨 publisher 가 담당한다(`20260626_0244`에서 FK 제거).
 - `signal_subscriptions` ← `next_billing_at`, `auto_renew` (027).
 
 ## Legacy — report MVP [COLLECTION] ✅ 제거됨
@@ -767,4 +767,5 @@ erDiagram
 
 - `schema_migrations(filename PK, checksum, applied_at)` — `database/migrate.py`가 자동 생성·관리하는 적용 원장. 마이그레이션 파일로 만들지 않는다.
 
-전체 테이블 수: **68개** (+ `schema_migrations` 원장). PUBLISHED 6 / COLLECTION 47 / BACKEND 15.
+전체 테이블 수: **68개** (+ `schema_migrations` 원장). PUBLISHED 6 / COLLECTION 46 / BACKEND 16
+(BACKEND 는 `collection_schedules` 포함 — `db_partition.py` 기준).

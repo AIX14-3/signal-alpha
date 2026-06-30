@@ -61,7 +61,9 @@ def normalize(dump: str) -> list[str]:
             continue
         if stripped.startswith("--"):
             continue
-        if stripped.startswith("SET ") or stripped.startswith("SELECT pg_catalog.set_config"):
+        # 세션 프리앰블은 pg_dump 가 **컬럼 0**에 emit 한다. raw 라인(들여쓰기 보존)으로 anchor 해야
+        # 함수/트리거 본문 안의 들여쓴 'SET ...'(예: UPDATE ... SET) 까지 지워 false PASS 가 되지 않는다.
+        if line.startswith("SET ") or line.startswith("SELECT pg_catalog.set_config"):
             continue
         out.append(line)
     return out
