@@ -20,6 +20,11 @@ import asyncpg  # type: ignore[import]
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+from app.clients.kipris_client import KiprisClient
+from app.clients.naver_datalab_client import NaverDataLabClient
+from app.collectors.datalab import DataLabCollector
+from app.collectors.patent import PatentCollector
+
 # Windows 콘솔 기본 코덱(cp949)은 ✗/✓ 같은 비-ASCII 기호를 인코딩 못 해 print 시
 # UnicodeEncodeError 가 난다. 그 예외가 타깃 격리 except 안에서 터지면 격리가 깨져
 # 배치가 통째로 죽으므로, 출력 스트림을 UTF-8 로 강제한다(리눅스/Actions 는 무영향).
@@ -28,11 +33,6 @@ for _stream in (sys.stdout, sys.stderr):
         _stream.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
     except (AttributeError, ValueError):
         pass
-
-from app.clients.kipris_client import KiprisClient
-from app.clients.naver_datalab_client import NaverDataLabClient
-from app.collectors.datalab import DataLabCollector
-from app.collectors.patent import PatentCollector
 
 ROOT = Path(__file__).resolve().parents[2]
 REGISTRY_PATH = Path(__file__).parent / "category_registry.json"

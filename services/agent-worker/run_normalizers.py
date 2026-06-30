@@ -30,13 +30,6 @@ import asyncpg  # type: ignore[import]
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "packages" / "data-access"))
 
-# Windows 콘솔(cp949)에서 ⚠️ 등 비-ASCII 기호 print 시 UnicodeEncodeError 방지.
-for _stream in (sys.stdout, sys.stderr):
-    try:
-        _stream.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
-    except (AttributeError, ValueError):
-        pass
-
 from app.orchestrator.alternative.tasks import (
     DataLabNormalizeTaskHandler,
     HiringNormalizeTaskHandler,
@@ -48,6 +41,13 @@ from app.orchestrator.queue.task_types import (
     NORMALIZE_PATENT,
 )
 from app.orchestrator.queue.tasks import QueueTaskRunner
+
+# Windows 콘솔(cp949)에서 ⚠️ 등 비-ASCII 기호 print 시 UnicodeEncodeError 방지.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
+    except (AttributeError, ValueError):
+        pass
 
 ROOT = Path(__file__).resolve().parents[2]
 
