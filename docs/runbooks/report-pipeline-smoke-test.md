@@ -88,6 +88,7 @@ docker compose exec -T postgres psql -U signal_alpha -d signal_alpha -c "select 
 Invoke-RestMethod `
   -Method Post `
   -Uri "http://localhost:8011/internal/tasks/collect_report/enqueue" `
+  -Headers @{"X-Internal-Token" = $env:INTERNAL_API_TOKEN} `
   -ContentType "application/json" `
   -Body '{"stock_id":1,"priority":"batch","task_context":{"stock_code":"005930","date_start":"2026-06-17","date_end":"2026-06-24","max_pages":2},"dedupe":false}'
 ```
@@ -108,6 +109,7 @@ docker compose exec -T postgres psql -U signal_alpha -d signal_alpha -c "select 
 Invoke-RestMethod `
   -Method Post `
   -Uri "http://localhost:8011/internal/queue/collect_report/run-batch" `
+  -Headers @{"X-Internal-Token" = $env:INTERNAL_API_TOKEN} `
   -ContentType "application/json" `
   -Body '{"max_runs":5}'
 ```
@@ -124,6 +126,7 @@ docker compose exec -T postgres psql -U signal_alpha -d signal_alpha -c "select 
 Invoke-RestMethod `
   -Method Post `
   -Uri "http://localhost:8011/internal/queue/process_report/run-batch" `
+  -Headers @{"X-Internal-Token" = $env:INTERNAL_API_TOKEN} `
   -ContentType "application/json" `
   -Body '{"max_runs":10}'
 ```
@@ -159,6 +162,7 @@ docker compose exec -T postgres psql -U signal_alpha -d signal_alpha -c "select 
 Invoke-RestMethod `
   -Method Post `
   -Uri "http://localhost:8011/internal/queue/normalize_report/run-batch" `
+  -Headers @{"X-Internal-Token" = $env:INTERNAL_API_TOKEN} `
   -ContentType "application/json" `
   -Body '{"max_runs":10}'
 ```
@@ -181,6 +185,7 @@ docker compose exec -T postgres psql -U signal_alpha -d signal_alpha -c "select 
 Invoke-RestMethod `
   -Method Post `
   -Uri "http://localhost:8011/internal/queue/analyze_report/run-batch" `
+  -Headers @{"X-Internal-Token" = $env:INTERNAL_API_TOKEN} `
   -ContentType "application/json" `
   -Body '{"max_runs":10}'
 ```
@@ -206,6 +211,7 @@ docker compose exec -T postgres psql -U signal_alpha -d signal_alpha -c "select 
 Invoke-RestMethod `
   -Method Post `
   -Uri "http://localhost:8011/internal/queue/ml_infer/run-batch" `
+  -Headers @{"X-Internal-Token" = $env:INTERNAL_API_TOKEN} `
   -ContentType "application/json" `
   -Body '{"max_runs":10}'
 ```
@@ -216,6 +222,7 @@ Invoke-RestMethod `
 Invoke-RestMethod `
   -Method Post `
   -Uri "http://localhost:8011/internal/queue/meta_combine/run-batch" `
+  -Headers @{"X-Internal-Token" = $env:INTERNAL_API_TOKEN} `
   -ContentType "application/json" `
   -Body '{"max_runs":10}'
 ```
@@ -226,6 +233,7 @@ Invoke-RestMethod `
 Invoke-RestMethod `
   -Method Post `
   -Uri "http://localhost:8011/internal/queue/aggregate_signal/run-batch" `
+  -Headers @{"X-Internal-Token" = $env:INTERNAL_API_TOKEN} `
   -ContentType "application/json" `
   -Body '{"max_runs":10}'
 ```
@@ -262,7 +270,8 @@ Report collector run 집계:
 ```powershell
 Invoke-RestMethod `
   -Method Get `
-  -Uri "http://localhost:8011/internal/stats/collectors/runs?collector_type=REPORT&limit=10"
+  -Uri "http://localhost:8011/internal/stats/collectors/runs?collector_type=REPORT&limit=10" `
+  -Headers @{"X-Internal-Token" = $env:INTERNAL_API_TOKEN}
 ```
 
 ## 8. 문제 해결

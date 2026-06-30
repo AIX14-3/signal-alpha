@@ -182,7 +182,7 @@ gcloud compute instances create-with-container sa-worker --zone=$ZONE --machine-
   --service-account=sa-worker@$PROJECT.iam.gserviceaccount.com \
   --scopes=cloud-platform \
   --container-image=$AR/agent-worker:demo \
-  --container-env=REPORT_STORAGE_BACKEND=gcs,GCS_REPORT_BUCKET=signal-alpha-reports,GCP_PROJECT_ID=$PROJECT,PRICE_COLLECTOR_ENABLED=true,QUEUE_DRAIN_DAEMON_ENABLED=true,KIWOOM_API_BASE=https://mockapi.kiwoom.com
+  --container-env=REPORT_STORAGE_BACKEND=gcs,GCS_REPORT_BUCKET=signal-alpha-reports,GCP_PROJECT_ID=$PROJECT,PRICE_COLLECTOR_ENABLED=true,QUEUE_DRAIN_DAEMON_ENABLED=true,INTERNAL_API_TOKEN=<CHANGE_ME>,KIWOOM_API_BASE=https://mockapi.kiwoom.com
 # 워커는 DB DSN 2개 주입: DATABASE_URL(=WORKER, sa-pg) + BACKEND_DATABASE_URL(=sa-be, 발행 대상).
 # create-with-container 는 Secret 직접 못 읽으므로 VM SSH 후 docker run 으로 둘 다 주입(가장 간단):
 #   docker run ... \
