@@ -9,17 +9,21 @@ name: AltData Collect (BigQuery)
 #   UNIQUE 제약에서 자동 dedup → 재실행 idempotent.
 # 런북: docs/runbooks/patent-dual-source.md
 #
-# ⚠️ 필요한 리포 Secrets — 반드시 Settings > Secrets and variables > "Actions" 탭의
-#    "Repository secrets" 에 넣어야 한다(Environment/Dependabot 시크릿은 이 워크플로가
-#    못 읽는다). 이름은 대소문자 정확히.
-#   GCP_SA_KEY            (필수) GCP 서비스계정 JSON 키 전체. SA 권한: BigQuery Job User
-#                         + 공개 데이터셋(patents-public-data) 읽기. 미등록/빈값이면 auth
-#                         스텝이 실패하고 잡이 red 가 된다(= "시크릿 설정하라"는 신호).
-#                         등록 후 dry_run=true 로 재실행하면 통과.
-#   GOOGLE_CLOUD_PROJECT  (필수) 청구/조회 프로젝트(예: patent-bq-reader). 없으면 스크립트가
-#                         DEFAULT_BQ_PROJECT="patent-bq-reader" 로 폴백.
+# 인증: Workload Identity Federation(키리스) — JSON 키 없이 GitHub OIDC 토큰으로
+#   patent-bq-reader 의 서비스계정 gh-actions-bq 를 임퍼소네이트한다. 조직 정책
+#   iam.disableServiceAccountKeyCreation(키 생성 차단) 과 충돌하지 않는 정석 방식.
+#   GCP 측 셋업(이미 완료): WIF 풀 github-pool + GitHub OIDC 공급자 github-provider
+#   (repository_owner==AIX14-3 로 제한) + SA 에 roles/iam.workloadIdentityUser 바인딩
+#   (attribute.repository = AIX14-3/signal-alpha 만 허용). 아래 with.* 의 리소스
+#   이름/SA 이메일은 비밀이 아니라 식별자라 그대로 둔다(임퍼소네이션은 위 제약으로 차단).
+#   ⚠️ OIDC 토큰 발급을 위해 job 의 permissions.id-token: write 필수.
+#
+# 필요한 리포 Secrets(Settings > Secrets and variables > Actions > Repository secrets):
 #   DATABASE_URL          (실적재 시 필수) dry-run 은 DB 미접속이라 불필요.
+#   GOOGLE_CLOUD_PROJECT  (선택) 청구/조회 프로젝트. 없으면 스크립트가
+#                         DEFAULT_BQ_PROJECT="patent-bq-reader" 로 폴백.
 # google-cloud-bigquery 는 정식 의존성이 아니라 `uv run --with` 로 임시 주입한다.
+# 런북: docs/runbooks/patent-dual-source.md
 
 on:
   schedule:
@@ -27,7 +31,7 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "DB 미적재(조회·리포트만). 시크릿 등록 후 첫 검증은 true 권장"
+        description: "DB 미적재(조회·리포트만). 첫 검증은 true 권장"
         type: boolean
         required: false
         default: true
@@ -53,6 +57,9 @@ jobs:
     name: Backfill patent (BigQuery)
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write # WIF: GitHub OIDC 토큰 발급(키리스 인증 필수)
     env:
       GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
@@ -70,14 +77,17 @@ jobs:
       - name: Sync dependencies
         run: uv sync --all-packages --group dev
 
-      # SA 키로 ADC 설정 → 이후 스텝의 bigquery.Client() 가 자격증명을 자동 획득.
+      # WIF 키리스 인증 → ADC 설정 → 이후 스텝의 bigquery.Client() 가 자격증명을 자동 획득.
+      # (리소스 이름/SA 이메일은 식별자라 비밀 아님 — 임퍼소네이션은 풀/공급자 제약으로 차단.)
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          project_id: patent-bq-reader
+          workload_identity_provider: projects/324035870293/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+          service_account: gh-actions-bq@patent-bq-reader.iam.gserviceaccount.com
 
       # KIPRIS 경로와 격리(continue-on-error): BigQuery/GCP 장애가 다른 워크플로를 막지 않음.
-      # dry_run 기본 true(수동) → 시크릿만 들어오면 DB 쓰기 없이 안전 검증. 스케줄은 실적재.
+      # dry_run 기본 true(수동) → WIF 인증되면 DB 쓰기 없이 안전 검증. 스케줄은 실적재.
       - name: Backfill — patent (Google Patents / BigQuery)
         if: always()
         continue-on-error: true

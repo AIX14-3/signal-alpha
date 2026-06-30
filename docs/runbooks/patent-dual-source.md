@@ -5,7 +5,7 @@
 | 소스 | 커버리지 | 진입점 | 자격증명 | 자동화 |
 |---|---|---|---|---|
 | **KIPRIS** | 최신(어제 1일치) | `run_collectors.py --patent-only` → `PatentCollector.run()` | `KIPRIS_API_KEY` (월 ~1,000건 쿼터) | ✅ `altdata-collect.yml` (06:30 KST) |
-| **BigQuery (Google Patents)** | 과거 대량(~18개월 지연) | `scripts/backfill_patents_bigquery.py` → `PatentCollector.ingest_records()` | GCP ADC + `GOOGLE_CLOUD_PROJECT` | ⚠️ `altdata-collect-bigquery.yml` (주1회, **시크릿 `GCP_SA_KEY` 등록 대기**) |
+| **BigQuery (Google Patents)** | 과거 대량(~18개월 지연) | `scripts/backfill_patents_bigquery.py` → `PatentCollector.ingest_records()` | **WIF 키리스**(GitHub OIDC→SA 임퍼소네이트) | ✅ `altdata-collect-bigquery.yml` (주1회) |
 
 ## 중복 제거 (cross-source dedup)
 
@@ -25,27 +25,31 @@
 
 - KIPRIS는 일간(최신), BigQuery는 18개월 지연이라 **주기(주1/월1) 백필**이 적합 — daily KIPRIS 경로에 끼우지 않는다.
 
-## BigQuery를 CI에 자동화하기 (워크플로 구현됨 — 시크릿 등록만 남음)
+## BigQuery를 CI에 자동화하기 (워크플로 + WIF 키리스 인증 — 셋업 완료)
 
-워크플로 `altdata-collect-bigquery.yml`이 추가되어 있다(주1회 cron + `workflow_dispatch`).
-`google-github-actions/auth@v2`로 `GCP_SA_KEY`를 ADC로 설정한 뒤
-`uv run --with google-cloud-bigquery python scripts/backfill_patents_bigquery.py`를
-`continue-on-error: true`로 돌려 KIPRIS 경로와 격리한다. **남은 것은 GCP/GitHub 쪽 설정뿐:**
+워크플로 `altdata-collect-bigquery.yml`(주1회 cron + `workflow_dispatch`)이 **Workload Identity
+Federation(WIF, 키리스)** 으로 GCP에 인증한다. JSON 키를 만들지 않으므로 조직 정책
+`iam.disableServiceAccountKeyCreation`(키 생성 차단, 본 org의 보안 기본값)과 충돌하지 않는다.
 
-1. **GCP 서비스계정 생성** — `patents-public-data` 조회 권한(BigQuery Job User + 공개 데이터셋 읽기).
-2. 서비스계정 **JSON 키를 리포 Actions Secret `GCP_SA_KEY`**로 등록, `GOOGLE_CLOUD_PROJECT` 시크릿도 등록.
-3. 등록 후 **`workflow_dispatch`를 `dry_run=true`(기본)로 1회 실행**해 인증·조회를 안전 검증
-   (DB 쓰기 없음). 통과하면 스케줄(또는 `dry_run=false` 수동)로 실적재.
-4. `bq_rows`/`build_records`는 `app/collectors/patent/bigquery_source.py`에 있으므로 별도 드라이버에서도 재사용 가능.
+**동작:** GitHub OIDC 토큰 → `google-github-actions/auth@v2`(`workload_identity_provider` +
+`service_account`) → SA `gh-actions-bq@patent-bq-reader.iam.gserviceaccount.com` 임퍼소네이트
+→ ADC 설정 → `uv run --with google-cloud-bigquery python scripts/backfill_patents_bigquery.py`를
+`continue-on-error: true`로 실행(KIPRIS 경로와 격리). job 에 `permissions.id-token: write` 필수.
 
-> ⚠️ **시크릿 위치 주의**: `GCP_SA_KEY`/`GOOGLE_CLOUD_PROJECT`는 *Settings > Secrets and
-> variables > **Actions** 탭 > Repository secrets*에 넣어야 한다. Environment 시크릿이나
-> Dependabot 시크릿에 넣으면 이 워크플로가 못 읽어 `${{ secrets.GCP_SA_KEY }}`가 빈값이 된다
-> (auth 액션이 *"must specify exactly one of ... credentials_json"* 로 실패).
->
-> `GCP_SA_KEY` 미등록/빈값이면 **auth 스텝이 실패하고 잡이 red** 가 된다(설정 오류를 드러내는
-> 의도된 신호 — auth 는 `continue-on-error` 아님). 백필 스텝만 `continue-on-error`라 BigQuery
-> 일시 장애·데이터 이슈는 잡을 죽이지 않는다. `gh secret list` 로 등록 여부를 확인할 수 있다.
+**GCP 측 셋업(완료, 재현용 메모):** 프로젝트 `patent-bq-reader`(번호 324035870293)에서
+- SA `gh-actions-bq` 에 `roles/bigquery.jobUser` + `roles/bigquery.dataViewer`.
+- WIF 풀 `github-pool` + OIDC 공급자 `github-provider`(issuer `token.actions.githubusercontent.com`,
+  attribute-condition `assertion.repository_owner == 'AIX14-3'`).
+- SA 에 `roles/iam.workloadIdentityUser` — principalSet `attribute.repository/AIX14-3/signal-alpha`
+  만 임퍼소네이트 허용(저장소 단위 제한).
+- 워크플로의 `workload_identity_provider`/`service_account` 값은 비밀 아닌 식별자라 yml 에 직접 둠.
+
+**남은 리포 Secrets(선택/실적재용):** `GOOGLE_CLOUD_PROJECT`(없으면 `patent-bq-reader` 폴백),
+`DATABASE_URL`(실적재 시만; dry-run 은 불필요). **`GCP_SA_KEY`는 더 이상 불필요(키리스).**
+
+검증: `workflow_dispatch`를 `dry_run=true`로 1회 실행 → auth ✅ → BigQuery 조회 ✅ → "would load N"
+(DB 쓰기 없음). 통과하면 스케줄(또는 `dry_run=false`)로 실적재.
+`bq_rows`/`build_records`는 `app/collectors/patent/bigquery_source.py`에 있어 재사용 가능.
 
 ## 검증
 
