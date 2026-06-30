@@ -15,7 +15,7 @@ import json
 import unittest
 from unittest.mock import patch
 
-from app.collectors.hiring.base_collector import BaseCollector, _kst_today
+from app.collectors.hiring.base_collector import BaseCollector
 from app.collectors.hiring.closing_date import parse_closing_date
 
 
