@@ -276,45 +276,29 @@ Report RAG는 복구 계획이 없습니다. 신규 개발은 `report_valuation_
 Gemini LLM 보강까지 켜서 PDF 파싱을 확인하려면 `docs/spec/report-gemini-pdf-parsing-dev-guide.md`를 먼저 참고합니다.
 
 ```powershell
+$headers = @{"X-Internal-Token" = $env:INTERNAL_API_TOKEN}
+
 # 1. 리포트 수집 작업 등록
 Invoke-RestMethod `
   -Method Post `
   -Uri "http://localhost:8011/internal/schedules/report/collect" `
+  -Headers $headers `
   -ContentType "application/json" `
   -Body '{"date_start":"2026-06-01","date_end":"2026-06-24","limit":10,"priority":"batch"}'
 
-# 2. 수집 작업 실행
+# 2. 현재 큐를 bounded fair cycle로 드레인
 Invoke-RestMethod `
   -Method Post `
-  -Uri "http://localhost:8011/internal/queue/collect_report/run-batch" `
+  -Uri "http://localhost:8011/internal/queue/run-cycle" `
+  -Headers $headers `
   -ContentType "application/json" `
-  -Body '{"max_runs":10}'
+  -Body '{"max_passes":10000}'
 
 # 2-1. Report collector_runs 확인
 Invoke-RestMethod `
   -Method Get `
-  -Uri "http://localhost:8011/internal/stats/collectors/runs?collector_type=REPORT&limit=10"
-
-# 3. PDF 다운로드와 파싱 작업 실행
-Invoke-RestMethod `
-  -Method Post `
-  -Uri "http://localhost:8011/internal/queue/process_report/run-batch" `
-  -ContentType "application/json" `
-  -Body '{"max_runs":10}'
-
-# 4. 리포트 canonical 정규화 작업 실행
-Invoke-RestMethod `
-  -Method Post `
-  -Uri "http://localhost:8011/internal/queue/normalize_report/run-batch" `
-  -ContentType "application/json" `
-  -Body '{"max_runs":10}'
-
-# 5. 리포트 deterministic 분석 결과 저장
-Invoke-RestMethod `
-  -Method Post `
-  -Uri "http://localhost:8011/internal/queue/analyze_report/run-batch" `
-  -ContentType "application/json" `
-  -Body '{"max_runs":10}'
+  -Uri "http://localhost:8011/internal/stats/collectors/runs?collector_type=REPORT&limit=10" `
+  -Headers $headers
 
 # embed_report/RAG 경로는 현재 코드에 없으므로 실행하지 않습니다.
 ```
@@ -330,6 +314,7 @@ Invoke-RestMethod `
 Invoke-RestMethod `
   -Method Post `
   -Uri "http://localhost:8011/internal/tasks/collect_report/enqueue" `
+  -Headers $headers `
   -ContentType "application/json" `
   -Body '{"stock_id":1,"priority":"batch","task_context":{"stock_code":"005930","date_start":"2026-06-01","date_end":"2026-06-24","max_pages":20}}'
 ```
@@ -401,9 +386,11 @@ uv run pytest packages\data-access\tests\test_collection_repository.py packages\
 기본값은 dry-run입니다. 먼저 후보 건수와 raw 문서 ID를 확인합니다.
 
 ```powershell
+$headers = @{"X-Internal-Token" = $env:INTERNAL_API_TOKEN}
 Invoke-RestMethod `
   -Method Post `
   -Uri "http://localhost:8011/internal/schedules/report/normalize-backfill" `
+  -Headers $headers `
   -ContentType "application/json" `
   -Body '{"limit":100}'
 ```
@@ -414,6 +401,7 @@ Invoke-RestMethod `
 Invoke-RestMethod `
   -Method Post `
   -Uri "http://localhost:8011/internal/schedules/report/normalize-backfill" `
+  -Headers $headers `
   -ContentType "application/json" `
   -Body '{"stock_code":"005930","limit":100}'
 ```
@@ -424,14 +412,16 @@ Invoke-RestMethod `
 Invoke-RestMethod `
   -Method Post `
   -Uri "http://localhost:8011/internal/schedules/report/normalize-backfill" `
+  -Headers $headers `
   -ContentType "application/json" `
   -Body '{"limit":100,"dry_run":false,"priority":"batch"}'
 
 Invoke-RestMethod `
   -Method Post `
-  -Uri "http://localhost:8011/internal/queue/normalize_report/run-batch" `
+  -Uri "http://localhost:8011/internal/queue/run-cycle" `
+  -Headers $headers `
   -ContentType "application/json" `
-  -Body '{"max_runs":100}'
+  -Body '{"max_passes":10000}'
 ```
 
 응답 필드:

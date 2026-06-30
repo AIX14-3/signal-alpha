@@ -378,6 +378,7 @@ OpenDART `/corpCode.xml`을 조회해 `dart_corp_codes`를 갱신한다.
 ```http
 POST /internal/tasks/collect_dart/enqueue
 Content-Type: application/json
+X-Internal-Token: <INTERNAL_API_TOKEN>
 
 {
   "stock_id": 1,
@@ -401,8 +402,11 @@ pending 또는 retrying 상태의 `collect_dart` 작업 1건을 claim 후 실행
 ### 정규화/분석 작업 실행
 
 ```http
-POST /internal/queue/normalize_dart/run-batch
-POST /internal/queue/analyze_dart/run-batch
+POST /internal/queue/run-cycle
+Content-Type: application/json
+X-Internal-Token: <INTERNAL_API_TOKEN>
+
+{"max_passes":10000}
 ```
 
 ### 개발용 E2E 실행
@@ -410,6 +414,7 @@ POST /internal/queue/analyze_dart/run-batch
 ```http
 POST /internal/dart/e2e/run
 Content-Type: application/json
+X-Internal-Token: <INTERNAL_API_TOKEN>
 
 {
   "stock_id": 1,
@@ -449,7 +454,8 @@ DELETE /internal/dart/test-data?stock_code=005930&bgn_de=2026-06-01&end_de=2026-
 
 ```powershell
 # corp code 동기화
-Invoke-RestMethod -Method Post -Uri "http://localhost:8011/internal/dart/corp-codes/sync"
+$headers = @{"X-Internal-Token" = $env:INTERNAL_API_TOKEN}
+Invoke-RestMethod -Method Post -Uri "http://localhost:8011/internal/dart/corp-codes/sync" -Headers $headers
 
 # collect_dart 작업 등록
 $body = @{
@@ -461,29 +467,30 @@ $body = @{
     end_de = "20260612"
   }
 } | ConvertTo-Json -Depth 5
-Invoke-RestMethod -Method Post -Uri "http://localhost:8011/internal/tasks/collect_dart/enqueue" -ContentType "application/json" -Body $body
+Invoke-RestMethod -Method Post -Uri "http://localhost:8011/internal/tasks/collect_dart/enqueue" -Headers $headers -ContentType "application/json" -Body $body
 
 # 수집, 정규화, 분석 실행
-Invoke-RestMethod -Method Post -Uri "http://localhost:8011/internal/tasks/collect_dart/run"
-Invoke-RestMethod -Method Post -Uri "http://localhost:8011/internal/queue/normalize_dart/run-batch" -ContentType "application/json" -Body '{"limit":20}'
-Invoke-RestMethod -Method Post -Uri "http://localhost:8011/internal/queue/analyze_dart/run-batch" -ContentType "application/json" -Body '{"limit":20}'
+Invoke-RestMethod -Method Post -Uri "http://localhost:8011/internal/tasks/collect_dart/run" -Headers $headers
+Invoke-RestMethod -Method Post -Uri "http://localhost:8011/internal/queue/run-cycle" -Headers $headers -ContentType "application/json" -Body '{"max_passes":10000}'
 
 # 결과 조회
-Invoke-RestMethod -Method Get -Uri "http://localhost:8011/internal/dart/document-results?stock_code=005930&limit=20"
+Invoke-RestMethod -Method Get -Uri "http://localhost:8011/internal/dart/document-results?stock_code=005930&limit=20" -Headers $headers
 ```
 
 ### curl
 
 ```bash
-curl -X POST http://localhost:8011/internal/dart/corp-codes/sync
-curl -X POST http://localhost:8011/internal/tasks/collect_dart/run
-curl -X POST http://localhost:8011/internal/queue/normalize_dart/run-batch \
+INTERNAL_API_TOKEN="${INTERNAL_API_TOKEN:?required}"
+curl -X POST http://localhost:8011/internal/dart/corp-codes/sync \
+  -H "X-Internal-Token: $INTERNAL_API_TOKEN"
+curl -X POST http://localhost:8011/internal/tasks/collect_dart/run \
+  -H "X-Internal-Token: $INTERNAL_API_TOKEN"
+curl -X POST http://localhost:8011/internal/queue/run-cycle \
+  -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"limit":20}'
-curl -X POST http://localhost:8011/internal/queue/analyze_dart/run-batch \
-  -H "Content-Type: application/json" \
-  -d '{"limit":20}'
-curl "http://localhost:8011/internal/dart/analysis-results?stock_code=005930&limit=20"
+  -d '{"max_passes":10000}'
+curl "http://localhost:8011/internal/dart/analysis-results?stock_code=005930&limit=20" \
+  -H "X-Internal-Token: $INTERNAL_API_TOKEN"
 ```
 
 ---
