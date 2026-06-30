@@ -25,6 +25,16 @@ Expected response:
 }
 ```
 
+Internal API authentication:
+
+- `/health` does not require the internal token.
+- `/internal/*` fails closed when `INTERNAL_API_TOKEN` is empty.
+- `/internal/*` calls must send `X-Internal-Token` with the same value.
+
+```powershell
+$headers = @{"X-Internal-Token" = $env:INTERNAL_API_TOKEN}
+```
+
 ## Run Modes (#11)
 
 This one codebase boots as three deploy units (single combined boot is also possible for
@@ -168,7 +178,7 @@ Queue a DART collection task through the worker API:
 
 ```powershell
 $body = '{"stock_id":1,"priority":"batch","task_context":{"stock_code":"005930","bgn_de":"20260601","end_de":"20260608"}}'
-Invoke-RestMethod -Method Post -Uri "http://localhost:8011/internal/tasks/collect_dart/enqueue" -ContentType "application/json" -Body $body
+Invoke-RestMethod -Method Post -Uri "http://localhost:8011/internal/tasks/collect_dart/enqueue" -Headers $headers -ContentType "application/json" -Body $body
 ```
 
 The enqueue endpoint deduplicates by default. If an active `pending`, `running`, or `retrying`
@@ -180,19 +190,19 @@ To intentionally re-run normalization and analysis for already collected DART do
 
 ```powershell
 $body = '{"stock_id":1,"priority":"batch","task_context":{"stock_code":"005930","bgn_de":"20260601","end_de":"20260608","force_reprocess":true}}'
-Invoke-RestMethod -Method Post -Uri "http://localhost:8011/internal/tasks/collect_dart/enqueue" -ContentType "application/json" -Body $body
+Invoke-RestMethod -Method Post -Uri "http://localhost:8011/internal/tasks/collect_dart/enqueue" -Headers $headers -ContentType "application/json" -Body $body
 ```
 
 Query stored DART analysis results:
 
 ```powershell
-Invoke-RestMethod -Method Get -Uri "http://localhost:8011/internal/dart/analysis-results?stock_code=005930&analysis_date=2026-06-08"
+Invoke-RestMethod -Method Get -Uri "http://localhost:8011/internal/dart/analysis-results?stock_code=005930&analysis_date=2026-06-08" -Headers $headers
 ```
 
 Query DART analysis results flattened by disclosure document:
 
 ```powershell
-Invoke-RestMethod -Method Get -Uri "http://localhost:8011/internal/dart/document-results?stock_code=005930&analysis_date=2026-06-08"
+Invoke-RestMethod -Method Get -Uri "http://localhost:8011/internal/dart/document-results?stock_code=005930&analysis_date=2026-06-08" -Headers $headers
 ```
 
 Run a development E2E pass that collects, normalizes, analyzes, and returns stored DART analysis
@@ -200,7 +210,7 @@ results:
 
 ```powershell
 $body = '{"stock_id":1,"stock_code":"005930","bgn_de":"2026-06-01","end_de":"2026-06-08","force_reprocess":true}'
-Invoke-RestMethod -Method Post -Uri "http://localhost:8011/internal/dart/e2e/run" -ContentType "application/json" -Body $body
+Invoke-RestMethod -Method Post -Uri "http://localhost:8011/internal/dart/e2e/run" -Headers $headers -ContentType "application/json" -Body $body
 ```
 
 E2E defaults to at most 20 normalize runs and 20 analyze runs. The response includes a
@@ -209,26 +219,26 @@ generated tasks in one development call, pass `run_until_idle`:
 
 ```powershell
 $body = '{"stock_id":1,"stock_code":"005930","bgn_de":"2026-05-01","end_de":"2026-05-31","force_reprocess":true,"run_until_idle":true}'
-Invoke-RestMethod -Method Post -Uri "http://localhost:8011/internal/dart/e2e/run" -ContentType "application/json" -Body $body
+Invoke-RestMethod -Method Post -Uri "http://localhost:8011/internal/dart/e2e/run" -Headers $headers -ContentType "application/json" -Body $body
 ```
 
 Inspect or drain queued work:
 
 ```powershell
-Invoke-RestMethod -Method Get -Uri "http://localhost:8011/internal/queue/tasks?stock_code=005930&task_type=normalize_dart&status=pending"
+Invoke-RestMethod -Method Get -Uri "http://localhost:8011/internal/queue/tasks?stock_code=005930&task_type=normalize_dart&status=pending" -Headers $headers
 
 $body = '{"max_runs":50}'
-Invoke-RestMethod -Method Post -Uri "http://localhost:8011/internal/queue/normalize_dart/run-batch" -ContentType "application/json" -Body $body
+Invoke-RestMethod -Method Post -Uri "http://localhost:8011/internal/queue/normalize_dart/run-batch" -Headers $headers -ContentType "application/json" -Body $body
 
-Invoke-RestMethod -Method Post -Uri "http://localhost:8011/internal/queue/aggregate_signal/run-batch" -ContentType "application/json" -Body $body
+Invoke-RestMethod -Method Post -Uri "http://localhost:8011/internal/queue/aggregate_signal/run-batch" -Headers $headers -ContentType "application/json" -Body $body
 
-Invoke-RestMethod -Method Post -Uri "http://localhost:8011/internal/queue/tasks/77/retry"
+Invoke-RestMethod -Method Post -Uri "http://localhost:8011/internal/queue/tasks/77/retry" -Headers $headers
 ```
 
 Delete development DART test data for a stock and date range:
 
 ```powershell
-Invoke-RestMethod -Method Delete -Uri "http://localhost:8011/internal/dart/test-data?stock_code=005930&bgn_de=2026-06-01&end_de=2026-06-30"
+Invoke-RestMethod -Method Delete -Uri "http://localhost:8011/internal/dart/test-data?stock_code=005930&bgn_de=2026-06-01&end_de=2026-06-30" -Headers $headers
 ```
 
 Quarterly and annual report text is scanned for basic financial figures such as revenue,
@@ -241,7 +251,7 @@ An external cron or operations script can enqueue DART collection tasks for acti
 
 ```powershell
 $body = '{"limit":100,"end_de":"20260610","priority":"batch"}'
-Invoke-RestMethod -Method Post -Uri "http://localhost:8011/internal/schedules/dart/collect" -ContentType "application/json" -Body $body
+Invoke-RestMethod -Method Post -Uri "http://localhost:8011/internal/schedules/dart/collect" -Headers $headers -ContentType "application/json" -Body $body
 ```
 
 The schedule endpoint enqueues `collect_dart` tasks only. Actual analysis can run on a separate
@@ -254,7 +264,7 @@ file containing XML entries. The worker stores listed entries that include `stoc
 `dart_corp_codes` is used as the ticker-to-corp-code mapping for stock collection.
 
 ```powershell
-Invoke-RestMethod -Method Post -Uri "http://localhost:8011/internal/dart/corp-codes/sync"
+Invoke-RestMethod -Method Post -Uri "http://localhost:8011/internal/dart/corp-codes/sync" -Headers $headers
 ```
 
 Expected response:
@@ -273,7 +283,7 @@ Stale queue tasks can be swept through the worker API:
 
 ```powershell
 $body = '{"running_timeout_minutes":30,"retrying_timeout_minutes":120}'
-Invoke-RestMethod -Method Post -Uri "http://localhost:8011/internal/queue/sweep-stale" -ContentType "application/json" -Body $body
+Invoke-RestMethod -Method Post -Uri "http://localhost:8011/internal/queue/sweep-stale" -Headers $headers -ContentType "application/json" -Body $body
 ```
 
 - Old `running` tasks are moved to `retrying` when retry budget remains.

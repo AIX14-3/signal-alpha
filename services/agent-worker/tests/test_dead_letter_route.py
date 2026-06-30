@@ -79,7 +79,7 @@ class DeadLetterRouteTest(unittest.TestCase):
 
     def test_list_dead_letters_returns_items(self):
         app.dependency_overrides[get_database_pool] = lambda: FakePool()
-        client = TestClient(app)
+        client = TestClient(app, headers={"X-Internal-Token": "test-internal-token"})
 
         response = client.get("/internal/queue/dead-letter", params={"replayed": False})
 
@@ -91,7 +91,7 @@ class DeadLetterRouteTest(unittest.TestCase):
     def test_replay_reenqueues_and_marks_replayed(self):
         connection = FakeConnection()
         app.dependency_overrides[get_database_pool] = lambda: FakePool(connection)
-        client = TestClient(app)
+        client = TestClient(app, headers={"X-Internal-Token": "test-internal-token"})
 
         response = client.post(
             "/internal/queue/dead-letter/replay",
@@ -108,7 +108,7 @@ class DeadLetterRouteTest(unittest.TestCase):
 
     def test_reconcile_returns_archived_count(self):
         app.dependency_overrides[get_database_pool] = lambda: FakePool()
-        client = TestClient(app)
+        client = TestClient(app, headers={"X-Internal-Token": "test-internal-token"})
 
         response = client.post("/internal/queue/dead-letter/reconcile", json={"limit": 100})
 

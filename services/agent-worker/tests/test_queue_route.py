@@ -95,7 +95,7 @@ class QueueRouteTest(unittest.TestCase):
 
     def test_claim_next_task_returns_running_task(self):
         app.dependency_overrides[get_database_pool] = lambda: FakePool()
-        client = TestClient(app)
+        client = TestClient(app, headers={"X-Internal-Token": "test-internal-token"})
 
         response = client.post("/internal/queue/normalize_report/claim")
 
@@ -105,7 +105,7 @@ class QueueRouteTest(unittest.TestCase):
 
     def test_sweep_stale_tasks_returns_cleanup_counts(self):
         app.dependency_overrides[get_database_pool] = lambda: FakePool()
-        client = TestClient(app)
+        client = TestClient(app, headers={"X-Internal-Token": "test-internal-token"})
 
         response = client.post(
             "/internal/queue/sweep-stale",
@@ -118,7 +118,7 @@ class QueueRouteTest(unittest.TestCase):
     def test_list_tasks_returns_filtered_queue_items(self):
         connection = FakeConnection()
         app.dependency_overrides[get_database_pool] = lambda: FakePool(connection)
-        client = TestClient(app)
+        client = TestClient(app, headers={"X-Internal-Token": "test-internal-token"})
 
         response = client.get(
             "/internal/queue/tasks",
@@ -133,7 +133,7 @@ class QueueRouteTest(unittest.TestCase):
     def test_retry_task_marks_task_retrying(self):
         connection = FakeConnection()
         app.dependency_overrides[get_database_pool] = lambda: FakePool(connection)
-        client = TestClient(app)
+        client = TestClient(app, headers={"X-Internal-Token": "test-internal-token"})
 
         response = client.post("/internal/queue/tasks/77/retry")
 
@@ -148,7 +148,7 @@ class QueueRouteTest(unittest.TestCase):
         connection = FakeConnection()
         app.dependency_overrides[get_database_pool] = lambda: FakePool(connection)
         app.dependency_overrides[get_task_handler_factory] = lambda: lambda _: {"normalize_dart": handler}
-        client = TestClient(app)
+        client = TestClient(app, headers={"X-Internal-Token": "test-internal-token"})
 
         response = client.post("/internal/queue/normalize_dart/run-batch", json={"max_runs": 5})
 

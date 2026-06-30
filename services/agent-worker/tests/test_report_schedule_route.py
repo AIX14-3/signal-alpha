@@ -89,7 +89,7 @@ class ReportScheduleRouteTest(unittest.TestCase):
 
     def test_report_collect_accepts_absolute_dates(self):
         app.dependency_overrides[get_database_pool] = lambda: FakePool()
-        client = TestClient(app)
+        client = TestClient(app, headers={"X-Internal-Token": "test-internal-token"})
 
         response = client.post(
             "/internal/schedules/report/collect",
@@ -101,7 +101,7 @@ class ReportScheduleRouteTest(unittest.TestCase):
 
     def test_report_collect_rejects_bad_date(self):
         app.dependency_overrides[get_database_pool] = lambda: FakePool()
-        client = TestClient(app)
+        client = TestClient(app, headers={"X-Internal-Token": "test-internal-token"})
 
         response = client.post(
             "/internal/schedules/report/collect",
@@ -113,7 +113,7 @@ class ReportScheduleRouteTest(unittest.TestCase):
     def test_report_normalize_backfill_dry_run_only_lists_candidates(self):
         pool = FakePool()
         app.dependency_overrides[get_database_pool] = lambda: pool
-        client = TestClient(app)
+        client = TestClient(app, headers={"X-Internal-Token": "test-internal-token"})
 
         response = client.post(
             "/internal/schedules/report/normalize-backfill",
@@ -132,7 +132,7 @@ class ReportScheduleRouteTest(unittest.TestCase):
     def test_report_normalize_backfill_enqueues_normalize_report_when_enabled(self):
         pool = FakePool()
         app.dependency_overrides[get_database_pool] = lambda: pool
-        client = TestClient(app)
+        client = TestClient(app, headers={"X-Internal-Token": "test-internal-token"})
 
         response = client.post(
             "/internal/schedules/report/normalize-backfill",
@@ -157,7 +157,7 @@ class ReportScheduleRouteTest(unittest.TestCase):
         connection = FakeConnection(existing_task_ids_by_raw_id={101: 501})
         pool = FakePool(connection=connection)
         app.dependency_overrides[get_database_pool] = lambda: pool
-        client = TestClient(app)
+        client = TestClient(app, headers={"X-Internal-Token": "test-internal-token"})
 
         response = client.post(
             "/internal/schedules/report/normalize-backfill",

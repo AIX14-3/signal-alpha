@@ -86,7 +86,7 @@ class FakePool:
 class ObservabilityRouteTest(unittest.TestCase):
     def setUp(self):
         app.dependency_overrides[get_database_pool] = lambda: FakePool()
-        self.client = TestClient(app)
+        self.client = TestClient(app, headers={"X-Internal-Token": "test-internal-token"})
 
     def tearDown(self):
         app.dependency_overrides.clear()

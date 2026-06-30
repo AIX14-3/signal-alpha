@@ -78,7 +78,7 @@ class DartCorpCodeSyncTest(unittest.TestCase):
         app.dependency_overrides[get_corp_code_sync_service_factory] = (
             lambda: lambda connection, settings: FakeCorpCodeSyncService()
         )
-        client = TestClient(app)
+        client = TestClient(app, headers={"X-Internal-Token": "test-internal-token"})
 
         response = client.post("/internal/dart/corp-codes/sync")
 

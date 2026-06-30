@@ -163,7 +163,7 @@ class DartRouteTest(unittest.TestCase):
     def test_list_analysis_results_filters_by_stock_and_date(self):
         connection = FakeConnection()
         app.dependency_overrides[get_database_pool] = lambda: FakePool(connection)
-        client = TestClient(app)
+        client = TestClient(app, headers={"X-Internal-Token": "test-internal-token"})
 
         response = client.get(
             "/internal/dart/analysis-results",
@@ -180,7 +180,7 @@ class DartRouteTest(unittest.TestCase):
     def test_list_document_analysis_results_flattens_signal_events(self):
         connection = FakeConnection()
         app.dependency_overrides[get_database_pool] = lambda: FakePool(connection)
-        client = TestClient(app)
+        client = TestClient(app, headers={"X-Internal-Token": "test-internal-token"})
 
         response = client.get(
             "/internal/dart/document-results",
@@ -206,7 +206,7 @@ class DartRouteTest(unittest.TestCase):
     def test_delete_test_data_returns_deleted_counts(self):
         connection = FakeConnection()
         app.dependency_overrides[get_database_pool] = lambda: FakePool(connection)
-        client = TestClient(app)
+        client = TestClient(app, headers={"X-Internal-Token": "test-internal-token"})
 
         response = client.delete(
             "/internal/dart/test-data",
@@ -246,7 +246,7 @@ class DartRouteTest(unittest.TestCase):
             "synthesize": synthesize_handler,
             "publish_signals": publish_handler,
         }
-        client = TestClient(app)
+        client = TestClient(app, headers={"X-Internal-Token": "test-internal-token"})
 
         response = client.post(
             "/internal/dart/e2e/run",
@@ -291,7 +291,7 @@ class DartRouteTest(unittest.TestCase):
             "normalize_dart": normalize_handler,
             "analyze_dart": normalize_handler,
         }
-        client = TestClient(app)
+        client = TestClient(app, headers={"X-Internal-Token": "test-internal-token"})
 
         response = client.post(
             "/internal/dart/e2e/run",
@@ -326,7 +326,7 @@ class DartRouteTest(unittest.TestCase):
             "normalize_dart": normalize_handler,
             "analyze_dart": normalize_handler,
         }
-        client = TestClient(app)
+        client = TestClient(app, headers={"X-Internal-Token": "test-internal-token"})
 
         response = client.post(
             "/internal/dart/e2e/run",

@@ -11,7 +11,7 @@ Signal Alpha is not an investment recommendation service. The pipeline produces 
 The scheduler must not contain collector or analyzer logic.
 
 - `agent-worker` owns collection, normalization, analysis, queue handling, ML inference, aggregation, synthesis, and risk veto.
-- The scheduler layer only calls internal `agent-worker` endpoints.
+- The scheduler layer only calls internal `agent-worker` endpoints and must send `X-Internal-Token`.
 - `main-server` and `web` do not run collection or analysis jobs.
 - PRICE collection remains the `agent-worker` lifespan daemon. PRICE analyzer reads DB data only.
 
@@ -327,18 +327,22 @@ For separate collection and drain tasks:
 
 ## 9. Linux Cron Example
 
-Use internal network URLs. Do not expose `/internal/*` endpoints publicly without an authentication or network control layer.
+Use internal network URLs. `/internal/*` endpoints fail closed when `INTERNAL_API_TOKEN` is empty,
+and every scheduler call must send the same value as `X-Internal-Token`.
 
 For Linux hosts without PowerShell, use `curl` in the same order:
 
 ```bash
 WORKER_INTERNAL_URL="${WORKER_INTERNAL_URL:-http://127.0.0.1:8011}"
+INTERNAL_API_TOKEN="${INTERNAL_API_TOKEN:?required}"
 
 curl -fsS -X POST "$WORKER_INTERNAL_URL/internal/schedules/dart/collect" \
+  -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"limit":100,"priority":"batch"}'
 
 curl -fsS -X POST "$WORKER_INTERNAL_URL/internal/schedules/report/collect" \
+  -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"limit":100,"days_back":7,"max_pages":20,"priority":"batch"}'
 
@@ -347,6 +351,7 @@ for task in \
   analyze_dart analyze_report ml_infer meta_combine aggregate_signal synthesize risk_veto
 do
   curl -fsS -X POST "$WORKER_INTERNAL_URL/internal/queue/$task/run-batch" \
+    -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
     -H 'Content-Type: application/json' \
     -d '{"max_runs":20}'
 done
@@ -359,10 +364,10 @@ Cron sketch:
 */5 * * * * WORKER_INTERNAL_URL=http://127.0.0.1:8011 /opt/signal-alpha/services/agent-worker/ops/run-agent-pipeline-drain.sh
 
 # Every hour during the day: enqueue DART collection.
-0 8-20 * * * curl -fsS -X POST http://127.0.0.1:8011/internal/schedules/dart/collect -H 'Content-Type: application/json' -d '{"limit":100,"priority":"batch"}'
+0 8-20 * * * curl -fsS -X POST http://127.0.0.1:8011/internal/schedules/dart/collect -H "X-Internal-Token: $INTERNAL_API_TOKEN" -H 'Content-Type: application/json' -d '{"limit":100,"priority":"batch"}'
 
 # Twice daily: enqueue Report collection.
-15 8,17 * * * curl -fsS -X POST http://127.0.0.1:8011/internal/schedules/report/collect -H 'Content-Type: application/json' -d '{"limit":100,"days_back":7,"max_pages":20,"priority":"batch"}'
+15 8,17 * * * curl -fsS -X POST http://127.0.0.1:8011/internal/schedules/report/collect -H "X-Internal-Token: $INTERNAL_API_TOKEN" -H 'Content-Type: application/json' -d '{"limit":100,"days_back":7,"max_pages":20,"priority":"batch"}'
 ```
 
 ## 10. Managed Scheduler Example
