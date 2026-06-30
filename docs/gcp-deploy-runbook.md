@@ -128,10 +128,9 @@ gcloud run jobs update sa-migrate --region=$REGION \
   --set-secrets=BACKEND_MIGRATE_DATABASE_URL=BACKEND_MIGRATE_DATABASE_URL:latest --args=status,--target,backend
 gcloud run jobs execute sa-migrate --region=$REGION --wait
 ```
-> - 수집 DB: collection 6 (0001·0002·0003·0005·0005b·0006) 적용 — `api.*` view + `signal_worker`/`signal_backend` 롤.
-> - 백엔드 DB: backend 5 (0001·0002·0004·0005·0007) 적용 — BACKEND15 + PUBLISHED6 + 발행용 `api.*`.
-> - 권한 오류(CREATEROLE 없음) 시: 각 Cloud SQL 콘솔에서 롤을 먼저 만들고 재실행(마이그는 `IF NOT EXISTS`).
-> - cross-DB FK 는 백엔드 baseline 이 이미 제거 — 두 인스턴스는 서로의 테이블을 참조하지 않는다.
+> - 적용 파일은 타깃별로 다르며 **타임스탬프 증분도 함께** 적용된다. 베이스라인: 수집=`0001·0002·0003·0005·0005b·0006`, 백엔드=`0001·0002·0004·0005·0007`. 여기에 `all`/해당 타깃 증분이 더해진다(예: 수집에 `20260630_1200`(legacy report DROP), 백엔드에 `20260626_0244`·`20260629_0900` 등). **정확한 목록은 하드코딩 대신 `status --target {collection|backend}` 출력으로 확인.** 수집엔 `api.*` view + 롤, 백엔드엔 BACKEND+PUBLISHED+발행용 `api.*`.
+> - 권한 오류(CREATEROLE 없음) 시: 각 Cloud SQL 콘솔에서 롤을 먼저 만들고 재실행(마이그는 `IF NOT EXISTS` 가드).
+> - cross-DB FK 없음 — 베이스라인 생성 시 제거되고, **증분 마이그도 cross-DB FK 를 추가하지 않는다**(예: `20260626_0244` 는 `analysis_requests`(COLLECTION)→`users`(BACKEND) FK 를 두지 않음; CI `check_targets` 가 강제). 두 인스턴스는 서로의 테이블을 참조하지 않는다.
 
 ## 7. 제한 롤 컷오버 (선택 — 보안 강화; 데모는 건너뛰고 owner 로 띄워도 동작)
 > 2-인스턴스에선 각 롤이 자기 인스턴스에 산다: `signal_worker`→**sa-pg**, `signal_backend`→**sa-be**.
