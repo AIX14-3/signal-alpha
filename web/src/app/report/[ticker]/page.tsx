@@ -118,11 +118,11 @@ export default function ReportPage() {
             <p className="mt-1 text-[14px] text-muted">{report.notice}</p>
             <div className="mt-4">
               {isMember ? (
-                <Link href="/pricing" className="brand-grad inline-block rounded-full px-6 py-3 text-[15px] font-bold text-white">
+                <Link href="/pricing" data-flow="unlock-report-pricing" className="brand-grad inline-block rounded-full px-6 py-3 text-[15px] font-bold text-white">
                   구독하고 전체 리포트 열람
                 </Link>
               ) : (
-                <Link href={loginHref} className="brand-grad inline-block rounded-full px-6 py-3 text-[15px] font-bold text-white">
+                <Link href={loginHref} data-flow="unlock-report-login" className="brand-grad inline-block rounded-full px-6 py-3 text-[15px] font-bold text-white">
                   로그인하고 구독하기
                 </Link>
               )}
@@ -193,6 +193,8 @@ function SourceCard({
       <button
         type="button"
         onClick={onUnlock}
+        data-flow="unlock-source"
+        data-source={sourceKey}
         className="card relative grid min-h-[140px] place-items-center overflow-hidden p-5 text-center disabled:opacity-70"
       >
         <div className="font-bold">{meta.icon} {meta.label}</div>
@@ -236,6 +238,8 @@ function PredictionRateCard({
       <button
         type="button"
         onClick={onUnlock}
+        data-flow="unlock-prediction-rate"
+        data-source={sourceKey}
         className="card relative grid min-h-[104px] place-items-center overflow-hidden p-3 text-center disabled:opacity-70"
       >
         <div className="text-[13px] font-bold">{meta.icon} {meta.label}</div>

@@ -73,7 +73,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
   }
 
   return (
-    <div className="mx-auto max-w-[420px] py-16">
+    <div className="mx-auto max-w-[420px] py-16" data-page={isSignup ? "signup" : "login"}>
       <h1 className="text-[28px] font-extrabold">{isSignup ? "회원가입" : "로그인"}</h1>
       <p className="mt-1 text-[14px] text-muted">
         {isSignup
@@ -107,12 +107,13 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
         </div>
       )}
 
-      {error && <p className="mt-4 text-[13px] text-red">{error}</p>}
+      {error && <p className="mt-4 text-[13px] text-red" role="alert">{error}</p>}
 
       <button
         type="button"
         onClick={() => void onIdentity()}
         disabled={busy}
+        data-flow={isSignup ? "identity-signup" : "identity-login"}
         className="brand-grad mt-6 w-full rounded-full py-[14px] text-[15px] font-extrabold text-white disabled:opacity-60"
       >
         {busy ? "처리 중…" : isSignup ? "본인인증으로 가입" : "본인인증으로 로그인"}
@@ -130,6 +131,8 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
                 type="button"
                 onClick={() => void onSocial(s.key)}
                 disabled={busy}
+                data-flow="social-login"
+                data-provider={s.key}
                 className="rounded-full border border-line py-3 text-[14px] font-semibold text-navy-soft hover:border-navy hover:text-navy disabled:opacity-60"
               >
                 {s.label}

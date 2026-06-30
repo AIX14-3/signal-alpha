@@ -71,7 +71,7 @@ export default function PricingPage() {
             <li>· 관심종목 무제한</li>
             <li>· 저널 {free?.journal_max_entries ?? 50}건</li>
           </ul>
-          <button type="button" onClick={() => router.push(user ? "/" : "/signup")} className="mt-6 rounded-full border border-line py-3 text-[15px] font-bold text-navy-soft hover:border-navy hover:text-navy">
+          <button type="button" onClick={() => router.push(user ? "/" : "/signup")} data-flow="free-plan-cta" className="mt-6 rounded-full border border-line py-3 text-[15px] font-bold text-navy-soft hover:border-navy hover:text-navy">
             {user ? "종목 검색하기" : "무료로 시작"}
           </button>
         </div>
@@ -80,8 +80,8 @@ export default function PricingPage() {
           <div className="flex items-center justify-between">
             <div className="text-[13px] font-bold uppercase tracking-[0.1em] text-sky-deep">유료 구독 · 주요 플랜</div>
             <div className="flex rounded-full bg-surface-2 p-0.5 text-[12px] font-semibold">
-              <button type="button" onClick={() => setCycle("monthly")} className={`rounded-full px-3 py-1 ${cycle === "monthly" ? "bg-surface text-navy shadow-sm" : "text-muted"}`}>월간</button>
-              <button type="button" onClick={() => setCycle("yearly")} className={`rounded-full px-3 py-1 ${cycle === "yearly" ? "bg-surface text-navy shadow-sm" : "text-muted"}`}>연간</button>
+              <button type="button" onClick={() => setCycle("monthly")} data-flow="billing-monthly" className={`rounded-full px-3 py-1 ${cycle === "monthly" ? "bg-surface text-navy shadow-sm" : "text-muted"}`}>월간</button>
+              <button type="button" onClick={() => setCycle("yearly")} data-flow="billing-yearly" className={`rounded-full px-3 py-1 ${cycle === "yearly" ? "bg-surface text-navy shadow-sm" : "text-muted"}`}>연간</button>
             </div>
           </div>
           <div className="mt-3 text-[32px] font-extrabold">
@@ -97,11 +97,11 @@ export default function PricingPage() {
             <li>· 언제든 취소(무료 잔여분 보존)</li>
           </ul>
           {user?.subscription_active ? (
-            <button type="button" onClick={() => router.push("/mypage")} className="mt-6 rounded-full border border-line py-3 text-[15px] font-bold text-navy-soft hover:border-navy hover:text-navy">
+            <button type="button" onClick={() => router.push("/mypage")} data-flow="manage-subscription" className="mt-6 rounded-full border border-line py-3 text-[15px] font-bold text-navy-soft hover:border-navy hover:text-navy">
               구독 중 · 마이페이지에서 관리
             </button>
           ) : (
-            <button type="button" onClick={() => void subscribe()} disabled={busy} className="brand-grad mt-6 rounded-full py-3 text-[15px] font-bold text-white disabled:opacity-60">
+            <button type="button" onClick={() => void subscribe()} disabled={busy} data-flow="start-subscription" className="brand-grad mt-6 rounded-full py-3 text-[15px] font-bold text-white disabled:opacity-60">
               {busy ? "처리 중…" : "구독하기"}
             </button>
           )}

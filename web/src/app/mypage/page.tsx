@@ -62,6 +62,7 @@ export default function MyPage() {
             key={key}
             type="button"
             onClick={() => setTab(key)}
+            data-tab={key}
             className={`-mb-px border-b-2 px-4 py-3 text-[14.5px] font-semibold ${
               tab === key ? "border-sky text-navy" : "border-transparent text-muted"
             }`}
@@ -88,17 +89,17 @@ function WatchlistTab() {
     void load();
   }, [load]);
 
-  if (loading) return <p className="text-muted">불러오는 중…</p>;
-  if (error) return <p className="text-red">{error}</p>;
+  if (loading) return <p className="text-muted" data-panel="watchlist">불러오는 중…</p>;
+  if (error) return <p className="text-red" data-panel="watchlist">{error}</p>;
   if (items.length === 0)
     return (
-      <p className="text-muted">
+      <p className="text-muted" data-panel="watchlist">
         관심종목이 없습니다. <Link href="/" className="text-sky-deep">종목 검색하기</Link>
       </p>
     );
 
   return (
-    <div>
+    <div data-panel="watchlist">
       <p className="mb-3 text-[13px] text-muted">{count}개 등록 (무제한)</p>
       <div className="space-y-2">
         {items.map((item) => (
@@ -227,7 +228,7 @@ function SubscriptionTab() {
           : `${daysLeft}일`;
 
   return (
-    <div className="card max-w-[480px] p-7">
+    <div className="card max-w-[480px] p-7" data-panel="subscription">
       {expiringSoon && (
         <div className="mb-5 rounded-[12px] bg-surface-2 px-4 py-3 text-[13px] text-navy-soft">
           {cancelScheduled
@@ -254,23 +255,23 @@ function SubscriptionTab() {
       <div className="mt-6 flex flex-wrap gap-2">
         {active ? (
           cancelScheduled ? (
-            <button type="button" onClick={() => void resume()} disabled={busy} className="brand-grad rounded-full px-6 py-2.5 text-[14px] font-bold text-white disabled:opacity-60">
+            <button type="button" onClick={() => void resume()} disabled={busy} data-flow="subscription-resume" className="brand-grad rounded-full px-6 py-2.5 text-[14px] font-bold text-white disabled:opacity-60">
               {busy ? "처리 중…" : "구독 계속하기"}
             </button>
           ) : (
             <>
               {expiringSoon && (
-                <button type="button" onClick={() => void subscribe()} disabled={busy} className="brand-grad rounded-full px-6 py-2.5 text-[14px] font-bold text-white disabled:opacity-60">
+                <button type="button" onClick={() => void subscribe()} disabled={busy} data-flow="subscription-renew" className="brand-grad rounded-full px-6 py-2.5 text-[14px] font-bold text-white disabled:opacity-60">
                   {busy ? "처리 중…" : "지금 연장하기"}
                 </button>
               )}
-              <button type="button" onClick={() => void cancel()} disabled={busy} className="rounded-full border border-line px-5 py-2.5 text-[14px] font-semibold text-navy-soft hover:border-red hover:text-red disabled:opacity-60">
+              <button type="button" onClick={() => void cancel()} disabled={busy} data-flow="subscription-cancel" className="rounded-full border border-line px-5 py-2.5 text-[14px] font-semibold text-navy-soft hover:border-red hover:text-red disabled:opacity-60">
                 구독 취소
               </button>
             </>
           )
         ) : (
-          <button type="button" onClick={() => void subscribe()} disabled={busy} className="brand-grad rounded-full px-6 py-2.5 text-[14px] font-bold text-white disabled:opacity-60">
+          <button type="button" onClick={() => void subscribe()} disabled={busy} data-flow="subscription-start" className="brand-grad rounded-full px-6 py-2.5 text-[14px] font-bold text-white disabled:opacity-60">
             {busy ? "처리 중…" : "월 9,900원 구독하기"}
           </button>
         )}
@@ -279,7 +280,7 @@ function SubscriptionTab() {
         </Link>
       </div>
       {active && (
-        <button type="button" onClick={() => void refund()} disabled={busy} className="mt-3 text-[13px] font-semibold text-muted hover:text-red disabled:opacity-60">
+        <button type="button" onClick={() => void refund()} disabled={busy} data-flow="subscription-refund" className="mt-3 text-[13px] font-semibold text-muted hover:text-red disabled:opacity-60">
           환불 요청 (즉시 해지)
         </button>
       )}
@@ -310,12 +311,12 @@ function JournalTab() {
       .finally(() => setLoading(false));
   }, []);
 
-  if (loading) return <p className="text-muted">불러오는 중…</p>;
-  if (items.length === 0) return <p className="text-muted">저장한 저널이 없습니다. 리포트에서 저장해 투자 추이를 기록하세요.</p>;
+  if (loading) return <p className="text-muted" data-panel="journal">불러오는 중…</p>;
+  if (items.length === 0) return <p className="text-muted" data-panel="journal">저장한 저널이 없습니다. 리포트에서 저장해 투자 추이를 기록하세요.</p>;
 
   const VIEW: Record<string, string> = { watch: "계속 관찰", research_more: "추가 확인 필요", not_relevant: "낮은 관련도" };
   return (
-    <div className="space-y-2">
+    <div className="space-y-2" data-panel="journal">
       {items.map((j) => (
         <div key={j.journal_id} className="card px-5 py-4">
           <div className="flex items-center justify-between">
@@ -359,7 +360,7 @@ function SocialTab() {
 
   const linkedMap = new Map(links.map((l) => [l.provider, l.linked]));
   return (
-    <div className="max-w-[480px]">
+    <div className="max-w-[480px]" data-panel="social">
       <p className="mb-4 text-[13.5px] text-muted">연동하면 다음부터 본인인증 없이 소셜로 간편 로그인할 수 있습니다.</p>
       <div className="space-y-2">
         {SOCIAL_PROVIDERS.map((s) => {
@@ -421,7 +422,7 @@ function ProfileTab() {
   }
 
   return (
-    <div className="card max-w-[480px] p-7">
+    <div className="card max-w-[480px] p-7" data-panel="profile">
       <dl className="space-y-3 text-[14px]">
         <div className="flex justify-between">
           <dt className="text-muted">회원식별번호</dt>
@@ -442,9 +443,9 @@ function ProfileTab() {
       <label className="mt-4 block text-[13px] font-semibold text-navy-soft">닉네임</label>
       <div className="mt-1 flex gap-2">
         <input value={nickname} onChange={(e) => setNickname(e.target.value)} className="card flex-1 px-4 py-2.5 text-[14px] outline-none focus:border-sky" />
-        <button type="button" onClick={() => void save()} disabled={busy} className="brand-grad rounded-full px-5 text-[14px] font-bold text-white disabled:opacity-60">저장</button>
+        <button type="button" onClick={() => void save()} disabled={busy} data-flow="profile-save" className="brand-grad rounded-full px-5 text-[14px] font-bold text-white disabled:opacity-60">저장</button>
       </div>
-      <button type="button" onClick={() => void withdraw()} className="mt-7 text-[13px] font-semibold text-muted hover:text-red">
+      <button type="button" onClick={() => void withdraw()} data-flow="profile-withdraw" className="mt-7 text-[13px] font-semibold text-muted hover:text-red">
         회원 탈퇴
       </button>
     </div>
