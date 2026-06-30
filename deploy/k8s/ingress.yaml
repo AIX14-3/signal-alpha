@@ -1,5 +1,7 @@
-# 외부 노출 — /api/* → main-server(8000), 그 외 → web(3000).
-# ingressClassName 은 클러스터에 맞게(예: gce, nginx). host 는 실제 도메인/IP 로 교체.
+# 외부 노출 — 서브도메인 분리(팀 문서 docs/gabia-domain-cors-setup.md 채택):
+#   www.<도메인> → web(3000),  api.<도메인> → main-server(8000).
+# HTTPS 는 GKE ManagedCertificate(managed-cert.yaml, www+api)로 종단한다.
+# host 의 example.com 두 곳을 실제 도메인으로 교체(managed-cert.yaml·CORS·web build-arg 와 동일해야 함).
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -9,19 +11,21 @@ metadata:
     app.kubernetes.io/part-of: signal-alpha
   annotations:
     argocd.argoproj.io/sync-wave: "3"
+    # 예약한 글로벌 고정 IP 를 *이름*으로 참조(gce 외부 LB 전용, IP 값 아님).
+    #   gcloud compute addresses create sa-ingress-ip --global
+    # 와 이름 일치 → 재배포해도 도메인이 가리키는 IP 고정. 가비아 A레코드(www·api)가 이 IP 를 가리킨다.
+    kubernetes.io/ingress.global-static-ip-name: sa-ingress-ip
+    # Google 관리형 SSL 인증서(자동 발급/갱신). managed-cert.yaml 의 이름과 일치.
+    networking.gke.io/managed-certificates: signal-alpha-cert
+    # 인증서 발급 전에도 http 접속 허용. 발급(Active) 후 "false" 로 바꾸면 https 강제.
+    kubernetes.io/ingress.allow-http: "true"
 spec:
-  # ingressClassName: gce        # GKE 기본 / nginx-ingress 설치 시 nginx
+  ingressClassName: gce          # 글로벌 고정 IP·ManagedCertificate annotation 은 gce(외부 HTTP LB) 에서만 동작
   rules:
-    - host: signal-alpha.example.com   # 실제 호스트로 교체
+    # FE — www 서브도메인
+    - host: www.example.com        # 실제 도메인으로 교체
       http:
         paths:
-          - path: /api
-            pathType: Prefix
-            backend:
-              service:
-                name: main-server
-                port:
-                  number: 8000
           - path: /
             pathType: Prefix
             backend:
@@ -29,3 +33,14 @@ spec:
                 name: web
                 port:
                   number: 3000
+    # BE — api 서브도메인 (main-server 가 루트에서 /health·/api/* 서빙)
+    - host: api.example.com        # 실제 도메인으로 교체
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: main-server
+                port:
+                  number: 8000

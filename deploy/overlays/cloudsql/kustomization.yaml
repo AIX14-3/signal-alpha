@@ -83,7 +83,25 @@ patches:
               - name: wait-postgres
                 $patch: delete
 
-# ③ 이미지 핀 — <PROJECT_ID> 를 실제 GCP 프로젝트로 교체하고 newTag 를 빌드 태그로.
+  # ③ BE 프로덕션 CORS/쿠키 env (커스텀 도메인 — 팀 docs/gabia-domain-cors-setup.md 채택).
+  #    base/dev 를 안 건드리게 prod 오버레이에서만 ConfigMap 에 머지한다(도메인은 비밀 아님 → 커밋 OK).
+  #    AUTH_SECRET_KEY 만 Secret(out-of-band). ⚠️ APP_ENV=production 이면 main-server 가 부팅 시
+  #    AUTH_SECRET_KEY(dev- 금지)·CORS_ALLOW_ORIGINS(빈값/`*` 금지) 검증 → 틀리면 CrashLoop(G5/G6).
+  #    example.com 을 실제 도메인으로 교체(ingress host·managed-cert·web build-arg 와 동일).
+  - patch: |-
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: signal-alpha-config
+        namespace: signal-alpha
+      data:
+        APP_ENV: "production"
+        CORS_ALLOW_ORIGINS: "https://www.example.com"   # 스킴 포함·끝 슬래시 없이. apex 도 받으려면 ,https://example.com
+        COOKIE_SECURE: "true"
+        COOKIE_SAMESITE: "lax"
+        COOKIE_DOMAIN: ".example.com"                    # 맨 앞 점 → www·api 서브도메인 쿠키 공유
+
+# ④ 이미지 핀 — <PROJECT_ID> 를 실제 GCP 프로젝트로 교체하고 newTag 를 빌드 태그로.
 #    base 의 placeholder 를 직접 고치지 않기 위해 오버레이에서 덮어쓴다.
 images:
   - name: signal-alpha-agent-worker

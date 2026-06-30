@@ -32,8 +32,11 @@ deploy/
 REG=asia-northeast3-docker.pkg.dev/PROJECT_ID/signal-alpha
 docker build -f services/agent-worker/Dockerfile -t $REG/agent-worker:TAG .
 docker build -f services/main-server/Dockerfile  -t $REG/main-server:TAG  .
+# web 은 BE 주소(NEXT_PUBLIC_*)를 빌드타임에 인라인 → 커스텀 도메인이면 api 서브도메인으로.
+#   서브도메인 분리 구조(docs/gabia-domain-cors-setup.md): FE=www.<도메인>, BE=api.<도메인>.
+#   ⚠️ 도메인 바뀌면 런타임 env 로는 안 바뀜 → 반드시 이 build-arg 로 재빌드.
 docker build -f web/Dockerfile --target runner \
-  --build-arg NEXT_PUBLIC_MAIN_API_BASE_URL=https://<INGRESS_HOST> -t $REG/web:TAG ./web
+  --build-arg NEXT_PUBLIC_MAIN_API_BASE_URL=https://api.<도메인> -t $REG/web:TAG ./web
 docker build -f database/Dockerfile -t $REG/db-migrate:TAG .
 # hiring 크롤러 전용 이미지 — agent-worker 빌드 후 그 위에 chromium 을 얹는다(FROM base).
 docker build -f services/agent-worker/Dockerfile.crawler -t $REG/hiring-crawler:TAG \
