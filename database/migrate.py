@@ -159,7 +159,7 @@ def verify_applied(applied: dict[str, str], files: list[Path]) -> list[Path]:
                     f"  원장:   {applied[path.name]}\n"
                     f"  파일:   {actual}\n"
                     "적용된 마이그레이션 파일은 수정할 수 없습니다. "
-                    "변경은 새 NNN_*.sql 파일로 추가하세요."
+                    "변경은 python database/migrate.py new 로 새 타임스탬프 파일에 추가하세요."
                 )
         else:
             pending.append(path)
@@ -259,8 +259,9 @@ def cmd_new(name: str | None, target: str = "collection") -> None:
         "-- 설계:\n"
         "-- ============================================================================\n"
         "\n"
-        "-- 멱등(ON CONFLICT / IF NOT EXISTS)하게 작성. 적용 후에는 이 파일을 수정하지 말 것\n"
-        "-- (checksum 검증). 변경은 새 마이그레이션으로 추가한다.\n"
+        "-- 작성 규칙: 적용 여부는 schema_migrations 원장이 관리하므로 IF NOT EXISTS를 쓰지 않는다.\n"
+        "-- 시드 데이터가 필요하면 seeds/에 분리하고 ON CONFLICT로 재실행 가능하게 작성한다.\n"
+        "-- 적용 후에는 이 파일을 수정하지 말 것(checksum 검증). 변경은 새 마이그레이션으로 추가한다.\n"
     )
     path.write_text(template, encoding="utf-8", newline="\n")
     print(f"생성: database/migrations/{path.name}  (target={target})")

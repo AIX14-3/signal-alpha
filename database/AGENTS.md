@@ -9,7 +9,7 @@
 ## Migration 규칙
 
 - 이미 적용된 migration은 절대 수정하지 마세요.
-- 스키마 변경은 새 번호의 migration으로 추가하세요.
+- 스키마 변경은 `python database/migrate.py new "..."`로 새 타임스탬프 migration으로 추가하세요.
 - 하나의 논리적 스키마 변경은 하나의 migration 파일에 담으세요.
 - 애플리케이션 코드에서 테이블을 만들지 마세요.
 - 거버넌스 문서를 명시적으로 갱신하지 않는 한 `IF NOT EXISTS`를 사용하지 마세요.

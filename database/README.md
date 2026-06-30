@@ -17,7 +17,7 @@ Signal Alpha 데이터베이스는 DART 공시, 증권사 리포트, 채용공�
 ```bash
 # Docker (권장) — postgres 기동 후 일회성 적용
 docker compose up -d postgres
-docker compose run --rm migrate          # apply --seeds 실행
+docker compose run --rm db-migrate apply --seeds
 
 # 로컬 (Windows/macOS) — 루트에서
 uv run python database/migrate.py status         # 적용 현황 확인
@@ -28,7 +28,7 @@ uv run python database/migrate.py apply --dry-run
 
 - DATABASE_URL은 `--database-url` 옵션 > 환경변수 > 루트 `.env` 순으로 찾습니다.
 - 파일당 한 트랜잭션으로 실행되며, 실패 시 해당 파일 전체가 롤백되고 중단됩니다.
-- **적용된 마이그레이션 파일은 절대 수정 금지.** 러너가 sha256 checksum으로 검증하여 수정 시 에러를 냅니다. 변경은 항상 새 번호 파일로 추가하세요.
+- **적용된 마이그레이션 파일은 절대 수정 금지.** 러너가 sha256 checksum으로 검증하여 수정 시 에러를 냅니다. 변경은 항상 `python database/migrate.py new "..."`로 만든 새 타임스탬프 파일에 추가하세요.
 
 드리프트 검사 (내 DB가 마이그레이션과 일치하는지):
 
@@ -40,7 +40,7 @@ uv run python database/tools/check_schema.py
 
 ```bash
 docker compose down -v && docker compose up -d postgres
-docker compose run --rm migrate
+docker compose run --rm db-migrate apply --seeds
 ```
 
 ## 2. 전체 Zone 구조 (테이블 인벤토리)
@@ -67,7 +67,7 @@ docker compose run --rm migrate
 `018_signal_journal_mvp_policy.sql`은 기존 `signal_journals`를 확장해 `tags JSONB`를 추가하고,
 `user_view`를 사용자 복기용 값(`watch`, `research_more`, `not_relevant`)으로 제한합니다.
 
-이후 스키마 변경은 `001_baseline.sql`을 수정하지 않고 `002_*.sql`부터 증분 마이그레이션으로 추가합니다 ([`docs/migration_rules.md`](./docs/migration_rules.md) §3).
+이후 스키마 변경은 baseline 파일을 수정하지 않고 `YYYYMMDD_HHMM_*.sql` 증분 마이그레이션으로 추가합니다 ([`docs/migration_rules.md`](./docs/migration_rules.md) §3).
 
 DataLab은 종목이 아닌 **카테고리 단위**로 수집합니다: 원본은 `datalab_raw_documents`/`datalab_raw_details`(category_id 기반)에 저장하고, `datalab_category_stocks` 매핑으로 종목을 해석합니다. `processing_queue.stock_id`가 NULL 허용인 이유도 이것입니다.
 

@@ -69,7 +69,7 @@ E2E_SUBSCRIBE=1 uv run --package signal-alpha-main-server python services/main-s
 
 ## 데이터베이스
 
-스키마의 유일한 기준은 `database/migrations/`. 이미 적용된 migration은 수정하지 말고 새 번호로 추가합니다.
+스키마의 유일한 기준은 `database/migrations/`. 이미 적용된 migration은 수정하지 말고 새 타임스탬프 파일로 추가합니다.
 
 ```powershell
 uv run python database/migrate.py status
