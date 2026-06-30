@@ -58,8 +58,8 @@ npm ci
 npm run verify
 ```
 
-`npm run verify` runs the TypeScript typecheck, production build, and frontend
-test suite in sequence.
+`npm run verify` runs the TypeScript typecheck, production build, source-level
+frontend test suite, and render smoke test in sequence.
 
 Service examples:
 
