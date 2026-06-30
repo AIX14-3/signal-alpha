@@ -89,8 +89,20 @@ async def load_fusion(
     neutral_band_pct: float = 0.3,
     signal_step: int = 20,
     xs_normalize: str = "rank",
+    min_sources: int | None = None,
 ) -> Dataset:
-    """Inner-join the requested sources on (stock_id, date) and concatenate features."""
+    """Join the requested sources on (stock_id, date) and concatenate features.
+
+    ``min_sources`` controls join strictness:
+      * ``None`` / == len(sources) → **inner join** (default): keep only stock-dates
+        present in EVERY source — the clean "co-occurrence" test (sample fixed, only
+        feature columns grow), but sparse sources starve the sample.
+      * ``k < len(sources)`` → **k-of-n outer join**: keep stock-dates present in at
+        least ``k`` sources; a missing source's columns are filled with NaN (LightGBM
+        handles natively). Retains samples on sparse sources, but mixes in rows that
+        are effectively single-source — interpret any "fusion lift" cautiously.
+    The forward-return label is taken from any source present at that key (all
+    sources share the same (stock,date) grid + label by construction)."""
     per_source: dict[str, Dataset] = {}
     for src in sources:
         per_source[src] = await _load_one(
@@ -101,11 +113,17 @@ async def load_fusion(
         )
 
     indices = {src: _index_dataset(ds) for src, ds in per_source.items()}
-    # Inner join: keys present in EVERY requested source.
-    common_keys = set.intersection(*(set(ix.keys()) for ix in indices.values())) if indices else set()
-    common_keys = sorted(common_keys)  # deterministic (stock_id, date)
+    n_sources = len(sources)
+    k = n_sources if min_sources is None else max(1, min(int(min_sources), n_sources))
 
-    base = per_source[sources[0]]
+    # Count how many sources carry each (stock, date) key; keep keys present in >= k.
+    key_count: dict[tuple[int, int], int] = {}
+    for ix in indices.values():
+        for key in ix:
+            key_count[key] = key_count.get(key, 0) + 1
+    common_keys = sorted(key for key, c in key_count.items() if c >= k)
+
+    widths = {src: len(per_source[src].feature_names) for src in sources}
     feature_names: list[str] = []
     for src in sources:
         feature_names.extend(per_source[src].feature_names)
@@ -116,11 +134,19 @@ async def load_fusion(
     dates: list[int] = []
     stock_ids: list[int] = []
     for key in common_keys:
-        parts = [per_source[src].X[indices[src][key]] for src in sources]
+        parts: list[np.ndarray] = []
+        label_src: str | None = None
+        for src in sources:
+            if key in indices[src]:
+                parts.append(per_source[src].X[indices[src][key]])
+                if label_src is None:
+                    label_src = src  # any present source supplies the (shared) label
+            else:
+                parts.append(np.full(widths[src], np.nan))  # missing source -> NaN cols
         rows.append(np.concatenate(parts))
-        bi = indices[sources[0]][key]
-        y.append(int(base.y[bi]))
-        excess.append(float(base.excess_returns[bi]))
+        bi = indices[label_src][key]
+        y.append(int(per_source[label_src].y[bi]))
+        excess.append(float(per_source[label_src].excess_returns[bi]))
         stock_ids.append(key[0])
         dates.append(key[1])
 
@@ -135,6 +161,7 @@ async def load_fusion(
     for src, ds in per_source.items():
         dropped[f"{src}_rows"] = len(ds)
     dropped["joined"] = len(common_keys)
+    dropped["min_sources"] = k
 
     return Dataset(
         X=X,

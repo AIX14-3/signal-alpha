@@ -249,6 +249,8 @@ def _load_hiring_db(args):
             min_observations=args.min_obs,
             precise_rematch=args.precise_rematch,
             feature_set=fs,
+            target=getattr(args, "target", "direction"),
+            min_cross_section=getattr(args, "min_cross_section", 6),
         )
     )
     up_rate = ds.y.mean() if len(ds) else 0.0
@@ -310,6 +312,8 @@ def _load_patent_db(args):
             signal_step=args.signal_step,
             xs_normalize=getattr(args, "xs_normalize", "none"),
             exclude_features=exclude,
+            target=getattr(args, "target", "direction"),
+            min_cross_section=getattr(args, "min_cross_section", 6),
         )
     )
     up_rate = ds.y.mean() if len(ds) else 0.0
@@ -361,6 +365,7 @@ def _load_fusion(args):
             neutral_band_pct=args.band,
             signal_step=args.signal_step,
             xs_normalize=getattr(args, "xs_normalize", "rank"),
+            min_sources=getattr(args, "fusion_min_sources", None),
         )
     )
     up_rate = ds.y.mean() if len(ds) else 0.0
@@ -378,13 +383,114 @@ def _load_fusion(args):
     return ds.X, ds.y, ds.excess_returns, ds.dates
 
 
+def _load_revenue(args):
+    """매출 나우캐스팅: prod 채용 공고 + 연구 매출 CSV → 분기 YoY 성장 횡단면 라벨."""
+    import asyncio
+    import os
+
+    from .fundamentals_dataset import load_from_env
+
+    try:
+        from dotenv import find_dotenv, load_dotenv
+
+        load_dotenv(find_dotenv(usecwd=True))
+    except ImportError:
+        pass
+
+    database_url = os.environ.get("DATABASE_URL")
+    if not database_url:
+        raise SystemExit("DATABASE_URL is required for --source revenue")
+    if not args.revenue_csv:
+        raise SystemExit("--revenue-csv is required for --source revenue "
+                         "(run app.ml.research.fundamentals_dart first)")
+    tickers = [t.strip() for t in args.tickers.split(",") if t.strip()]
+    fs = getattr(args, "feature_set", "all")
+    if fs not in ("volume", "duty", "volume+duty"):
+        fs = "volume"
+    ds = asyncio.run(
+        load_from_env(
+            database_url=database_url,
+            revenue_csv=args.revenue_csv,
+            tickers=tickers,
+            lookback_days=args.lookback,
+            feature_set=fs,
+            min_observations=args.min_obs,
+            min_cross_section=args.min_cross_section,
+            precise_rematch=args.precise_rematch,
+        )
+    )
+    up_rate = ds.y.mean() if len(ds) else 0.0
+    print(
+        f"[revenue] samples={len(ds)}  features={len(ds.feature_names)}  "
+        f"stocks={len(np.unique(ds.stock_ids)) if len(ds) else 0}  "
+        f"quarters={len(np.unique(ds.dates)) if len(ds) else 0}  "
+        f"hi-rate={up_rate:.2f}\n  dropped={dict(ds.dropped)}\n  features={ds.feature_names}\n"
+    )
+    if len(ds) == 0:
+        raise SystemExit(
+            "No samples built — is revenue_csv populated and HIRING loaded for these tickers? "
+            f"dropped={dict(ds.dropped)}"
+        )
+    return ds.X, ds.y, ds.excess_returns, ds.dates
+
+
+def _load_patent_revenue(args):
+    """특허→차기분기 매출 나우캐스팅: prod 특허 + 연구 매출 CSV → 분기 YoY 성장 횡단면 라벨."""
+    import asyncio
+    import os
+
+    from .fundamentals_dataset import load_patent_revenue_from_env
+
+    try:
+        from dotenv import find_dotenv, load_dotenv
+
+        load_dotenv(find_dotenv(usecwd=True))
+    except ImportError:
+        pass
+
+    database_url = os.environ.get("DATABASE_URL")
+    if not database_url:
+        raise SystemExit("DATABASE_URL is required for --source patent-revenue")
+    if not args.revenue_csv:
+        raise SystemExit("--revenue-csv is required for --source patent-revenue "
+                         "(run app.ml.research.fundamentals_dart first)")
+    tickers = [t.strip() for t in args.tickers.split(",") if t.strip()]
+    ds = asyncio.run(
+        load_patent_revenue_from_env(
+            database_url=database_url,
+            revenue_csv=args.revenue_csv,
+            tickers=tickers,
+            lookback_days=args.lookback,
+            min_observations=getattr(args, "min_obs", 1),
+            min_cross_section=args.min_cross_section,
+            xs_normalize=getattr(args, "xs_normalize", "none"),
+        )
+    )
+    up_rate = ds.y.mean() if len(ds) else 0.0
+    print(
+        f"[patent-revenue] samples={len(ds)}  features={len(ds.feature_names)}  "
+        f"stocks={len(np.unique(ds.stock_ids)) if len(ds) else 0}  "
+        f"quarters={len(np.unique(ds.dates)) if len(ds) else 0}  "
+        f"hi-rate={up_rate:.2f}\n  dropped={dict(ds.dropped)}\n  features={ds.feature_names}\n"
+    )
+    if len(ds) == 0:
+        raise SystemExit(
+            "No samples built — is revenue_csv populated and patents loaded for these tickers? "
+            f"dropped={dict(ds.dropped)}"
+        )
+    return ds.X, ds.y, ds.excess_returns, ds.dates
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Alternative-data ML model bake-off")
     parser.add_argument(
         "--source",
-        choices=["synthetic", "datalab-demo", "datalab-db", "patent-db", "hiring-db", "fusion"],
+        choices=["synthetic", "datalab-demo", "datalab-db", "patent-db", "hiring-db",
+                 "fusion", "revenue", "patent-revenue"],
         default="synthetic",
-        help="synthetic, DataLab demo/DB, Patent DB, Hiring DB, or multi-source fusion",
+        help="synthetic, DataLab demo/DB, Patent DB, Hiring DB, multi-source fusion, "
+             "revenue nowcasting (hiring->next-quarter revenue), or patent-revenue "
+             "(patent features -> next-quarter revenue growth)",
     )
     parser.add_argument("--folds", type=int, default=5, help="walk-forward folds")
     parser.add_argument("--seed", type=int, default=42, help="model/data seed")
@@ -417,6 +523,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--precise-rematch", action="store_true",
                         help="hiring-db: re-attribute postings by exact source_name match to the "
                              "universe (precision; drops ambiguous/mis-attributed names)")
+    parser.add_argument("--target",
+                        choices=["direction", "abs_return", "realized_vol"],
+                        default="direction",
+                        help="hiring-db: prediction target — direction (up/down, default), or a "
+                             "MAGNITUDE target: abs_return (|excess|) / realized_vol (forward vol). "
+                             "Magnitude uses per-date cross-sectional big/small labels.")
+    parser.add_argument("--min-cross-section", type=int, default=6,
+                        help="hiring-db magnitude: min stocks per date to keep that date's "
+                             "cross-section (thin dates dropped; default 6)")
     parser.add_argument("--permute", type=int, default=0,
                         help="permutation test: label-shuffle iterations per model for a "
                              "rank-IC p-value (0=off; ~200 for a confirmatory run)")
@@ -439,11 +554,22 @@ def main(argv: list[str] | None = None) -> int:
                         help="patent-db: 'count'/'count+llm'. hiring-db: 'volume' (default), 'duty' "
                              "(tech-mix only), or 'volume+duty'.")
     parser.add_argument("--fusion-sources", type=str, default="patent,hiring,datalab",
-                        help="comma-separated sources to inner-join for --source fusion")
+                        help="comma-separated sources to join for --source fusion")
+    parser.add_argument("--fusion-min-sources", type=int, default=None,
+                        help="fusion: keep stock-dates present in >= K sources (k-of-n outer "
+                             "join; missing source cols -> NaN). Default None = inner join "
+                             "(all sources). Use e.g. 2 with 3 sources for a recall variant.")
+    parser.add_argument("--revenue-csv", type=str, default=None,
+                        help="revenue CSV (app.ml.research.fundamentals_dart output) for "
+                             "--source revenue")
     parser.add_argument("--csv", type=str, default=None, help="write full metrics CSV here")
     args = parser.parse_args(argv)
 
-    if args.source == "fusion":
+    if args.source == "revenue":
+        X, y, excess, dates = _load_revenue(args)
+    elif args.source == "patent-revenue":
+        X, y, excess, dates = _load_patent_revenue(args)
+    elif args.source == "fusion":
         X, y, excess, dates = _load_fusion(args)
     elif args.source == "hiring-db":
         X, y, excess, dates = _load_hiring_db(args)

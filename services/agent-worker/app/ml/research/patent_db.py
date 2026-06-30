@@ -91,6 +91,26 @@ def _patent_row(record: Any) -> dict | None:
     }
 
 
+async def fetch_patent_rows(pool: Any, stock_ids: list[int]) -> dict[int, list[dict]]:
+    """Per stock, fetch full patent history shaped for ``compute_indicators``.
+
+    Reused by the price-label dataset (below) and the revenue-nowcasting dataset
+    (``fundamentals_dataset``). Full history (``since_date=None``) because a filing's
+    publication lags ~18mo, so publications in any window come from earlier filings.
+    Rows without a parseable publication date are dropped (no honest knowable date).
+    """
+    from signal_alpha_data_access.repositories.raw_details import RawDetailRepository
+
+    out: dict[int, list[dict]] = {}
+    async with pool.acquire() as conn:
+        raw = RawDetailRepository(conn)
+        for stock_id in stock_ids:
+            records = await raw.list_patent_details_by_stock(stock_id=stock_id, since_date=None)
+            shaped = [_patent_row(r) for r in records]
+            out[stock_id] = [r for r in shaped if r is not None]
+    return out
+
+
 async def _price_series_for(market: Any, stock_id: int, start: date, end: date) -> PriceSeries:
     rows = await market.list_ohlcv_between(stock_id=stock_id, start_date=start, end_date=end)
     pairs = [(r["trade_date"], float(r["close"])) for r in rows if r["close"] is not None]
@@ -113,6 +133,8 @@ async def load_patent_dataset(
     min_observations: int = 1,
     xs_normalize: str = "none",
     exclude_features: frozenset[str] = frozenset(),
+    target: str = "direction",
+    min_cross_section: int = 6,
 ) -> Dataset:
     """Fetch patents (full history per stock) + prices, and build a Dataset."""
     from signal_alpha_data_access.repositories.raw_details import RawDetailRepository
@@ -166,6 +188,8 @@ async def load_patent_dataset(
         min_observations=min_observations,
         xs_normalize=xs_normalize,
         exclude_features=exclude_features,
+        target=target,
+        min_cross_section=min_cross_section,
     )
 
 
@@ -224,4 +248,4 @@ async def load_from_env(
         await pool.close()
 
 
-__all__ = ["load_from_env", "load_patent_dataset"]
+__all__ = ["load_from_env", "load_patent_dataset", "fetch_patent_rows"]

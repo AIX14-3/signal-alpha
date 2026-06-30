@@ -181,6 +181,8 @@ async def load_from_env(
     min_observations: int = 2,
     precise_rematch: bool = False,
     feature_set: str = "volume",
+    target: str = "direction",
+    min_cross_section: int = 6,
 ) -> Any:
     """Fetch hiring postings (DB) + prices (CSV) and build a Dataset.
 
@@ -231,4 +233,6 @@ async def load_from_env(
         neutral_band_pct=neutral_band_pct,
         min_observations=min_observations,
         feature_set=feature_set,
+        target=target,
+        min_cross_section=min_cross_section,
     )

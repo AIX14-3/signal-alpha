@@ -30,6 +30,12 @@ from app.analyzers.patent.indicators import compute_indicators
 from .datalab_dataset import Dataset, PriceSeries, _as_date
 from .features import build_feature_row, feature_matrix
 from .labels import make_label
+from .magnitude import (
+    MAGNITUDE_TARGETS,
+    abs_excess,
+    cross_sectional_median_labels,
+    forward_realized_vol,
+)
 
 # Absolute-scale, size-confounded count columns. Left un-normalized, a model can
 # read these as a proxy for company size (Samsung's ``total`` dwarfs a small-cap's
@@ -113,6 +119,8 @@ def build_dataset(
     min_observations: int = 1,
     xs_normalize: str = "none",
     exclude_features: frozenset[str] = frozenset(),
+    target: str = "direction",
+    min_cross_section: int = 6,
 ) -> Dataset:
     """Assemble per-(stock, signal-date) patent feature rows and forward-return labels.
 
@@ -126,10 +134,25 @@ def build_dataset(
     ``_cross_sectional_normalize``). ``exclude_features`` drops feature columns by
     their prefixed name (e.g. ``patent__mean_significance``) — used to run a clean
     count-only test when LLM-enriched columns are mostly empty.
+
+    ``target`` selects what y means (mirrors ``hiring_dataset.build_dataset``):
+      * ``"direction"``    — up/down sign of forward excess return (default; neutral
+        band drops near-zero moves).
+      * ``"abs_return"``   — |forward excess return| (move size vs benchmark).
+      * ``"realized_vol"`` — forward realized volatility (benchmark-independent).
+    For the two magnitude targets y is a **per-date cross-sectional** binary label
+    (top half = big mover = 1, bottom half = 0; ``min_cross_section`` thin dates
+    dropped) and ``Dataset.excess_returns`` carries the continuous magnitude so
+    ``rank_ic_xs`` scores move-size ranking. No neutral band applies.
     """
+    if target not in ("direction", *MAGNITUDE_TARGETS):
+        raise ValueError(f"unknown target: {target!r}")
+    is_magnitude = target in MAGNITUDE_TARGETS
+
     feat_rows: list[dict[str, float]] = []
     y: list[int] = []
     excess: list[float] = []
+    mags: list[float] = []  # magnitude 모드에서만(조립 후 횡단면 라벨로 변환)
     dates: list[int] = []
     stock_ids: list[int] = []
     dropped: Counter = Counter()
@@ -159,6 +182,28 @@ def build_dataset(
             )
             if bench_ret is None:
                 bench_ret = 0.0
+            # Drop the non-numeric date string (would become an all-NaN feature column).
+            ind = asdict(indicators)
+            ind.pop("latest_application_date", None)
+            features = build_feature_row("patent", ind)
+
+            if is_magnitude:
+                # 방향 대신 "움직임의 크기"를 모은다(neutral band 무관). 라벨(큰/작은)은
+                # 조립 후 per-date 횡단면으로 부여하므로 여기선 연속 매그니튜드만 적재.
+                if target == "abs_return":
+                    mag = abs_excess(stock_ret, bench_ret)
+                else:  # realized_vol
+                    rv = forward_realized_vol(prices, as_of, horizon_sessions)
+                    if rv is None:
+                        dropped["no_realized_vol"] += 1
+                        continue
+                    mag = rv
+                feat_rows.append(features)
+                mags.append(mag)
+                dates.append(as_of.toordinal())
+                stock_ids.append(stock_id)
+                continue
+
             label = make_label(
                 stock_return_pct=stock_ret,
                 benchmark_return_pct=bench_ret,
@@ -167,14 +212,22 @@ def build_dataset(
             if label.y_direction is None:
                 dropped["neutral_band"] += 1
                 continue
-            # Drop the non-numeric date string (would become an all-NaN feature column).
-            ind = asdict(indicators)
-            ind.pop("latest_application_date", None)
-            feat_rows.append(build_feature_row("patent", ind))
+            feat_rows.append(features)
             y.append(label.y_direction)
             excess.append(label.excess_return_pct)
             dates.append(as_of.toordinal())
             stock_ids.append(stock_id)
+
+    if is_magnitude:
+        # per-date 횡단면 이진 라벨(상위 절반=1·하위 절반=0). 빈약한 날짜·중앙 행은 버려진다.
+        keep, y = cross_sectional_median_labels(
+            mags, dates, min_cross_section=min_cross_section
+        )
+        dropped["thin_cross_section"] += len(feat_rows) - len(keep)
+        feat_rows = [feat_rows[i] for i in keep]
+        excess = [mags[i] for i in keep]  # 연속 매그니튜드 → rank_ic_xs 채점용
+        dates = [dates[i] for i in keep]
+        stock_ids = [stock_ids[i] for i in keep]
 
     matrix, names = feature_matrix(feat_rows)
     X = (

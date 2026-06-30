@@ -34,6 +34,12 @@ import numpy as np
 from .datalab_dataset import Dataset, PriceSeries, _as_date, weekly_signal_dates
 from .features import feature_matrix
 from .labels import make_label
+from .magnitude import (
+    MAGNITUDE_TARGETS,
+    abs_excess,
+    cross_sectional_median_labels,
+    forward_realized_vol,
+)
 
 _YEAR_DAYS = 365
 
@@ -206,6 +212,8 @@ def build_dataset(
     min_observations: int = 2,
     seasonal: dict[int, float] | None = None,
     feature_set: str = "volume",
+    target: str = "direction",
+    min_cross_section: int = 6,
 ) -> Dataset:
     """Assemble per-(stock, signal-date) hiring feature rows + forward-return labels.
 
@@ -220,11 +228,26 @@ def build_dataset(
       * ``"volume+duty"``  — all 6.
     Duty features require each row to carry ``duty_groups`` (a list of duty names);
     rows without it tally as zero duties (NaN share -> imputed/dropped downstream).
+
+    ``target`` selects what y means:
+      * ``"direction"``    — up/down sign of forward excess return (default; neutral
+        band drops near-zero moves). Unchanged legacy behaviour.
+      * ``"abs_return"``   — |forward excess return| (size of the move vs benchmark).
+      * ``"realized_vol"`` — forward realized volatility (std of daily returns over the
+        horizon; absolute, benchmark-independent).
+    For the two magnitude targets y is a **per-date cross-sectional** binary label
+    (top half = big mover = 1, bottom half = 0; ``min_cross_section`` thin dates are
+    dropped), and ``Dataset.excess_returns`` carries the continuous magnitude so
+    ``rank_ic_xs`` scores how well a model ranks move size. No neutral band applies.
     """
     if feature_set not in ("volume", "duty", "volume+duty"):
         raise ValueError(f"unknown feature_set: {feature_set!r}")
+    if target not in ("direction", *MAGNITUDE_TARGETS):
+        raise ValueError(f"unknown target: {target!r}")
     want_volume = feature_set in ("volume", "volume+duty")
     want_duty = feature_set in ("duty", "volume+duty")
+    # 매그니튜드 모드: 행별 매그니튜드를 모은 뒤(조립 후) per-date 횡단면으로 이진 라벨링.
+    is_magnitude = target in MAGNITUDE_TARGETS
 
     # Parse + sort each stock's posting dates once; pool all for the seasonal index.
     # When duty features are requested, also build per-stock (date, n_tech, n_total)
@@ -252,6 +275,7 @@ def build_dataset(
     feat_rows: list[dict[str, float]] = []
     y: list[int] = []
     excess: list[float] = []
+    mags: list[float] = []  # 매그니튜드 모드에서만 채워짐(조립 후 횡단면 라벨로 변환)
     dates: list[int] = []
     stock_ids: list[int] = []
     dropped: Counter = Counter()
@@ -290,6 +314,24 @@ def build_dataset(
             )
             if bench_ret is None:
                 bench_ret = 0.0  # benchmark gap -> fall back to raw return
+
+            if is_magnitude:
+                # 방향 대신 "움직임의 크기"를 모은다. 라벨(큰/작은)은 조립 후 per-date
+                # 횡단면으로 부여하므로 여기선 연속 매그니튜드만 적재(neutral band 무관).
+                if target == "abs_return":
+                    mag = abs_excess(stock_ret, bench_ret)
+                else:  # realized_vol
+                    rv = forward_realized_vol(prices, as_of, horizon_sessions)
+                    if rv is None:
+                        dropped["no_realized_vol"] += 1
+                        continue
+                    mag = rv
+                feat_rows.append(features)
+                mags.append(mag)
+                dates.append(as_of.toordinal())
+                stock_ids.append(stock_id)
+                continue
+
             label = make_label(
                 stock_return_pct=stock_ret,
                 benchmark_return_pct=bench_ret,
@@ -303,6 +345,17 @@ def build_dataset(
             excess.append(label.excess_return_pct)
             dates.append(as_of.toordinal())
             stock_ids.append(stock_id)
+
+    if is_magnitude:
+        # per-date 횡단면 이진 라벨(상위 절반=1·하위 절반=0). 빈약한 날짜·중앙 행은 버려진다.
+        keep, y = cross_sectional_median_labels(
+            mags, dates, min_cross_section=min_cross_section
+        )
+        dropped["thin_cross_section"] += len(feat_rows) - len(keep)
+        feat_rows = [feat_rows[i] for i in keep]
+        excess = [mags[i] for i in keep]  # 연속 매그니튜드 → rank_ic_xs 채점용
+        dates = [dates[i] for i in keep]
+        stock_ids = [stock_ids[i] for i in keep]
 
     matrix, names = feature_matrix(feat_rows)
     return Dataset(
