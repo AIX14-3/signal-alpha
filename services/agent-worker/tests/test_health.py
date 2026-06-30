@@ -41,9 +41,24 @@ class _FakePool:
         return _FakeAcquire(fail=self._fail)
 
 
+class _FakeTask:
+    def __init__(self, *, done: bool = False, cancelled: bool = False) -> None:
+        self._done = done
+        self._cancelled = cancelled
+
+    def done(self) -> bool:
+        return self._done
+
+    def cancelled(self) -> bool:
+        return self._cancelled
+
+
 class HealthCheckTest(unittest.TestCase):
     def tearDown(self) -> None:
         app.dependency_overrides.pop(get_database_pool, None)
+        for attr in ("price_collector_task", "ops_daemon_task", "queue_drain_task"):
+            if hasattr(app.state, attr):
+                delattr(app.state, attr)
 
     def test_health_returns_ok_when_db_reachable(self) -> None:
         # /health 는 DB 연결을 검증한다 → 도달 가능한 풀을 주입하면 200.
@@ -58,9 +73,28 @@ class HealthCheckTest(unittest.TestCase):
             {
                 "status": "ok",
                 "service": "agent-worker",
-                "version": "0.1.0"
+                "version": "0.1.0",
+                "runtime": {
+                    "price_collector": {"enabled": False, "state": "not_started"},
+                    "hiring_ops_daemon": {"enabled": False, "state": "not_started"},
+                    "queue_drain_daemon": {"enabled": False, "state": "not_started"},
+                },
             }
         )
+
+    def test_health_reports_daemon_runtime_state(self) -> None:
+        app.dependency_overrides[get_database_pool] = lambda: _FakePool()
+        app.state.price_collector_task = _FakeTask(done=False)
+        app.state.ops_daemon_task = _FakeTask(done=True)
+        app.state.queue_drain_task = _FakeTask(done=True, cancelled=True)
+        client = TestClient(app)
+
+        response = client.get("/health")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["runtime"]["price_collector"]["state"], "running")
+        self.assertEqual(response.json()["runtime"]["hiring_ops_daemon"]["state"], "stopped")
+        self.assertEqual(response.json()["runtime"]["queue_drain_daemon"]["state"], "cancelled")
 
     def test_health_returns_503_when_db_unavailable(self) -> None:
         # DB 연결/쿼리 실패 → 503 (Cloud Run/GCE 헬스체크가 장애를 감지).

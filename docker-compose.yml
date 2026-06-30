@@ -93,15 +93,17 @@ services:
       # (GEMINI_API_KEY 는 위에서 이미 전달됨)
       SYNTHESIS_USE_LLM: ${SYNTHESIS_USE_LLM:-false}
       SYNTHESIS_LLM_PROVIDER: ${SYNTHESIS_LLM_PROVIDER:-gemini}
-      SYNTHESIS_LLM_MODEL: ${SYNTHESIS_LLM_MODEL:-gemini-2.0-flash}
+      SYNTHESIS_LLM_MODEL: ${SYNTHESIS_LLM_MODEL:-gemini-2.5-flash}
       SYNTHESIS_LLM_TIMEOUT_SECONDS: ${SYNTHESIS_LLM_TIMEOUT_SECONDS:-30}
       REPORT_STORAGE_BACKEND: ${REPORT_STORAGE_BACKEND:-local}
       REPORT_LOCAL_STORAGE_DIR: /workspace/data/report-storage
       GCP_PROJECT_ID: ${GCP_PROJECT_ID:-}
       GCS_REPORT_BUCKET: ${GCS_REPORT_BUCKET:-signal-alpha-reports}
       GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
-      # 실시간 가격 수집 데몬 (agent-worker 내장 백그라운드 태스크)
-      PRICE_COLLECTOR_ENABLED: ${PRICE_COLLECTOR_ENABLED:-true}
+      # 워커 인스턴스: 큐 드레인을 기본 기동하고, 가격 수집은 별도 collector 인스턴스가 담당.
+      QUEUE_DRAIN_DAEMON_ENABLED: ${QUEUE_DRAIN_DAEMON_ENABLED:-true}
+      # 단일 통합 개발 기동에서만 true 로 켠다(run_collector_instance.py 가 기본 가격 수집 유닛).
+      PRICE_COLLECTOR_ENABLED: ${PRICE_COLLECTOR_ENABLED:-false}
       KIWOOM_APP_KEY: ${KIWOOM_APP_KEY:-}
       KIWOOM_APP_SECRET: ${KIWOOM_APP_SECRET:-}
       KIWOOM_API_BASE: ${KIWOOM_API_BASE:-https://mockapi.kiwoom.com}

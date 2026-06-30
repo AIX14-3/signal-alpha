@@ -111,7 +111,7 @@ DART_RETRY_BACKOFF_SECONDS=0.5
 DART_USE_LLM=false
 DART_LLM_HIGH_IMPACT_ONLY=true
 DART_LLM_PROVIDER=gemini
-DART_LLM_MODEL=gemini-2.0-flash
+DART_LLM_MODEL=gemini-2.5-flash
 DART_LLM_TIMEOUT_SECONDS=20
 GEMINI_API_KEY=
 GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta
@@ -127,15 +127,12 @@ Disclosure document download failures do not fail the whole list collection; the
 `document_fetch_status`, `document_error_category`, and retryability metadata in the DART raw
 detail payload.
 
-DART analysis runs through a LangGraph-based `DartAnalysisGraphAgent` that validates input, calls
-the DART source agent, and records graph metadata in `agent_results.method_detail`. Analysis is
-rule-based by default. To enable Gemini-assisted analysis for high-impact disclosures, set
-`DART_USE_LLM=true`, `DART_LLM_PROVIDER=gemini`, `DART_LLM_MODEL`, and `GEMINI_API_KEY`. OpenAI
-remains available by setting `DART_LLM_PROVIDER=openai` with `OPENAI_API_KEY`. The worker keeps the
-rule result as a fallback: invalid JSON, timeout, unsafe investment-advice language, or API failure
-stores the rule-based result with `analysis_source="rules_fallback"`. Successful LLM analysis stores
-`analysis_source="llm"`, `llm_model`, `prompt_ver`, `llm_confidence`, and `key_facts` in
-`agent_results.method_detail`. The prompt template is versioned at `app/prompts/dart_analysis_v1.md`.
+DART analysis runs through `DartAnalysisGraphAgent`, a direct three-step flow that validates input,
+delegates to the DART source agent, and records graph provenance in `agent_results.method_detail`.
+The former LangGraph dependency has been removed; the class name and stored `graph_nodes` metadata
+remain for compatibility. DART LLM 판정 경로는 제거되어 현재 DART agent는 features-only output
+(`direction="unknown"`, `data_status="no_signal"`)을 반환합니다. DART disclosure facts still join
+the final `SYNTHESIZE` explanation as evidence, but they do not change the deterministic/ML score.
 
 After successful `analyze_dart`, the worker enqueues `aggregate_signal`. The aggregator reads the
 DART `agent_results` row and creates the user-facing `final_signals` row with `run_key="AGGREGATED"`.
