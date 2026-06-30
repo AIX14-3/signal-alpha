@@ -41,13 +41,31 @@ def _with_db(base_url: str, dbname: str) -> str:
     return urlunsplit((p.scheme, p.netloc, f"/{dbname}", p.query, p.fragment))
 
 
+def _guard_destructive(base_url: str) -> None:
+    """안전장치: sa_coll/sa_be 를 DROP/CREATE 하므로 의도치 않은 서버 대상 실행을 막는다.
+
+    localhost/127.0.0.1 또는 CI 환경에서만 무조건 허용. 그 외 호스트는
+    ALLOW_2DB_SMOKE=1 로 명시 동의해야 한다(공유/스테이징 DB 실수 방지).
+    """
+    host = (urlsplit(base_url).hostname or "").lower()
+    if host in ("localhost", "127.0.0.1", "::1"):
+        return
+    if os.environ.get("CI") or os.environ.get("ALLOW_2DB_SMOKE") == "1":
+        return
+    raise SystemExit(
+        f"안전장치: 이 도구는 '{COLL_DB}'/'{BE_DB}' DB 를 DROP/CREATE 합니다. "
+        f"대상 호스트가 '{host}' 입니다 — localhost/CI 가 아니면 ALLOW_2DB_SMOKE=1 로 명시 동의하세요."
+    )
+
+
 def _recreate_databases(base_url: str) -> None:
     conn = psycopg2.connect(base_url)
     conn.autocommit = True
     try:
         with conn.cursor() as cur:
             for db in (COLL_DB, BE_DB):
-                cur.execute(f"DROP DATABASE IF EXISTS {db}")
+                # WITH (FORCE): 잔존 연결(풀러·중단된 이전 실행)이 있어도 강제 종료 후 DROP(PG13+).
+                cur.execute(f"DROP DATABASE IF EXISTS {db} WITH (FORCE)")
                 cur.execute(f"CREATE DATABASE {db}")
     finally:
         conn.close()
@@ -95,6 +113,7 @@ def main() -> None:
     if not base_url:
         raise SystemExit("DATABASE_URL 환경변수가 필요합니다.")
 
+    _guard_destructive(base_url)
     coll_url = _with_db(base_url, COLL_DB)
     be_url = _with_db(base_url, BE_DB)
 

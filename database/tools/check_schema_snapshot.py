@@ -40,6 +40,16 @@ def normalize(dump: str) -> list[str]:
 
     비교는 이 라인들의 **다중집합(순서 무관)** 으로 한다 — pg_dump 버전/객체 생성순서에
     따라 객체 출력 순서가 달라져도(같은 스키마면 라인 구성은 동일) 오탐이 없도록.
+
+    제거 대상(비스키마/비결정):
+    - ``\\restrict`` / ``\\unrestrict`` (덤프마다 랜덤 토큰).
+    - 주석 라인(``--`` 시작).
+    - 세션 설정 프리앰블(``SET ...``, ``SELECT pg_catalog.set_config(...)``) — 스키마가 아니라
+      pg_dump 버전마다 늘거나 줄 수 있어 버전 드리프트 거짓 실패의 원인이 된다.
+
+    한계: 라인 다중집합이라 **같은 텍스트의 컬럼을 같은 테이블 안에서 재배치**하거나, 동일
+    라인을 테이블 A→B 로 옮기는(다중집합 변화 0) 경우는 잡지 못한다. 이는 의도적 트레이드오프
+    (객체 출력 순서에 대한 거짓 실패를 없애기 위함)이며, 그런 변화는 review/마이그에서 드러난다.
     """
     out: list[str] = []
     for raw in dump.splitlines():
@@ -50,6 +60,8 @@ def normalize(dump: str) -> list[str]:
         if stripped.startswith("\\restrict") or stripped.startswith("\\unrestrict"):
             continue
         if stripped.startswith("--"):
+            continue
+        if stripped.startswith("SET ") or stripped.startswith("SELECT pg_catalog.set_config"):
             continue
         out.append(line)
     return out

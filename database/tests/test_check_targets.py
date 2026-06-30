@@ -59,14 +59,47 @@ def test_allowed_fks_pass():
         assert owner_dbs <= ref_dbs, f"{owner}->{ref} should be allowed"
 
 
-def test_comments_and_do_blocks_ignored():
-    """주석/ DO $$ 본문 안의 테이블 언급은 파싱되지 않는다(오탐 방지)."""
+def test_comments_ignored():
+    """주석 안의 테이블 언급은 파싱되지 않는다(오탐 방지)."""
     sql = (
         "-- ALTER TABLE public.analysis_requests REFERENCES public.users\n"
-        "DO $$ BEGIN ALTER TABLE foo ADD CONSTRAINT c FOREIGN KEY (x) "
-        "REFERENCES bar; END $$;\n"
+        "/* CREATE TABLE public.x REFERENCES public.users */\n"
         "SELECT 1;"
     )
     subjects, edges = ct.analyze_sql(sql)
     assert subjects == set()
     assert edges == []
+
+
+def test_do_block_table_ddl_analyzed():
+    """DO $$ ... $$ 안의 CREATE/ALTER TABLE·FK 도 검사 대상이다(멱등 패턴 누락 방지)."""
+    sql = (
+        "DO $$ BEGIN\n"
+        "  IF NOT EXISTS (SELECT FROM pg_tables WHERE tablename='foo') THEN\n"
+        "    ALTER TABLE foo ADD CONSTRAINT c FOREIGN KEY (x) REFERENCES public.users(id);\n"
+        "  END IF;\n"
+        "END $$;"
+    )
+    subjects, edges = ct.analyze_sql(sql)
+    assert "foo" in subjects
+    assert ("foo", "users") in edges
+
+
+def test_string_literal_does_not_break_parsing():
+    """DEFAULT 문자열 안의 ;·-- 가 있어도 뒤따르는 REFERENCES 가 올바로 귀속된다."""
+    sql = (
+        "CREATE TABLE public.foo (\n"
+        "  id bigint,\n"
+        "  label text NOT NULL DEFAULT 'a;b--c',\n"
+        "  owner_id bigint REFERENCES public.users(id)\n"
+        ");"
+    )
+    subjects, edges = ct.analyze_sql(sql)
+    assert subjects == {"foo"}
+    assert ("foo", "users") in edges
+
+
+def test_non_public_schema_qualifier():
+    """public 외 스키마 한정자도 테이블명만 캡처한다."""
+    subjects, edges = ct.analyze_sql("CREATE TABLE app.user_sessions (id bigint);")
+    assert subjects == {"user_sessions"}

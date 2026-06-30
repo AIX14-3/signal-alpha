@@ -56,24 +56,33 @@ _TARGET_DBS = {
     "all": frozenset({"coll", "be"}),
 }
 
+# 스키마 한정자(public. 또는 임의 스키마.)는 건너뛰고 식별자만 캡처.
 _CREATE_TABLE_RE = re.compile(
-    r"\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:public\.)?\"?(\w+)\"?",
+    r"\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:\w+\.)?\"?(\w+)\"?",
     re.IGNORECASE,
 )
 _ALTER_TABLE_RE = re.compile(
-    r"\bALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?(?:public\.)?\"?(\w+)\"?",
+    r"\bALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?(?:\w+\.)?\"?(\w+)\"?",
     re.IGNORECASE,
 )
-_REFERENCES_RE = re.compile(r"\bREFERENCES\s+(?:public\.)?\"?(\w+)\"?", re.IGNORECASE)
-# $$ ... $$ / $tag$ ... $tag$ (DO 블록·함수 본문) — 테이블 DDL 분석에 불필요하므로 제거.
-_DOLLAR_RE = re.compile(r"\$([A-Za-z_]*)\$.*?\$\1\$", re.DOTALL)
+_REFERENCES_RE = re.compile(r"\bREFERENCES\s+(?:\w+\.)?\"?(\w+)\"?", re.IGNORECASE)
+# 단일 인용 문자열 리터럴('' 이스케이프 포함). 내부의 ; -- /* 가 문장 분리·주석 제거를
+# 깨뜨리지 않도록 가장 먼저 비운다.
+_STRING_RE = re.compile(r"'(?:[^']|'')*'", re.DOTALL)
 
 
 def _strip_noise(sql: str) -> str:
-    """주석과 dollar-quoted 본문을 제거(테이블/ FK 정규식의 오탐 방지)."""
+    """문자열 리터럴·주석을 제거(테이블/ FK 정규식의 오탐 방지).
+
+    순서가 중요하다: (1) 문자열 리터럴을 먼저 비워 내부의 ``;``·``--``·``/* */`` 가
+    문장 분리/주석 제거를 오염시키지 않게 한다. (2) 블록·라인 주석 제거.
+    dollar-quoted 본문(``$$ ... $$``)은 **제거하지 않는다** — ``DO $$ ... CREATE TABLE ... $$``
+    같은 멱등 패턴 안의 테이블/FK 도 검사 대상이기 때문. (함수 본문이 'REFERENCES' 등을
+    포함해 드물게 오탐하면, 조용한 누락보다 시끄러운 실패가 가드로서 안전하다.)
+    """
+    sql = _STRING_RE.sub("''", sql)  # 문자열 리터럴 비우기
     sql = re.sub(r"/\*.*?\*/", " ", sql, flags=re.DOTALL)  # 블록 주석
     sql = re.sub(r"--[^\n]*", " ", sql)  # 라인 주석
-    sql = _DOLLAR_RE.sub(" ", sql)  # DO/함수 본문
     return sql
 
 
