@@ -21,7 +21,7 @@ REPORT_LOCAL_STORAGE_DIR=data/report-storage
 
 REPORT_USE_LLM=true
 REPORT_LLM_PROVIDER=gemini
-REPORT_LLM_MODEL=gemini-2.0-flash
+REPORT_LLM_MODEL=gemini-2.5-flash
 REPORT_LLM_TIMEOUT_SECONDS=20
 
 GEMINI_API_KEY=your-gemini-api-key
@@ -48,7 +48,7 @@ docker compose exec -T agent-worker python -c "from app.core.config import get_s
 local
 True
 gemini
-gemini-2.0-flash
+gemini-2.5-flash
 ```
 
 ## 3. 테스트용 리포트 수집 작업 등록
@@ -62,9 +62,11 @@ docker compose exec -T postgres psql -U signal_alpha -d signal_alpha -c "select 
 네이버 금융 리서치 목록에 실제 리포트가 있는 날짜 범위를 지정해 `collect_report`를 등록합니다.
 
 ```powershell
+$headers = @{"X-Internal-Token" = $env:INTERNAL_API_TOKEN}
 Invoke-RestMethod `
   -Method Post `
   -Uri "http://localhost:8011/internal/tasks/collect_report/enqueue" `
+  -Headers $headers `
   -ContentType "application/json" `
   -Body '{"stock_id":1,"priority":"batch","task_context":{"stock_code":"005930","date_start":"2026-06-17","date_end":"2026-06-24","max_pages":1},"dedupe":false}'
 ```
@@ -74,9 +76,10 @@ Invoke-RestMethod `
 ```powershell
 Invoke-RestMethod `
   -Method Post `
-  -Uri "http://localhost:8011/internal/queue/collect_report/run-batch" `
+  -Uri "http://localhost:8011/internal/queue/run-cycle" `
+  -Headers $headers `
   -ContentType "application/json" `
-  -Body '{"max_runs":5}'
+  -Body '{"max_passes":10000}'
 ```
 
 `collected`가 0이면 날짜 범위에 리포트가 없거나 제목/날짜 필터에 맞는 항목이 없는 것입니다. 이 경우 네이버 목록의 실제 작성일에 맞춰 `date_start`, `date_end`를 조정합니다.
@@ -88,9 +91,10 @@ Invoke-RestMethod `
 ```powershell
 Invoke-RestMethod `
   -Method Post `
-  -Uri "http://localhost:8011/internal/queue/process_report/run-batch" `
+  -Uri "http://localhost:8011/internal/queue/run-cycle" `
+  -Headers $headers `
   -ContentType "application/json" `
-  -Body '{"max_runs":5}'
+  -Body '{"max_passes":10000}'
 ```
 
 이 단계에서 수행되는 일:
@@ -133,15 +137,10 @@ PDF 파싱 이후 현재 canonical 경로와 deterministic 분석 결과 저장�
 ```powershell
 Invoke-RestMethod `
   -Method Post `
-  -Uri "http://localhost:8011/internal/queue/normalize_report/run-batch" `
+  -Uri "http://localhost:8011/internal/queue/run-cycle" `
+  -Headers $headers `
   -ContentType "application/json" `
-  -Body '{"max_runs":5}'
-
-Invoke-RestMethod `
-  -Method Post `
-  -Uri "http://localhost:8011/internal/queue/analyze_report/run-batch" `
-  -ContentType "application/json" `
-  -Body '{"max_runs":5}'
+  -Body '{"max_passes":10000}'
 ```
 
 ## 7. 문제 해결

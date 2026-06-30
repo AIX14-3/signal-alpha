@@ -56,3 +56,34 @@ def test_worker_runbooks_match_current_queue_and_auth_contracts():
     assert "INTERNAL_API_TOKEN=" in gcp
     assert "SYNTHESIS_LLM_MODEL=gemini-2.5-flash" in staging
     assert "gemini-2.0-flash" not in staging
+
+
+def test_worker_specs_match_current_queue_auth_and_model_contracts():
+    dart_spec = (ROOT / "docs" / "spec" / "dart-collector-analyzer-spec.md").read_text(
+        encoding="utf-8"
+    )
+    report_gemini = (
+        ROOT / "docs" / "spec" / "report-gemini-pdf-parsing-dev-guide.md"
+    ).read_text(encoding="utf-8")
+    report_state = (
+        ROOT / "docs" / "spec" / "report-rag-current-state.md"
+    ).read_text(encoding="utf-8")
+
+    assert "gemini-2.0-flash" not in report_gemini
+    assert "REPORT_LLM_MODEL=gemini-2.5-flash" in report_gemini
+    assert "X-Internal-Token" in dart_spec
+    assert "X-Internal-Token" in report_gemini
+    assert "X-Internal-Token" in report_state
+    assert "/internal/queue/run-cycle" in dart_spec
+    assert "/internal/queue/run-cycle" in report_gemini
+    assert "/internal/queue/run-cycle" in report_state
+    assert "/internal/queue/normalize_dart/run-batch" not in dart_spec
+    assert "/internal/queue/analyze_dart/run-batch" not in dart_spec
+    assert "/internal/queue/collect_report/run-batch" not in report_gemini
+    assert "/internal/queue/process_report/run-batch" not in report_gemini
+    assert "/internal/queue/normalize_report/run-batch" not in report_gemini
+    assert "/internal/queue/analyze_report/run-batch" not in report_gemini
+    assert "/internal/queue/collect_report/run-batch" not in report_state
+    assert "/internal/queue/process_report/run-batch" not in report_state
+    assert "/internal/queue/normalize_report/run-batch" not in report_state
+    assert "/internal/queue/analyze_report/run-batch" not in report_state
