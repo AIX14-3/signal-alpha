@@ -33,6 +33,18 @@ class TestContainsForbidden:
     def test_detects_investment_recommendation(self):
         assert contains_forbidden("지금 삼성전자 매수하세요 좋은 기회입니다") is True
 
+    @pytest.mark.parametrize(
+        "phrase",
+        [
+            "보유 추천",
+            "목표 수익률",
+            "수익 예측",
+            "투자 타이밍 알림",
+        ],
+    )
+    def test_detects_agent_policy_recommendation_phrases(self, phrase: str):
+        assert contains_forbidden(f"이 문장은 {phrase} 표현을 포함합니다") is True
+
     def test_detects_ai_style_phrase(self):
         assert contains_forbidden("종합적으로 분석한 결과 긍정적인 흐름이 감지되었습니다") is True
 
