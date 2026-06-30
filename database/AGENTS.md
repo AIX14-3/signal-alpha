@@ -39,7 +39,7 @@ source_documents / signal_events / signal_metrics
 
 ## Legacy
 
-`report_raw`, `report_signal`은 legacy Report MVP 테이블입니다. 현재 런타임 코드는 이 테이블을 참조하지 않으며, 기존 환경 호환성과 추후 DROP migration 준비를 위해 보존합니다. 신규 코드에서 사용하면 안 됩니다.
+`report_raw`, `report_signal`은 legacy Report MVP 테이블이었습니다. 현재 런타임 코드는 참조하지 않으며, `20260630_1200_drop_legacy_report_raw_signal.sql`(target: collection)로 DROP 됐습니다. 신규 코드에서 사용하면 안 됩니다.
 
 ## 검증
 
