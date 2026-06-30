@@ -101,7 +101,7 @@
 - **저장**: `price_snapshots`(장중 스냅샷) + `ohlcv_data`(당일 UPSERT + 수급 확정치) + `collector_runs`(실행 로그)
 - **정합성 관리**: 결측·날짜 정렬 보장. 7일 초과 시 stale 표시 (분석 단계에서 처리). 데몬 중복 기동은 Postgres advisory lock으로 방지
 - **후속 작업** `[계획]`: 120영업일 과거 일봉 백필(ka10081), 주/월/년봉·업종 지수 수집
-- **용도**: 주가 분석기(A-5) 입력 및 백테스팅 검증용. 상세는 [`docs/price-collector.md`](../price-collector.md)·[`docs/spec/kiwoom-rest-spec.md`](../spec/kiwoom-rest-spec.md)
+- **용도**: 주가 분석기(A-5) 입력 및 백테스팅 검증용. 상세는 [`docs/price-collector.md`](../price-collector.md)·[`docs/spec/kiwoom-rest-spec.md`](../../spec/kiwoom-rest-spec.md)
 
 ---
 
