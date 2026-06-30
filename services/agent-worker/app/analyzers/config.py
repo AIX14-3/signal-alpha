@@ -106,18 +106,22 @@ class DataLabRuleConfig:
     attention_z_caution: float = 1.5  # 정상→주의 boundary
     attention_z_watch: float = 2.5  # 주의→주목 boundary
     attention_z_surge: float = 3.5  # 주목→급증 boundary
-    # z→magnitude multiplier table — calibrated on DAILY KOSDAQ-46 (29,479
-    # stock-days, h=5 forward) via calibrate_attention_flag.py (2026-06-29).
-    # vol_mult = forward realized-vol ÷ baseline; volume_mult = forward 5d volume ÷
-    # the stock's trailing-60d "평소" (so "거래량 평소 N배"). NON-DIRECTIONAL.
-    # ⚠️ KOSDAQ small-caps see larger relative volume jumps than large-caps — refine
-    # on broad-250 daily after the DataLab quota resets; all env-overridable.
-    attention_vol_mult_caution: float | None = 1.25  # z 1.5~2.5
-    attention_vol_mult_watch: float | None = 1.37  # z 2.5~3.5
-    attention_vol_mult_surge: float | None = 1.53  # z >3.5
-    attention_volume_mult_caution: float | None = 2.42
-    attention_volume_mult_watch: float | None = 3.34
-    attention_volume_mult_surge: float | None = 6.29
+    # z→magnitude multiplier table — calibrated on DAILY broad-250 (KRX top-250 by
+    # market cap, 230 stocks · 367,203 stock-days · h=5 forward) via
+    # calibrate_attention_flag.py (2026-06-30; search=stockname_daily_krx250.csv,
+    # prices=prices_krx250.csv). vol_mult = forward realized-vol ÷ baseline;
+    # volume_mult = forward 5d volume ÷ the stock's trailing-60d "평소" (so "거래량
+    # 평소 N배"). NON-DIRECTIONAL.
+    # NOTE: the earlier DAILY KOSDAQ-46 table (vol 1.25/1.37/1.53, volume
+    # 2.42/3.34/6.29) overstated volume jumps — small-caps spike far more than the
+    # large-caps that dominate the real product universe. Broad-250 is the
+    # representative table. All env-overridable.
+    attention_vol_mult_caution: float | None = 1.13  # z 1.5~2.5
+    attention_vol_mult_watch: float | None = 1.21  # z 2.5~3.5
+    attention_vol_mult_surge: float | None = 1.35  # z >3.5
+    attention_volume_mult_caution: float | None = 1.41
+    attention_volume_mult_watch: float | None = 1.57
+    attention_volume_mult_surge: float | None = 2.29
 
     @classmethod
     def from_env(cls) -> "DataLabRuleConfig":

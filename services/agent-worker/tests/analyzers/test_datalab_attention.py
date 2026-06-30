@@ -93,13 +93,13 @@ class ComputeAttentionSpikeTest(unittest.TestCase):
         self.assertIsNone(spike.expected_fwd_volume_mult)
 
     def test_default_config_is_calibrated_and_cites_numbers(self):
-        # Defaults are now calibrated (daily KOSDAQ): 급증 → 거래량 6.3배·변동성 1.5배.
+        # Defaults are now calibrated (daily broad-250): 급증 → 거래량 2.3배·변동성 1.4배.
         series = _series(85.0)
         spike = compute_attention_spike(series, as_of=_as_of(series), config=CONFIG)
-        self.assertEqual(spike.expected_fwd_volume_mult, 6.29)
-        self.assertEqual(spike.expected_fwd_vol_mult, 1.53)
-        self.assertIn("6.3배", spike.evidence_text)
-        self.assertIn("1.5배", spike.evidence_text)
+        self.assertEqual(spike.expected_fwd_volume_mult, 2.29)
+        self.assertEqual(spike.expected_fwd_vol_mult, 1.35)
+        self.assertIn("2.3배", spike.evidence_text)
+        self.assertIn("1.4배", spike.evidence_text)
 
     def test_evidence_text_cites_numbers_when_calibrated(self):
         config = replace(
