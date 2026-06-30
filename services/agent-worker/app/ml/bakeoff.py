@@ -18,7 +18,7 @@ import argparse
 import numpy as np
 
 from .evaluation import ModelReport, evaluate_model, walk_forward_folds
-from .models import build_classifier_registry
+from .models import build_classifier_registry, build_regressor_registry
 from .report import render_csv, render_table
 from .synthetic import make_synthetic
 
@@ -31,14 +31,23 @@ def run_bakeoff(
     *,
     n_folds: int = 5,
     seed: int = 42,
+    task: str = "direction",
 ) -> list[ModelReport]:
-    """Evaluate the full model registry on one dataset with walk-forward CV."""
+    """Evaluate the full model registry on one dataset with walk-forward CV.
+
+    ``task='direction'`` runs the classifier zoo; ``task='magnitude'`` runs the
+    regressor zoo against the continuous magnitude target.
+    """
     folds = walk_forward_folds(dates, n_folds=n_folds)
-    registry = build_classifier_registry(seed=seed)
+    registry = (
+        build_regressor_registry(seed=seed)
+        if task == "magnitude"
+        else build_classifier_registry(seed=seed)
+    )
     reports: list[ModelReport] = []
     for name, model in registry.items():
         reports.append(
-            evaluate_model(name, model, X, y, excess_returns, folds)
+            evaluate_model(name, model, X, y, excess_returns, folds, task=task)
         )
     return reports
 
@@ -172,6 +181,51 @@ def _load_period_keyword(args):
     return ds.X, ds.y, ds.excess_returns, ds.dates
 
 
+def _load_magnitude(args):
+    """Name-search DataLab features -> continuous future-MAGNITUDE target (regression).
+
+    Self-contained from CSVs: a ``ticker,keyword,period,ratio`` name-search file and
+    a ``ticker,date,close,volume`` price file (volume needed for the volume target).
+    """
+    from datetime import date
+
+    from .magnitude_dataset import load_magnitude_dataset
+
+    if not args.prices_csv:
+        raise SystemExit(
+            "--prices-csv (ticker,date,close,volume) is required for --task magnitude"
+        )
+    raw = [t.strip() for t in args.tickers.split(",") if t.strip()]
+    # The --tickers default is the datalab-db 3-ticker sentinel; for magnitude we
+    # default to the full CSV universe (intersection of search & price tickers).
+    tickers = None if raw == ["005930", "000660", "035420"] else raw
+    ds = load_magnitude_dataset(
+        keyword_csv=args.keyword_csv,
+        prices_csv=args.prices_csv,
+        tickers=tickers,
+        start=date.fromisoformat(args.start),
+        end=date.fromisoformat(args.end),
+        target=args.target,
+        horizon_sessions=args.horizon,
+        signal_step=args.signal_step,
+    )
+    y_mean = ds.y.mean() if len(ds) else 0.0
+    print(
+        f"[magnitude:{args.target} h={args.horizon}] samples={len(ds)}  "
+        f"features={len(ds.feature_names)}  "
+        f"stocks={len(np.unique(ds.stock_ids)) if len(ds) else 0}  "
+        f"dates={len(np.unique(ds.dates)) if len(ds) else 0}  "
+        f"y_mean={y_mean:.3f}\n  dropped={dict(ds.dropped)}\n"
+        f"  features={ds.feature_names}\n"
+    )
+    if len(ds) == 0:
+        raise SystemExit(
+            "No samples built — check --keyword-csv / --prices-csv cover the universe "
+            f"and [{args.start}, {args.end}]. dropped={dict(ds.dropped)}"
+        )
+    return ds.X, ds.y, ds.excess_returns, ds.dates
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Alternative-data ML model bake-off")
     parser.add_argument(
@@ -219,10 +273,22 @@ def main(argv: list[str] | None = None) -> int:
                         choices=["period_keyword", "fixed_keyword"],
                         help="period_keyword gates by first_avail_date; fixed_keyword is the "
                              "no-gate control")
+    # task switch: direction (classification) vs magnitude (regression)
+    parser.add_argument(
+        "--task", type=str, default="direction", choices=["direction", "magnitude"],
+        help="direction = predict up/down (classifiers); magnitude = predict future "
+             "volatility/volume (regressors, --source ignored, uses name-search CSVs)",
+    )
+    parser.add_argument(
+        "--target", type=str, default="volatility", choices=["volatility", "volume"],
+        help="magnitude target: forward realized volatility or forward abnormal volume",
+    )
     parser.add_argument("--csv", type=str, default=None, help="write full metrics CSV here")
     args = parser.parse_args(argv)
 
-    if args.source == "period-keyword":
+    if args.task == "magnitude":
+        X, y, excess, dates = _load_magnitude(args)
+    elif args.source == "period-keyword":
         X, y, excess, dates = _load_period_keyword(args)
     elif args.source == "datalab-db":
         X, y, excess, dates = _load_datalab_db(args)
@@ -231,12 +297,14 @@ def main(argv: list[str] | None = None) -> int:
     else:
         X, y, excess, dates = _load_synthetic(args)
 
-    reports = run_bakeoff(X, y, excess, dates, n_folds=args.folds, seed=args.seed)
-    print(render_table(reports))
+    reports = run_bakeoff(
+        X, y, excess, dates, n_folds=args.folds, seed=args.seed, task=args.task
+    )
+    print(render_table(reports, task=args.task))
 
     if args.csv:
         with open(args.csv, "w", newline="", encoding="utf-8") as fh:
-            fh.write(render_csv(reports))
+            fh.write(render_csv(reports, task=args.task))
         print(f"\n[csv] wrote {args.csv}")
     return 0
 

@@ -15,7 +15,7 @@ from io import StringIO
 
 from .evaluation import ModelReport
 
-_BASELINE_KEY = "baseline_majority"
+_BASELINE_KEY = "baseline_majority"  # classification (direction) baseline
 
 _COLUMNS = [
     ("model", "model", 22),
@@ -31,8 +31,24 @@ _COLUMNS = [
     ("dec_sprd", "decile_spread_mean", 9),
 ]
 
+# Magnitude (regression) table: rank by predicted-vs-realized magnitude skill.
+# R2 is the honest "beats the mean baseline" check (R2>0 ⟺ better than the
+# DummyRegressor mean), so a separate baseline-delta column would be redundant —
+# the mean baseline itself has an undefined Rank-IC (its prediction is constant).
+_REG_COLUMNS = [
+    ("model", "model", 22),
+    ("n", "n_test", 6),
+    ("rankIC", "rank_ic_mean", 8),
+    ("sd_rIC", "rank_ic_std", 8),
+    ("IC", "ic_mean", 7),
+    ("R2", "r2_mean", 7),
+    ("MAE", "mae_mean", 9),
+    ("RMSE", "rmse_mean", 9),
+    ("dec_sprd", "decile_spread_mean", 9),
+]
 
-def _rows(reports: list[ModelReport]) -> list[dict[str, float]]:
+
+def _rows(reports: list[ModelReport], task: str = "direction") -> list[dict[str, float]]:
     summaries = {r.name: r.summary() for r in reports}
     base_acc = summaries.get(_BASELINE_KEY, {}).get("accuracy_mean", math.nan)
     rows = []
@@ -65,30 +81,38 @@ def _fmt(value) -> str:
     return f"{value:+.3f}" if abs(value) < 100 else f"{value:.1f}"
 
 
-def render_table(reports: list[ModelReport]) -> str:
+def render_table(reports: list[ModelReport], task: str = "direction") -> str:
     """Human-readable, fixed-width comparison table as a string."""
-    rows = _rows(reports)
-    header = "  ".join(f"{title:>{w}}" for title, _, w in _COLUMNS)
-    lines = [header, "  ".join("-" * w for _, _, w in _COLUMNS)]
+    rows = _rows(reports, task=task)
+    columns = _REG_COLUMNS if task == "magnitude" else _COLUMNS
+    header = "  ".join(f"{title:>{w}}" for title, _, w in columns)
+    lines = [header, "  ".join("-" * w for _, _, w in columns)]
     for r in rows:
         cells = []
-        for _, key, w in _COLUMNS:
+        for _, key, w in columns:
             raw = r.get(key)
             text = raw if key == "model" else _fmt(raw)
             cells.append(f"{text:>{w}}")
         lines.append("  ".join(cells))
     lines.append("")
-    lines.append(
-        "Read: Dbase>0 means it beat the majority baseline; IC/rankIC>0 means the "
-        "score tracks future excess return; +/- cols are fold-to-fold stability "
-        "(smaller=more reliable)."
-    )
+    if task == "magnitude":
+        lines.append(
+            "Read: rankIC>0 means predicted magnitude tracks realized magnitude; "
+            "R2>0 means it beats the mean baseline (DummyRegressor); sd_rIC is "
+            "fold-to-fold stability (smaller=more reliable)."
+        )
+    else:
+        lines.append(
+            "Read: Dbase>0 means it beat the majority baseline; IC/rankIC>0 means the "
+            "score tracks future excess return; +/- cols are fold-to-fold stability "
+            "(smaller=more reliable)."
+        )
     return "\n".join(lines)
 
 
-def render_csv(reports: list[ModelReport]) -> str:
+def render_csv(reports: list[ModelReport], task: str = "direction") -> str:
     """Full summary as CSV (all metrics, both mean and std), for spreadsheets."""
-    rows = _rows(reports)
+    rows = _rows(reports, task=task)
     if not rows:
         return ""
     fieldnames = ["model", "_acc_delta"] + [

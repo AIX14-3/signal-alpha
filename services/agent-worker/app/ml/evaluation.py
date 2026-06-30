@@ -23,7 +23,10 @@ from scipy.stats import pearsonr, spearmanr
 from sklearn.metrics import (
     accuracy_score,
     f1_score,
+    mean_absolute_error,
+    mean_squared_error,
     precision_score,
+    r2_score,
     recall_score,
     roc_auc_score,
 )
@@ -121,6 +124,10 @@ class FoldMetrics:
     ic: float
     rank_ic: float
     decile_spread: float
+    # Regression-only (magnitude task); nan on the classification path.
+    r2: float = float("nan")
+    mae: float = float("nan")
+    rmse: float = float("nan")
 
 
 @dataclass
@@ -146,11 +153,41 @@ class ModelReport:
             "ic",
             "rank_ic",
             "decile_spread",
+            "r2",
+            "mae",
+            "rmse",
         ):
             mean, std = self._agg(attr)
             out[f"{attr}_mean"] = mean
             out[f"{attr}_std"] = std
         return out
+
+
+def _regression_fold_metrics(pred: np.ndarray, yte: np.ndarray) -> FoldMetrics:
+    """Per-fold metrics for the magnitude task: IC/Rank-IC of predicted vs realized.
+
+    The primary selection metric is ``rank_ic`` (Spearman of predicted magnitude vs
+    realized magnitude) — task-agnostic and identical in spirit to the classifier
+    path's score-vs-return IC. Classification fields stay nan.
+    """
+    n = len(yte)
+    r2 = float(r2_score(yte, pred)) if n >= 2 and np.std(yte) > 0 else float("nan")
+    mae = float(mean_absolute_error(yte, pred)) if n >= 1 else float("nan")
+    rmse = float(np.sqrt(mean_squared_error(yte, pred))) if n >= 1 else float("nan")
+    return FoldMetrics(
+        n_test=n,
+        accuracy=float("nan"),
+        precision=float("nan"),
+        recall=float("nan"),
+        f1=float("nan"),
+        roc_auc=float("nan"),
+        ic=_safe_corr(pearsonr, pred, yte),
+        rank_ic=_safe_corr(spearmanr, pred, yte),
+        decile_spread=_decile_spread(pred, yte),
+        r2=r2,
+        mae=mae,
+        rmse=rmse,
+    )
 
 
 def evaluate_model(
@@ -160,14 +197,25 @@ def evaluate_model(
     y: np.ndarray,
     excess_returns: np.ndarray,
     folds: list[WalkForwardSplit],
+    *,
+    task: str = "direction",
 ) -> ModelReport:
-    """Run one model across all walk-forward folds and collect per-fold metrics."""
+    """Run one model across all walk-forward folds and collect per-fold metrics.
+
+    ``task='direction'`` (default) scores a binary classifier; ``task='magnitude'``
+    scores a regressor on the continuous magnitude target ``y`` and records
+    regression metrics instead (Rank-IC / IC / R² / MAE / RMSE).
+    """
+    is_regression = task == "magnitude"
     report = ModelReport(name=name)
     for fold in folds:
         Xtr, ytr = X[fold.train_idx], y[fold.train_idx]
         Xte, yte = X[fold.test_idx], y[fold.test_idx]
         ret_te = excess_returns[fold.test_idx]
-        if len(np.unique(ytr)) < 2 or len(Xte) == 0:
+        # Classification needs both classes present; regression just needs variance
+        # in the training target (a constant target teaches nothing).
+        degenerate = np.std(ytr) == 0 if is_regression else len(np.unique(ytr)) < 2
+        if degenerate or len(Xte) == 0:
             continue  # can't train/score a degenerate fold
         from sklearn.base import clone
 
@@ -180,6 +228,9 @@ def evaluate_model(
             # A model that can't fit/predict this (often tiny, long-horizon) fold is
             # skipped for the fold rather than crashing the whole bake-off run, e.g.
             # KNN when n_neighbors > the fold's train size. Other models/folds stand.
+            continue
+        if is_regression:
+            report.folds.append(_regression_fold_metrics(pred, yte))
             continue
         both_classes = len(np.unique(yte)) == 2
         report.folds.append(

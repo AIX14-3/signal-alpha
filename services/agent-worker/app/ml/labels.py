@@ -6,10 +6,17 @@ Subtracting the market strips out "everything went up because the index went up"
 so we measure the signal's stock-specific skill — important when history is short
 and covers only one market regime.
 
-Two label forms come out of the same return, mirroring ``backtest_results``:
-- regression target ``y_return`` — the continuous excess return (magnitude)
+Two RETURN label forms come out of the same return, mirroring ``backtest_results``:
+- regression target ``y_return`` — the continuous excess return (signed)
 - classification target ``y_direction`` — up(1)/down(0), with a NEUTRAL BAND so
   tiny moves (noise) are dropped instead of taught as signal.
+
+A third, NON-DIRECTIONAL label form — ``MagnitudeLabel`` — predicts future
+*magnitude* (realized volatility / abnormal volume) rather than the return's
+sign. This is the one search-attention target that survives rigorous validation
+(non-overlapping cross-sectional IC +0.15~0.30, permutation + BH-FDR q≈0 at every
+horizon; the directional and search→revenue labels did not). It carries no
+buy/sell meaning — see ``docs/attention-spike-flag-design.md``.
 
 Everything here is pure Python: no numpy/sklearn, no DB, no clock. Callers pass
 already-fetched numbers so this stays deterministic and unit-testable.
@@ -17,6 +24,8 @@ already-fetched numbers so this stays deterministic and unit-testable.
 
 from __future__ import annotations
 
+import math
+import statistics
 from dataclasses import dataclass
 
 
@@ -64,6 +73,65 @@ def make_label(
         excess_return_pct=excess,
         y_direction=1 if excess > 0 else 0,
         in_neutral_band=False,
+    )
+
+
+@dataclass(frozen=True)
+class MagnitudeLabel:
+    """Non-directional future-magnitude target (the validated attention survivor).
+
+    Both fields are UNSIGNED — they say "how much trading/movement is coming",
+    never which way. ``None`` when the forward window is too short to compute.
+    """
+
+    fwd_volatility: float | None  # forward realized vol, % (stdev of daily log returns)
+    fwd_abn_volume: float | None  # forward mean volume / trailing baseline mean (x)
+
+
+def forward_realized_volatility(forward_closes: list[float]) -> float | None:
+    """Realized volatility over the forward window = pstdev of daily log returns × 100.
+
+    Mirrors ``scripts/search_to_magnitude.fwd_vol``. ``forward_closes`` are the
+    closes at t, t+1, … t+h (already point-in-time on the caller's side). Needs at
+    least 2 usable consecutive returns.
+    """
+    rets = [
+        math.log(c1 / c0)
+        for c0, c1 in zip(forward_closes, forward_closes[1:])
+        if c0 > 0 and c1 > 0
+    ]
+    return statistics.pstdev(rets) * 100.0 if len(rets) >= 2 else None
+
+
+def forward_abnormal_volume(
+    forward_volumes: list[float], baseline_volumes: list[float]
+) -> float | None:
+    """Forward abnormal volume = mean(forward) / mean(trailing baseline).
+
+    Mirrors ``scripts/search_to_magnitude.fwd_volume``. >1 means heavier-than-usual
+    trading is coming. ``None`` when either window is empty or the baseline mean is
+    non-positive.
+    """
+    if not forward_volumes or not baseline_volumes:
+        return None
+    base = statistics.mean(baseline_volumes)
+    return statistics.mean(forward_volumes) / base if base > 0 else None
+
+
+def make_magnitude_label(
+    *,
+    forward_closes: list[float],
+    forward_volumes: list[float],
+    baseline_volumes: list[float],
+) -> MagnitudeLabel:
+    """Build a :class:`MagnitudeLabel` from forward price/volume windows (PIT).
+
+    The same definitions validated in ``search_to_magnitude`` — runtime
+    ``attention_spike`` reads these multipliers from the calibration table.
+    """
+    return MagnitudeLabel(
+        fwd_volatility=forward_realized_volatility(forward_closes),
+        fwd_abn_volume=forward_abnormal_volume(forward_volumes, baseline_volumes),
     )
 
 

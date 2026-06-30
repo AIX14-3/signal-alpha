@@ -61,6 +61,45 @@ def test_negative_band_rejected():
         )
 
 
+# --- magnitude label (non-directional, the validated attention survivor) ----
+
+def test_forward_realized_volatility_matches_pstdev_of_log_returns():
+    import math
+    import statistics
+
+    closes = [100.0, 110.0, 99.0, 108.9]
+    rets = [math.log(b / a) for a, b in zip(closes, closes[1:])]
+    expected = statistics.pstdev(rets) * 100.0
+    assert labels.forward_realized_volatility(closes) == pytest.approx(expected)
+
+
+def test_forward_realized_volatility_needs_two_returns():
+    assert labels.forward_realized_volatility([100.0]) is None  # 0 returns
+    assert labels.forward_realized_volatility([100.0, 101.0]) is None  # only 1 return
+
+
+def test_forward_abnormal_volume_is_forward_over_baseline():
+    # forward mean 300, baseline mean 100 -> 3.0x abnormal volume
+    assert labels.forward_abnormal_volume([200.0, 400.0], [100.0, 100.0]) == pytest.approx(3.0)
+
+
+def test_forward_abnormal_volume_guards_empty_and_zero_baseline():
+    assert labels.forward_abnormal_volume([], [100.0]) is None
+    assert labels.forward_abnormal_volume([100.0], []) is None
+    assert labels.forward_abnormal_volume([100.0], [0.0]) is None
+
+
+def test_make_magnitude_label_is_unsigned_and_bundles_both():
+    lab = labels.make_magnitude_label(
+        forward_closes=[100.0, 90.0, 99.0],      # a DOWN move...
+        forward_volumes=[300.0, 300.0],
+        baseline_volumes=[100.0, 100.0],
+    )
+    # magnitude is direction-agnostic: a down move still yields positive vol/volume.
+    assert lab.fwd_volatility is not None and lab.fwd_volatility > 0
+    assert lab.fwd_abn_volume == pytest.approx(3.0)
+
+
 # --- features ---------------------------------------------------------------
 
 def test_build_feature_row_prefixes_flattens_and_coerces():
@@ -135,3 +174,105 @@ def test_evaluate_model_skips_a_model_that_errors_on_a_fold():
 
     assert report.folds == []  # every fold skipped, no exception raised
     assert np.isnan(report.summary()["rank_ic_mean"])  # degrades to nan, not a crash
+
+
+# --- magnitude regression path ---------------------------------------------
+
+def test_priceseries_forward_windows_are_point_in_time():
+    from datetime import date
+
+    from app.ml.datalab_dataset import PriceSeries
+
+    days = [date(2021, 1, d) for d in range(1, 11)]  # 10 trading days
+    closes = [100.0 + i for i in range(10)]
+    volumes = [10.0 + i for i in range(10)]  # 10,11,...,19
+    ps = PriceSeries.from_rows(list(zip(days, closes, volumes)))
+
+    as_of = days[3]  # index 3
+    # forward closes = entry + h forward (closes[3..3+2] inclusive).
+    assert ps.forward_closes(as_of, 2) == closes[3:6]
+    # forward volumes are STRICTLY after as_of (vol[4..5]); baseline STRICTLY before.
+    assert ps.forward_volumes(as_of, 2) == volumes[4:6]
+    assert ps.baseline_volumes(as_of, back=3) == volumes[0:3]
+    # not enough forward sessions / no prior session -> None (never fabricated).
+    assert ps.forward_closes(days[9], 2) is None
+    assert ps.forward_volumes(days[9], 2) is None
+    assert ps.baseline_volumes(days[0], back=3) is None
+
+
+def test_priceseries_without_volume_returns_none_for_volume_windows():
+    from datetime import date
+
+    from app.ml.datalab_dataset import PriceSeries
+
+    days = [date(2021, 1, d) for d in range(1, 6)]
+    ps = PriceSeries.from_pairs(list(zip(days, [100.0, 101.0, 102.0, 103.0, 104.0])))
+    assert ps.forward_volumes(days[1], 2) is None  # closes-only series has no volume
+    assert ps.baseline_volumes(days[2], back=2) is None
+
+
+def test_regressor_registry_has_baselines_and_fits():
+    from app.ml.models import build_regressor_registry
+
+    reg = build_regressor_registry(seed=0)
+    assert "baseline_mean" in reg and "baseline_median" in reg
+    assert "lda" not in reg and "naive_bayes" not in reg  # no regression form
+    rng = np.random.default_rng(0)
+    X = rng.normal(size=(40, 3))
+    y = X[:, 0] * 2.0 + rng.normal(scale=0.1, size=40)  # continuous target
+    est = reg["ridge"]
+    est.fit(X, y)
+    pred = est.predict(X)
+    assert pred.shape == (40,) and np.isfinite(pred).all()
+
+
+def test_evaluate_model_magnitude_emits_regression_metrics():
+    from app.ml.evaluation import evaluate_model, walk_forward_folds
+    from app.ml.models import build_regressor_registry
+
+    dates = np.repeat(np.arange(8), 6)
+    n = len(dates)
+    rng = np.random.default_rng(0)
+    X = rng.normal(size=(n, 3))
+    y = X[:, 0] * 3.0 + rng.normal(scale=0.2, size=n)  # continuous magnitude
+    folds = walk_forward_folds(dates, n_folds=3)
+
+    report = evaluate_model(
+        "ridge", build_regressor_registry(seed=0)["ridge"], X, y, y, folds, task="magnitude"
+    )
+    s = report.summary()
+    assert report.folds  # at least one fold scored
+    assert not np.isnan(s["rank_ic_mean"])  # predicted vs realized magnitude tracks
+    assert not np.isnan(s["r2_mean"])
+    assert np.isnan(s["accuracy_mean"])  # classification fields stay nan on this path
+
+
+def test_build_magnitude_dataset_emits_continuous_unsigned_target():
+    from datetime import date, timedelta
+
+    from app.ml.datalab_dataset import PriceSeries
+    from app.ml.magnitude_dataset import build_magnitude_dataset
+
+    base = date(2021, 1, 1)
+    days = [base + timedelta(days=i) for i in range(20)]
+    closes = [100.0 + (i % 3) for i in range(20)]  # some wiggle for volatility
+    volumes = [10.0 + i for i in range(20)]
+    prices = PriceSeries.from_rows(list(zip(days, closes, volumes)))
+    # one search observation per day, rising — gives a defined rolling z after history.
+    search = [(d, float(i)) for i, d in enumerate(days)]
+
+    ds = build_magnitude_dataset(
+        search_by_ticker={"AAA": search},
+        prices_by_ticker={"AAA": prices},
+        signal_dates_by_ticker={"AAA": days},
+        target="volatility",
+        horizon_sessions=2,
+        baseline_back=4,
+        mom_lag=1,
+        win=4,  # tiny window so the short fixture yields samples
+    )
+    assert len(ds) > 0
+    assert ds.y.dtype == float and np.all(ds.y >= 0)  # magnitude is unsigned
+    assert "magnitude__abn" in ds.feature_names
+    # excess_returns mirrors the magnitude target (used for IC), not a signed return.
+    assert np.allclose(ds.y, ds.excess_returns)

@@ -16,24 +16,30 @@ from __future__ import annotations
 from typing import Any
 
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
-from sklearn.dummy import DummyClassifier
+from sklearn.dummy import DummyClassifier, DummyRegressor
 from sklearn.ensemble import (
     ExtraTreesClassifier,
+    ExtraTreesRegressor,
     GradientBoostingClassifier,
+    GradientBoostingRegressor,
     HistGradientBoostingClassifier,
+    HistGradientBoostingRegressor,
     RandomForestClassifier,
+    RandomForestRegressor,
     StackingClassifier,
+    StackingRegressor,
     VotingClassifier,
+    VotingRegressor,
 )
-from sklearn.gaussian_process import GaussianProcessClassifier
+from sklearn.gaussian_process import GaussianProcessClassifier, GaussianProcessRegressor
 from sklearn.impute import SimpleImputer
-from sklearn.linear_model import LogisticRegression, RidgeClassifier
+from sklearn.linear_model import LinearRegression, LogisticRegression, Ridge, RidgeClassifier
 from sklearn.naive_bayes import GaussianNB
-from sklearn.neighbors import KNeighborsClassifier
+from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
-from sklearn.svm import SVC
-from sklearn.tree import DecisionTreeClassifier
+from sklearn.svm import SVC, SVR
+from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 
 # Models that need standardized, imputed input (distances/kernels/linear).
 _NEEDS_SCALING = ("knn", "svm_rbf", "gaussian_process", "logistic", "ridge", "lda")
@@ -155,4 +161,97 @@ def build_classifier_registry(seed: int = 42) -> dict[str, Any]:
     registry = _base_classifiers(seed)
     registry.update(_optional_boosters(seed))
     registry.update(_meta_ensembles(seed))
+    return registry
+
+
+# --------------------------------------------------------------------------- #
+# Regressors — the parallel zoo for the continuous MAGNITUDE target.
+# Same Pipeline hygiene (impute + scale where needed); LDA/GaussianNB have no
+# regression form so they're dropped; the must-beat baselines are mean/median.
+# --------------------------------------------------------------------------- #
+def _base_regressors(seed: int) -> dict[str, Any]:
+    return {
+        # --- baselines (must be beaten to claim any skill) ---
+        "baseline_mean": _imputed(DummyRegressor(strategy="mean")),
+        "baseline_median": _imputed(DummyRegressor(strategy="median")),
+        # --- linear ---
+        "ridge": _scaled(Ridge()),
+        "linear": _scaled(LinearRegression()),
+        # --- trees / ensembles ---
+        "decision_tree": _imputed(DecisionTreeRegressor(random_state=seed)),
+        "random_forest": _imputed(
+            RandomForestRegressor(n_estimators=300, random_state=seed, n_jobs=-1)
+        ),
+        "extra_trees": _imputed(
+            ExtraTreesRegressor(n_estimators=300, random_state=seed, n_jobs=-1)
+        ),
+        "grad_boost": _imputed(GradientBoostingRegressor(random_state=seed)),
+        "hist_grad_boost": _imputed(HistGradientBoostingRegressor(random_state=seed)),
+        # --- distance / kernel ---
+        "knn": _scaled(KNeighborsRegressor(n_neighbors=15)),
+        "svm_rbf": _scaled(SVR(kernel="rbf")),
+        "gaussian_process": _scaled(
+            GaussianProcessRegressor(random_state=seed, normalize_y=True)
+        ),
+    }
+
+
+def _optional_boost_regressors(seed: int) -> dict[str, Any]:
+    """XGBoost/LightGBM/CatBoost regressors when their libs are installed."""
+    extra: dict[str, Any] = {}
+    try:
+        from xgboost import XGBRegressor
+
+        extra["xgboost"] = _imputed(
+            XGBRegressor(n_estimators=300, random_state=seed, tree_method="hist")
+        )
+    except ImportError:
+        pass
+    try:
+        from lightgbm import LGBMRegressor
+
+        extra["lightgbm"] = _imputed(
+            LGBMRegressor(n_estimators=300, random_state=seed, verbose=-1)
+        )
+    except ImportError:
+        pass
+    try:
+        from catboost import CatBoostRegressor
+
+        extra["catboost"] = _imputed(
+            CatBoostRegressor(
+                iterations=300, random_seed=seed, verbose=False, allow_writing_files=False
+            )
+        )
+    except ImportError:
+        pass
+    return extra
+
+
+def _meta_regressors(seed: int) -> dict[str, Any]:
+    """Voting/Stacking over a few strong, diverse base regressors."""
+    estimators = [
+        ("ridge", _scaled(Ridge())),
+        ("random_forest", _imputed(RandomForestRegressor(n_estimators=200, random_state=seed))),
+        ("hist_grad_boost", _imputed(HistGradientBoostingRegressor(random_state=seed))),
+    ]
+    return {
+        "voting": VotingRegressor(estimators=estimators),
+        "stacking": StackingRegressor(
+            estimators=estimators,
+            final_estimator=Ridge(),
+            cv=3,
+        ),
+    }
+
+
+def build_regressor_registry(seed: int = 42) -> dict[str, Any]:
+    """All bake-off regressors for the magnitude target, keyed by name.
+
+    Mirrors :func:`build_classifier_registry`: mean/median baselines first, then
+    the regressor families, any installed optional boosters, and meta-ensembles.
+    """
+    registry = _base_regressors(seed)
+    registry.update(_optional_boost_regressors(seed))
+    registry.update(_meta_regressors(seed))
     return registry

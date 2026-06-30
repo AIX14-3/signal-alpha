@@ -31,11 +31,17 @@ from .labels import excess_return_pct, make_label
 
 @dataclass(frozen=True)
 class PriceSeries:
-    """One stock's trading-day closes, ascending, with O(1) date->close lookup."""
+    """One stock's trading-day closes (and optional volumes), ascending, O(1) lookup.
+
+    ``volumes`` is parallel to ``closes`` and may be empty when only closes were
+    loaded (the directional path); the forward-magnitude accessors return ``None``
+    rather than guessing when volume is absent.
+    """
 
     dates: list[date]
     closes: list[float]
     _index: dict[date, int] = field(default_factory=dict)
+    volumes: list[float] = field(default_factory=list)
 
     @classmethod
     def from_pairs(cls, pairs: list[tuple[date, float]]) -> "PriceSeries":
@@ -43,6 +49,20 @@ class PriceSeries:
         dates = [d for d, _ in ordered]
         closes = [float(c) for _, c in ordered]
         return cls(dates=dates, closes=closes, _index={d: i for i, d in enumerate(dates)})
+
+    @classmethod
+    def from_rows(cls, rows: list[tuple[date, float, float]]) -> "PriceSeries":
+        """Build from ``(date, close, volume)`` triples (the magnitude path)."""
+        ordered = sorted(rows, key=lambda r: r[0])
+        dates = [d for d, _, _ in ordered]
+        closes = [float(c) for _, c, _ in ordered]
+        volumes = [float(v) for _, _, v in ordered]
+        return cls(
+            dates=dates,
+            closes=closes,
+            _index={d: i for i, d in enumerate(dates)},
+            volumes=volumes,
+        )
 
     def forward_return_pct(self, as_of: date, horizon_sessions: int) -> float | None:
         """Percent return from ``as_of``'s close to the close ``horizon`` sessions later.
@@ -59,6 +79,44 @@ class PriceSeries:
         if entry == 0:
             return None
         return (exit_ / entry - 1.0) * 100.0
+
+    def forward_closes(self, as_of: date, horizon_sessions: int) -> list[float] | None:
+        """Closes ``[i .. i+h]`` (entry + h forward), for realized-volatility labels.
+
+        Mirrors ``scripts/search_to_magnitude.fwd_vol``: returns ``None`` when
+        ``as_of`` isn't a trading day or fewer than ``h`` forward sessions exist, so
+        a magnitude label is never fabricated from a short window.
+        """
+        i = self._index.get(as_of)
+        if i is None or i + horizon_sessions >= len(self.closes):
+            return None
+        return self.closes[i : i + horizon_sessions + 1]
+
+    def forward_volumes(self, as_of: date, horizon_sessions: int) -> list[float] | None:
+        """Volumes over the forward window ``[i+1 .. i+h]`` (strictly after ``as_of``).
+
+        Mirrors ``search_to_magnitude.fwd_volume``'s forward window. ``None`` when
+        volume is absent or fewer than ``h`` forward sessions exist.
+        """
+        if not self.volumes:
+            return None
+        i = self._index.get(as_of)
+        if i is None or i + horizon_sessions >= len(self.volumes):
+            return None
+        return self.volumes[i + 1 : i + 1 + horizon_sessions]
+
+    def baseline_volumes(self, as_of: date, back: int = 60) -> list[float] | None:
+        """Trailing volumes ``[i-back .. i-1]`` (strictly before ``as_of``) — the baseline.
+
+        Mirrors ``search_to_magnitude.fwd_volume``'s trailing baseline. ``None`` when
+        volume is absent or there is no prior session to average.
+        """
+        if not self.volumes:
+            return None
+        i = self._index.get(as_of)
+        if i is None or i <= 0:
+            return None
+        return self.volumes[max(0, i - back) : i]
 
 
 @dataclass
