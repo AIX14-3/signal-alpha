@@ -12,7 +12,7 @@
 - 스키마 변경은 `python database/migrate.py new "..."`로 새 타임스탬프 migration으로 추가하세요.
 - 하나의 논리적 스키마 변경은 하나의 migration 파일에 담으세요.
 - 애플리케이션 코드에서 테이블을 만들지 마세요.
-- 거버넌스 문서를 명시적으로 갱신하지 않는 한 `IF NOT EXISTS`를 사용하지 마세요.
+- 신규 테이블 정의(plain `CREATE TABLE`)에는 `IF NOT EXISTS`를 쓰지 마세요. 단, 증분 변경의 멱등 가드(`ADD COLUMN IF NOT EXISTS`, `DROP CONSTRAINT IF EXISTS … ADD`, `CREATE OR REPLACE VIEW`, 롤/grant 의 `IF [NOT] EXISTS` 가드)는 허용·권장입니다(재적용·2-DB 부분적용 안전).
 - plain `TIMESTAMP`가 아니라 `TIMESTAMPTZ`를 사용하세요.
 - enum 성격 컬럼은 `VARCHAR + CHECK`를 사용하세요.
 - seed는 migration과 분리하고 재실행 가능하게 만드세요.
@@ -39,7 +39,7 @@ source_documents / signal_events / signal_metrics
 
 ## Legacy
 
-`report_raw`, `report_signal`은 legacy Report MVP 테이블입니다. 현재 런타임 코드는 이 테이블을 참조하지 않으며, 기존 환경 호환성과 추후 DROP migration 준비를 위해 보존합니다. 신규 코드에서 사용하면 안 됩니다.
+`report_raw`, `report_signal`은 legacy Report MVP 테이블이었습니다. 현재 런타임 코드는 참조하지 않으며, `20260630_1200_drop_legacy_report_raw_signal.sql`(target: collection)로 DROP 됐습니다. 신규 코드에서 사용하면 안 됩니다.
 
 ## 검증
 

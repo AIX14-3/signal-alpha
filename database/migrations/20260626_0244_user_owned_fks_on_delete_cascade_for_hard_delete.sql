@@ -13,8 +13,13 @@
 --     terms_agreements / user_signal_reads / watchlists / payments(NOT NULL).
 --     (report_issuances / social_accounts / user_sessions 는 이미 CASCADE 라 제외.)
 --   - analysis_requests: 공용 시그널 파이프라인(analysis_results→final_signals→…)의
---     뿌리이므로 삭제하지 않고 ON DELETE SET NULL 로 분리(detach)해 공용 데이터 보존.
---     (user_id 는 nullable. 현재 users FK 가 없어 새로 추가한다.)
+--     뿌리이므로 회원과 함께 삭제하지 않는다(공용 데이터 보존).
+--     단, analysis_requests 는 COLLECTION DB(sa-pg) 전용이고 users 는 BACKEND DB(sa-be)
+--     전용이라 2-인스턴스 분리(#531)에서는 둘 사이 **물리 FK 가 불가능**하다(cross-DB FK).
+--     따라서 여기서 FK 를 추가하지 않는다 — user_id 는 FK 없는 nullable 컬럼으로 유지하고,
+--     회원 삭제 시 분리(detach)는 앱레벨 publisher 책임으로 둔다
+--     (rebaseline.py 의 cross-DB FK 제거 정책과 동일선상). 이 마이그는 target: backend 라
+--     sa-be 에만 적용되는데 거기엔 analysis_requests 가 없으므로 관련 구문을 두면 적용이 실패한다.
 -- ============================================================================
 
 -- 회원 소유 자식 → ON DELETE CASCADE
@@ -55,8 +60,6 @@ ALTER TABLE public.payments
     ADD  CONSTRAINT payments_user_id_fkey
         FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
 
--- 공용 시그널 보존: analysis_requests → ON DELETE SET NULL (행 보존, 회원만 분리)
-ALTER TABLE public.analysis_requests
-    DROP CONSTRAINT IF EXISTS analysis_requests_user_id_fkey,
-    ADD  CONSTRAINT analysis_requests_user_id_fkey
-        FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE SET NULL;
+-- analysis_requests(COLLECTION) → users(BACKEND) 는 cross-DB FK 라 추가하지 않는다(위 설계 주석 참조).
+-- COLLECTION DB 의 0003_collection_baseline 은 analysis_requests.user_id 를 FK 없는 nullable 컬럼으로
+-- 두므로 그린필드에선 정리할 FK 가 없다(구 단일 DB 에서 생긴 FK 는 dev 재생성으로 사라진다).

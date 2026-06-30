@@ -46,6 +46,10 @@
 | `0006_collection_grants.sql` | collection | signal_worker GRANT | 정적 |
 | `0007_backend_grants.sql` | backend | signal_backend GRANT + api SELECT | 정적 |
 
+> `0005b` 는 `0005`(api 스키마 생성, target all)에 의존하는 collection 전용 view 를 그 직후에
+> 끼워 넣기 위한 **정적 베이스라인 한정 의도적 예외**다(정렬상 `0005_` < `0005b` < `0006_`).
+> 신규 증분 마이그는 타임스탬프 규칙을 따르며 `000xb` 형식을 새로 만들지 않는다.
+
 ## 규칙
 
 1. **모든 마이그/시드는 `-- target:` 을 단독 라인으로 명시한다.** 인라인 주석 금지

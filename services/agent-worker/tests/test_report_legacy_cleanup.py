@@ -58,4 +58,7 @@ def test_database_docs_do_not_claim_report_legacy_is_kept_for_runtime_code():
 
     assert "기존 코드 때문에 임시로 유지" not in combined
     assert "raw_documents` → `report_raw_details` → `report_chunks" not in combined
-    assert "기존 환경 호환성과 추후 DROP migration 준비" in combined
+    # report_raw/report_signal 은 20260630_1200 마이그로 DROP 됨 — 문서가 이를 반영해야 하고,
+    # 더 이상 '추후 DROP 준비를 위해 보존' 으로 서술하지 않는다.
+    assert "20260630_1200_drop_legacy_report_raw_signal" in combined
+    assert "추후 DROP migration 준비" not in combined

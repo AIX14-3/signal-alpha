@@ -7,13 +7,19 @@
 --   DML, 발행 산출물은 api.* 읽기 view 로만 SELECT. PUBLISHED base 테이블 직접 권한은
 --   부여하지 않는다(읽기 계약). 롤 생성은 0001_infra_roles(target all).
 -- 설계: 존재하는 테이블/시퀀스만 동적으로 grant(멱등). api 스키마는 0005_api_read_contract.
+--   롤이 존재할 때만 grant(0006/20260629_0900 과 동일 패턴) — 관리형 DB 롤 선생성/부분 적용 안전.
 -- ============================================================================
 
--- api 읽기 계약 (worker 산출물은 view 로만).
-GRANT USAGE ON SCHEMA api TO signal_backend;
-GRANT SELECT ON ALL TABLES IN SCHEMA api TO signal_backend;
-ALTER DEFAULT PRIVILEGES IN SCHEMA api
-    GRANT SELECT ON TABLES TO signal_backend;
+-- api 읽기 계약 (worker 산출물은 view 로만). 롤 존재 시에만.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'signal_backend') THEN
+        GRANT USAGE ON SCHEMA api TO signal_backend;
+        GRANT SELECT ON ALL TABLES IN SCHEMA api TO signal_backend;
+        ALTER DEFAULT PRIVILEGES IN SCHEMA api
+            GRANT SELECT ON TABLES TO signal_backend;
+    END IF;
+END $$;
 
 -- backend 소유 테이블만 DML (+ 해당 시퀀스). PUBLISHED base 직접 권한 없음.
 DO $$
@@ -39,6 +45,9 @@ DECLARE
     col TEXT;
     seq TEXT;
 BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'signal_backend') THEN
+        RETURN;  -- 롤 미존재(예: 롤 콘솔 선생성 전) — grant 건너뜀(멱등)
+    END IF;
     GRANT USAGE ON SCHEMA public TO signal_backend;
     FOREACH t IN ARRAY backend_tables LOOP
         IF to_regclass('public.' || t) IS NULL THEN

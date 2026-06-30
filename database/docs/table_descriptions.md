@@ -124,14 +124,10 @@ Agent·ML의 분석 결과와 최종 시그널.
 | `admin_accounts` | 관리자 계정(이메일·비밀번호 해시·활성 여부) |
 | `admin_sessions` | 관리자 세션 토큰과 만료 시각 |
 
-## Legacy — report MVP (013_legacy_report_mvp.sql) ⚠️ 폐기 예정
-
-신규 코드 참조 금지. 현재 Report 런타임은 `raw_documents` → `report_raw_details` 이후 `source_documents` / `signal_events` / `signal_metrics`와 분석 테이블을 사용합니다. `report_chunks`는 RAG 복구 후보 스키마이며 현재 런타임 저장 경로가 아닙니다. 기존 환경 호환성과 추후 DROP migration 준비를 위해 보존합니다.
-
-| 테이블 | 역할 |
-| --- | --- |
-| `report_raw` | (레거시) report RAG MVP가 마이그레이션 체계 밖에서 쓰던 리포트 원본. 문자열 날짜 등 구 스키마 |
-| `report_signal` | (레거시) 위 원본 기반 리포트 시그널(방향·점수·의견 JSON) |
+레거시 `report_raw` / `report_signal`(구 report RAG MVP)은
+`20260630_1200_drop_legacy_report_raw_signal.sql`로 DROP 됐다. Report 런타임은 공용 경로
+(`raw_documents` → `report_raw_details` 이후 `source_documents`/`signal_events`/`signal_metrics`
++ 분석 테이블)만 사용한다. (`report_chunks`는 RAG 복구 후보 스키마이며 현재 런타임 저장 경로가 아니다.)
 
 ## 시스템 테이블
 

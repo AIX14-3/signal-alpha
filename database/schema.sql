@@ -2,10 +2,10 @@
 -- PostgreSQL database dump
 --
 
-\restrict 60F2EtFMPdNqXELNW0KGf1xmB6tQHU8j5JErwhh1Oh5vYrsoaqU3jXGMiT4Cscn
+\restrict HCsv7S4NA1rdMFqi3TOWZkBuliWGTEy31BKQQ5YgmFYYORtY65xjhGTfMocyYu5
 
--- Dumped from database version 16.14 (Debian 16.14-1.pgdg13+1)
--- Dumped by pg_dump version 16.14 (Debian 16.14-1.pgdg13+1)
+-- Dumped from database version 16.14 (Debian 16.14-1.pgdg12+1)
+-- Dumped by pg_dump version 16.14 (Debian 16.14-1.pgdg12+1)
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -17,6 +17,13 @@ SET check_function_bodies = false;
 SET xmloption = content;
 SET client_min_messages = warning;
 SET row_security = off;
+
+--
+-- Name: api; Type: SCHEMA; Schema: -; Owner: -
+--
+
+CREATE SCHEMA api;
+
 
 --
 -- Name: hiring_crawler_type; Type: TYPE; Schema: public; Owner: -
@@ -79,6 +86,342 @@ SET default_tablespace = '';
 SET default_table_access_method = heap;
 
 --
+-- Name: processing_queue; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.processing_queue (
+    id bigint NOT NULL,
+    stock_id bigint,
+    task_type character varying(50) NOT NULL,
+    status character varying(20) DEFAULT 'pending'::character varying NOT NULL,
+    priority character varying(10) DEFAULT 'batch'::character varying NOT NULL,
+    source_raw_ids bigint[],
+    source_signal_event_ids bigint[],
+    source_analysis_result_ids bigint[],
+    task_context jsonb,
+    retry_count smallint DEFAULT 0 NOT NULL,
+    max_retry_count smallint DEFAULT 3 NOT NULL,
+    error_message text,
+    scheduled_at timestamp with time zone DEFAULT now() NOT NULL,
+    started_at timestamp with time zone,
+    finished_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT processing_queue_priority_check CHECK (((priority)::text = ANY (ARRAY[('immediate'::character varying)::text, ('batch'::character varying)::text]))),
+    CONSTRAINT processing_queue_status_check CHECK (((status)::text = ANY (ARRAY[('pending'::character varying)::text, ('running'::character varying)::text, ('success'::character varying)::text, ('failed'::character varying)::text, ('retrying'::character varying)::text, ('skipped'::character varying)::text])))
+);
+
+
+--
+-- Name: stocks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.stocks (
+    id bigint NOT NULL,
+    ticker character varying(10) NOT NULL,
+    name character varying(100) NOT NULL,
+    market character varying(10) NOT NULL,
+    sector character varying(100),
+    is_active boolean DEFAULT true NOT NULL,
+    is_target boolean DEFAULT false NOT NULL,
+    short_name character varying(50),
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT stocks_market_check CHECK (((market)::text = ANY (ARRAY[('KOSPI'::character varying)::text, ('KOSDAQ'::character varying)::text])))
+);
+
+
+--
+-- Name: analysis_pipeline_status; Type: VIEW; Schema: api; Owner: -
+--
+
+CREATE VIEW api.analysis_pipeline_status AS
+ SELECT processing_queue.id,
+    processing_queue.stock_id,
+    processing_queue.task_type,
+    processing_queue.status,
+    processing_queue.created_at,
+    processing_queue.updated_at,
+    stocks.ticker AS stock_code,
+    stocks.name AS stock_name
+   FROM (public.processing_queue
+     JOIN public.stocks ON ((stocks.id = processing_queue.stock_id)));
+
+
+--
+-- Name: agent_results; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.agent_results (
+    id bigint NOT NULL,
+    result_id bigint NOT NULL,
+    stock_id bigint NOT NULL,
+    debate_method character varying(5) NOT NULL,
+    source_signal_event_ids bigint[],
+    method_score numeric(5,2) NOT NULL,
+    method_signal character varying(10) NOT NULL,
+    method_detail jsonb NOT NULL,
+    reliability_score numeric(5,2),
+    evidence_quality numeric(5,2),
+    llm_model character varying(50),
+    prompt_ver character varying(20) DEFAULT '1.0'::character varying,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT agent_results_debate_method_check CHECK (((debate_method)::text = ANY (ARRAY[('D-1'::character varying)::text, ('D-2'::character varying)::text, ('D-3'::character varying)::text, ('D-4'::character varying)::text, ('D-5'::character varying)::text]))),
+    CONSTRAINT agent_results_method_score_check CHECK (((method_score >= (0)::numeric) AND (method_score <= (100)::numeric))),
+    CONSTRAINT agent_results_method_signal_check CHECK (((method_signal)::text = ANY ((ARRAY['positive'::character varying, 'negative'::character varying, 'neutral'::character varying, 'mixed'::character varying, 'unknown'::character varying])::text[])))
+);
+
+
+--
+-- Name: analysis_results; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.analysis_results (
+    id bigint NOT NULL,
+    request_id bigint,
+    stock_id bigint NOT NULL,
+    analysis_date date NOT NULL,
+    run_key character varying(30) DEFAULT 'BATCH'::character varying NOT NULL,
+    source_signal_event_ids bigint[] NOT NULL,
+    base_score numeric(5,2) NOT NULL,
+    pre_xgb_score numeric(5,2),
+    xgb_adj numeric(5,2),
+    analysis_mode character varying(20) DEFAULT 'full'::character varying NOT NULL,
+    warning text,
+    disclaimer text DEFAULT '본 서비스가 제공하는 시그널은 AI 에이전트의 데이터 분석 결과일 뿐, 투자 권유가 아니며 투자 손실에 대한 책임은 사용자에게 있습니다.'::text NOT NULL,
+    version character varying(20) DEFAULT '1.0'::character varying NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT analysis_results_analysis_mode_check CHECK (((analysis_mode)::text = ANY (ARRAY[('full'::character varying)::text, ('dart_only'::character varying)::text, ('quick'::character varying)::text]))),
+    CONSTRAINT analysis_results_base_score_check CHECK (((base_score >= (0)::numeric) AND (base_score <= (100)::numeric)))
+);
+
+
+--
+-- Name: final_signals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.final_signals (
+    id bigint NOT NULL,
+    stock_id bigint NOT NULL,
+    analysis_result_id bigint NOT NULL,
+    signal_date date NOT NULL,
+    run_key character varying(30) DEFAULT 'BATCH'::character varying NOT NULL,
+    version character varying(20) DEFAULT '1.0'::character varying NOT NULL,
+    is_current boolean DEFAULT true NOT NULL,
+    final_score numeric(5,2) NOT NULL,
+    confidence numeric(5,2) NOT NULL,
+    signal character varying(10) NOT NULL,
+    source_agreement character varying(10) NOT NULL,
+    warning_level character varying(10) DEFAULT 'NORMAL'::character varying NOT NULL,
+    score_breakdown jsonb NOT NULL,
+    summary text NOT NULL,
+    bull_point text,
+    bear_point text,
+    disclaimer text DEFAULT '본 서비스가 제공하는 시그널은 AI 에이전트의 데이터 분석 결과일 뿐, 투자 권유가 아니며 투자 손실에 대한 책임은 사용자에게 있습니다.'::text NOT NULL,
+    needs_review boolean DEFAULT false NOT NULL,
+    min_plan_required character varying(20) DEFAULT 'free'::character varying NOT NULL,
+    is_published boolean DEFAULT false NOT NULL,
+    published_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    consensus_score numeric(5,2),
+    positive_evidence jsonb,
+    caution_evidence jsonb,
+    ml_final_score double precision,
+    ml_direction character varying(16),
+    ml_confidence double precision,
+    source_predictions jsonb,
+    CONSTRAINT chk_final_signal_ml_direction CHECK (((ml_direction IS NULL) OR ((ml_direction)::text = ANY (ARRAY[('positive'::character varying)::text, ('negative'::character varying)::text, ('neutral'::character varying)::text, ('unknown'::character varying)::text])))),
+    CONSTRAINT chk_final_signal_publish_time CHECK (((is_published = false) OR (published_at IS NOT NULL))),
+    CONSTRAINT final_signals_confidence_check CHECK (((confidence >= (0)::numeric) AND (confidence <= (100)::numeric))),
+    CONSTRAINT final_signals_consensus_score_check CHECK (((consensus_score >= (0)::numeric) AND (consensus_score <= (100)::numeric))),
+    CONSTRAINT final_signals_final_score_check CHECK (((final_score >= (0)::numeric) AND (final_score <= (100)::numeric))),
+    CONSTRAINT final_signals_min_plan_required_check CHECK (((min_plan_required)::text = ANY (ARRAY[('free'::character varying)::text, ('pro'::character varying)::text, ('premium'::character varying)::text]))),
+    CONSTRAINT final_signals_signal_check CHECK (((signal)::text = ANY (ARRAY[('positive'::character varying)::text, ('negative'::character varying)::text, ('neutral'::character varying)::text, ('mixed'::character varying)::text]))),
+    CONSTRAINT final_signals_source_agreement_check CHECK (((source_agreement)::text = ANY (ARRAY[('HIGH'::character varying)::text, ('MEDIUM'::character varying)::text, ('LOW'::character varying)::text]))),
+    CONSTRAINT final_signals_warning_level_check CHECK (((warning_level)::text = ANY (ARRAY[('NORMAL'::character varying)::text, ('CAUTION'::character varying)::text, ('WARNING'::character varying)::text])))
+);
+
+
+--
+-- Name: signal_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.signal_events (
+    id bigint NOT NULL,
+    stock_id bigint NOT NULL,
+    source_document_id bigint NOT NULL,
+    event_hash character varying(64) NOT NULL,
+    source_type character varying(20) NOT NULL,
+    event_type character varying(50) NOT NULL,
+    event_date date NOT NULL,
+    signal_direction character varying(10) NOT NULL,
+    impact_level character varying(10) NOT NULL,
+    title text NOT NULL,
+    summary text,
+    evidence_text text,
+    evidence_url text,
+    needs_review boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT signal_events_impact_level_check CHECK (((impact_level)::text = ANY (ARRAY[('high'::character varying)::text, ('medium'::character varying)::text, ('low'::character varying)::text]))),
+    CONSTRAINT signal_events_signal_direction_check CHECK (((signal_direction)::text = ANY (ARRAY[('positive'::character varying)::text, ('negative'::character varying)::text, ('neutral'::character varying)::text, ('mixed'::character varying)::text, ('unknown'::character varying)::text]))),
+    CONSTRAINT signal_events_source_type_check CHECK (((source_type)::text = ANY (ARRAY[('DART'::character varying)::text, ('REPORT'::character varying)::text, ('HIRING'::character varying)::text, ('PATENT'::character varying)::text, ('DATALAB'::character varying)::text])))
+);
+
+
+--
+-- Name: source_documents; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.source_documents (
+    id bigint NOT NULL,
+    raw_document_id bigint,
+    stock_id bigint NOT NULL,
+    source_type character varying(20) NOT NULL,
+    source_name character varying(100) NOT NULL,
+    title text NOT NULL,
+    source_url text,
+    published_at timestamp with time zone NOT NULL,
+    collected_at timestamp with time zone NOT NULL,
+    reliability_level character varying(10) DEFAULT 'medium'::character varying NOT NULL,
+    is_official boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    external_ref_type character varying(40),
+    external_ref_id bigint,
+    CONSTRAINT chk_source_doc_anchor CHECK ((((raw_document_id IS NOT NULL) AND (external_ref_type IS NULL) AND (external_ref_id IS NULL)) OR ((raw_document_id IS NULL) AND (external_ref_type IS NOT NULL) AND (external_ref_id IS NOT NULL)))),
+    CONSTRAINT source_documents_reliability_level_check CHECK (((reliability_level)::text = ANY (ARRAY[('high'::character varying)::text, ('medium'::character varying)::text, ('low'::character varying)::text]))),
+    CONSTRAINT source_documents_source_type_check CHECK (((source_type)::text = ANY (ARRAY[('DART'::character varying)::text, ('REPORT'::character varying)::text, ('HIRING'::character varying)::text, ('PATENT'::character varying)::text, ('DATALAB'::character varying)::text])))
+);
+
+
+--
+-- Name: signal_detail; Type: VIEW; Schema: api; Owner: -
+--
+
+CREATE VIEW api.signal_detail AS
+ SELECT final_signals.id,
+    final_signals.stock_id,
+    final_signals.analysis_result_id,
+    final_signals.signal_date,
+    final_signals.run_key,
+    final_signals.version,
+    final_signals.is_current,
+    final_signals.final_score,
+    final_signals.confidence,
+    final_signals.signal,
+    final_signals.source_agreement,
+    final_signals.warning_level,
+    final_signals.score_breakdown,
+    final_signals.summary,
+    final_signals.bull_point,
+    final_signals.bear_point,
+    final_signals.disclaimer,
+    final_signals.needs_review,
+    final_signals.min_plan_required,
+    final_signals.is_published,
+    final_signals.published_at,
+    final_signals.created_at,
+    final_signals.consensus_score,
+    final_signals.positive_evidence,
+    final_signals.caution_evidence,
+    final_signals.ml_final_score,
+    final_signals.ml_direction,
+    final_signals.ml_confidence,
+    final_signals.source_predictions,
+    stocks.ticker,
+    stocks.name,
+    stocks.market,
+    stocks.sector,
+    analysis_results.analysis_date,
+    analysis_results.analysis_mode,
+    analysis_results.run_key AS analysis_run_key,
+    analysis_results.version AS analysis_version,
+    analysis_results.base_score,
+    analysis_results.warning AS analysis_warning,
+    analysis_results.source_signal_event_ids,
+    COALESCE(agent_results.items, '[]'::jsonb) AS agent_results,
+    COALESCE(signal_events.items, '[]'::jsonb) AS signal_events
+   FROM ((((public.final_signals
+     JOIN public.stocks ON ((stocks.id = final_signals.stock_id)))
+     JOIN public.analysis_results ON ((analysis_results.id = final_signals.analysis_result_id)))
+     LEFT JOIN LATERAL ( SELECT jsonb_agg(jsonb_build_object('id', agent_results_1.id, 'debate_method', agent_results_1.debate_method, 'method_score', agent_results_1.method_score, 'method_signal', agent_results_1.method_signal, 'method_detail', agent_results_1.method_detail, 'source_signal_event_ids', agent_results_1.source_signal_event_ids, 'reliability_score', agent_results_1.reliability_score, 'evidence_quality', agent_results_1.evidence_quality, 'llm_model', agent_results_1.llm_model, 'prompt_ver', agent_results_1.prompt_ver, 'created_at', agent_results_1.created_at) ORDER BY agent_results_1.debate_method, agent_results_1.id) AS items
+           FROM public.agent_results agent_results_1
+          WHERE (agent_results_1.result_id = analysis_results.id)) agent_results ON (true))
+     LEFT JOIN LATERAL ( SELECT jsonb_agg(jsonb_build_object('id', signal_events_1.id, 'source_document_id', signal_events_1.source_document_id, 'source_type', signal_events_1.source_type, 'event_type', signal_events_1.event_type, 'event_date', signal_events_1.event_date, 'signal_direction', signal_events_1.signal_direction, 'impact_level', signal_events_1.impact_level, 'title', signal_events_1.title, 'summary', signal_events_1.summary, 'evidence_url', signal_events_1.evidence_url, 'needs_review', signal_events_1.needs_review, 'source_name', source_documents.source_name, 'source_url', source_documents.source_url, 'is_official', source_documents.is_official) ORDER BY
+                CASE signal_events_1.impact_level
+                    WHEN 'high'::text THEN 0
+                    WHEN 'medium'::text THEN 1
+                    ELSE 2
+                END, signal_events_1.event_date DESC, signal_events_1.id) AS items
+           FROM (public.signal_events signal_events_1
+             LEFT JOIN public.source_documents ON ((source_documents.id = signal_events_1.source_document_id)))
+          WHERE (signal_events_1.id = ANY (analysis_results.source_signal_event_ids))) signal_events ON (true))
+  WHERE ((final_signals.is_current = true) AND (final_signals.is_published = true));
+
+
+--
+-- Name: signals_current; Type: VIEW; Schema: api; Owner: -
+--
+
+CREATE VIEW api.signals_current AS
+ SELECT final_signals.id,
+    final_signals.stock_id,
+    final_signals.analysis_result_id,
+    final_signals.signal_date,
+    final_signals.run_key,
+    final_signals.version,
+    final_signals.is_current,
+    final_signals.final_score,
+    final_signals.confidence,
+    final_signals.signal,
+    final_signals.source_agreement,
+    final_signals.warning_level,
+    final_signals.score_breakdown,
+    final_signals.summary,
+    final_signals.bull_point,
+    final_signals.bear_point,
+    final_signals.disclaimer,
+    final_signals.needs_review,
+    final_signals.min_plan_required,
+    final_signals.is_published,
+    final_signals.published_at,
+    final_signals.created_at,
+    final_signals.consensus_score,
+    final_signals.positive_evidence,
+    final_signals.caution_evidence,
+    final_signals.ml_final_score,
+    final_signals.ml_direction,
+    final_signals.ml_confidence,
+    final_signals.source_predictions,
+    stocks.ticker,
+    stocks.name,
+    stocks.market,
+    stocks.sector,
+    analysis_results.analysis_mode,
+    analysis_results.base_score,
+    analysis_results.warning AS analysis_warning
+   FROM ((public.final_signals
+     JOIN public.stocks ON ((stocks.id = final_signals.stock_id)))
+     JOIN public.analysis_results ON ((analysis_results.id = final_signals.analysis_result_id)))
+  WHERE ((final_signals.is_current = true) AND (final_signals.is_published = true));
+
+
+--
+-- Name: stocks; Type: VIEW; Schema: api; Owner: -
+--
+
+CREATE VIEW api.stocks AS
+ SELECT id,
+    ticker,
+    name,
+    market,
+    sector,
+    is_active,
+    created_at,
+    updated_at
+   FROM public.stocks;
+
+
+--
 -- Name: admin_accounts; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -109,6 +452,41 @@ CREATE SEQUENCE public.admin_accounts_id_seq
 --
 
 ALTER SEQUENCE public.admin_accounts_id_seq OWNED BY public.admin_accounts.id;
+
+
+--
+-- Name: admin_audit_log; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.admin_audit_log (
+    id bigint NOT NULL,
+    actor_admin_id bigint,
+    action character varying(50) NOT NULL,
+    target_type character varying(30) NOT NULL,
+    target_id bigint,
+    before jsonb,
+    after jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: admin_audit_log_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.admin_audit_log_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: admin_audit_log_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.admin_audit_log_id_seq OWNED BY public.admin_audit_log.id;
 
 
 --
@@ -143,30 +521,6 @@ CREATE SEQUENCE public.admin_sessions_id_seq
 --
 
 ALTER SEQUENCE public.admin_sessions_id_seq OWNED BY public.admin_sessions.id;
-
-
---
--- Name: agent_results; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.agent_results (
-    id bigint NOT NULL,
-    result_id bigint NOT NULL,
-    stock_id bigint NOT NULL,
-    debate_method character varying(5) NOT NULL,
-    source_signal_event_ids bigint[],
-    method_score numeric(5,2) NOT NULL,
-    method_signal character varying(10) NOT NULL,
-    method_detail jsonb NOT NULL,
-    reliability_score numeric(5,2),
-    evidence_quality numeric(5,2),
-    llm_model character varying(50),
-    prompt_ver character varying(20) DEFAULT '1.0'::character varying,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT agent_results_debate_method_check CHECK (((debate_method)::text = ANY ((ARRAY['D-1'::character varying, 'D-2'::character varying, 'D-3'::character varying, 'D-4'::character varying, 'D-5'::character varying])::text[]))),
-    CONSTRAINT agent_results_method_score_check CHECK (((method_score >= (0)::numeric) AND (method_score <= (100)::numeric))),
-    CONSTRAINT agent_results_method_signal_check CHECK (((method_signal)::text = ANY ((ARRAY['positive'::character varying, 'negative'::character varying, 'neutral'::character varying, 'mixed'::character varying])::text[])))
-);
 
 
 --
@@ -240,8 +594,8 @@ CREATE TABLE public.analysis_requests (
     completed_at timestamp with time zone,
     error_message text,
     ip_address inet,
-    CONSTRAINT analysis_requests_analysis_mode_check CHECK (((analysis_mode)::text = ANY ((ARRAY['full'::character varying, 'dart_only'::character varying, 'quick'::character varying])::text[]))),
-    CONSTRAINT analysis_requests_status_check CHECK (((status)::text = ANY ((ARRAY['pending'::character varying, 'running'::character varying, 'completed'::character varying, 'failed'::character varying])::text[])))
+    CONSTRAINT analysis_requests_analysis_mode_check CHECK (((analysis_mode)::text = ANY (ARRAY[('full'::character varying)::text, ('dart_only'::character varying)::text, ('quick'::character varying)::text]))),
+    CONSTRAINT analysis_requests_status_check CHECK (((status)::text = ANY (ARRAY[('pending'::character varying)::text, ('running'::character varying)::text, ('completed'::character varying)::text, ('failed'::character varying)::text])))
 );
 
 
@@ -262,30 +616,6 @@ CREATE SEQUENCE public.analysis_requests_id_seq
 --
 
 ALTER SEQUENCE public.analysis_requests_id_seq OWNED BY public.analysis_requests.id;
-
-
---
--- Name: analysis_results; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.analysis_results (
-    id bigint NOT NULL,
-    request_id bigint,
-    stock_id bigint NOT NULL,
-    analysis_date date NOT NULL,
-    run_key character varying(30) DEFAULT 'BATCH'::character varying NOT NULL,
-    source_signal_event_ids bigint[] NOT NULL,
-    base_score numeric(5,2) NOT NULL,
-    pre_xgb_score numeric(5,2),
-    xgb_adj numeric(5,2),
-    analysis_mode character varying(20) DEFAULT 'full'::character varying NOT NULL,
-    warning text,
-    disclaimer text DEFAULT '본 서비스가 제공하는 시그널은 AI 에이전트의 데이터 분석 결과일 뿐, 투자 권유가 아니며 투자 손실에 대한 책임은 사용자에게 있습니다.'::text NOT NULL,
-    version character varying(20) DEFAULT '1.0'::character varying NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT analysis_results_analysis_mode_check CHECK (((analysis_mode)::text = ANY ((ARRAY['full'::character varying, 'dart_only'::character varying, 'quick'::character varying])::text[]))),
-    CONSTRAINT analysis_results_base_score_check CHECK (((base_score >= (0)::numeric) AND (base_score <= (100)::numeric)))
-);
 
 
 --
@@ -349,6 +679,43 @@ ALTER SEQUENCE public.backtest_results_id_seq OWNED BY public.backtest_results.i
 
 
 --
+-- Name: collection_schedules; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.collection_schedules (
+    id bigint NOT NULL,
+    name character varying(64) NOT NULL,
+    enabled boolean DEFAULT true NOT NULL,
+    run_at_local time without time zone DEFAULT '04:30:00'::time without time zone NOT NULL,
+    timezone text DEFAULT 'Asia/Seoul'::text NOT NULL,
+    targets jsonb DEFAULT '["price", "dart"]'::jsonb NOT NULL,
+    dart_limit integer DEFAULT 10 NOT NULL,
+    price_modes jsonb DEFAULT '["flows", "snapshot"]'::jsonb NOT NULL,
+    last_run_at timestamp with time zone,
+    last_status text,
+    last_detail jsonb,
+    next_run_at timestamp with time zone,
+    manual_trigger_requested_at timestamp with time zone,
+    updated_by text,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: collection_schedules_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.collection_schedules ALTER COLUMN id ADD GENERATED BY DEFAULT AS IDENTITY (
+    SEQUENCE NAME public.collection_schedules_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: collector_runs; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -365,9 +732,9 @@ CREATE TABLE public.collector_runs (
     failed_count integer DEFAULT 0 NOT NULL,
     error_message text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT collector_runs_collector_type_check CHECK (((collector_type)::text = ANY ((ARRAY['DART'::character varying, 'REPORT'::character varying, 'HIRING'::character varying, 'PATENT'::character varying, 'DATALAB'::character varying, 'PRICE'::character varying])::text[]))),
-    CONSTRAINT collector_runs_run_mode_check CHECK (((run_mode)::text = ANY ((ARRAY['batch'::character varying, 'immediate'::character varying, 'manual'::character varying])::text[]))),
-    CONSTRAINT collector_runs_status_check CHECK (((status)::text = ANY ((ARRAY['running'::character varying, 'success'::character varying, 'partial'::character varying, 'failed'::character varying])::text[])))
+    CONSTRAINT collector_runs_collector_type_check CHECK (((collector_type)::text = ANY (ARRAY[('DART'::character varying)::text, ('REPORT'::character varying)::text, ('HIRING'::character varying)::text, ('PATENT'::character varying)::text, ('DATALAB'::character varying)::text, ('PRICE'::character varying)::text]))),
+    CONSTRAINT collector_runs_run_mode_check CHECK (((run_mode)::text = ANY (ARRAY[('batch'::character varying)::text, ('immediate'::character varying)::text, ('manual'::character varying)::text]))),
+    CONSTRAINT collector_runs_status_check CHECK (((status)::text = ANY (ARRAY[('running'::character varying)::text, ('success'::character varying)::text, ('partial'::character varying)::text, ('failed'::character varying)::text])))
 );
 
 
@@ -595,7 +962,7 @@ CREATE TABLE public.dart_raw_details (
     original_receipt_no character varying(30),
     extra_payload jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT dart_raw_details_priority_check CHECK (((priority)::text = ANY ((ARRAY['immediate'::character varying, 'batch'::character varying])::text[])))
+    CONSTRAINT dart_raw_details_priority_check CHECK (((priority)::text = ANY (ARRAY[('immediate'::character varying)::text, ('batch'::character varying)::text])))
 );
 
 
@@ -657,12 +1024,12 @@ CREATE TABLE public.datalab_category_keywords (
     validation_coverage numeric(4,3),
     validated_at timestamp with time zone,
     CONSTRAINT chk_datalab_keyword_polarity_confidence CHECK (((polarity_confidence IS NULL) OR ((polarity_confidence >= (0)::numeric) AND (polarity_confidence <= (1)::numeric)))),
-    CONSTRAINT chk_datalab_keyword_polarity_source CHECK (((polarity_source)::text = ANY ((ARRAY['manual'::character varying, 'llm'::character varying, 'default'::character varying])::text[]))),
-    CONSTRAINT chk_datalab_keyword_review_status CHECK (((review_status)::text = ANY ((ARRAY['approved'::character varying, 'pending'::character varying, 'rejected'::character varying])::text[]))),
+    CONSTRAINT chk_datalab_keyword_polarity_source CHECK (((polarity_source)::text = ANY (ARRAY[('manual'::character varying)::text, ('llm'::character varying)::text, ('default'::character varying)::text]))),
+    CONSTRAINT chk_datalab_keyword_review_status CHECK (((review_status)::text = ANY (ARRAY[('approved'::character varying)::text, ('pending'::character varying)::text, ('rejected'::character varying)::text]))),
     CONSTRAINT chk_datalab_keyword_validation_active_days CHECK (((validation_active_days IS NULL) OR (validation_active_days >= 0))),
     CONSTRAINT chk_datalab_keyword_validation_coverage CHECK (((validation_coverage IS NULL) OR ((validation_coverage >= (0)::numeric) AND (validation_coverage <= (1)::numeric)))),
     CONSTRAINT chk_datalab_keyword_validation_window_days CHECK (((validation_window_days IS NULL) OR (validation_window_days > 0))),
-    CONSTRAINT datalab_category_keywords_polarity_check CHECK (((polarity)::text = ANY ((ARRAY['demand'::character varying, 'risk'::character varying, 'neutral'::character varying])::text[])))
+    CONSTRAINT datalab_category_keywords_polarity_check CHECK (((polarity)::text = ANY (ARRAY[('demand'::character varying)::text, ('risk'::character varying)::text, ('neutral'::character varying)::text])))
 );
 
 
@@ -698,9 +1065,9 @@ CREATE TABLE public.datalab_raw_details (
     is_spike boolean DEFAULT false NOT NULL,
     extra_payload jsonb,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT datalab_raw_details_device_check CHECK (((device)::text = ANY ((ARRAY['pc'::character varying, 'mobile'::character varying, 'all'::character varying])::text[]))),
-    CONSTRAINT datalab_raw_details_gender_check CHECK (((gender)::text = ANY ((ARRAY['m'::character varying, 'f'::character varying, 'all'::character varying])::text[]))),
-    CONSTRAINT datalab_raw_details_period_type_check CHECK (((period_type)::text = ANY ((ARRAY['daily'::character varying, 'weekly'::character varying, 'monthly'::character varying])::text[])))
+    CONSTRAINT datalab_raw_details_device_check CHECK (((device)::text = ANY (ARRAY[('pc'::character varying)::text, ('mobile'::character varying)::text, ('all'::character varying)::text]))),
+    CONSTRAINT datalab_raw_details_gender_check CHECK (((gender)::text = ANY (ARRAY[('m'::character varying)::text, ('f'::character varying)::text, ('all'::character varying)::text]))),
+    CONSTRAINT datalab_raw_details_period_type_check CHECK (((period_type)::text = ANY (ARRAY[('daily'::character varying)::text, ('weekly'::character varying)::text, ('monthly'::character varying)::text])))
 );
 
 
@@ -723,7 +1090,7 @@ CREATE TABLE public.datalab_raw_documents (
     collected_at timestamp with time zone DEFAULT now() NOT NULL,
     collector_ver character varying(20) DEFAULT '1.0'::character varying NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT datalab_raw_documents_collect_status_check CHECK (((collect_status)::text = ANY ((ARRAY['success'::character varying, 'partial'::character varying, 'failed'::character varying])::text[])))
+    CONSTRAINT datalab_raw_documents_collect_status_check CHECK (((collect_status)::text = ANY (ARRAY[('success'::character varying)::text, ('partial'::character varying)::text, ('failed'::character varying)::text])))
 );
 
 
@@ -766,7 +1133,7 @@ CREATE TABLE public.dead_letter (
     replayed_at timestamp with time zone,
     replayed_task_id bigint,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT dead_letter_priority_check CHECK (((priority)::text = ANY ((ARRAY['immediate'::character varying, 'batch'::character varying])::text[])))
+    CONSTRAINT dead_letter_priority_check CHECK (((priority)::text = ANY (ARRAY[('immediate'::character varying)::text, ('batch'::character varying)::text])))
 );
 
 
@@ -790,44 +1157,40 @@ ALTER SEQUENCE public.dead_letter_id_seq OWNED BY public.dead_letter.id;
 
 
 --
--- Name: final_signals; Type: TABLE; Schema: public; Owner: -
+-- Name: event_study_panel; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.final_signals (
+CREATE TABLE public.event_study_panel (
     id bigint NOT NULL,
+    signal_event_id bigint NOT NULL,
     stock_id bigint NOT NULL,
-    analysis_result_id bigint NOT NULL,
-    signal_date date NOT NULL,
-    run_key character varying(30) DEFAULT 'BATCH'::character varying NOT NULL,
-    version character varying(20) DEFAULT '1.0'::character varying NOT NULL,
-    is_current boolean DEFAULT true NOT NULL,
-    final_score numeric(5,2) NOT NULL,
-    confidence numeric(5,2) NOT NULL,
-    signal character varying(10) NOT NULL,
-    source_agreement character varying(10) NOT NULL,
-    warning_level character varying(10) DEFAULT 'NORMAL'::character varying NOT NULL,
-    score_breakdown jsonb NOT NULL,
-    summary text NOT NULL,
-    bull_point text,
-    bear_point text,
-    disclaimer text DEFAULT '본 서비스가 제공하는 시그널은 AI 에이전트의 데이터 분석 결과일 뿐, 투자 권유가 아니며 투자 손실에 대한 책임은 사용자에게 있습니다.'::text NOT NULL,
-    needs_review boolean DEFAULT false NOT NULL,
-    min_plan_required character varying(20) DEFAULT 'free'::character varying NOT NULL,
-    is_published boolean DEFAULT false NOT NULL,
-    published_at timestamp with time zone,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    consensus_score numeric(5,2),
-    positive_evidence jsonb,
-    caution_evidence jsonb,
-    CONSTRAINT chk_final_signal_publish_time CHECK (((is_published = false) OR (published_at IS NOT NULL))),
-    CONSTRAINT final_signals_confidence_check CHECK (((confidence >= (0)::numeric) AND (confidence <= (100)::numeric))),
-    CONSTRAINT final_signals_consensus_score_check CHECK (((consensus_score >= (0)::numeric) AND (consensus_score <= (100)::numeric))),
-    CONSTRAINT final_signals_final_score_check CHECK (((final_score >= (0)::numeric) AND (final_score <= (100)::numeric))),
-    CONSTRAINT final_signals_min_plan_required_check CHECK (((min_plan_required)::text = ANY ((ARRAY['free'::character varying, 'pro'::character varying, 'premium'::character varying])::text[]))),
-    CONSTRAINT final_signals_signal_check CHECK (((signal)::text = ANY ((ARRAY['positive'::character varying, 'negative'::character varying, 'neutral'::character varying, 'mixed'::character varying])::text[]))),
-    CONSTRAINT final_signals_source_agreement_check CHECK (((source_agreement)::text = ANY ((ARRAY['HIGH'::character varying, 'MEDIUM'::character varying, 'LOW'::character varying])::text[]))),
-    CONSTRAINT final_signals_warning_level_check CHECK (((warning_level)::text = ANY ((ARRAY['NORMAL'::character varying, 'CAUTION'::character varying, 'WARNING'::character varying])::text[])))
+    asof_date date NOT NULL,
+    fwd_return_1d double precision,
+    fwd_return_5d double precision,
+    fwd_return_20d double precision,
+    abnormal_return_20d double precision,
+    universe_snapshot character varying(40) DEFAULT 'kospi20_seed'::character varying NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
 );
+
+
+--
+-- Name: event_study_panel_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.event_study_panel_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: event_study_panel_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.event_study_panel_id_seq OWNED BY public.event_study_panel.id;
 
 
 --
@@ -870,7 +1233,7 @@ CREATE TABLE public.fundamentals (
     debt_ratio numeric(8,2),
     source character varying(50),
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT fundamentals_period_type_check CHECK (((period_type)::text = ANY ((ARRAY['annual'::character varying, 'quarter'::character varying])::text[])))
+    CONSTRAINT fundamentals_period_type_check CHECK (((period_type)::text = ANY (ARRAY[('annual'::character varying)::text, ('quarter'::character varying)::text])))
 );
 
 
@@ -1097,7 +1460,7 @@ CREATE TABLE public.hiring_raw_details (
     observed_date date NOT NULL,
     ocr_skills jsonb,
     ocr_status character varying(20) DEFAULT 'pending'::character varying NOT NULL,
-    CONSTRAINT chk_hiring_ocr_status CHECK (((ocr_status)::text = ANY ((ARRAY['pending'::character varying, 'success'::character varying, 'failed'::character varying, 'skipped'::character varying])::text[])))
+    CONSTRAINT chk_hiring_ocr_status CHECK (((ocr_status)::text = ANY (ARRAY[('pending'::character varying)::text, ('success'::character varying)::text, ('failed'::character varying)::text, ('skipped'::character varying)::text])))
 );
 
 
@@ -1150,13 +1513,6 @@ CREATE TABLE public.hiring_signals (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     calculation_phase character varying(1)
 );
-
-
---
--- Name: COLUMN hiring_signals.calculation_phase; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.hiring_signals.calculation_phase IS 'A=14일 이동평균, B=DataLab 검색량, C=기본값(1.0) — 분석 근거 추적용';
 
 
 --
@@ -1229,7 +1585,10 @@ CREATE TABLE public.meta_signals (
     model_count smallint DEFAULT 0 NOT NULL,
     weight_breakdown jsonb,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT meta_signals_method_check CHECK (((method)::text = ANY ((ARRAY['stacking'::character varying, 'equal_fallback'::character varying, 'empty'::character varying])::text[])))
+    final_score double precision,
+    direction character varying(16),
+    CONSTRAINT meta_signals_direction_check CHECK (((direction IS NULL) OR ((direction)::text = ANY (ARRAY[('positive'::character varying)::text, ('negative'::character varying)::text, ('neutral'::character varying)::text, ('unknown'::character varying)::text])))),
+    CONSTRAINT meta_signals_method_check CHECK (((method)::text = ANY (ARRAY[('stacking'::character varying)::text, ('equal_fallback'::character varying)::text, ('empty'::character varying)::text, ('linear_stacking'::character varying)::text])))
 );
 
 
@@ -1268,7 +1627,7 @@ CREATE TABLE public.ml_inferences (
     gate_passed boolean DEFAULT true NOT NULL,
     error_message text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT ml_inferences_device_check CHECK (((device)::text = ANY ((ARRAY['cpu'::character varying, 'gpu'::character varying])::text[])))
+    CONSTRAINT ml_inferences_device_check CHECK (((device)::text = ANY (ARRAY[('cpu'::character varying)::text, ('gpu'::character varying)::text])))
 );
 
 
@@ -1387,8 +1746,50 @@ CREATE TABLE public.patent_raw_details (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     llm_features jsonb,
     llm_status character varying(20) DEFAULT 'pending'::character varying NOT NULL,
-    CONSTRAINT patent_raw_details_llm_status_check CHECK (((llm_status)::text = ANY ((ARRAY['pending'::character varying, 'success'::character varying, 'failed'::character varying, 'skipped'::character varying])::text[])))
+    CONSTRAINT patent_raw_details_llm_status_check CHECK (((llm_status)::text = ANY (ARRAY[('pending'::character varying)::text, ('success'::character varying)::text, ('failed'::character varying)::text, ('skipped'::character varying)::text])))
 );
+
+
+--
+-- Name: payments; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.payments (
+    id bigint NOT NULL,
+    user_id bigint NOT NULL,
+    subscription_id bigint,
+    imp_uid character varying(100) NOT NULL,
+    merchant_uid character varying(100) NOT NULL,
+    amount integer NOT NULL,
+    currency character varying(8) DEFAULT 'KRW'::character varying NOT NULL,
+    status character varying(20) NOT NULL,
+    paid_at timestamp with time zone,
+    cancelled_at timestamp with time zone,
+    refund_amount integer DEFAULT 0 NOT NULL,
+    cancel_reason text,
+    raw_response jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT payments_status_check CHECK (((status)::text = ANY (ARRAY[('paid'::character varying)::text, ('cancelled'::character varying)::text, ('partial_cancelled'::character varying)::text, ('failed'::character varying)::text])))
+);
+
+
+--
+-- Name: payments_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.payments_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: payments_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.payments_id_seq OWNED BY public.payments.id;
 
 
 --
@@ -1405,7 +1806,7 @@ CREATE TABLE public.portone_verifications (
     verified_at timestamp with time zone,
     raw_response jsonb,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT portone_verifications_verification_type_check CHECK (((verification_type)::text = ANY ((ARRAY['identity'::character varying, 'payment'::character varying])::text[])))
+    CONSTRAINT portone_verifications_verification_type_check CHECK (((verification_type)::text = ANY (ARRAY[('identity'::character varying)::text, ('payment'::character varying)::text])))
 );
 
 
@@ -1472,33 +1873,6 @@ CREATE SEQUENCE public.price_snapshots_id_seq
 --
 
 ALTER SEQUENCE public.price_snapshots_id_seq OWNED BY public.price_snapshots.id;
-
-
---
--- Name: processing_queue; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.processing_queue (
-    id bigint NOT NULL,
-    stock_id bigint,
-    task_type character varying(50) NOT NULL,
-    status character varying(20) DEFAULT 'pending'::character varying NOT NULL,
-    priority character varying(10) DEFAULT 'batch'::character varying NOT NULL,
-    source_raw_ids bigint[],
-    source_signal_event_ids bigint[],
-    source_analysis_result_ids bigint[],
-    task_context jsonb,
-    retry_count smallint DEFAULT 0 NOT NULL,
-    max_retry_count smallint DEFAULT 3 NOT NULL,
-    error_message text,
-    scheduled_at timestamp with time zone DEFAULT now() NOT NULL,
-    started_at timestamp with time zone,
-    finished_at timestamp with time zone,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT processing_queue_priority_check CHECK (((priority)::text = ANY ((ARRAY['immediate'::character varying, 'batch'::character varying])::text[]))),
-    CONSTRAINT processing_queue_status_check CHECK (((status)::text = ANY ((ARRAY['pending'::character varying, 'running'::character varying, 'success'::character varying, 'failed'::character varying, 'retrying'::character varying, 'skipped'::character varying])::text[])))
-);
 
 
 --
@@ -1574,7 +1948,7 @@ CREATE TABLE public.quant_scores (
     score_cap_reason text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT quant_scores_alert_level_check CHECK ((alert_level = ANY (ARRAY[0, 1, 2, 3]))),
-    CONSTRAINT quant_scores_source_agreement_check CHECK (((source_agreement)::text = ANY ((ARRAY['HIGH'::character varying, 'MEDIUM'::character varying, 'LOW'::character varying])::text[])))
+    CONSTRAINT quant_scores_source_agreement_check CHECK (((source_agreement)::text = ANY (ARRAY[('HIGH'::character varying)::text, ('MEDIUM'::character varying)::text, ('LOW'::character varying)::text])))
 );
 
 
@@ -1617,8 +1991,8 @@ CREATE TABLE public.raw_documents (
     collected_at timestamp with time zone DEFAULT now() NOT NULL,
     collector_ver character varying(20) DEFAULT '1.0'::character varying NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT raw_documents_collect_status_check CHECK (((collect_status)::text = ANY ((ARRAY['success'::character varying, 'partial'::character varying, 'failed'::character varying])::text[]))),
-    CONSTRAINT raw_documents_source_type_check CHECK (((source_type)::text = ANY ((ARRAY['DART'::character varying, 'REPORT'::character varying, 'HIRING'::character varying, 'PATENT'::character varying, 'DATALAB'::character varying])::text[])))
+    CONSTRAINT raw_documents_collect_status_check CHECK (((collect_status)::text = ANY (ARRAY[('success'::character varying)::text, ('partial'::character varying)::text, ('failed'::character varying)::text]))),
+    CONSTRAINT raw_documents_source_type_check CHECK (((source_type)::text = ANY (ARRAY[('DART'::character varying)::text, ('REPORT'::character varying)::text, ('HIRING'::character varying)::text, ('PATENT'::character varying)::text, ('DATALAB'::character varying)::text])))
 );
 
 
@@ -1642,6 +2016,49 @@ ALTER SEQUENCE public.raw_documents_id_seq OWNED BY public.raw_documents.id;
 
 
 --
+-- Name: recommendations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.recommendations (
+    id bigint NOT NULL,
+    stock_id bigint NOT NULL,
+    asof_date date NOT NULL,
+    run_key character varying(30) DEFAULT 'REC'::character varying NOT NULL,
+    rank smallint NOT NULL,
+    recommendation_score numeric(6,2) NOT NULL,
+    basis character varying(10) NOT NULL,
+    signal character varying(10),
+    final_score numeric(5,2),
+    confidence numeric(6,4),
+    combined_vol double precision,
+    components jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT recommendations_basis_check CHECK (((basis)::text = ANY (ARRAY[('final'::character varying)::text, ('meta'::character varying)::text]))),
+    CONSTRAINT recommendations_recommendation_score_check CHECK (((recommendation_score >= (0)::numeric) AND (recommendation_score <= (100)::numeric))),
+    CONSTRAINT recommendations_signal_check CHECK (((signal)::text = ANY (ARRAY[('positive'::character varying)::text, ('negative'::character varying)::text, ('neutral'::character varying)::text, ('mixed'::character varying)::text])))
+);
+
+
+--
+-- Name: recommendations_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.recommendations_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: recommendations_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.recommendations_id_seq OWNED BY public.recommendations.id;
+
+
+--
 -- Name: report_issuances; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1653,7 +2070,7 @@ CREATE TABLE public.report_issuances (
     run_key character varying(30) NOT NULL,
     issued_via character varying(20) NOT NULL,
     issued_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT report_issuances_issued_via_check CHECK (((issued_via)::text = ANY ((ARRAY['free'::character varying, 'subscription'::character varying])::text[])))
+    CONSTRAINT report_issuances_issued_via_check CHECK (((issued_via)::text = ANY (ARRAY[('free'::character varying)::text, ('subscription'::character varying)::text])))
 );
 
 
@@ -1674,27 +2091,6 @@ CREATE SEQUENCE public.report_issuances_id_seq
 --
 
 ALTER SEQUENCE public.report_issuances_id_seq OWNED BY public.report_issuances.id;
-
-
---
--- Name: report_raw; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.report_raw (
-    id bigint NOT NULL,
-    stock_code character varying(10) NOT NULL,
-    firm character varying(50) NOT NULL,
-    date character varying(20) NOT NULL,
-    report_type character varying(30),
-    title text,
-    pdf_url text,
-    target_price integer,
-    opinion character varying(20),
-    key_rationale text,
-    raw_text_preview text,
-    processed boolean DEFAULT false,
-    created_at timestamp with time zone DEFAULT now()
-);
 
 
 --
@@ -1724,67 +2120,8 @@ CREATE TABLE public.report_raw_details (
     s3_key character varying(500),
     parsed_at timestamp with time zone,
     key_rationale text,
-    CONSTRAINT report_raw_details_parsing_status_check CHECK (((parsing_status)::text = ANY ((ARRAY['pending'::character varying, 'success'::character varying, 'failed'::character varying, 'skipped'::character varying])::text[])))
+    CONSTRAINT report_raw_details_parsing_status_check CHECK (((parsing_status)::text = ANY (ARRAY[('pending'::character varying)::text, ('success'::character varying)::text, ('failed'::character varying)::text, ('skipped'::character varying)::text])))
 );
-
-
---
--- Name: report_raw_id_seq; Type: SEQUENCE; Schema: public; Owner: -
---
-
-CREATE SEQUENCE public.report_raw_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
---
--- Name: report_raw_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
---
-
-ALTER SEQUENCE public.report_raw_id_seq OWNED BY public.report_raw.id;
-
-
---
--- Name: report_signal; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.report_signal (
-    id bigint NOT NULL,
-    stock_code character varying(10) NOT NULL,
-    direction character varying(20),
-    score double precision,
-    avg_target double precision,
-    upside_pct double precision,
-    target_trend character varying(20),
-    conflict_detected boolean,
-    opinions jsonb,
-    risk_flags jsonb,
-    summary text,
-    data_status character varying(20),
-    analyzed_at timestamp with time zone DEFAULT now()
-);
-
-
---
--- Name: report_signal_id_seq; Type: SEQUENCE; Schema: public; Owner: -
---
-
-CREATE SEQUENCE public.report_signal_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
---
--- Name: report_signal_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
---
-
-ALTER SEQUENCE public.report_signal_id_seq OWNED BY public.report_signal.id;
 
 
 --
@@ -1811,8 +2148,8 @@ CREATE TABLE public.report_valuation_facts (
     needs_review boolean DEFAULT false NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT report_valuation_facts_extraction_source_check CHECK (((extraction_source)::text = ANY ((ARRAY['rules'::character varying, 'llm'::character varying, 'rules_fallback'::character varying])::text[]))),
-    CONSTRAINT report_valuation_facts_methodology_check CHECK (((methodology)::text = ANY ((ARRAY['PER'::character varying, 'PBR'::character varying, 'EV_EBITDA'::character varying, 'SOTP'::character varying, 'DCF'::character varying, 'mixed'::character varying, 'unknown'::character varying])::text[])))
+    CONSTRAINT report_valuation_facts_extraction_source_check CHECK (((extraction_source)::text = ANY (ARRAY[('rules'::character varying)::text, ('llm'::character varying)::text, ('rules_fallback'::character varying)::text]))),
+    CONSTRAINT report_valuation_facts_methodology_check CHECK (((methodology)::text = ANY (ARRAY[('PER'::character varying)::text, ('PBR'::character varying)::text, ('EV_EBITDA'::character varying)::text, ('SOTP'::character varying)::text, ('DCF'::character varying)::text, ('mixed'::character varying)::text, ('unknown'::character varying)::text])))
 );
 
 
@@ -1869,32 +2206,6 @@ ALTER SEQUENCE public.score_history_id_seq OWNED BY public.score_history.id;
 
 
 --
--- Name: signal_events; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.signal_events (
-    id bigint NOT NULL,
-    stock_id bigint NOT NULL,
-    source_document_id bigint NOT NULL,
-    event_hash character varying(64) NOT NULL,
-    source_type character varying(20) NOT NULL,
-    event_type character varying(50) NOT NULL,
-    event_date date NOT NULL,
-    signal_direction character varying(10) NOT NULL,
-    impact_level character varying(10) NOT NULL,
-    title text NOT NULL,
-    summary text,
-    evidence_text text,
-    evidence_url text,
-    needs_review boolean DEFAULT false NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT signal_events_impact_level_check CHECK (((impact_level)::text = ANY ((ARRAY['high'::character varying, 'medium'::character varying, 'low'::character varying])::text[]))),
-    CONSTRAINT signal_events_signal_direction_check CHECK (((signal_direction)::text = ANY ((ARRAY['positive'::character varying, 'negative'::character varying, 'neutral'::character varying, 'mixed'::character varying, 'unknown'::character varying])::text[]))),
-    CONSTRAINT signal_events_source_type_check CHECK (((source_type)::text = ANY ((ARRAY['DART'::character varying, 'REPORT'::character varying, 'HIRING'::character varying, 'PATENT'::character varying, 'DATALAB'::character varying])::text[])))
-);
-
-
---
 -- Name: signal_events_id_seq; Type: SEQUENCE; Schema: public; Owner: -
 --
 
@@ -1936,7 +2247,7 @@ CREATE TABLE public.signal_journals (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     tags jsonb DEFAULT '[]'::jsonb NOT NULL,
-    CONSTRAINT signal_journals_user_view_check CHECK (((user_view)::text = ANY ((ARRAY['watch'::character varying, 'research_more'::character varying, 'not_relevant'::character varying])::text[])))
+    CONSTRAINT signal_journals_user_view_check CHECK (((user_view)::text = ANY (ARRAY[('watch'::character varying)::text, ('research_more'::character varying)::text, ('not_relevant'::character varying)::text])))
 );
 
 
@@ -2012,8 +2323,10 @@ CREATE TABLE public.signal_subscriptions (
     billing_cycle character varying(10),
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT signal_subscriptions_billing_cycle_check CHECK ((((billing_cycle)::text = ANY ((ARRAY['monthly'::character varying, 'yearly'::character varying])::text[])) OR (billing_cycle IS NULL))),
-    CONSTRAINT signal_subscriptions_status_check CHECK (((status)::text = ANY ((ARRAY['active'::character varying, 'expired'::character varying, 'cancelled'::character varying, 'trial'::character varying])::text[])))
+    next_billing_at timestamp with time zone,
+    auto_renew boolean DEFAULT false NOT NULL,
+    CONSTRAINT signal_subscriptions_billing_cycle_check CHECK ((((billing_cycle)::text = ANY (ARRAY[('monthly'::character varying)::text, ('yearly'::character varying)::text])) OR (billing_cycle IS NULL))),
+    CONSTRAINT signal_subscriptions_status_check CHECK (((status)::text = ANY (ARRAY[('active'::character varying)::text, ('expired'::character varying)::text, ('cancelled'::character varying)::text, ('trial'::character varying)::text])))
 );
 
 
@@ -2049,7 +2362,7 @@ CREATE TABLE public.social_accounts (
     refresh_token text,
     token_expires_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT social_accounts_provider_check CHECK (((provider)::text = ANY ((ARRAY['google'::character varying, 'kakao'::character varying, 'naver'::character varying])::text[])))
+    CONSTRAINT social_accounts_provider_check CHECK (((provider)::text = ANY (ARRAY[('google'::character varying)::text, ('kakao'::character varying)::text, ('naver'::character varying)::text])))
 );
 
 
@@ -2073,31 +2386,6 @@ ALTER SEQUENCE public.social_accounts_id_seq OWNED BY public.social_accounts.id;
 
 
 --
--- Name: source_documents; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.source_documents (
-    id bigint NOT NULL,
-    raw_document_id bigint,
-    stock_id bigint NOT NULL,
-    source_type character varying(20) NOT NULL,
-    source_name character varying(100) NOT NULL,
-    title text NOT NULL,
-    source_url text,
-    published_at timestamp with time zone NOT NULL,
-    collected_at timestamp with time zone NOT NULL,
-    reliability_level character varying(10) DEFAULT 'medium'::character varying NOT NULL,
-    is_official boolean DEFAULT false NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    external_ref_type character varying(40),
-    external_ref_id bigint,
-    CONSTRAINT chk_source_doc_anchor CHECK ((((raw_document_id IS NOT NULL) AND (external_ref_type IS NULL) AND (external_ref_id IS NULL)) OR ((raw_document_id IS NULL) AND (external_ref_type IS NOT NULL) AND (external_ref_id IS NOT NULL)))),
-    CONSTRAINT source_documents_reliability_level_check CHECK (((reliability_level)::text = ANY ((ARRAY['high'::character varying, 'medium'::character varying, 'low'::character varying])::text[]))),
-    CONSTRAINT source_documents_source_type_check CHECK (((source_type)::text = ANY ((ARRAY['DART'::character varying, 'REPORT'::character varying, 'HIRING'::character varying, 'PATENT'::character varying, 'DATALAB'::character varying])::text[])))
-);
-
-
---
 -- Name: source_documents_id_seq; Type: SEQUENCE; Schema: public; Owner: -
 --
 
@@ -2114,25 +2402,6 @@ CREATE SEQUENCE public.source_documents_id_seq
 --
 
 ALTER SEQUENCE public.source_documents_id_seq OWNED BY public.source_documents.id;
-
-
---
--- Name: stocks; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.stocks (
-    id bigint NOT NULL,
-    ticker character varying(10) NOT NULL,
-    name character varying(100) NOT NULL,
-    market character varying(10) NOT NULL,
-    sector character varying(100),
-    is_active boolean DEFAULT true NOT NULL,
-    is_target boolean DEFAULT false NOT NULL,
-    short_name character varying(50),
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT stocks_market_check CHECK (((market)::text = ANY ((ARRAY['KOSPI'::character varying, 'KOSDAQ'::character varying])::text[])))
-);
 
 
 --
@@ -2343,7 +2612,9 @@ CREATE TABLE public.users (
     email_verified_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     deleted_at timestamp with time zone,
-    phone character varying(20)
+    phone character varying(20),
+    status character varying(20) DEFAULT 'active'::character varying NOT NULL,
+    CONSTRAINT chk_users_status CHECK (((status)::text = ANY (ARRAY[('active'::character varying)::text, ('suspended'::character varying)::text, ('deleted'::character varying)::text])))
 );
 
 
@@ -2381,7 +2652,7 @@ CREATE TABLE public.validation_logs (
     retry_count smallint DEFAULT 0 NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT chk_validation_target_id CHECK ((num_nonnulls(target_id_int, target_id_uuid) = 1)),
-    CONSTRAINT validation_logs_target_type_check CHECK (((target_type)::text = ANY ((ARRAY['signal_event'::character varying, 'signal_metric'::character varying, 'analysis_result'::character varying, 'agent_result'::character varying, 'final_signal'::character varying, 'llm_output'::character varying])::text[])))
+    CONSTRAINT validation_logs_target_type_check CHECK (((target_type)::text = ANY (ARRAY[('signal_event'::character varying)::text, ('signal_metric'::character varying)::text, ('analysis_result'::character varying)::text, ('agent_result'::character varying)::text, ('final_signal'::character varying)::text, ('llm_output'::character varying)::text])))
 );
 
 
@@ -2478,6 +2749,13 @@ ALTER SEQUENCE public.xgb_model_versions_id_seq OWNED BY public.xgb_model_versio
 --
 
 ALTER TABLE ONLY public.admin_accounts ALTER COLUMN id SET DEFAULT nextval('public.admin_accounts_id_seq'::regclass);
+
+
+--
+-- Name: admin_audit_log id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.admin_audit_log ALTER COLUMN id SET DEFAULT nextval('public.admin_audit_log_id_seq'::regclass);
 
 
 --
@@ -2579,6 +2857,13 @@ ALTER TABLE ONLY public.dead_letter ALTER COLUMN id SET DEFAULT nextval('public.
 
 
 --
+-- Name: event_study_panel id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_study_panel ALTER COLUMN id SET DEFAULT nextval('public.event_study_panel_id_seq'::regclass);
+
+
+--
 -- Name: final_signals id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -2677,6 +2962,13 @@ ALTER TABLE ONLY public.ohlcv_data ALTER COLUMN id SET DEFAULT nextval('public.o
 
 
 --
+-- Name: payments id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.payments ALTER COLUMN id SET DEFAULT nextval('public.payments_id_seq'::regclass);
+
+
+--
 -- Name: portone_verifications id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -2719,24 +3011,17 @@ ALTER TABLE ONLY public.raw_documents ALTER COLUMN id SET DEFAULT nextval('publi
 
 
 --
+-- Name: recommendations id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.recommendations ALTER COLUMN id SET DEFAULT nextval('public.recommendations_id_seq'::regclass);
+
+
+--
 -- Name: report_issuances id; Type: DEFAULT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.report_issuances ALTER COLUMN id SET DEFAULT nextval('public.report_issuances_id_seq'::regclass);
-
-
---
--- Name: report_raw id; Type: DEFAULT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.report_raw ALTER COLUMN id SET DEFAULT nextval('public.report_raw_id_seq'::regclass);
-
-
---
--- Name: report_signal id; Type: DEFAULT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.report_signal ALTER COLUMN id SET DEFAULT nextval('public.report_signal_id_seq'::regclass);
 
 
 --
@@ -2875,6 +3160,14 @@ ALTER TABLE ONLY public.admin_accounts
 
 
 --
+-- Name: admin_audit_log admin_audit_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.admin_audit_log
+    ADD CONSTRAINT admin_audit_log_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: admin_sessions admin_sessions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -2936,6 +3229,22 @@ ALTER TABLE ONLY public.analysis_results
 
 ALTER TABLE ONLY public.backtest_results
     ADD CONSTRAINT backtest_results_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: collection_schedules collection_schedules_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.collection_schedules
+    ADD CONSTRAINT collection_schedules_name_key UNIQUE (name);
+
+
+--
+-- Name: collection_schedules collection_schedules_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.collection_schedules
+    ADD CONSTRAINT collection_schedules_pkey PRIMARY KEY (id);
 
 
 --
@@ -3080,6 +3389,14 @@ ALTER TABLE ONLY public.dead_letter
 
 ALTER TABLE ONLY public.dead_letter
     ADD CONSTRAINT dead_letter_processing_queue_id_key UNIQUE (processing_queue_id);
+
+
+--
+-- Name: event_study_panel event_study_panel_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_study_panel
+    ADD CONSTRAINT event_study_panel_pkey PRIMARY KEY (id);
 
 
 --
@@ -3259,6 +3576,14 @@ ALTER TABLE ONLY public.patent_raw_details
 
 
 --
+-- Name: payments payments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.payments
+    ADD CONSTRAINT payments_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: portone_verifications portone_verifications_imp_uid_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -3331,6 +3656,14 @@ ALTER TABLE ONLY public.raw_documents
 
 
 --
+-- Name: recommendations recommendations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.recommendations
+    ADD CONSTRAINT recommendations_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: report_issuances report_issuances_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -3344,22 +3677,6 @@ ALTER TABLE ONLY public.report_issuances
 
 ALTER TABLE ONLY public.report_raw_details
     ADD CONSTRAINT report_raw_details_pkey PRIMARY KEY (raw_document_id);
-
-
---
--- Name: report_raw report_raw_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.report_raw
-    ADD CONSTRAINT report_raw_pkey PRIMARY KEY (id);
-
-
---
--- Name: report_signal report_signal_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.report_signal
-    ADD CONSTRAINT report_signal_pkey PRIMARY KEY (id);
 
 
 --
@@ -3547,6 +3864,14 @@ ALTER TABLE ONLY public.datalab_raw_documents
 
 
 --
+-- Name: event_study_panel uq_event_study_panel; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_study_panel
+    ADD CONSTRAINT uq_event_study_panel UNIQUE (signal_event_id, asof_date);
+
+
+--
 -- Name: final_signals uq_final_signal_version; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -3667,19 +3992,19 @@ ALTER TABLE ONLY public.user_signal_reads
 
 
 --
+-- Name: recommendations uq_recommendation; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.recommendations
+    ADD CONSTRAINT uq_recommendation UNIQUE (stock_id, asof_date, run_key);
+
+
+--
 -- Name: report_issuances uq_report_issuance; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.report_issuances
     ADD CONSTRAINT uq_report_issuance UNIQUE (user_id, final_signal_id);
-
-
---
--- Name: report_raw uq_report_raw; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.report_raw
-    ADD CONSTRAINT uq_report_raw UNIQUE (firm, date, stock_code);
 
 
 --
@@ -3806,6 +4131,20 @@ CREATE INDEX idx_admin_accounts_email ON public.admin_accounts USING btree (emai
 --
 
 CREATE INDEX idx_admin_accounts_is_active ON public.admin_accounts USING btree (is_active);
+
+
+--
+-- Name: idx_admin_audit_actor; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_admin_audit_actor ON public.admin_audit_log USING btree (actor_admin_id, created_at DESC);
+
+
+--
+-- Name: idx_admin_audit_target; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_admin_audit_target ON public.admin_audit_log USING btree (target_type, target_id, created_at DESC);
 
 
 --
@@ -4054,6 +4393,20 @@ CREATE INDEX idx_dead_letter_unreplayed ON public.dead_letter USING btree (archi
 
 
 --
+-- Name: idx_event_study_panel_asof; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_event_study_panel_asof ON public.event_study_panel USING btree (asof_date, universe_snapshot);
+
+
+--
+-- Name: idx_event_study_panel_stock_asof; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_event_study_panel_stock_asof ON public.event_study_panel USING btree (stock_id, asof_date DESC);
+
+
+--
 -- Name: idx_final_published; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -4208,6 +4561,27 @@ CREATE INDEX idx_patent_stock_tech ON public.patent_raw_details USING btree (sto
 
 
 --
+-- Name: idx_payments_imp_uid; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_payments_imp_uid ON public.payments USING btree (imp_uid);
+
+
+--
+-- Name: idx_payments_subscription; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_payments_subscription ON public.payments USING btree (subscription_id) WHERE (subscription_id IS NOT NULL);
+
+
+--
+-- Name: idx_payments_user_created; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_payments_user_created ON public.payments USING btree (user_id, created_at DESC);
+
+
+--
 -- Name: idx_portone_verifications_merchant_uid; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -4260,7 +4634,7 @@ CREATE INDEX idx_queue_immediate ON public.processing_queue USING btree (stock_i
 -- Name: idx_queue_pending; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_queue_pending ON public.processing_queue USING btree (task_type, priority, scheduled_at) WHERE ((status)::text = ANY ((ARRAY['pending'::character varying, 'retrying'::character varying])::text[]));
+CREATE INDEX idx_queue_pending ON public.processing_queue USING btree (task_type, priority, scheduled_at) WHERE ((status)::text = ANY (ARRAY[('pending'::character varying)::text, ('retrying'::character varying)::text]));
 
 
 --
@@ -4306,6 +4680,13 @@ CREATE INDEX idx_raw_doc_stock_source ON public.raw_documents USING btree (stock
 
 
 --
+-- Name: idx_recommendations_rank; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_recommendations_rank ON public.recommendations USING btree (asof_date, run_key, rank);
+
+
+--
 -- Name: idx_report_detail_firm; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -4338,20 +4719,6 @@ CREATE INDEX idx_report_issuances_user_stock ON public.report_issuances USING bt
 --
 
 CREATE INDEX idx_report_issuances_user_via ON public.report_issuances USING btree (user_id, issued_via);
-
-
---
--- Name: idx_report_raw_stock; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_report_raw_stock ON public.report_raw USING btree (stock_code);
-
-
---
--- Name: idx_report_signal_stock; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_report_signal_stock ON public.report_signal USING btree (stock_code);
 
 
 --
@@ -4621,6 +4988,14 @@ CREATE TRIGGER trg_stocks_updated_at BEFORE UPDATE ON public.stocks FOR EACH ROW
 
 
 --
+-- Name: admin_audit_log admin_audit_log_actor_admin_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.admin_audit_log
+    ADD CONSTRAINT admin_audit_log_actor_admin_id_fkey FOREIGN KEY (actor_admin_id) REFERENCES public.admin_accounts(id);
+
+
+--
 -- Name: admin_sessions admin_sessions_admin_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -4666,22 +5041,6 @@ ALTER TABLE ONLY public.ai_scores
 
 ALTER TABLE ONLY public.analysis_requests
     ADD CONSTRAINT analysis_requests_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
-
-
---
--- Name: analysis_requests analysis_requests_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.analysis_requests
-    ADD CONSTRAINT analysis_requests_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id);
-
-
---
--- Name: analysis_results analysis_results_request_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.analysis_results
-    ADD CONSTRAINT analysis_results_request_id_fkey FOREIGN KEY (request_id) REFERENCES public.analysis_requests(id);
 
 
 --
@@ -4845,6 +5204,22 @@ ALTER TABLE ONLY public.dead_letter
 
 
 --
+-- Name: event_study_panel event_study_panel_signal_event_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_study_panel
+    ADD CONSTRAINT event_study_panel_signal_event_id_fkey FOREIGN KEY (signal_event_id) REFERENCES public.signal_events(id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_study_panel event_study_panel_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_study_panel
+    ADD CONSTRAINT event_study_panel_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
+
+
+--
 -- Name: final_signals final_signals_analysis_result_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5005,11 +5380,27 @@ ALTER TABLE ONLY public.patent_raw_details
 
 
 --
+-- Name: payments payments_subscription_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.payments
+    ADD CONSTRAINT payments_subscription_id_fkey FOREIGN KEY (subscription_id) REFERENCES public.signal_subscriptions(id);
+
+
+--
+-- Name: payments payments_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.payments
+    ADD CONSTRAINT payments_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+
+
+--
 -- Name: portone_verifications portone_verifications_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.portone_verifications
-    ADD CONSTRAINT portone_verifications_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id);
+    ADD CONSTRAINT portone_verifications_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
 
 
 --
@@ -5066,6 +5457,14 @@ ALTER TABLE ONLY public.raw_documents
 
 ALTER TABLE ONLY public.raw_documents
     ADD CONSTRAINT raw_documents_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
+
+
+--
+-- Name: recommendations recommendations_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.recommendations
+    ADD CONSTRAINT recommendations_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
 
 
 --
@@ -5169,7 +5568,7 @@ ALTER TABLE ONLY public.signal_journals
 --
 
 ALTER TABLE ONLY public.signal_journals
-    ADD CONSTRAINT signal_journals_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id);
+    ADD CONSTRAINT signal_journals_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
 
 
 --
@@ -5193,7 +5592,7 @@ ALTER TABLE ONLY public.signal_subscriptions
 --
 
 ALTER TABLE ONLY public.signal_subscriptions
-    ADD CONSTRAINT signal_subscriptions_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id);
+    ADD CONSTRAINT signal_subscriptions_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
 
 
 --
@@ -5202,14 +5601,6 @@ ALTER TABLE ONLY public.signal_subscriptions
 
 ALTER TABLE ONLY public.social_accounts
     ADD CONSTRAINT social_accounts_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
-
-
---
--- Name: source_documents source_documents_raw_document_id_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.source_documents
-    ADD CONSTRAINT source_documents_raw_document_id_stock_id_fkey FOREIGN KEY (raw_document_id, stock_id) REFERENCES public.raw_documents(id, stock_id) ON DELETE CASCADE;
 
 
 --
@@ -5233,7 +5624,7 @@ ALTER TABLE ONLY public.ta_scores
 --
 
 ALTER TABLE ONLY public.terms_agreements
-    ADD CONSTRAINT terms_agreements_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id);
+    ADD CONSTRAINT terms_agreements_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
 
 
 --
@@ -5257,7 +5648,7 @@ ALTER TABLE ONLY public.user_signal_reads
 --
 
 ALTER TABLE ONLY public.user_signal_reads
-    ADD CONSTRAINT user_signal_reads_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id);
+    ADD CONSTRAINT user_signal_reads_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
 
 
 --
@@ -5273,12 +5664,12 @@ ALTER TABLE ONLY public.watchlists
 --
 
 ALTER TABLE ONLY public.watchlists
-    ADD CONSTRAINT watchlists_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id);
+    ADD CONSTRAINT watchlists_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
 
 
 --
 -- PostgreSQL database dump complete
 --
 
-\unrestrict 60F2EtFMPdNqXELNW0KGf1xmB6tQHU8j5JErwhh1Oh5vYrsoaqU3jXGMiT4Cscn
+\unrestrict HCsv7S4NA1rdMFqi3TOWZkBuliWGTEy31BKQQ5YgmFYYORtY65xjhGTfMocyYu5
 

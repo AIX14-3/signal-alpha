@@ -22,7 +22,7 @@
 | ALTER류 (014/017/018/019/021) | 대상 `CREATE TABLE`에 컬럼·인덱스로 **흡수** (ALTER 제거). 014→`hiring_raw_details.observed_date`, 017→`final_signals`(consensus_score/positive_evidence/caution_evidence), 018→`datalab_category_keywords.polarity`, 019→`patent_raw_details`(llm_features/llm_status+부분인덱스), 021→`hiring_signals.calculation_phase` |
 | 신규 테이블 (015/016/020) | `hiring_signals`, `hiring_sources`, `hiring_job_functions`, `hiring_job_function_stocks`를 베이스라인에 합침. `IF NOT EXISTS`는 컨벤션(§3)대로 제거 |
 | 016 종목별 크롤러 INSERT 15건 | `seeds/005_seed_hiring_sources.sql`로 **분리** (시드는 마이그레이션에 넣지 않음) |
-| 013 레거시 `report_raw` / `report_signal` | 현재 report 런타임 코드는 더 이상 참조하지 않지만 기존 환경 호환성을 위해 **보존**. 베이스라인 맨 아래 Legacy 섹션 (폐기 예정, 신규 참조 금지) |
+| 013 레거시 `report_raw` / `report_signal` | report 런타임이 canonical 경로로 이전됨(참조 0). **`20260630_1200_drop_legacy_report_raw_signal.sql`로 DROP 됨**(이 표는 당시 baseline 통합 이력). 베이스라인엔 생성 구문이 남아 있으나 해당 마이그가 적용 직후 제거 |
 | `schema_migrations` 원장 | 러너가 자동 관리. 베이스라인에 포함하지 않음 |
 
 결과: 마이그레이션 파일 **1개**(`001_baseline.sql`) + 시드 5개. 총 **52개 테이블**.
@@ -66,12 +66,19 @@ docker compose run --rm db-migrate apply --seeds # baseline + seeds 재적용
    - 정수 순번(`NNN_`)은 브랜치 병렬 작업 시 충돌하므로 **신규 생성 중단**. 레거시 `001~023`은
      동결이며, 파일은 사전순이라 `0xx`(레거시) → `YYYYMMDD...`(신규) 순으로 적용된다.
    - 1 논리적 변경 = 1 파일. 무관한 변경을 한 파일에 섞지 않는다.
-   - `IF NOT EXISTS` 금지. 명명 규칙(`uq_`/`idx_`/`trg_`/`chk_`)·`TIMESTAMPTZ`·
-     `updated_at` 트리거 등 `README.md` §3 컨벤션을 따른다.
+   - **신규 테이블 정의(plain `CREATE TABLE`)에는 `IF NOT EXISTS` 금지.** 단, **증분 변경의 멱등
+     가드는 허용·권장**: `ADD COLUMN IF NOT EXISTS`, `DROP CONSTRAINT IF EXISTS … ADD`,
+     `CREATE OR REPLACE VIEW`, `CREATE SCHEMA IF NOT EXISTS`, 롤/grant 의 `IF [NOT] EXISTS`
+     가드(`0001`/`0006`/`0007` 처럼) — 재적용·2-DB 부분적용에서 깨지지 않게. 실제 `0005`/
+     `20260628`/`20260629` 마이그가 이 방식을 쓴다. 명명 규칙(`uq_`/`idx_`/`trg_`/`chk_`)·
+     `TIMESTAMPTZ`·`updated_at` 트리거 등 `README.md` §3 컨벤션을 따른다.
 3. **다음 squash는 언제?** 운영 데이터가 생기기 전(MVP 출시 전)까지만 베이스라인
    재통합을 허용한다. 출시 후에는 증분 마이그레이션만 추가하고 squash하지 않는다.
 4. 시드 데이터는 마이그레이션이 아니라 `seeds/NNN_*.sql`에 두고 `ON CONFLICT`로
-   idempotent하게 작성한다.
+   idempotent하게 작성한다. **예외**: 제어 평면 테이블의 **단일 부트스트랩 config 1행**(예:
+   `collection_schedules` 의 기본 스케줄)은 그 테이블을 만드는 마이그 안에서
+   `INSERT … ON CONFLICT DO NOTHING` 으로 함께 넣어도 된다(테이블과 생애주기가 같고
+   종목/대량 데이터가 아님). 그 외 모든 시드는 `seeds/` 로 분리한다.
 
 ---
 
