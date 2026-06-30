@@ -103,6 +103,27 @@ class SourceModel:
         value = float(raw[0])
         return value if math.isfinite(value) else None
 
+    def contributions(self, features: Mapping[str, Any]) -> dict[str, float] | None:
+        """피처별 예측 기여도(LightGBM ``pred_contrib`` = TreeSHAP). 미적재면 None.
+
+        반환 dict 의 부호/크기는 "이 피처가 예측값을 얼마나 위/아래로 밀었는지"이며, 서술
+        랭킹(|기여도| 상위)에만 쓴다. 마지막 base(expected) 값은 제외한다.
+        """
+        if self._booster is None:
+            return None
+        try:
+            vector = vectorize(features, self.feature_order)
+            raw = self._booster.predict([vector], pred_contrib=True)[0]
+        except Exception:  # noqa: BLE001 — 기여도 계산 실패는 치명 아님(서술 생략)
+            return None
+        # pred_contrib 길이 = 피처수 + 1(마지막 = base). feature_order 와 1:1 정렬.
+        out: dict[str, float] = {}
+        for name, contrib in zip(self.feature_order, raw):
+            val = float(contrib)
+            if math.isfinite(val):
+                out[name] = val
+        return out or None
+
 
 def predict_sources(
     asof: date,

@@ -26,6 +26,35 @@ from app.synthesis.synthesizer import RiskNarrative, Synthesizer
 logger = logging.getLogger("synthesize")
 
 
+def _load_price_model() -> Any:
+    """src_price LightGBM 모델 적재 — 아티팩트 부재/lightgbm 미설치면 미적재 모델을 돌려준다
+    (그 경우 ``contributions`` 가 None → 결정론 서술이 피처 현저성 기준으로 동작)."""
+    try:
+        from app.ml.source_inference import DEFAULT_ARTIFACT_DIR
+        from app.ml.source_models import SourceModel
+
+        model = SourceModel("src_price")
+        artifact = DEFAULT_ARTIFACT_DIR / "src_price.txt"
+        if artifact.exists():
+            model.load(str(artifact))
+        return model
+    except Exception:  # noqa: BLE001 — 모델 적재 실패는 치명 아님
+        return None
+
+
+def _coerce_date(value: Any):
+    from datetime import date, datetime
+
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except (ValueError, TypeError):
+        return date.today()
+
+
 class SynthesizeTaskHandler:
     def __init__(
         self,
@@ -36,6 +65,7 @@ class SynthesizeTaskHandler:
     ) -> None:
         from signal_alpha_data_access.repositories import (
             AnalysisRepository,
+            MarketDataRepository,
             NormalizationRepository,
             ProcessingQueueRepository,
         )
@@ -43,6 +73,9 @@ class SynthesizeTaskHandler:
         self._analysis = AnalysisRepository(connection)
         self._normalization = NormalizationRepository(connection)
         self._queue = ProcessingQueueRepository(connection)
+        # PRICE 메타 피처 결정론 서술용: OHLCV 재조회 + src_price 모델(있으면 pred_contrib 랭킹).
+        self._market_data = MarketDataRepository(connection)
+        self._price_model = _load_price_model()
         self._settings = settings
         self._synthesizer = synthesizer if synthesizer is not None else _build_synthesizer(settings)
 
@@ -195,9 +228,13 @@ class SynthesizeTaskHandler:
                 await self._narrate_dart(stock_id, stock_code, signal_date, source_predictions)
             except Exception:  # noqa: BLE001 — 서술 실패가 발행을 막지 않음
                 logger.exception("DART narrate 실패 — 기존 요약 유지 (stock_id=%s)", stock_id)
-        if _source_narrate_enabled(self._settings, "PRICE") and not _already_narrated(score_breakdown, "PRICE"):
+        # PRICE 는 LLM 게이트와 무관하게 항상 서술한다(LLM on=정제 서술, off=메타 피처 결정론
+        # 근거). 멱등(_already_narrated)만 지킨다.
+        if not _already_narrated(score_breakdown, "PRICE"):
             try:
-                await self._narrate_price(stock_id, stock_code, price_prediction, source_predictions)
+                await self._narrate_price(
+                    stock_id, stock_code, signal_date, price_prediction, source_predictions
+                )
             except Exception:  # noqa: BLE001
                 logger.exception("PRICE narrate 실패 — 기존 요약 유지 (stock_id=%s)", stock_id)
         if _source_narrate_enabled(self._settings, "REPORT") and not _already_narrated(score_breakdown, "REPORT"):
@@ -226,25 +263,52 @@ class SynthesizeTaskHandler:
         self,
         stock_id: int,
         stock_code: str,
+        signal_date: Any,
         price_prediction: dict[str, Any] | None,
         source_predictions: dict[str, Any] | None,
     ) -> None:
-        from app.narrate.price import PriceNarrator
+        # PRICE_USE_LLM 게이트면 LLM 정제 서술, 아니면 메타 피처 결정론 근거.
+        use_llm = self._settings is not None and _source_narrate_enabled(self._settings, "PRICE")
+        built = self._narrate_client("PRICE") if use_llm else None
+        if built is not None:
+            from app.narrate.price import PriceNarrator
 
-        built = self._narrate_client("PRICE")
-        if built is None:
+            client, model, timeout = built
+            pred = (source_predictions or {}).get("SRC_PRICE")
+            narrator = PriceNarrator(client=client, model=model, timeout_seconds=timeout)
+            narrative = await narrator.narrate(
+                stock_code=stock_code, analysis=price_prediction, prediction_rate=pred
+            )
+        else:
+            narrative = await self._narrate_price_features(stock_id, signal_date, price_prediction)
+        if narrative is None:
             return
-        client, model, timeout = built
-        pred = (source_predictions or {}).get("SRC_PRICE")
-        narrator = PriceNarrator(client=client, model=model, timeout_seconds=timeout)
-        narrative = await narrator.narrate(
-            stock_code=stock_code, analysis=price_prediction, prediction_rate=pred
-        )
         await self._analysis.update_source_narrative(
             stock_id=stock_id, source="PRICE",
             summary=narrative.summary, narrative_points=narrative.key_facts,
         )
         logger.info("PRICE narrate 적용 stock_id=%s facts=%d", stock_id, len(narrative.key_facts))
+
+    async def _narrate_price_features(
+        self, stock_id: int, signal_date: Any, price_prediction: dict[str, Any] | None
+    ) -> Any:
+        """주가 메타 피처(OHLCV 파생) → 결정론 근거 서술. 모델 있으면 pred_contrib 로 상위 기여
+        피처 랭킹, 없으면 현저성 기준. OHLCV 없거나 주목 피처 없으면 None(서술 생략)."""
+        from app.ml.source_features import assemble_features
+        from app.narrate.price_features import narrate_price_features
+
+        records = await self._market_data.list_recent_ohlcv(stock_id=stock_id, limit=80)
+        rows = [dict(record) for record in records]
+        if not rows:
+            return None
+        features = assemble_features(_coerce_date(signal_date), price_rows=rows)["price"]
+        contributions = (
+            self._price_model.contributions(features) if self._price_model is not None else None
+        )
+        direction = (price_prediction or {}).get("direction")
+        return narrate_price_features(
+            features=features, contributions=contributions, direction=direction
+        )
 
     async def _narrate_report(
         self,
