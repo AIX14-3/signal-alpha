@@ -244,7 +244,7 @@ function SubscriptionTab() {
           ? cancelScheduled
             ? `만료 ${subscription.expires_at.slice(0, 10)}까지 이용 가능 (이후 종료)`
             : `만료 ${subscription.expires_at.slice(0, 10)}${remainingLabel ? ` · 남은 기간 ${remainingLabel}` : ""}`
-          : "무료 회원은 리포트를 3회까지 열람할 수 있습니다."}
+          : "비구독 회원은 DART·네이버 데이터만 볼 수 있어요. 구독 시 전체 리포트가 열립니다."}
       </div>
       <div className="mt-3 text-[15px]">
         {active && yearly

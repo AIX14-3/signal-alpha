@@ -136,8 +136,6 @@ export type PredictionRate = {
 export type ReportAccess = {
   unlocked: boolean;
   is_member: boolean;
-  issued_via?: "free" | "subscription";
-  free_remaining?: number;
 };
 
 // 메타러너 return 채널 (#525 WS-C) — 결정론 집계 점수(score)와 별개의 학습형 수익률 신호.
@@ -209,12 +207,6 @@ export type SourceDetail = {
   notice: string;
 };
 
-export type Quota = {
-  free_quota: number;
-  free_used: number;
-  free_remaining: number;
-  subscription_active: boolean;
-};
 
 export type Provider = "naver" | "google" | "kakao";
 export type SocialLink = { provider: Provider; linked: boolean; linked_at?: string | null };
@@ -354,13 +346,6 @@ export async function getReport(stockCode: string): Promise<Report> {
   return apiFetch(`/api/reports/${encodeURIComponent(stockCode)}`);
 }
 
-export async function issueReport(stockCode: string): Promise<Report> {
-  return apiFetch(`/api/reports/${encodeURIComponent(stockCode)}/issue`, { method: "POST" });
-}
-
-export async function getQuota(): Promise<Quota> {
-  return apiFetch("/api/reports/quota");
-}
 
 export async function getSourceDetail(stockCode: string, source: SourceKey): Promise<SourceDetail> {
   return apiFetch(`/api/reports/${encodeURIComponent(stockCode)}/sources/${source}`);
