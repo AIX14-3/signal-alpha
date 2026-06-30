@@ -297,9 +297,22 @@ class SubscriptionRoutesTest(unittest.TestCase):
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.json()["detail"]["code"], "ALREADY_SUBSCRIBED")
 
+    def _seed_verification(self, payment_id, user_id=1, status="ready"):
+        # checkout 이 적재하는 paymentId↔user 매핑(소유권 검증용)을 모의한다.
+        self.connection.verifications[payment_id] = {
+            "id": len(self.connection.verifications) + 1,
+            "user_id": user_id,
+            "imp_uid": payment_id,
+            "merchant_uid": payment_id,
+            "verification_type": "payment",
+            "status": status,
+            "created_at": datetime(2026, 6, 25, tzinfo=UTC),
+        }
+
     def test_confirm_extends_active_subscription(self):
         # 안전망: 활성 상태에서 결제가 확정되면 거절(금전 손실)이 아니라 만료일부터 30일 연장.
         self._seed_active(datetime(2030, 1, 1, tzinfo=UTC))
+        self._seed_verification("sa-pay-extend")  # checkout 매핑(본인 소유)
         confirm = self.client.post(
             "/api/payments/confirm",
             json={"payment_id": "sa-pay-extend"},
@@ -309,6 +322,18 @@ class SubscriptionRoutesTest(unittest.TestCase):
         self.assertEqual(
             self.connection.created[-1]["expires_at"], datetime(2030, 1, 31, tzinfo=UTC)
         )
+
+    def test_confirm_rejects_other_users_payment(self):
+        # H1(IDOR): 타인(user 2)에게 발급된 결제는 호출자(user 1)가 확정할 수 없다.
+        self._seed_verification("sa-pay-victim", user_id=2)
+        confirm = self.client.post(
+            "/api/payments/confirm",
+            json={"payment_id": "sa-pay-victim"},
+            headers=self.auth_headers(),
+        )
+        self.assertEqual(confirm.status_code, 403)
+        self.assertEqual(confirm.json()["detail"]["code"], "PAYMENT_OWNER_MISMATCH")
+        self.assertEqual(self.connection.created, [])
 
     def test_confirm_is_idempotent(self):
         # 동일 paymentId 로 두 번 confirm → 구독은 한 번만 생성(이중 연장 방지).

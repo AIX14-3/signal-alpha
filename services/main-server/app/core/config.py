@@ -110,6 +110,13 @@ class Settings:
         # G6: 교차도메인 쿠키(SameSite=None)는 Secure 가 없으면 브라우저가 거부.
         if self.cookie_samesite == "none" and not self.cookie_secure:
             problems.append("COOKIE_SECURE must be true when COOKIE_SAMESITE=none")
+        # G8: HttpOnly refresh/admin 쿠키는 프로덕션(HTTPS)에서 항상 Secure 여야 한다(평문 구간 유출 방지).
+        if not self.cookie_secure:
+            problems.append("COOKIE_SECURE must be true in production")
+        # G9: 포트원 웹훅 서명 시크릿 필수 — 미설정 시 무서명 웹훅을 수용해 위조 결제 이벤트로
+        #     구독이 부여될 수 있다(payments.webhook 의 fail-closed 와 짝).
+        if not self.portone_webhook_secret:
+            problems.append("PORTONE_WEBHOOK_SECRET must be set in production")
         if problems:
             raise ValueError(
                 "Invalid production configuration (APP_ENV=production): " + "; ".join(problems)
