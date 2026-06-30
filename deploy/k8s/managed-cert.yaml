@@ -13,5 +13,5 @@ metadata:
     argocd.argoproj.io/sync-wave: "3"   # ingress 와 같은 wave
 spec:
   domains:
-    - www.example.com        # 실제 도메인으로 교체 (ingress host 와 일치)
-    - api.example.com        # 실제 도메인으로 교체 (ingress host 와 일치)
+    - www.signal-alpha.cloud   # ingress host 와 일치
+    - api.signal-alpha.cloud   # ingress host 와 일치

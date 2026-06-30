@@ -1,7 +1,7 @@
 # 외부 노출 — 서브도메인 분리(팀 문서 docs/gabia-domain-cors-setup.md 채택):
 #   www.<도메인> → web(3000),  api.<도메인> → main-server(8000).
 # HTTPS 는 GKE ManagedCertificate(managed-cert.yaml, www+api)로 종단한다.
-# host 의 example.com 두 곳을 실제 도메인으로 교체(managed-cert.yaml·CORS·web build-arg 와 동일해야 함).
+# 도메인 = signal-alpha.cloud (managed-cert.yaml·CORS·web build-arg 와 동일).
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -23,7 +23,7 @@ spec:
   ingressClassName: gce          # 글로벌 고정 IP·ManagedCertificate annotation 은 gce(외부 HTTP LB) 에서만 동작
   rules:
     # FE — www 서브도메인
-    - host: www.example.com        # 실제 도메인으로 교체
+    - host: www.signal-alpha.cloud
       http:
         paths:
           - path: /
@@ -34,7 +34,7 @@ spec:
                 port:
                   number: 3000
     # BE — api 서브도메인 (main-server 가 루트에서 /health·/api/* 서빙)
-    - host: api.example.com        # 실제 도메인으로 교체
+    - host: api.signal-alpha.cloud
       http:
         paths:
           - path: /
