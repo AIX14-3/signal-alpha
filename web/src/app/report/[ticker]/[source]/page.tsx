@@ -49,7 +49,7 @@ export default function SourceDetailPage() {
   const meta = SOURCE_META[source] ?? { label: source, icon: "📄", hint: "" };
 
   return (
-    <div className="py-10">
+    <div className="py-10" data-page="source-detail">
       <Link href={`/report/${encodeURIComponent(ticker)}`} className="text-[13px] text-sky-deep">← 리포트로</Link>
       <h1 className="my-2 text-[28px] font-extrabold">{meta.icon} {meta.label} 상세</h1>
 

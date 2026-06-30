@@ -64,5 +64,5 @@ export default function SocialCallbackPage() {
     }
   }, [provider, router, hydrate, showToast]);
 
-  return <div className="py-24 text-center text-muted">{message}</div>;
+  return <div className="py-24 text-center text-muted" data-page="social-callback">{message}</div>;
 }
