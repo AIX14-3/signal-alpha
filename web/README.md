@@ -26,4 +26,6 @@ npm ci
 npm run verify
 ```
 
-`npm run verify` runs the frontend typecheck, production build, and test suite in sequence.
+`npm run verify` runs the frontend typecheck, production build, source-level test suite, and
+render smoke test in sequence. The render smoke test starts the built Next.js app and checks
+core public user-flow routes.

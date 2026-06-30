@@ -8,7 +8,8 @@
     "lint": "tsc --noEmit",
     "start": "next start",
     "test": "node --test tests/*.test.mjs",
-    "verify": "npm run lint && npm run build && npm run test"
+    "test:render": "node --test qa/render-smoke.test.mjs",
+    "verify": "npm run lint && npm run build && npm run test && npm run test:render"
   },
   "dependencies": {
     "@portone/browser-sdk": "^0.1.9",

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const EXPECTED_VERIFY_SCRIPT = "npm run lint && npm run build && npm run test";
+const EXPECTED_VERIFY_SCRIPT = "npm run lint && npm run build && npm run test && npm run test:render";
 
 test("web package exposes one reproducible verification script", async () => {
   const packageJson = JSON.parse(
