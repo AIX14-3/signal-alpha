@@ -41,14 +41,18 @@ Signal α 프로젝트 문서의 진입점입니다. 새로 합류했다면 **�
 - Report(밸류에이션): `report-rag-current-state.md`, `report-gemini-pdf-parsing-dev-guide.md`, `report-valuation-reinterpretation-strategy.md`
 - 가격: `kiwoom-rest-spec.md`
 - Alternative(채용): `agent-worker-hiring.md`, `hiring-skill-enrichment-design.md`, `hiring-cutover-and-final-signals-naming.md`
+- 워커 파이프라인: `worker-design-and-handoff.md`(토폴로지·팀 핸드오프), `worker-pipeline-detailed.md`(단계별 설계·PR 현황)
 - 집계/오케스트레이션: `final-signal-aggregator-spec.md`, `cross-layer-orchestration-and-risks.md`, `source-agent-contract.md`
 - API/프론트: `main-server-api-spec.md`, `web-frontend-spec.md`, `web-frontend-design.md`
 - 운영/연동: `third-party-integration-setup.md`
 
 ## 운영 런북 — [`runbooks/`](./runbooks/)
 
+- `agent-pipeline-schedule.md` — 에이전트 파이프라인 스케줄 운영 절차
 - `hiring-daily-schedule.md` — 채용 데이터 일일 수집/분석 스케줄 운영 절차
 - `report-pipeline-smoke-test.md` — 리포트 수집→파싱→정규화→분석→Aggregator 반영 스모크 테스트 절차
+- `patent-dual-source.md` — 특허 KIPRIS+BigQuery 듀얼 소스 수집/중복제거 절차
+- `db-2-instance-bootstrap.md` — 수집/백엔드 2-인스턴스 DB 부트스트랩 절차 (DB 스크립트가 참조)
 
 ## 다이어그램 — [`superpowers/plans/`](./superpowers/plans/)
 
@@ -57,3 +61,5 @@ Signal α 프로젝트 문서의 진입점입니다. 새로 합류했다면 **�
 ## 아카이브 — [`archive/`](./archive/)
 
 과거 기획서·초기 설계·리서치 노트 보존. 현행 기준 아님. → [archive/README.md](./archive/README.md)
+
+- `archive/plan/` — 실현·대체된 통합 계획 사료(메타러너 융합·DB 2-인스턴스 분리, #11로 일부 경로 변경). 현행 동작은 코드 + `spec/`가 기준.
