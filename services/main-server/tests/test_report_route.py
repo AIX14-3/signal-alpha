@@ -14,9 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "packages" / "data-
 
 from app.api.routes.reports import (
     _derive_dart_points,
-    _derive_report_points,
     _humanize_dart_summary,
-    _humanize_report_summary,
     _PREDICTION_RATE_SOURCES,
     _prediction_rate_block,
     _SOURCE_TO_BREAKDOWN,
@@ -171,73 +169,6 @@ class DeriveDartPointsTest(unittest.TestCase):
         points = _derive_dart_points(dup, {})
         quoted = [p for p in points if p.startswith("[2026-06-25]")]
         self.assertEqual(len(quoted), 1)
-
-
-_REPORT_TERSE = (
-    "미래에셋, 삼성증권 자료의 밸류에이션 fact 기준 데이터 방향성은 긍정 방향입니다. "
-    "소스 간 일치도와 원문 근거 확인이 필요합니다."
-)
-
-
-class HumanizeReportSummaryTest(unittest.TestCase):
-    def test_rewrites_machine_summary(self):
-        out = _humanize_report_summary({"summary": _REPORT_TERSE})
-        self.assertIn("목표주가·밸류에이션", out)
-        self.assertIn("학습형 모델", out)
-        self.assertIn("밸류에이션", out)
-        self.assertNotIn("밸류에이션 fact", out)
-        self.assertNotIn("소스 간 일치도", out)
-
-    def test_passes_through_natural_language(self):
-        natural = "목표주가 상향이 잇따르며 투자의견이 개선되고 있습니다."
-        self.assertEqual(_humanize_report_summary({"summary": natural}), natural)
-
-    def test_none_summary_returns_none(self):
-        self.assertIsNone(_humanize_report_summary({}))
-
-
-class DeriveReportPointsTest(unittest.TestCase):
-    def _valuation(self):
-        return {
-            "event_count": 3,
-            "target_price": 95000.0,
-            "methodology": "PER",
-            "implied_multiple_avg": 12.5,
-            "peer_group": ["SK하이닉스", "마이크론", "TSMC"],
-        }
-
-    def test_summarizes_valuation_facts(self):
-        points = _derive_report_points([], {"direction": "positive"}, self._valuation())
-        self.assertIn("증권사 리포트 3건을 집계했습니다.", points)
-        self.assertTrue(any("긍정적" in p for p in points))
-        self.assertTrue(any("95,000원" in p for p in points))
-        self.assertTrue(any("PER" in p for p in points))
-        self.assertTrue(any("12.5배" in p for p in points))
-        self.assertTrue(any("비교 기업: SK하이닉스, 마이크론, TSMC." == p for p in points))
-
-    def test_counts_from_items_when_event_count_absent(self):
-        items = [{"title": "a"}, {"title": "b"}]
-        points = _derive_report_points(items, {}, {"target_price": 1000})
-        self.assertIn("증권사 리포트 2건을 집계했습니다.", points)
-
-    def test_applied_multiple_fallback_and_review_flag(self):
-        points = _derive_report_points(
-            [],
-            {"direction": "neutral", "risk_flags": ["valuation_review_required"]},
-            {"applied_multiple": 9},
-        )
-        self.assertTrue(any("9배" in p for p in points))
-        self.assertTrue(any("밸류에이션 검토" in p for p in points))
-
-    def test_skips_unknown_methodology_and_trims_multiple_decimals(self):
-        points = _derive_report_points(
-            [], {"direction": "positive"}, {"methodology": "unknown", "implied_multiple_avg": 86.8687}
-        )
-        self.assertFalse(any("방법론" in p for p in points))
-        self.assertTrue(any("86.9배" in p for p in points))
-
-    def test_empty_inputs_returns_empty(self):
-        self.assertEqual(_derive_report_points([], {}, None), [])
 
 
 if __name__ == "__main__":

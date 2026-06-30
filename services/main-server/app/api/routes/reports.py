@@ -117,15 +117,11 @@ async def get_source_detail(
     # score_breakdown 필드에서 파생한다.
     narrative_points = _narrative_points(source, breakdown)
     if not narrative_points:
-        if source == "dart":
+        if source == "dart" and items:
             narrative_points = _derive_dart_points(items, breakdown.get("DART") or {})
-        elif source == "report":
-            narrative_points = _derive_report_points(
-                items, breakdown.get("REPORT") or {}, _report_valuation(breakdown)
-            )
-        # DART/REPORT 라도 결정론 파생이 비고 이벤트도 없으면(items 비어있음), 그 외 문서
-        # 비기반 소스(주가 등)와 동일하게 발행 score_breakdown 필드에서 일반 불릿을 파생한다.
-        if not narrative_points and not items:
+        elif not items:
+            # DART 라도 공시 이벤트가 없으면(items 비어있음) 기존처럼 발행 score_breakdown
+            # 필드(방향·점수·리스크 플래그)에서 일반 근거 불릿을 파생한다.
             narrative_points = _derive_points(source, breakdown)
 
     return {
@@ -231,15 +227,12 @@ _RISK_FLAG_KO = {
     "insufficient_history": "분석에 활용할 과거 데이터가 충분하지 않습니다.",
     "missing_source": "해당 데이터가 아직 충분히 수집되지 않았습니다.",
     "correction_disclosure": "정정 공시가 포함되어 있어 원공시와 함께 확인이 필요합니다.",
-    "valuation_review_required": "일부 리포트는 밸류에이션 검토가 필요해 원문과 함께 확인이 권장됩니다.",
 }
 
 # 기계식 PRICE 요약("… 방향 positive, 점수 +0.400.") 판별용.
 _PRICE_TERSE_RE = re.compile(r"방향\s+\w+\s*,\s*점수")
 # 기계식 DART 요약("DART 공시 N건 피처 산출 … 판정은 학습형 메타러너가 수행.") 판별용.
 _DART_TERSE_RE = re.compile(r"피처\s*산출|학습형\s*메타러너")
-# 기계식 REPORT 요약("… 밸류에이션 fact 기준 … 소스 간 일치도와 원문 근거 확인이 필요합니다.") 판별용.
-_REPORT_TERSE_RE = re.compile(r"밸류에이션\s*fact|소스\s*간\s*일치도")
 
 
 def _humanize_price_summary(detail: dict[str, Any]) -> str | None:
@@ -267,8 +260,6 @@ def _humanize_summary(source: str, detail: dict[str, Any]) -> str | None:
         return _humanize_price_summary(detail)
     if source == "dart":
         return _humanize_dart_summary(detail)
-    if source == "report":
-        return _humanize_report_summary(detail)
     return detail.get("summary")
 
 
@@ -303,23 +294,6 @@ def _has_dart_review_flag(detail: dict[str, Any]) -> bool:
     return any(
         str(f).strip() == "correction_disclosure" or str(f).strip().startswith("review_required")
         for f in flags
-    )
-
-
-def _humanize_report_summary(detail: dict[str, Any]) -> str | None:
-    """REPORT 요약이 기계식 패턴일 때만 사람이 읽기 쉬운 문장으로 풀어 쓴다.
-    그 외(LLM 서술 등 이미 자연어)에는 손대지 않고 원문을 그대로 돌려준다.
-
-    구체적 수치(목표주가·방법론·배수)는 상세의 '밸류에이션' 카드와 분석 근거 불릿
-    (_derive_report_points)이 노출하므로, 헤드라인은 무엇을 집계했는지만 안내한다."""
-    summary = detail.get("summary")
-    if not isinstance(summary, str) or not summary.strip():
-        return summary if isinstance(summary, str) else None
-    if not _REPORT_TERSE_RE.search(summary):
-        return summary
-    return (
-        "증권사 리포트의 목표주가·밸류에이션 정보를 집계했습니다. 방향성 판정은 학습형 모델이 "
-        "수행하며, 목표주가·방법론은 아래 ‘밸류에이션’ 카드와 ‘근거 자료’에서 확인할 수 있습니다."
     )
 
 
@@ -416,62 +390,6 @@ def _derive_dart_points(items: list[dict[str, Any]], detail: dict[str, Any]) -> 
 
     if _has_dart_review_flag(detail):
         points.append("정정·검토가 필요한 공시가 포함되어 있어 함께 확인이 필요합니다.")
-    return points
-
-
-# 증권가 투자의견 방향(score_breakdown.REPORT.direction) → 한국어 컨센서스 문장.
-_REPORT_CONSENSUS_KO = {
-    "positive": "증권가의 투자의견은 대체로 긍정적입니다.",
-    "negative": "증권가의 투자의견은 대체로 보수적입니다.",
-    "neutral": "증권가의 투자의견은 중립적입니다.",
-    "mixed": "증권가의 투자의견은 엇갈립니다.",
-}
-
-
-def _derive_report_points(
-    items: list[dict[str, Any]], detail: dict[str, Any], valuation: dict[str, Any] | None
-) -> list[str]:
-    """REPORT 는 LLM 서술이 없어도 집계된 밸류에이션(목표주가/방법론/배수/비교기업)과 투자의견
-    컨센서스에서 사람이 읽기 쉬운 근거 불릿을 결정론적으로 파생한다(새 판정 없이 사실만 요약)."""
-    val = valuation if isinstance(valuation, dict) else {}
-    points: list[str] = []
-
-    count = _number(val.get("event_count")) or (len(items) if items else None)
-    if count:
-        points.append(f"증권사 리포트 {count}건을 집계했습니다.")
-
-    consensus = _REPORT_CONSENSUS_KO.get(str(detail.get("direction") or "").lower())
-    if consensus:
-        points.append(consensus)
-
-    target_price = _number(val.get("target_price"))
-    if target_price:
-        points.append(f"집계된 목표주가는 약 {target_price:,.0f}원입니다.")
-
-    methodology = val.get("methodology")
-    if isinstance(methodology, str) and methodology.strip() and methodology.strip().lower() != "unknown":
-        points.append(f"주요 밸류에이션 방법론은 {methodology.strip()}입니다.")
-
-    multiple = _number(val.get("implied_multiple_avg"))
-    if multiple is None:
-        multiple = _number(val.get("applied_multiple"))
-    if multiple:
-        # 정수면 "9배", 소수면 1자리로("86.9배") — 발행값의 과도한 소수점을 다듬는다.
-        multiple_text = f"{multiple:.1f}".rstrip("0").rstrip(".")
-        points.append(f"목표 배수는 평균 {multiple_text}배 수준입니다.")
-
-    peers = val.get("peer_group")
-    if isinstance(peers, list):
-        names = [str(p).strip() for p in peers[:3] if str(p).strip()]
-        if names:
-            points.append("비교 기업: " + ", ".join(names) + ".")
-
-    flags = detail.get("risk_flags")
-    if isinstance(flags, list):
-        for flag in flags:
-            text = _RISK_FLAG_KO.get(str(flag).strip())
-            if text and text not in points:
-                points.append(text)
     return points
 
 
