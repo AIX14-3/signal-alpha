@@ -146,9 +146,11 @@ class QueueCycleRunner:
     ) -> dict[str, Any]:
         remaining: dict[str, int] = {t: int(c) for t, c in plan.items() if int(c) > 0}
         counts: dict[str, int] = {t: 0 for t in remaining}
+        statuses: dict[str, int] = {}
         failures: dict[str, int] = {}
         idle: set[str] = set()
         passes = 0
+        stopped_reason = "max_passes_reached"
 
         while passes < max_passes:
             passes += 1
@@ -165,15 +167,23 @@ class QueueCycleRunner:
                 # 않는다(다른 type 굶기지 않기 위해). run_next 가 이미 재시도/사장 처리.
                 remaining[task_type] -= 1
                 counts[task_type] += 1
+                statuses[status] = statuses.get(status, 0) + 1
                 progressed = True
                 if status == "failed":
                     failures[task_type] = failures.get(task_type, 0) + 1
             if not progressed:
+                stopped_reason = "idle"
+                break
+            if all(remaining[t] <= 0 or t in idle for t in remaining):
+                stopped_reason = "plan_exhausted"
                 break
 
         return {
             "passes": passes,
             "total_runs": sum(counts.values()),
             "counts": {t: c for t, c in counts.items() if c > 0},
+            "statuses": statuses,
             "failures": failures,
+            "idle_task_types": sorted(idle),
+            "stopped_reason": stopped_reason,
         }

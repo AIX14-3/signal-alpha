@@ -99,7 +99,7 @@ Modes:
 |---|---|
 | `All` | Enqueue DART and Report collection, then drain queue tasks. |
 | `Collect` | Only call schedule endpoints. |
-| `Drain` | Only run queue batch endpoints. |
+| `Drain` | Only run the bounded fair queue cycle endpoint. |
 
 Useful local variations:
 
@@ -196,7 +196,7 @@ Expected:
   -ReportMaxPages 3
 ```
 
-5. Run a bounded drain pass:
+5. Run a bounded fair drain cycle:
 
 ```powershell
 .\ops\run_agent_pipeline_schedule.ps1 -Mode Drain -MaxRuns 5

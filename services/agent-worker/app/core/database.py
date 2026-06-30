@@ -21,6 +21,7 @@ async def lifespan_with_database(app: FastAPI) -> AsyncIterator[None]:
     app.state.price_collector_task = None
     app.state.ops_daemon_task = None
     app.state.queue_drain_task = None
+    app.state.queue_drain_status = None
 
     if settings.database_url:
         from signal_alpha_data_access import DatabaseSettings, create_pool
@@ -80,10 +81,18 @@ async def lifespan_with_database(app: FastAPI) -> AsyncIterator[None]:
                 "queue drain daemon will not start"
             )
         else:
-            from app.orchestrator.queue.drain_daemon import supervise_queue_daemon
+            from app.orchestrator.queue.drain_daemon import (
+                QueueDrainRuntimeStatus,
+                supervise_queue_daemon,
+            )
 
+            app.state.queue_drain_status = QueueDrainRuntimeStatus()
             app.state.queue_drain_task = asyncio.create_task(
-                supervise_queue_daemon(app.state.database_pool, settings),
+                supervise_queue_daemon(
+                    app.state.database_pool,
+                    settings,
+                    runtime_status=app.state.queue_drain_status,
+                ),
                 name="queue-drain-daemon",
             )
 

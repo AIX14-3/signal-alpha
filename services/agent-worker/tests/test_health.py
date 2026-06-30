@@ -53,10 +53,26 @@ class _FakeTask:
         return self._cancelled
 
 
+class _FakeQueueDrainStatus:
+    def snapshot(self):
+        return {
+            "cycles_completed": 3,
+            "last_started_at": "2026-06-30T10:00:00+00:00",
+            "last_finished_at": "2026-06-30T10:00:01+00:00",
+            "last_cycle": {"total_runs": 2, "stopped_reason": "plan_exhausted"},
+            "last_error": None,
+        }
+
+
 class HealthCheckTest(unittest.TestCase):
     def tearDown(self) -> None:
         app.dependency_overrides.pop(get_database_pool, None)
-        for attr in ("price_collector_task", "ops_daemon_task", "queue_drain_task"):
+        for attr in (
+            "price_collector_task",
+            "ops_daemon_task",
+            "queue_drain_task",
+            "queue_drain_status",
+        ):
             if hasattr(app.state, attr):
                 delattr(app.state, attr)
 
@@ -77,7 +93,15 @@ class HealthCheckTest(unittest.TestCase):
                 "runtime": {
                     "price_collector": {"enabled": False, "state": "not_started"},
                     "hiring_ops_daemon": {"enabled": False, "state": "not_started"},
-                    "queue_drain_daemon": {"enabled": False, "state": "not_started"},
+                    "queue_drain_daemon": {
+                        "enabled": False,
+                        "state": "not_started",
+                        "cycles_completed": 0,
+                        "last_started_at": None,
+                        "last_finished_at": None,
+                        "last_cycle": None,
+                        "last_error": None,
+                    },
                 },
             }
         )
@@ -95,6 +119,20 @@ class HealthCheckTest(unittest.TestCase):
         self.assertEqual(response.json()["runtime"]["price_collector"]["state"], "running")
         self.assertEqual(response.json()["runtime"]["hiring_ops_daemon"]["state"], "stopped")
         self.assertEqual(response.json()["runtime"]["queue_drain_daemon"]["state"], "cancelled")
+
+    def test_health_reports_queue_drain_cycle_status(self) -> None:
+        app.dependency_overrides[get_database_pool] = lambda: _FakePool()
+        app.state.queue_drain_task = _FakeTask(done=False)
+        app.state.queue_drain_status = _FakeQueueDrainStatus()
+        client = TestClient(app)
+
+        response = client.get("/health")
+
+        queue_runtime = response.json()["runtime"]["queue_drain_daemon"]
+        self.assertEqual(queue_runtime["state"], "running")
+        self.assertEqual(queue_runtime["cycles_completed"], 3)
+        self.assertEqual(queue_runtime["last_cycle"]["total_runs"], 2)
+        self.assertIsNone(queue_runtime["last_error"])
 
     def test_health_returns_503_when_db_unavailable(self) -> None:
         # DB 연결/쿼리 실패 → 503 (Cloud Run/GCE 헬스체크가 장애를 감지).

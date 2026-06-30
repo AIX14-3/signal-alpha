@@ -46,8 +46,9 @@ signal-alpha/
   DB의 `api.*` 읽기전용 view(읽기 계약)로만 읽습니다(backend/worker 런타임 분리 → 독립 배포).
 - **`agent-worker`** 코드베이스는 세 유닛으로 기동됩니다(#11):
   - **워커**: uvicorn FastAPI(라우트 `health, tasks, queue, dart, price, schedules, dead_letter, observability`)
-    + **큐 드레인 데몬**(`QUEUE_DRAIN_DAEMON_ENABLED`) — `processing_queue` 를 체인 순서로 끝단
-    (PUBLISH_SIGNALS 발행)까지 연속 소비. advisory-lock 단일 기동. 단발/CI 검증은 `run_worker_drain.py`.
+    + **큐 드레인 데몬**(`QUEUE_DRAIN_DAEMON_ENABLED`) — `QueueCycleRunner` 기반 bounded fair cycle로
+    `processing_queue` 를 소비. advisory-lock 단일 기동. `/health` 는 마지막 cycle 요약/에러를 노출하며
+    단발/CI 검증은 `run_worker_drain.py`.
   - **수집기**: `run_collector_instance.py` — 키움 실시간 가격 데몬 + `run_collectors.py`(patent/datalab).
   - **스케줄러**: `run_scheduler_instance.py` — 워커 `/internal/schedules/*` 를 주기 호출(수집 스케줄). 팀
     스케줄러 경계("스케줄러는 엔드포인트만 호출")를 따른다(직접 DB 인큐 안 함). 인큐분은 드레인 데몬이 소비.

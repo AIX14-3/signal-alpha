@@ -6,7 +6,8 @@ Package boundaries:
 
 - `queue/`: shared queue task runner, handler registry, task type names, and the **queue drain
   daemon** (`drain_daemon.py`, `QUEUE_DRAIN_DAEMON_ENABLED`) that consumes `processing_queue` in
-  chain order to the end (`PUBLISH_SIGNALS`) under an advisory lock (#11).
+  bounded fair `QueueCycleRunner` cycles under an advisory lock (#11). `/health` exposes the last
+  cycle summary and last daemon error.
 - `dart/`: DART-specific task handlers, scheduling, and corp code sync orchestration.
 - `persistence.py`: shared persistence helpers used by collector/analyzer flows.
 - `pipeline.py`: generic collector/analyzer pipeline glue.
