@@ -689,14 +689,38 @@ class AlternativeAnalyzeTaskHandler:
             result = await self._run_source(registration, repository, stock_id, stock_code, as_of)
             # Each source maps to its OWN single-source signal and final_signals
             # row (its own run_key) — a peer of DART, not a blended component.
-            signal = build_source_signal(result, self._aggregator_config)
-            ids = await persistence.save(
-                stock_id=stock_id,
-                signal=signal,
-                analysis_date=as_of,
-                publish_final_signal=True,
-                run_key=registration.resolved_run_key,
-            )
+            # Build + persist is wrapped per source: a signal-build or DB/persist
+            # failure for one source must not sink the remaining sources (mirrors
+            # the per-source isolation in _run_source). The failed source is still
+            # recorded as data_status="failed" so the report shows "no data".
+            try:
+                signal = build_source_signal(result, self._aggregator_config)
+                ids = await persistence.save(
+                    stock_id=stock_id,
+                    signal=signal,
+                    analysis_date=as_of,
+                    publish_final_signal=True,
+                    run_key=registration.resolved_run_key,
+                )
+            except Exception as exc:  # noqa: BLE001 — isolate one source's failure
+                logger.warning(
+                    "Alternative source %s 발행 실패 (stock=%s): %s",
+                    registration.source,
+                    stock_code,
+                    exc,
+                )
+                sources.append(
+                    {
+                        "source": result.source,
+                        "run_key": registration.resolved_run_key,
+                        "direction": "unknown",
+                        "score": 0.0,
+                        "data_status": "failed",
+                        "analysis_result_id": None,
+                        "final_signal_id": None,
+                    }
+                )
+                continue
             if result.data_status != "failed":
                 available_sources.append(result.source)
             sources.append(
