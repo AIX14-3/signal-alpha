@@ -47,6 +47,20 @@ cd ../signal-core
 uv run pytest
 ```
 
+## Frontend Development
+
+The frontend uses the lockfile under `web/package-lock.json`. Use `npm ci`
+for a reproducible install, then run the same verification contract used by CI:
+
+```powershell
+cd web
+npm ci
+npm run verify
+```
+
+`npm run verify` runs the TypeScript typecheck, production build, and frontend
+test suite in sequence.
+
 Service examples:
 
 ```powershell
