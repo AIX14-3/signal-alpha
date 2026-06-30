@@ -13,6 +13,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "packages" / "data-access"))
 
 from app.api.routes.reports import (
+    _derive_dart_points,
+    _humanize_dart_summary,
     _PREDICTION_RATE_SOURCES,
     _prediction_rate_block,
     _SOURCE_TO_BREAKDOWN,
@@ -94,6 +96,79 @@ class PredictionRateBlockTest(unittest.TestCase):
     def test_locked_hides_detail(self):
         block = _prediction_rate_block("hiring", _SOURCE_PREDICTIONS, locked=True)
         self.assertEqual(block, {"source": "hiring", "locked": True})
+
+
+_DART_TERSE = (
+    "DART 공시 21건 피처 산출(유형 {'annual_report': 1}, 방향 {'unknown': 21}). "
+    "판정은 학습형 메타러너가 수행."
+)
+
+
+class HumanizeDartSummaryTest(unittest.TestCase):
+    def test_rewrites_machine_summary_without_asserting_direction(self):
+        out = _humanize_dart_summary({"summary": _DART_TERSE, "direction": "unknown"})
+        self.assertIn("최근 수집된 공시", out)
+        self.assertIn("학습형 모델", out)
+        self.assertIn("근거 자료", out)
+        # Phase 0 features-only — 방향을 단정하지 않는다.
+        self.assertNotIn("피처 산출", out)
+        self.assertNotIn("메타러너", out)
+        # 발행 score_breakdown 의 건수는 signal_events 와 어긋날 수 있어 헤드라인엔 넣지 않는다.
+        self.assertNotIn("21건", out)
+
+    def test_passes_through_natural_language(self):
+        natural = "삼성전자는 1분기 호실적 공시로 긍정적 신호를 보였습니다."
+        self.assertEqual(_humanize_dart_summary({"summary": natural}), natural)
+
+    def test_appends_review_note_on_correction_flag(self):
+        out = _humanize_dart_summary(
+            {"summary": _DART_TERSE, "risk_flags": ["correction_disclosure"]}
+        )
+        self.assertIn("정정·검토", out)
+
+    def test_none_summary_returns_none(self):
+        self.assertIsNone(_humanize_dart_summary({}))
+
+
+class DeriveDartPointsTest(unittest.TestCase):
+    def _items(self):
+        return [
+            {"title": "사업보고서 제출", "event_date": "2026-04-15", "direction": "positive", "impact_level": "high"},
+            {"title": "단일판매·공급계약", "event_date": "2026-04-10", "direction": "positive", "impact_level": "medium"},
+            {"title": "최대주주 변경", "event_date": "2026-04-01", "direction": "negative", "impact_level": "low"},
+            {"title": "기타 안내", "event_date": "2026-03-20", "direction": "unknown", "impact_level": "low"},
+        ]
+
+    def test_summarizes_count_and_direction_distribution(self):
+        points = _derive_dart_points(self._items(), {})
+        self.assertIn("최근 공시 4건을 분석했습니다.", points)
+        dist = next(p for p in points if "분류됐습니다" in p)
+        self.assertIn("긍정 2건", dist)
+        self.assertIn("부정 1건", dist)
+        self.assertIn("분류 보류 1건", dist)
+
+    def test_flags_high_impact_and_quotes_notable(self):
+        points = _derive_dart_points(self._items(), {})
+        self.assertTrue(any("중요도 높은 공시 1건" in p for p in points))
+        # 고임팩트 공시를 제목·날짜와 함께 인용.
+        self.assertTrue(any("[2026-04-15] 사업보고서 제출" in p for p in points))
+
+    def test_appends_review_note(self):
+        points = _derive_dart_points(self._items(), {"risk_flags": ["review_required:correction"]})
+        self.assertTrue(any("정정·검토" in p for p in points))
+
+    def test_empty_items_returns_empty(self):
+        self.assertEqual(_derive_dart_points([], {}), [])
+
+    def test_dedupes_identical_notable_disclosures(self):
+        # 같은 날 동일 제목(예: 임원 소유상황보고서 다건)은 한 번만 인용한다.
+        dup = [
+            {"title": "임원ㆍ주요주주특정증권등소유상황보고서", "event_date": "2026-06-25", "direction": "neutral", "impact_level": "low"},
+            {"title": "임원ㆍ주요주주특정증권등소유상황보고서", "event_date": "2026-06-25", "direction": "neutral", "impact_level": "low"},
+        ]
+        points = _derive_dart_points(dup, {})
+        quoted = [p for p in points if p.startswith("[2026-06-25]")]
+        self.assertEqual(len(quoted), 1)
 
 
 if __name__ == "__main__":

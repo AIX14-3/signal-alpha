@@ -111,12 +111,18 @@ async def get_source_detail(
     event_type = _SOURCE_TO_EVENT_TYPE[source]
     items = [_evidence(e) for e in events if str(e.get("source_type", "")).upper() == event_type]
 
-    # 분석 근거 서술(score_breakdown.{SRC}.narrative_points). PRICE 처럼 signal_events 가 없는
-    # 소스도 이 불릿으로 근거를 노출한다(DART/REPORT 는 items 표로 노출). 저장된 서술도, 이벤트
-    # 근거도 없는 소스(주가 등 문서 비기반)는 발행된 score_breakdown 필드에서 근거 불릿을 파생한다.
+    # 분석 근거 서술(score_breakdown.{SRC}.narrative_points). 저장된(LLM) 서술이 있으면 우선.
+    # 없을 때: DART 는 items(공시 이벤트)는 표로 노출되지만 LLM off 면 불릿이 비므로, 이미 로드한
+    # items 에서 결정론 근거 불릿을 파생한다. 그 외 문서 비기반 소스(주가 등)는 발행된
+    # score_breakdown 필드에서 파생한다.
     narrative_points = _narrative_points(source, breakdown)
-    if not narrative_points and not items:
-        narrative_points = _derive_points(source, breakdown)
+    if not narrative_points:
+        if source == "dart" and items:
+            narrative_points = _derive_dart_points(items, breakdown.get("DART") or {})
+        elif not items:
+            # DART 라도 공시 이벤트가 없으면(items 비어있음) 기존처럼 발행 score_breakdown
+            # 필드(방향·점수·리스크 플래그)에서 일반 근거 불릿을 파생한다.
+            narrative_points = _derive_points(source, breakdown)
 
     return {
         "stock": _stock(row),
@@ -195,9 +201,9 @@ def _source_block(source: str, breakdown: dict[str, Any], *, locked: bool) -> di
         "direction": detail.get("direction", "unknown"),
         "score": _number(detail.get("score_100", detail.get("score"))),
         "data_status": detail.get("data_status", "missing"),
-        # 주가(PRICE)는 워커가 기계식 요약("… 방향 positive, 점수 +0.400.")만 남기는 경우가
-        # 있어, 그 패턴일 때만 사람이 읽기 쉬운 문장으로 풀어 쓴다(LLM 요약이 있으면 그대로 둠).
-        "summary": _humanize_price_summary(detail) if source == "price" else detail.get("summary"),
+        # 주가(PRICE)/공시(DART)는 워커가 기계식 요약만 남기는 경우가 있어, 그 패턴일 때만 사람이
+        # 읽기 쉬운 문장으로 풀어 쓴다(LLM 요약 등 이미 자연어면 원문 그대로 둠).
+        "summary": _humanize_summary(source, detail),
         "locked": False,
     }
 
@@ -220,10 +226,13 @@ _RISK_FLAG_KO = {
     "low_liquidity": "거래량이 적어(유동성이 낮아) 가격 신호의 신뢰도가 낮을 수 있습니다.",
     "insufficient_history": "분석에 활용할 과거 데이터가 충분하지 않습니다.",
     "missing_source": "해당 데이터가 아직 충분히 수집되지 않았습니다.",
+    "correction_disclosure": "정정 공시가 포함되어 있어 원공시와 함께 확인이 필요합니다.",
 }
 
 # 기계식 PRICE 요약("… 방향 positive, 점수 +0.400.") 판별용.
 _PRICE_TERSE_RE = re.compile(r"방향\s+\w+\s*,\s*점수")
+# 기계식 DART 요약("DART 공시 N건 피처 산출 … 판정은 학습형 메타러너가 수행.") 판별용.
+_DART_TERSE_RE = re.compile(r"피처\s*산출|학습형\s*메타러너")
 
 
 def _humanize_price_summary(detail: dict[str, Any]) -> str | None:
@@ -243,6 +252,49 @@ def _humanize_price_summary(detail: dict[str, Any]) -> str | None:
     date_match = re.match(r"\s*(\d{4}-\d{2}-\d{2})", summary)
     prefix = f"{date_match.group(1)} 기준 " if date_match else ""
     return f"{prefix}최근 약 6개월(120영업일)간 주가 흐름과 거래 수급을 종합한 결과 {phrase} 신호입니다."
+
+
+def _humanize_summary(source: str, detail: dict[str, Any]) -> str | None:
+    """소스별 기계식 요약을 사람이 읽기 쉬운 문장으로 풀어 쓰는 디스패처(그 외엔 원문 통과)."""
+    if source == "price":
+        return _humanize_price_summary(detail)
+    if source == "dart":
+        return _humanize_dart_summary(detail)
+    return detail.get("summary")
+
+
+def _humanize_dart_summary(detail: dict[str, Any]) -> str | None:
+    """DART 요약이 기계식 피처-산출 패턴일 때만 사람이 읽기 쉬운 문장으로 풀어 쓴다.
+    그 외(LLM 서술 등 이미 자연어)에는 손대지 않고 원문을 그대로 돌려준다.
+
+    DART 는 Phase 0 features-only 라 방향(direction)이 보통 'unknown' 이므로 방향을 단정하지
+    않고, '판정은 학습형 모델이 수행' 사실 + 정정/검토 플래그만 정직하게 노출한다. 건수는 발행
+    score_breakdown 의 값이 signal_events 와 어긋날 수 있어(stale) 헤드라인엔 넣지 않는다 —
+    정확한 건수·분포는 상세의 분석 근거 불릿(_derive_dart_points)이 실제 이벤트에서 노출한다.
+    """
+    summary = detail.get("summary")
+    if not isinstance(summary, str) or not summary.strip():
+        return summary if isinstance(summary, str) else None
+    if not _DART_TERSE_RE.search(summary):
+        return summary
+    text = (
+        "최근 수집된 공시를 분석했습니다. 방향성 판정은 학습형 모델이 수행하며, "
+        "개별 공시 내용은 아래 ‘근거 자료’에서 확인할 수 있습니다."
+    )
+    if _has_dart_review_flag(detail):
+        text += " 정정·검토가 필요한 공시가 포함되어 있어 함께 확인이 필요합니다."
+    return text
+
+
+def _has_dart_review_flag(detail: dict[str, Any]) -> bool:
+    """risk_flags 에 정정/검토 필요 플래그(correction_disclosure / review_required:*)가 있는지."""
+    flags = detail.get("risk_flags")
+    if not isinstance(flags, list):
+        return False
+    return any(
+        str(f).strip() == "correction_disclosure" or str(f).strip().startswith("review_required")
+        for f in flags
+    )
 
 
 def _derive_points(source: str, breakdown: dict[str, Any]) -> list[str]:
@@ -279,6 +331,65 @@ def _derive_points(source: str, breakdown: dict[str, Any]) -> list[str]:
             text = str(flag).strip()
             if text:
                 points.append(_RISK_FLAG_KO.get(text, f"유의 사항: {text}"))
+    return points
+
+
+# DART 방향 라벨(공시 이벤트 signal_direction → 한국어).
+_DART_DIRECTION_KO = {"positive": "긍정", "negative": "부정", "neutral": "중립"}
+
+
+def _derive_dart_points(items: list[dict[str, Any]], detail: dict[str, Any]) -> list[str]:
+    """DART 는 LLM 서술이 없어도 이미 로드한 공시 이벤트(items)에서 사람이 읽기 쉬운 근거
+    불릿을 결정론적으로 파생한다(새 판정을 만들지 않고 수집된 공시 분포를 자연어로 요약).
+    items 의 각 원소는 _evidence() 형태: direction / impact_level / title / event_date."""
+    if not items:
+        return []
+    points: list[str] = []
+    points.append(f"최근 공시 {len(items)}건을 분석했습니다.")
+
+    direction_counts: dict[str, int] = {}
+    for it in items:
+        direction_counts[str(it.get("direction") or "unknown")] = (
+            direction_counts.get(str(it.get("direction") or "unknown"), 0) + 1
+        )
+    parts = [
+        f"{label} {direction_counts[key]}건"
+        for key, label in _DART_DIRECTION_KO.items()
+        if direction_counts.get(key)
+    ]
+    pending = direction_counts.get("unknown", 0)
+    if pending:
+        parts.append(f"분류 보류 {pending}건")
+    if parts:
+        points.append("이 중 " + "·".join(parts) + "으로 분류됐습니다.")
+
+    high_impact = [it for it in items if str(it.get("impact_level") or "").lower() == "high"]
+    if high_impact:
+        points.append(f"중요도 높은 공시 {len(high_impact)}건이 포함되어 있습니다.")
+
+    # 주목 공시(고임팩트 우선, 없으면 최신순) 최대 2건을 제목과 함께 인용. 같은 날 동일 제목
+    # (예: 임원 소유상황보고서 다건)은 시각적으로 중복돼 보이므로 (날짜·제목) 기준 중복 제거.
+    notable = high_impact or sorted(
+        items, key=lambda it: str(it.get("event_date") or ""), reverse=True
+    )
+    seen: set[tuple[str, str]] = set()
+    quoted = 0
+    for it in notable:
+        if quoted >= 2:
+            break
+        title = str(it.get("title") or "").strip()
+        if not title:
+            continue
+        date_text = str(it.get("event_date") or "").strip()
+        if (date_text, title) in seen:
+            continue
+        seen.add((date_text, title))
+        prefix = f"[{date_text}] " if date_text else ""
+        points.append(f"{prefix}{title}")
+        quoted += 1
+
+    if _has_dart_review_flag(detail):
+        points.append("정정·검토가 필요한 공시가 포함되어 있어 함께 확인이 필요합니다.")
     return points
 
 
