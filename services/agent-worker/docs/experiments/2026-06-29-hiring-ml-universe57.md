@@ -17,14 +17,22 @@
 ## 1. 배경 / 동기
 - 3종목 채용 단독 = 무신호였으나 통계력(독립표본<3·~330공고)이 근본 제약이었다
   (`2026-06-25-hiring-ml-bakeoff.md`).
-- 직전 세션에 유니버스를 KOSPI 시총상위 200으로 확장: stocks 39→208 시드, 가격 201종목,
+- 직전 세션에 유니버스를 KOSPI 시총상위 200으로 확장: stocks **19→208** 시드(189행 신규,
+  `is_target=FALSE`, 2026-06-26 `seed_universe_stocks.py`), 가격 201종목,
   **채용 전수스캔(공고 2397→7842, 회사 3→175)**.
 - 이번 세션: 데이터 충분 종목 선별 → 패널 ML 본격 검정 + duty 가설 + FDR.
+
+> **주(prod stocks 시드).** 유니버스 시드는 공유 prod `stocks` 테이블에 대한 *유일한 쓰기*다
+> (분석 자체는 read-only). 2026-06-26 `seed_universe_stocks.py`가 KOSPI200 유니버스를
+> `INSERT … ON CONFLICT(ticker) DO NOTHING`(`is_target=FALSE, is_active=TRUE`)으로 적재해
+> **189행 신규**(prod 총 19→208행). `is_target=TRUE`만 수집하는 팀 collector에는 무영향.
+> 과거 본문의 "39→208"은 prod `created_at` 실측(이전 19행 + 189행)과 불일치해 **19→208로
+> 정정**. 189행 유지/롤백은 팀 논의 후 결정(보류).
 
 ## 2. 데이터 / 환경
 | 항목 | 값 |
 |---|---|
-| DB | Supabase prod — **read-only** |
+| DB | Supabase prod — 분석은 **read-only**. 단 유니버스 시드는 1회 *쓰기*(아래 주) |
 | HIRING raw_documents | 7,842건 (hiring_raw_details 100% 적재) |
 | **duty_groups 커버리지** | **98.7%** (7,740/7,842; 2016~2023 연도별 94~100%) |
 | 가격 | FinanceDataReader → `prices_kospi200.csv`(201종목+KS11, 2016~2024) |
