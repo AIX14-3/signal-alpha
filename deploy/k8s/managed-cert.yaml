@@ -1,0 +1,17 @@
+# GKE 관리형 SSL 인증서 — Ingress(gce)가 이 인증서로 HTTPS 종단한다.
+# 도메인 A레코드(www·api)가 LB 고정 IP 로 연결된 뒤 Google 이 자동 발급/갱신(보통 15~60분).
+# 발급 상태: kubectl -n signal-alpha describe managedcertificate signal-alpha-cert  (Status: Active)
+# domains 는 ingress.yaml 의 host 두 개와 정확히 일치해야 한다(실제 도메인으로 교체).
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata:
+  name: signal-alpha-cert
+  namespace: signal-alpha
+  labels:
+    app.kubernetes.io/part-of: signal-alpha
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"   # ingress 와 같은 wave
+spec:
+  domains:
+    - www.example.com        # 실제 도메인으로 교체 (ingress host 와 일치)
+    - api.example.com        # 실제 도메인으로 교체 (ingress host 와 일치)

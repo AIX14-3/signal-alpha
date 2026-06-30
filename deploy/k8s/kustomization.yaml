@@ -17,6 +17,7 @@ resources:
   - main-server.yaml
   - web.yaml
   - ingress.yaml
+  - managed-cert.yaml
 
 # 이미지 태그 핀(GitOps). <PROJECT_ID> 를 실제 GCP 프로젝트로 교체하고 newTag 를 빌드 태그로.
 images:
