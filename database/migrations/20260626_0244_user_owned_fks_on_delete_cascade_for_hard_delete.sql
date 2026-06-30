@@ -12,14 +12,8 @@
 --     portone_verifications / signal_journals / signal_subscriptions /
 --     terms_agreements / user_signal_reads / watchlists / payments(NOT NULL).
 --     (report_issuances / social_accounts / user_sessions 는 이미 CASCADE 라 제외.)
---   - analysis_requests: 공용 시그널 파이프라인(analysis_results→final_signals→…)의
---     뿌리이므로 회원과 함께 삭제하지 않는다(공용 데이터 보존).
---     단, analysis_requests 는 COLLECTION DB(sa-pg) 전용이고 users 는 BACKEND DB(sa-be)
---     전용이라 2-인스턴스 분리(#531)에서는 둘 사이 **물리 FK 가 불가능**하다(cross-DB FK).
---     따라서 여기서 FK 를 추가하지 않는다 — user_id 는 FK 없는 nullable 컬럼으로 유지하고,
---     회원 삭제 시 분리(detach)는 앱레벨 publisher 책임으로 둔다
---     (rebaseline.py 의 cross-DB FK 제거 정책과 동일선상). 이 마이그는 target: backend 라
---     sa-be 에만 적용되는데 거기엔 analysis_requests 가 없으므로 관련 구문을 두면 적용이 실패한다.
+--   - analysis_requests: collection DB 소유(다른 서버)라 이 FK 는 2-DB 분리에선 만들 수 없어 제외.
+--     회원 detach 가 필요하면 DB FK 가 아니라 앱 레벨에서 처리(파일 하단 주석 참고).
 -- ============================================================================
 
 -- 회원 소유 자식 → ON DELETE CASCADE
@@ -60,6 +54,9 @@ ALTER TABLE public.payments
     ADD  CONSTRAINT payments_user_id_fkey
         FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
 
--- analysis_requests(COLLECTION) → users(BACKEND) 는 cross-DB FK 라 추가하지 않는다(위 설계 주석 참조).
--- COLLECTION DB 의 0003_collection_baseline 은 analysis_requests.user_id 를 FK 없는 nullable 컬럼으로
--- 두므로 그린필드에선 정리할 FK 가 없다(구 단일 DB 에서 생긴 FK 는 dev 재생성으로 사라진다).
+-- analysis_requests 는 의도적으로 제외한다 (2-DB 분리에서 cross-DB FK 불가).
+--   analysis_requests = collection DB (0003_collection_baseline, target: collection),
+--   users            = backend DB. 둘은 서로 다른 서버라 이 FK 를 어느 DB 에서도 만들 수 없다
+--   (backend 엔 analysis_requests 부재, collection 엔 users 부재 → 단일 DB 시절 잔재).
+-- 회원 하드삭제 시 analysis_requests.user_id 를 NULL 로 분리(detach)해야 한다면, DB FK 가 아니라
+-- 앱 레벨(collection·backend 두 DB 를 잇는 로직)에서 처리한다.
