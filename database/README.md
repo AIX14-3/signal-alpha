@@ -45,7 +45,15 @@ docker compose run --rm db-migrate apply --seeds
 
 ## 2. 전체 Zone 구조 (테이블 인벤토리)
 
-전체 스키마는 단일 베이스라인 **`001_baseline.sql`** 한 파일에 Zone 단위로 들어 있습니다(개발 단계 통합 — 구 001~021 squash, 배경·규칙은 [`docs/migration_rules.md`](./docs/migration_rules.md)). **새 테이블을 만들기 전에 이 표에서 역할이 겹치는 테이블이 없는지 먼저 확인하세요.**
+> **베이스라인 구조 (#531 2-인스턴스 재베이스라인):** 스키마는 더 이상 단일 `001_baseline.sql`
+> 한 파일이 아닙니다. 수집(워커) DB / 백엔드(서비스) DB **물리 분리**에 맞춰 타깃별 베이스라인
+> `0001_infra_roles` ~ `0007_backend_grants` 로 나뉘고, 이후 변경은 타임스탬프 증분 마이그입니다.
+> 구 단일 `001_baseline.sql`(및 001~029 레거시)는 `migrations/archive/` 로 이동했으며 **적용 대상이
+> 아닙니다**(러너는 `migrations/*.sql` 만 글롭, archive 비재귀 무시). 타깃별 베이스라인 구성·테이블→
+> DB 매핑의 단일 출처는 [`docs/migration_seed_targets.md`](./docs/migration_seed_targets.md) 입니다.
+
+아래 Zone 표는 **테이블 역할 인벤토리**입니다(어느 DB 에 사는지는 위 문서의 target 매핑 참조).
+**새 테이블을 만들기 전에 이 표에서 역할이 겹치는 테이블이 없는지 먼저 확인하세요.**
 
 | Zone | 테이블 |
 | --- | --- |
@@ -60,14 +68,11 @@ docker compose run --rm db-migrate apply --seeds
 | F User 확장 | `signal_subscriptions`, `watchlists`, `signal_journals`, `user_signal_reads`, `user_sessions`, `social_accounts`, `portone_verifications`, `terms_agreements` |
 | G Admin | `admin_accounts`, `admin_sessions` |
 | 트리거 | (트리거 함수 2종 + updated_at 트리거 일괄 부착) |
-| Legacy | `report_raw`, `report_signal` ← **폐기 예정, 신규 참조 금지** (§7) |
+| ~~Legacy~~ | ~~`report_raw`, `report_signal`~~ ← **제거됨** (`20260630_1200…`, §7) |
 
-이 외에 러너가 자동 생성하는 `schema_migrations` 원장이 있습니다. 총 **54개 테이블**.
+이 외에 러너가 각 DB 에 자동 생성하는 `schema_migrations` 원장이 있습니다.
 
-`018_signal_journal_mvp_policy.sql`은 기존 `signal_journals`를 확장해 `tags JSONB`를 추가하고,
-`user_view`를 사용자 복기용 값(`watch`, `research_more`, `not_relevant`)으로 제한합니다.
-
-이후 스키마 변경은 baseline 파일을 수정하지 않고 `YYYYMMDD_HHMM_*.sql` 증분 마이그레이션으로 추가합니다 ([`docs/migration_rules.md`](./docs/migration_rules.md) §3).
+이후 스키마 변경은 베이스라인 파일을 수정하지 않고 `YYYYMMDD_HHMM_*.sql` 증분 마이그레이션으로 추가합니다 ([`docs/migration_rules.md`](./docs/migration_rules.md) §3). 표 베이스라인(`0002`/`0003`/`0004`)은 손으로 고치지 말고 `rebaseline.py` 로 재생성합니다.
 
 DataLab은 종목이 아닌 **카테고리 단위**로 수집합니다: 원본은 `datalab_raw_documents`/`datalab_raw_details`(category_id 기반)에 저장하고, `datalab_category_stocks` 매핑으로 종목을 해석합니다. `processing_queue.stock_id`가 NULL 허용인 이유도 이것입니다.
 
@@ -83,7 +88,7 @@ DataLab은 종목이 아닌 **카테고리 단위**로 수집합니다: 원본�
 | 시간 컬럼 | `TIMESTAMPTZ` 사용 (`TIMESTAMP` 금지). `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()` 기본 포함 |
 | updated_at | 컬럼이 있으면 012 컨벤션대로 `trg_<table>_updated_at` 트리거를 함께 추가 |
 | 제약/인덱스 명명 | `uq_` (unique), `idx_` (index), `trg_` (trigger), `chk_` (check) 접두 |
-| `IF NOT EXISTS` | **금지.** 적용 여부는 원장이 관리하므로 불필요하고, 과거 스키마 충돌(report_chunks 이중 정의)을 은폐한 주범 |
+| `IF NOT EXISTS` | **신규 테이블 정의(plain `CREATE TABLE`)에는 쓰지 않는다** — 적용 여부는 원장이 관리하고, 과거 스키마 충돌(report_chunks 이중 정의)을 은폐한 주범. **단, 증분 변경의 멱등 가드는 허용·권장**: `ADD COLUMN IF NOT EXISTS`, `DROP CONSTRAINT IF EXISTS … ADD`, `CREATE OR REPLACE VIEW`, `CREATE SCHEMA IF NOT EXISTS`, 롤/grant 의 `IF [NOT] EXISTS` 가드(0001/0006/0007 처럼). 재적용·2-DB 부분적용 안전성을 위함 |
 | FK ON DELETE | raw detail 테이블 = `CASCADE` (원본 삭제 시 상세 동반 삭제), 분석/이력 테이블 = NO ACTION(기본, 이력 보존) |
 | 데이터 시드 | 마이그레이션에 넣지 않고 `seeds/NNN_*.sql`로 분리. 시드는 `ON CONFLICT` 기반 재실행 안전(idempotent) 필수 |
 | ENUM성 컬럼 | `VARCHAR + CHECK` 사용 (PostgreSQL ENUM 타입 미사용) |
@@ -172,12 +177,12 @@ Frontend는 원칙적으로 `final_signals`를 중심으로 조회합니다.
 
 (리포트 임베딩/RAG 검색 기능은 제거됨 — `report_chunks`/pgvector 폐지.)
 
-## 7. Legacy 테이블 (폐기 예정)
+## 7. Legacy 테이블 (제거됨)
 
-`013_legacy_report_mvp.sql`의 `report_raw` / `report_signal`은 report RAG MVP가 마이그레이션 체계 밖(`setup_db.py`)에서 만들어 쓰던 테이블입니다. 현재 report 런타임 코드는 canonical 경로로 이전되어 더 이상 이 테이블을 참조하지 않습니다. 테이블은 기존 환경 호환성과 추후 DROP migration 준비를 위해 베이스라인에 남아 있습니다.
+`report_raw` / `report_signal`은 report RAG MVP가 마이그레이션 체계 밖(`setup_db.py`)에서 만들어 쓰던 테이블입니다. report 런타임 코드가 canonical 경로(`raw_documents` -> `report_raw_details`)로 완전히 이전돼 더 이상 참조하지 않음을 확인하고(코드 참조 0, 2026-06-30), **`20260630_1200_drop_legacy_report_raw_signal.sql`(target: collection)로 DROP** 했습니다.
 
-- **신규 코드에서 참조 금지.** 리포트 데이터는 `raw_documents` -> `report_raw_details` 경로를 사용하세요.
-- 이전 계획: 운영 데이터 호환성 확인 뒤 별도 마이그레이션으로 DROP.
+- 리포트 데이터는 항상 `raw_documents` -> `report_raw_details` 경로를 사용하세요.
+- 베이스라인 `0003_collection_baseline.sql`에는 생성 구문이 이력으로 남아 있으나 위 마이그가 적용 직후 제거합니다(그린필드: 생성→DROP). 다음 `rebaseline.py` 재생성 시 베이스라인에서도 사라집니다.
 
 ## 8. 주의사항
 

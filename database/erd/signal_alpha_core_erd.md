@@ -756,31 +756,15 @@ erDiagram
 - `users` ← `phone` (025), `status`(active|suspended|deleted) (027). 사용자-소유 테이블의 `user_id` FK는 `ON DELETE CASCADE`(하드 삭제, `20260626_0244`), `analysis_requests.user_id`는 `ON DELETE SET NULL`.
 - `signal_subscriptions` ← `next_billing_at`, `auto_renew` (027).
 
-## Legacy — report MVP [COLLECTION] ⚠️ 폐기 예정
+## Legacy — report MVP [COLLECTION] ✅ 제거됨
 
-`0003_collection_baseline.sql`의 legacy 블록. 신규 코드 참조 금지. 공용 경로(`raw_documents` → `report_raw_details`)로 이전 후 DROP 예정.
-
-```mermaid
-erDiagram
-    report_raw {
-        BIGINT id PK
-        VARCHAR stock_code "UK(firm,date,stock_code)"
-        VARCHAR firm
-        VARCHAR date "문자열 날짜(레거시)"
-        INT target_price
-    }
-
-    report_signal {
-        BIGINT id PK
-        VARCHAR stock_code
-        VARCHAR direction
-        FLOAT score
-        JSONB opinions
-    }
-```
+레거시 `report_raw` / `report_signal`(구 report RAG MVP, `setup_db.py` 산출)은
+`20260630_1200_drop_legacy_report_raw_signal.sql`(target: collection)로 **DROP 됐다**.
+리포트는 공용 경로(`raw_documents` → `report_raw_details`)만 사용한다. 베이스라인
+`0003_collection_baseline.sql` 에는 생성 구문이 남아 있으나(이력) 위 마이그가 곧바로 제거한다.
 
 ## 시스템 테이블
 
 - `schema_migrations(filename PK, checksum, applied_at)` — `database/migrate.py`가 자동 생성·관리하는 적용 원장. 마이그레이션 파일로 만들지 않는다.
 
-전체 테이블 수: **70개** (+ `schema_migrations` 원장). PUBLISHED 6 / COLLECTION 49 / BACKEND 15.
+전체 테이블 수: **68개** (+ `schema_migrations` 원장). PUBLISHED 6 / COLLECTION 47 / BACKEND 15.

@@ -12,7 +12,7 @@
 - 스키마 변경은 `python database/migrate.py new "..."`로 새 타임스탬프 migration으로 추가하세요.
 - 하나의 논리적 스키마 변경은 하나의 migration 파일에 담으세요.
 - 애플리케이션 코드에서 테이블을 만들지 마세요.
-- 거버넌스 문서를 명시적으로 갱신하지 않는 한 `IF NOT EXISTS`를 사용하지 마세요.
+- 신규 테이블 정의(plain `CREATE TABLE`)에는 `IF NOT EXISTS`를 쓰지 마세요. 단, 증분 변경의 멱등 가드(`ADD COLUMN IF NOT EXISTS`, `DROP CONSTRAINT IF EXISTS … ADD`, `CREATE OR REPLACE VIEW`, 롤/grant 의 `IF [NOT] EXISTS` 가드)는 허용·권장입니다(재적용·2-DB 부분적용 안전).
 - plain `TIMESTAMP`가 아니라 `TIMESTAMPTZ`를 사용하세요.
 - enum 성격 컬럼은 `VARCHAR + CHECK`를 사용하세요.
 - seed는 migration과 분리하고 재실행 가능하게 만드세요.
