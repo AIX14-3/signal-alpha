@@ -21,13 +21,53 @@ BQ_TABLE = "patents-public-data.patents.publications"
 DEFAULT_BQ_PROJECT = "patent-bq-reader"
 SOURCE_NAME = "GOOGLE_PATENTS"
 
-# Ticker -> BigQuery assignee_harmonized.name UPPER LIKE patterns. Mirrors
-# DEFAULT_COMPANIES.bq_like in scripts/patent_source_audit.py. ASCII-only so the
-# same patterns are safe in the BigQuery console too.
+# Ticker -> BigQuery assignee_harmonized.name UPPER LIKE patterns. ASCII-only so
+# the same patterns are safe in the BigQuery console too. prod 적재분의 실제
+# 출원인 이름에서 도출(2026-06-30 실측). 그룹 내 종목은 서로 겹치지 않는 부분문자열로
+# 좁혀 계열사 오염을 막는다(삼성전자 vs 삼성SDI, LG 4사, 현대 3사, 한미약품 vs 한미반도체).
+# 사명 변경/복수 변형은 리스트로 여러 패턴(예: LX세미콘=구 실리콘웍스).
 TICKER_BQ_PATTERNS: dict[str, list[str]] = {
-    "005930": ["%SAMSUNG ELECTRONICS%"],  # 삼성전자 (Samsung Electronics only — not SDI/Display/SDS)
-    "000660": ["%SK HYNIX%"],             # SK하이닉스
-    "035420": ["%NAVER%"],                # NAVER
+    # 전자/반도체/IT
+    "005930": ["%SAMSUNG ELECTRONICS%"],   # 삼성전자 (SDI/Display/SDS 제외)
+    "006400": ["%SAMSUNG SDI%"],           # 삼성SDI
+    "000660": ["%SK HYNIX%"],              # SK하이닉스
+    "066570": ["%LG ELECTRONICS%"],        # LG전자
+    "034220": ["%LG DISPLAY%"],            # LG디스플레이
+    "011070": ["%LG INNOTEK%"],            # LG이노텍
+    "000990": ["%DB HITEK%"],              # DB하이텍
+    "240810": ["%WONIK IPS%"],             # 원익IPS
+    "042700": ["%HANMI SEMICONDUCTOR%"],   # 한미반도체 (한미약품과 구분)
+    "054450": ["%TELECHIPS%"],             # 텔레칩스
+    "108320": ["%LX SEMICON%", "%SILICON WORKS%"],  # LX세미콘 (구 실리콘웍스)
+    # 화학/2차전지/소재
+    "051910": ["%LG CHEM%"],               # LG화학 (LG CHEMICAL/LG CHEM)
+    "011170": ["%LOTTE CHEMICAL%"],        # 롯데케미칼
+    "009830": ["%HANWHA SOLUTIONS%"],      # 한화솔루션
+    "247540": ["%ECOPRO BM%"],             # 에코프로비엠
+    # 자동차/부품
+    "005380": ["%HYUNDAI MOTOR%"],         # 현대자동차
+    "000270": ["%KIA MOTORS%", "%KIA CORP%"],  # 기아 (2021 KIA MOTORS→KIA CORP 사명변경)
+    "012330": ["%HYUNDAI MOBIS%"],         # 현대모비스
+    "011210": ["%HYUNDAI WIA%"],           # 현대위아
+    "204320": ["%MANDO%"],                 # HL만도 (MANDO/HL MANDO)
+    "018880": ["%HANON SYSTEMS%"],         # 한온시스템
+    # SK 에너지/바이오
+    "096770": ["%SK INNOVATION%"],         # SK이노베이션
+    "302440": ["%SK BIOSCIENCE%"],         # SK바이오사이언스
+    # 인터넷/게임
+    "035420": ["%NAVER%"],                 # NAVER (CORP/LABS/WEBTOON/CLOUD)
+    "035720": ["%KAKAO%"],                 # 카카오
+    "251270": ["%NETMARBLE%"],             # 넷마블
+    "036570": ["%NCSOFT%"],                # 엔씨소프트
+    # 제약/바이오
+    "128940": ["%HANMI PHARM%"],           # 한미약품 (한미반도체와 구분)
+    "185750": ["%CHONG KUN DANG%"],        # 종근당
+    "068270": ["%CELLTRION%"],             # 셀트리온
+    "000100": ["%YUHAN%"],                 # 유한양행
+    # 기타
+    "228850": ["%RAYENCE%"],               # 레이언스
+    "299030": ["%HANATECH%"],              # 하나기술
+    "036690": ["%COMMAX%"],                # 코맥스
 }
 
 
