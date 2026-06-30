@@ -36,9 +36,9 @@ export function directionLabel(direction: string | null | undefined): {
 } {
   switch ((direction ?? "").toUpperCase()) {
     case "POSITIVE":
-      return { label: "매수 우위", tone: "up" };
+      return { label: "긍정 방향", tone: "up" };
     case "NEGATIVE":
-      return { label: "매도 우위", tone: "down" };
+      return { label: "부정 방향", tone: "down" };
     case "MIXED":
       return { label: "혼조", tone: "flat" };
     default:
