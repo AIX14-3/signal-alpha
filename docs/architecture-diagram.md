@@ -56,6 +56,16 @@ flowchart LR
 
     mig["db-migrate<br/>--target collection / backend (owner 롤)"]
 
+    subgraph EDGE["외부 진입 — 도메인/HTTPS (#672)"]
+        user["사용자 브라우저<br/>https://www·api.도메인"]
+        ing["GKE Ingress (gce) · 고정 IP sa-ingress-ip<br/>멀티호스트: www→web / api→main-server<br/>ManagedCertificate(HTTPS)"]
+    end
+
+    argo["Argo CD — GitOps 배포<br/>deploy/argocd Application<br/>deploy/k8s kustomize + cloudsql 오버레이(ConfigMap·Secret)"]
+
+    user -- HTTPS --> ing
+    ing -- "www →" --> web
+    ing -- "api → CORS·쿠키(.도메인)" --> ms
     web -- HTTP --> ms
     ms -- "SELECT · signal_backend" --> bv
     ms -- "DML · signal_backend" --> bt
@@ -69,6 +79,13 @@ flowchart LR
     aw -- "publish(PUBLISH_SIGNALS) · BACKEND_DATABASE_URL" --> bpub
     mig -- "DDL + 롤/grant" --> CDB
     mig -- "DDL + 롤/grant" --> BDB
+    argo -. "GitOps sync·배포" .-> FE
+    argo -. "GitOps sync·배포" .-> BE
+    argo -. "GitOps sync·배포" .-> WK
+    argo -. "GitOps sync·배포" .-> SCH
+    argo -. "GitOps sync·배포" .-> COL
+    argo -. "StatefulSet ×2 + 마이그 Job ×2" .-> CDB
+    argo -. "StatefulSet ×2 + 마이그 Job ×2" .-> BDB
 
     classDef fe fill:#eef6ff,stroke:#3b82f6;
     classDef be fill:#eefbf0,stroke:#22c55e;
@@ -80,6 +97,10 @@ flowchart LR
     class aw wk;
     class col,altcron,sch sd;
     class cwt,cv,bt,bpub,bv,bsched db;
+    classDef ext fill:#f1f5f9,stroke:#64748b;
+    classDef ops fill:#fdf2f8,stroke:#db2777;
+    class user,ing ext;
+    class argo ops;
 ```
 
 > **유닛 경계(수집/스케줄/드레인 분리)**: 수집기는 외부 API에서 원천만 적재하고, 스케줄러는
