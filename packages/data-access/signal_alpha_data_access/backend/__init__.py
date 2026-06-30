@@ -10,7 +10,7 @@ normalization, scoring, dart_* 등)에 의존하지 않는다. main-server 코�
 - worker 산출물 읽기(api.* view): SignalRepository, UserSignalRepository → repositories.*
   (두 클래스는 backend 전용이라 base→api 로 직접 수정됨)
 - backend 소유 테이블 DML: UserBillingRepository, UserSessionRepository,
-  AdminRepository, ReportIssuanceRepository
+  AdminRepository
 """
 
 from signal_alpha_data_access.backend.read_contract import (
@@ -22,7 +22,6 @@ from signal_alpha_data_access.repositories.collection_schedules import (
     CollectionScheduleRepository,
     parse_schedule_row,
 )
-from signal_alpha_data_access.repositories.report_issuances import ReportIssuanceRepository
 from signal_alpha_data_access.repositories.signals import SignalRepository
 from signal_alpha_data_access.repositories.user_sessions import UserSessionRepository
 from signal_alpha_data_access.repositories.user_signals import UserSignalRepository
@@ -32,7 +31,6 @@ __all__ = [
     "AdminRepository",
     "CollectionScheduleRepository",
     "ProcessingQueueRepository",
-    "ReportIssuanceRepository",
     "SignalRepository",
     "StockRepository",
     "UserBillingRepository",

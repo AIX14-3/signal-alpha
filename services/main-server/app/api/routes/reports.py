@@ -137,7 +137,7 @@ async def get_source_detail(
 
 
 async def _is_unlocked(connection: Any, user_id: int) -> bool:
-    """전체 리포트 열람은 활성 구독자만 가능하다(무료 3회 열람 폐지)."""
+    """전체 리포트 열람은 활성 구독자만 가능하다."""
     return await _subscription_active(connection, user_id)
 
 

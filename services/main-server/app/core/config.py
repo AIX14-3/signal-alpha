@@ -45,11 +45,10 @@ class Settings:
         # 포트원 V2 웹훅 서명 검증 시크릿(standard-webhooks). 미설정 시 서명검증 생략(로컬/dev).
         self.portone_webhook_secret = getenv("PORTONE_WEBHOOK_SECRET")
 
-        # 단일 구독 상품가(원) + 무료 리포트 열람 횟수.
+        # 단일 구독 상품가(원).
         self.subscription_price_krw = int(getenv("SUBSCRIPTION_PRICE_KRW", "9900"))
         self.subscription_plan_type = getenv("SUBSCRIPTION_PLAN_TYPE", "monthly_9900")
         self.subscription_price_yearly_krw = int(getenv("SUBSCRIPTION_PRICE_YEARLY_KRW", "99000"))
-        self.free_report_quota = int(getenv("FREE_REPORT_QUOTA", "3"))
         # 구독 만료 임박 안내 기준(일) + 청약철회(전액환불) 기간(일).
         self.subscription_expiring_soon_days = int(getenv("SUBSCRIPTION_EXPIRING_SOON_DAYS", "7"))
         self.refund_full_window_days = int(getenv("REFUND_FULL_WINDOW_DAYS", "7"))

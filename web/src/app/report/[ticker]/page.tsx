@@ -53,7 +53,7 @@ export default function ReportPage() {
   const byKey = new Map(report.sources.map((s) => [s.source, s] as const));
   const byPred = new Map((report.prediction_rates ?? []).map((p) => [p.source, p] as const));
   const loginHref = `/login?returnTo=${encodeURIComponent(`/report/${ticker}`)}`;
-  // 무료 3회 열람 폐지 → 전체 리포트는 구독자만. 비구독 회원은 구독(/pricing), 비회원은 로그인으로.
+  // 전체 리포트는 구독자만 열람. 비구독 회원은 구독(/pricing), 비회원은 로그인으로 보낸다.
   const onUnlock = () => {
     router.push(isMember ? "/pricing" : loginHref);
   };

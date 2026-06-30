@@ -60,16 +60,15 @@ export default function PricingPage() {
   return (
     <div className="py-12" data-page="pricing">
       <h1 className="text-[32px] font-extrabold">요금 안내</h1>
-      <p className="mt-1 text-[14px] text-muted">필요한 만큼 선택하세요. 언제든 취소할 수 있고, 남은 무료 열람은 보존됩니다.</p>
+      <p className="mt-1 text-[14px] text-muted">필요한 만큼 선택하세요. 언제든 취소할 수 있습니다.</p>
 
       <div className="mt-8 grid grid-cols-1 gap-5 md:grid-cols-2">
         <div className="card flex flex-col p-7">
           <div className="text-[13px] font-bold uppercase tracking-[0.1em] text-muted">무료</div>
           <div className="mt-3 text-[32px] font-extrabold">0원</div>
           <ul className="mt-5 flex-1 space-y-2 text-[14px] text-navy-soft">
-            <li>· 리포트 무료 3회 열람 (이후 잠김 · 구독 시 무제한)</li>
+            <li>· DART·네이버 소스만 공개 (그 외 잠김 · 구독 시 전체 열람)</li>
             <li>· 관심종목 무제한</li>
-            <li>· 비회원은 DART·네이버 소스만 공개</li>
             <li>· 저널 {free?.journal_max_entries ?? 50}건</li>
           </ul>
           <button type="button" onClick={() => router.push(user ? "/" : "/signup")} className="mt-6 rounded-full border border-line py-3 text-[15px] font-bold text-navy-soft hover:border-navy hover:text-navy">
