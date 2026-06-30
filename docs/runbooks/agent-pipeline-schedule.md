@@ -21,7 +21,7 @@ Existing internal endpoints:
 |---|---|
 | DART collection enqueue | `POST /internal/schedules/dart/collect` |
 | Report collection enqueue | `POST /internal/schedules/report/collect` |
-| Queue batch execution | `POST /internal/queue/{task_type}/run-batch` |
+| Queue cycle execution | `POST /internal/queue/run-cycle` |
 
 ## 2. Recommended MVP Scheduling Model
 
@@ -163,7 +163,7 @@ Expected:
 
 - Output includes `DRY-RUN POST /internal/schedules/dart/collect`.
 - Output includes `DRY-RUN POST /internal/schedules/report/collect`.
-- Output includes queue calls from `collect_dart` through `risk_veto`.
+- Output includes the bounded fair queue cycle call.
 
 2. Start local services:
 
@@ -183,7 +183,7 @@ Expected:
 
 - Dry-run prints `DRY-RUN GET /health`.
 - Real run reaches `/health` and exits without a request error.
-- Empty queues are valid and should show `run_count=0`.
+- Empty queues are valid and should show `total_runs=0`.
 
 4. Run a small collection pass:
 
@@ -205,8 +205,9 @@ Expected:
 6. Inspect queue health:
 
 ```powershell
-Invoke-RestMethod -Method Get -Uri "http://localhost:8011/internal/stats/queue"
-Invoke-RestMethod -Method Get -Uri "http://localhost:8011/internal/queue/tasks?status=failed&limit=20"
+$headers = @{"X-Internal-Token" = $env:INTERNAL_API_TOKEN}
+Invoke-RestMethod -Method Get -Uri "http://localhost:8011/internal/stats/queue" -Headers $headers
+Invoke-RestMethod -Method Get -Uri "http://localhost:8011/internal/queue/tasks?status=failed&limit=20" -Headers $headers
 ```
 
 If this smoke test is stable, increase limits and then add Windows Task Scheduler, cron, or a managed scheduler.
@@ -237,6 +238,7 @@ Enqueue DART collection:
 Invoke-RestMethod `
   -Method Post `
   -Uri "http://localhost:8011/internal/schedules/dart/collect" `
+  -Headers @{"X-Internal-Token" = $env:INTERNAL_API_TOKEN} `
   -ContentType "application/json" `
   -Body '{"limit":100,"priority":"batch"}'
 ```
@@ -247,6 +249,7 @@ Enqueue Report collection:
 Invoke-RestMethod `
   -Method Post `
   -Uri "http://localhost:8011/internal/schedules/report/collect" `
+  -Headers @{"X-Internal-Token" = $env:INTERNAL_API_TOKEN} `
   -ContentType "application/json" `
   -Body '{"limit":100,"days_back":7,"max_pages":20,"priority":"batch"}'
 ```
@@ -254,40 +257,26 @@ Invoke-RestMethod `
 Drain queues manually:
 
 ```powershell
-$tasks = @(
-  "collect_dart",
-  "collect_report",
-  "normalize_dart",
-  "process_report",
-  "normalize_report",
-  "analyze_dart",
-  "analyze_report",
-  "ml_infer",
-  "meta_combine",
-  "aggregate_signal",
-  "synthesize",
-  "risk_veto"
-)
-
-foreach ($task in $tasks) {
-  Invoke-RestMethod `
-    -Method Post `
-    -Uri "http://localhost:8011/internal/queue/$task/run-batch" `
-    -ContentType "application/json" `
-    -Body '{"max_runs":20}'
-}
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://localhost:8011/internal/queue/run-cycle" `
+  -Headers @{"X-Internal-Token" = $env:INTERNAL_API_TOKEN} `
+  -ContentType "application/json" `
+  -Body '{"max_passes":10000}'
 ```
 
 Check queue state:
 
 ```powershell
-Invoke-RestMethod -Method Get -Uri "http://localhost:8011/internal/stats/queue"
+$headers = @{"X-Internal-Token" = $env:INTERNAL_API_TOKEN}
+Invoke-RestMethod -Method Get -Uri "http://localhost:8011/internal/stats/queue" -Headers $headers
 ```
 
 Check recent DART analysis:
 
 ```powershell
-Invoke-RestMethod -Method Get -Uri "http://localhost:8011/internal/dart/analysis-results?stock_code=005930&limit=5"
+$headers = @{"X-Internal-Token" = $env:INTERNAL_API_TOKEN}
+Invoke-RestMethod -Method Get -Uri "http://localhost:8011/internal/dart/analysis-results?stock_code=005930&limit=5" -Headers $headers
 ```
 
 ## 8. Windows Task Scheduler
@@ -346,15 +335,10 @@ curl -fsS -X POST "$WORKER_INTERNAL_URL/internal/schedules/report/collect" \
   -H 'Content-Type: application/json' \
   -d '{"limit":100,"days_back":7,"max_pages":20,"priority":"batch"}'
 
-for task in \
-  collect_dart collect_report normalize_dart process_report normalize_report \
-  analyze_dart analyze_report ml_infer meta_combine aggregate_signal synthesize risk_veto
-do
-  curl -fsS -X POST "$WORKER_INTERNAL_URL/internal/queue/$task/run-batch" \
-    -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
-    -H 'Content-Type: application/json' \
-    -d '{"max_runs":20}'
-done
+curl -fsS -X POST "$WORKER_INTERNAL_URL/internal/queue/run-cycle" \
+  -H "X-Internal-Token: $INTERNAL_API_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"max_passes":10000}'
 ```
 
 Cron sketch:
@@ -377,7 +361,7 @@ For Cloud Scheduler, Railway Cron, GitHub Actions, or another managed scheduler:
 1. Keep `agent-worker` running.
 2. Point the scheduler to an internal or protected worker URL.
 3. Trigger collection endpoints on a source-specific cadence.
-4. Trigger queue drain every 1-5 minutes.
+4. Trigger `POST /internal/queue/run-cycle` every 1-5 minutes and send `X-Internal-Token`.
 5. Monitor `/internal/stats/queue`, failed tasks, and dead letters.
 
 Do not call `agent-worker` internal endpoints from a public GitHub Actions runner unless the URL is protected by VPN, private networking, a token-checking proxy, or equivalent access control.
@@ -386,17 +370,18 @@ Do not call `agent-worker` internal endpoints from a public GitHub Actions runne
 
 Expected behavior:
 
-- Empty queues return `run_count=0`.
-- Individual task failures stop the current task type batch.
+- Empty queues return `total_runs=0`.
+- Individual task failures are reported in the cycle `statuses`/`failures` fields with a bounded `stopped_reason`.
 - Retryable failures remain in `processing_queue`.
 - Terminal failures are archived through the dead-letter path.
 
 Operational checks:
 
 ```powershell
-Invoke-RestMethod -Method Get -Uri "http://localhost:8011/internal/stats/queue"
-Invoke-RestMethod -Method Get -Uri "http://localhost:8011/internal/queue/tasks?status=failed&limit=20"
-Invoke-RestMethod -Method Get -Uri "http://localhost:8011/internal/queue/dead-letter?replayed=false"
+$headers = @{"X-Internal-Token" = $env:INTERNAL_API_TOKEN}
+Invoke-RestMethod -Method Get -Uri "http://localhost:8011/internal/stats/queue" -Headers $headers
+Invoke-RestMethod -Method Get -Uri "http://localhost:8011/internal/queue/tasks?status=failed&limit=20" -Headers $headers
+Invoke-RestMethod -Method Get -Uri "http://localhost:8011/internal/queue/dead-letter?replayed=false" -Headers $headers
 ```
 
 If failures are caused by missing API keys, fix environment variables and restart `agent-worker`.

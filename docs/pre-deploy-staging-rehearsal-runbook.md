@@ -12,7 +12,7 @@
   DB_SSLMODE=require                                # managed = require (PR#443 노브)
   DART_API_KEY=...
   PORTONE_API_SECRET=...   PORTONE_STORE_ID=...   PORTONE_CHANNEL_KEY_*=...
-  GEMINI_API_KEY=...       SYNTHESIS_USE_LLM=true   SYNTHESIS_LLM_MODEL=gemini-2.0-flash
+  GEMINI_API_KEY=...       SYNTHESIS_USE_LLM=true   SYNTHESIS_LLM_MODEL=gemini-2.5-flash
   AUTH_SECRET_KEY=<staging 전용 강한 랜덤>           # dev 기본값 금지
   ```
 - 로컬에 psql/pg_dump 없음 → pg 클라이언트는 Docker(`pgvector/pgvector:pg16`)로 실행.
