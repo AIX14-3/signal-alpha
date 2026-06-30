@@ -14,12 +14,17 @@ class SignalRepository:
         self._connection = connection
 
     async def get_current_by_ticker(self, ticker: str) -> Any:
+        # 사용자 노출 리포트는 통합 신호(run_key='AGGREGATED' — 6소스 score_breakdown 합본)를
+        # 우선한다. 동일 종목에 per-source 런(DART/PRICE/PATENT/…)도 is_current/is_published 로
+        # 함께 노출되는데, 이들은 자기 소스 외 score_breakdown 이 비어 있어(=데이터 수집 전) 그대로
+        # 고르면 빈 카드만 나온다. AGGREGATED 가 없을 때만 최신 발행본으로 폴백한다.
         return await self._connection.fetchrow(
             """
             SELECT *
             FROM api.signals_current
             WHERE ticker = $1
-            ORDER BY published_at DESC NULLS LAST,
+            ORDER BY (run_key = 'AGGREGATED') DESC,
+                     published_at DESC NULLS LAST,
                      created_at DESC
             LIMIT 1
             """,
