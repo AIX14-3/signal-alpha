@@ -1,5 +1,5 @@
 name: "✅ Task (작업 단위)"
-description: "Kick-off 아래의 개별 작업. 시작하는 사람이 self-assign."
+description: "개별 작업 단위. 시작하는 사람이 self-assign."
 title: "[Task] <영역>: <작업>"
 labels: ["task"]
 body:
@@ -25,11 +25,6 @@ body:
         - other
     validations:
       required: true
-  - type: input
-    id: kickoff
-    attributes:
-      label: 연결된 Kick-off 이슈
-      placeholder: "#이슈번호"
   - type: textarea
     id: detail
     attributes:

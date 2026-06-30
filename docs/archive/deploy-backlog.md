@@ -21,7 +21,7 @@
 - **수집기 7종**(dart/report/hiring/patent/datalab/price/sec[폐기]), **분석기** 소스별 구현
 - **web 프론트** 10개 페이지(home/login/signup/report/source-detail/auth-callback/admin/pricing/mypage/dashboard) + Zustand 5 스토어 + apiClient
 - **DB** 마이그레이션 027개(단일 구독 모델까지) + 시드 7종, smoke test CI
-- **Docker** 3종 Dockerfile + docker-compose(로컬), CI(ci.yml/branch-kickoff/datalab-daily)
+- **Docker** 3종 Dockerfile + docker-compose(로컬), CI(ci.yml/datalab-daily)
 
 ### 진행중 / 검증 필요
 - **Price 데몬** Kiwoom REST 폴링 구현됐으나 **120일 OHLCV 백필 미완** → Price analyzer·ML 추론 입력 부족
