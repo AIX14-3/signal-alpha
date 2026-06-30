@@ -9,8 +9,10 @@ name: AltData Process
 #
 # ⚠️ 필요한 리포 Secrets: DATABASE_URL (필수). 정규화/분석은 외부 API·LLM 미사용.
 #
-# NOTE: 백로그가 크면 1회 90분으로 다 못 비울 수 있다(매일 반복 소화 설계). 그래도 부족하면
-#       후속으로 정규화 배치/동시화(tasks.py·normalization.py) 리팩터를 검토할 것.
+# NOTE: 정규화는 이제 NORMALIZE_CONCURRENCY(기본 8) 만큼 병렬 드레인한다
+#       (run_normalizers.py, claim 이 FOR UPDATE SKIP LOCKED 라 안전). 직렬 1건씩이던
+#       기존 구조가 대량 백로그(특허 ~15만건)를 90분에 못 비우던 문제 대응. 그래도 첫
+#       대량 백로그는 1회로 다 못 비울 수 있어 매일 반복 소화 + 필요시 동시성 상향(env)으로 처리.
 
 on:
   schedule:
@@ -30,10 +32,11 @@ jobs:
   process:
     name: Normalize + Analyze
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       COLLECTOR_VERSION: ${{ secrets.COLLECTOR_VERSION }}
+      NORMALIZE_CONCURRENCY: "8" # 병렬 정규화 워커 수(run_normalizers.py)
       TICKER_ARG: ${{ inputs.ticker && format('--ticker {0}', inputs.ticker) || '' }}
     steps:
       - uses: actions/checkout@v4

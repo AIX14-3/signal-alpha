@@ -4,7 +4,7 @@ import asyncio
 import json
 import time
 from typing import Any
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 
@@ -146,6 +146,18 @@ class NaverDataLabClient:
             try:
                 with urlopen(request, timeout=self._timeout_seconds) as response:
                     return json.loads(response.read().decode("utf-8"))
+            except HTTPError as exc:
+                # HTTPError 는 URLError 의 서브클래스라 먼저 잡는다. 4xx(429 포함)는
+                # 재시도해도 거의 회복 안 된다(429=일·초당 쿼터 소진, 4xx=요청 오류) →
+                # 선형 1~2초 백오프를 3번 낭비하지 말고 즉시 실패해 빠르게 기록한다.
+                # 5xx(서버 일시 오류)만 백오프 재시도한다.
+                if exc.code < 500:
+                    raise NaverDataLabError(
+                        f"Naver DataLab HTTP {exc.code} {exc.reason}"
+                    ) from exc
+                last_error = exc
+                if attempt < self.MAX_RETRIES - 1:
+                    time.sleep(self.RETRY_BACKOFF_SECONDS * (attempt + 1))
             except (TimeoutError, URLError) as exc:
                 last_error = exc
                 if attempt < self.MAX_RETRIES - 1:

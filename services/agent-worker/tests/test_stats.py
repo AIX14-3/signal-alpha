@@ -44,9 +44,11 @@ class CalculateRunStatusTest(unittest.TestCase):
         # 전건 치명적 실패는 partial 이 아니라 failed.
         self.assertEqual(calculate_run_status(0, 0, 5), "failed")
 
-    def test_failed_when_empty_run(self):
-        # 아무것도 수집/적재하지 못한 빈 런은 success 가 아니라 failed.
-        self.assertEqual(calculate_run_status(0, 0, 0), "failed")
+    def test_success_when_empty_run(self):
+        # 빈 런(0건)은 실패가 아니다 — 진짜 에러(예외)는 호출자가 except 에서 직접
+        # 'failed' 로 기록한다. 여기 도달한 (0,0,0)은 "정상 실행, 데이터 없음" → success.
+        # (빈결과를 failed 로 세던 게 prod DataLab 실패율을 ~19%로 부풀린 원인이었음)
+        self.assertEqual(calculate_run_status(0, 0, 0), "success")
 
 
 class RunStatsTest(unittest.TestCase):
