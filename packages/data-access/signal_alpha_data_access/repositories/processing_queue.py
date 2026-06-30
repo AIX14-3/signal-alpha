@@ -48,8 +48,9 @@ class ProcessingQueueRepository:
         dedupe: bool = False,
     ) -> dict[str, Any]:
         serialized_task_context = _jsonb(task_context)
-        if dedupe:
-            existing_task_id = await self._connection.fetchval(
+
+        async def _find_active_duplicate() -> int | None:
+            return await self._connection.fetchval(
                 """
                 SELECT id
                 FROM processing_queue
@@ -70,34 +71,56 @@ class ProcessingQueueRepository:
                 source_signal_event_ids,
                 source_analysis_result_ids,
             )
-            if existing_task_id is not None:
-                return {"task_id": existing_task_id, "reused": True}
 
-        task_id = await self._connection.fetchval(
-            """
-            INSERT INTO processing_queue (
+        async def _insert() -> int:
+            return await self._connection.fetchval(
+                """
+                INSERT INTO processing_queue (
+                    stock_id,
+                    task_type,
+                    priority,
+                    source_raw_ids,
+                    source_signal_event_ids,
+                    source_analysis_result_ids,
+                    task_context,
+                    scheduled_at
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, NOW()))
+                RETURNING id
+                """,
                 stock_id,
                 task_type,
                 priority,
                 source_raw_ids,
                 source_signal_event_ids,
                 source_analysis_result_ids,
-                task_context,
-                scheduled_at
+                serialized_task_context,
+                scheduled_at,
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, NOW()))
-            RETURNING id
-            """,
-            stock_id,
-            task_type,
-            priority,
-            source_raw_ids,
-            source_signal_event_ids,
-            source_analysis_result_ids,
-            serialized_task_context,
-            scheduled_at,
-        )
-        return {"task_id": task_id, "reused": False}
+
+        if not dedupe:
+            return {"task_id": await _insert(), "reused": False}
+
+        # 원자적 dedupe(M3): 단순 SELECT-후-INSERT 는 서로 다른 풀 커넥션에서 동시 enqueue 되는 두
+        # 형제(예: PRICE+DART, 또는 드레인 데몬 + HTTP run-batch)가 모두 SELECT 를 통과해 중복 INSERT
+        # 하는 레이스가 있다. 실 asyncpg 연결에서는 (task_type, stock_id) 단위 advisory xact lock 으로
+        # 동시 enqueue 를 직렬화하고 SELECT+INSERT 를 한 트랜잭션으로 묶어 원자화한다(락은 트랜잭션
+        # 종료 시 자동 해제 — 스키마 마이그 불필요). 단위테스트의 가짜 연결은 트랜잭션/락 의미가 없으므로
+        # 비잠금 경로로 동일한 dedup 로직만 수행한다(락 래퍼는 실 DB 통합 동작이라 단위검증 대상 아님).
+        if _is_real_db_connection(self._connection):
+            async with self._connection.transaction():
+                await self._connection.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext($1), $2)", task_type, stock_id
+                )
+                existing_task_id = await _find_active_duplicate()
+                if existing_task_id is not None:
+                    return {"task_id": existing_task_id, "reused": True}
+                return {"task_id": await _insert(), "reused": False}
+
+        existing_task_id = await _find_active_duplicate()
+        if existing_task_id is not None:
+            return {"task_id": existing_task_id, "reused": True}
+        return {"task_id": await _insert(), "reused": False}
 
     async def has_open_or_successful_task(
         self,
@@ -239,6 +262,9 @@ class ProcessingQueueRepository:
         retry: bool = False,
     ) -> None:
         status = "retrying" if retry else "failed"
+        # 지수 백오프(M1): retrying 은 즉시 재claim 되면 실패하는 외부 API 를 같은 패스에서 연속
+        # 폭격한다. retry_count(증가 전 값)에 따라 30s·60s·120s… 로 미루되 30분 상한. scheduled_at
+        # 절을 claim 의 `scheduled_at <= NOW()` 게이트가 읽어 백오프가 적용된다.
         await self._connection.execute(
             """
             UPDATE processing_queue
@@ -247,7 +273,14 @@ class ProcessingQueueRepository:
                 retry_count = retry_count + 1,
                 error_message = $2,
                 finished_at = CASE WHEN $3::VARCHAR = 'failed' THEN NOW() ELSE finished_at END,
-                scheduled_at = CASE WHEN $3::VARCHAR = 'retrying' THEN NOW() ELSE scheduled_at END,
+                scheduled_at = CASE
+                    WHEN $3::VARCHAR = 'retrying'
+                    THEN NOW() + LEAST(
+                        POWER(2, retry_count) * INTERVAL '30 seconds',
+                        INTERVAL '30 minutes'
+                    )
+                    ELSE scheduled_at
+                END,
                 updated_at = NOW()
             WHERE id = $1
             """,
@@ -321,6 +354,19 @@ class ProcessingQueueRepository:
             "retried_count": _command_row_count(retried_status),
             "failed_count": _command_row_count(failed_status),
         }
+
+
+def _is_real_db_connection(connection: Any) -> bool:
+    """advisory lock/transaction 을 적용할 실 asyncpg 연결인지 식별한다(M3).
+
+    실 연결은 ``asyncpg.connection.Connection`` 또는 풀 프록시(``asyncpg.pool.PoolConnectionProxy``)로
+    모듈 경로가 ``asyncpg.*`` 다. 단위테스트의 가짜 연결(모듈 경로 ``tests.*`` 등)은 트랜잭션/락 의미가
+    없으므로 비잠금 dedup 경로를 쓴다. ``transaction``/``execute`` 보유 여부를 추가로 확인해 안전화한다.
+    """
+    module = type(connection).__module__ or ""
+    if module.split(".", 1)[0] != "asyncpg":
+        return False
+    return hasattr(connection, "transaction") and hasattr(connection, "execute")
 
 
 def _jsonb(value: Any) -> str | None:

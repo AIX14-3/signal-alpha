@@ -358,7 +358,10 @@ class ReportAnalyzeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         task_context = json.loads(enqueue_call[2][6])
         self.assertEqual(task_context["stock_code"], "005930")
         self.assertEqual(task_context["signal_date"], "2026-06-24")
-        self.assertEqual(task_context["run_key"], "AGGREGATED")
+        # H2: AGGREGATE dedupe 키 정규화 — 프로듀서별 run_key/aggregation_key 는 ctx 에서 제거돼
+        # PRICE·DART·REPORT 가 (stock, date) 기준으로 한 건으로 dedupe 된다(핸들러는 이 둘을 안 읽음).
+        self.assertNotIn("run_key", task_context)
+        self.assertNotIn("aggregation_key", task_context)
 
 
 class ReportConsensusDirectionTest(unittest.TestCase):

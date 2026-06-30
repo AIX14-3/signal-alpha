@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
+import functools
 import hashlib
 import json
 import logging
 from collections.abc import Mapping
 from datetime import date, datetime, timedelta
-from typing import Any
+from typing import Any, Callable, TypeVar
 
 from app.collectors.report.crawler import collect_stock
 from app.collectors.report.parsers.run_parser import process_from_s3
@@ -26,6 +28,18 @@ from signal_alpha_data_access.repositories import (
 )
 
 logger = logging.getLogger(__name__)
+
+_T = TypeVar("_T")
+
+
+async def _run_blocking(fn: Callable[..., _T], *args: Any, **kwargs: Any) -> _T:
+    """동기 블로킹 호출(requests/PDF 파싱/time.sleep 크롤)을 기본 스레드풀로 오프로딩한다(H4).
+
+    이 핸들러들은 단일 이벤트 루프에서 돌므로, 블로킹 IO 를 직접 await 경로에서 호출하면 그 수십 초
+    동안 다른 큐 작업·HTTP·데몬이 전부 동결된다. ``run_in_executor`` 로 워커 스레드에 넘겨 루프를 비운다.
+    """
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, functools.partial(fn, *args, **kwargs))
 
 
 class ReportCollectTaskHandler:
@@ -58,7 +72,8 @@ class ReportCollectTaskHandler:
             date_end = datetime.fromisoformat(de) if de else datetime.now()
             date_start = datetime.fromisoformat(ds) if ds else date_end - timedelta(days=days_back)
 
-            reports = collect_stock(
+            reports = await _run_blocking(
+                collect_stock,
                 stock_name="",
                 stock_code=stock_code,
                 max_pages=max_pages,
@@ -219,13 +234,13 @@ class ReportProcessTaskHandler:
 
         storage = self._get_storage()
 
-        if not storage.exists(s3_key):
-            success = download_and_upload(row["pdf_url"], s3_key, storage)
+        if not await _run_blocking(storage.exists, s3_key):
+            success = await _run_blocking(download_and_upload, row["pdf_url"], s3_key, storage)
             if not success:
                 await self._mark_failed(raw_document_id, "PDF 다운로드 실패")
                 return {"status": "download_failed"}
 
-        parsed = process_from_s3(s3_key, storage, settings=self._settings)
+        parsed = await _run_blocking(process_from_s3, s3_key, storage, settings=self._settings)
 
         await self._connection.execute(
             """

@@ -128,13 +128,27 @@ async def drain_until_idle(
             return counts
 
 
+async def _sweep_stale(pool: Any) -> None:
+    """좀비(active) 작업 회수(H3): 핸들러 도중 죽어 ``running`` 으로 남은 작업을 timeout 후
+    ``retrying`` 으로 승계해 재claim 가능하게 한다. 드레인 데몬이 곧 큐 처리 주체이므로
+    orphan 복구를 여기에 직접 배선한다(ops 데몬 플래그(HIRING_OPS_DAEMON_ENABLED)에 의존하지 않음).
+    """
+    from signal_alpha_data_access.repositories import ProcessingQueueRepository
+
+    async with pool.acquire() as conn:
+        swept = await ProcessingQueueRepository(conn).sweep_stale_active_tasks()
+    if swept.get("retried_count") or swept.get("failed_count"):
+        logger.info("좀비 작업 회수: %s", swept)
+
+
 async def run_drain_daemon(
     pool: Any, settings: Settings, *, handler_factory: HandlerFactory = build_task_handlers
 ) -> None:
-    """주기 루프: 큐를 idle 까지 드레인 → interval 대기 → 반복. cancel 은 전파."""
+    """주기 루프: 좀비 회수 → 큐를 idle 까지 드레인 → interval 대기 → 반복. cancel 은 전파."""
     try:
         while True:
             try:
+                await _sweep_stale(pool)
                 counts = await drain_until_idle(pool, handler_factory=handler_factory)
                 if counts:
                     logger.info("드레인 패스 완료: %s", counts)

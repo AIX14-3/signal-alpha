@@ -46,15 +46,26 @@ async def enqueue_aggregate(
 ) -> int | None:
     """선형 체인에서 게이트2(AGGREGATE_SIGNAL)를 인큐한다.
 
-    ``aggregate_ctx`` 는 ANALYZE_DART/REPORT 가 만들어 AGGREGATE 로 직접 넘기는
-    컨텍스트(``signal_date``·``stock_code``·``aggregation_key``). AGGREGATE는 fan-in 방식이라
-    ``source_analysis_result_ids`` 없이도 (stock_id, signal_date)로 모든 소스를 모은다 —
-    ids 가 있으면 그 목록만 집계하는 레거시 단일 프로듀서 경로로 동작한다.
+    ``aggregate_ctx`` 는 ANALYZE_DART/REPORT/PRICE·RETURN_COMBINE 가 만들어 AGGREGATE 로 넘기는
+    컨텍스트(``signal_date``·``stock_code``). AGGREGATE는 fan-in 방식이라 ``source_analysis_result_ids``
+    없이도 (stock_id, signal_date)로 모든 소스를 모은다 — ids 가 있으면 그 목록만 집계하는 레거시
+    단일 프로듀서 경로로 동작한다.
+
+    **dedupe 키 정규화(H2):** dedupe 는 ``task_context`` 정확 일치를 요구한다. 프로듀서마다 ctx 모양이
+    달라(예: DART 는 ``run_key``/``aggregation_key`` 추가) 같은 (stock, date) 의 PRICE·DART·REPORT·
+    RETURN_COMBINE 가 서로 dedupe 되지 않고 중복 집계/발행되던 문제가 있었다. ``AggregateSignalTaskHandler``
+    는 ``signal_date``/``stock_code``/``priority`` 만 읽으므로, 여기서 ctx 를 그 정규형으로 축소해 프로듀서가
+    달라도 한 건으로 dedupe 되게 한다(레거시 ids 경로는 dedupe 와 무관하게 그대로 전달).
     """
     if not aggregate_ctx:
         return None
     ids = aggregate_ctx.get("source_analysis_result_ids")
-    ctx = {key: value for key, value in aggregate_ctx.items() if key != "source_analysis_result_ids"}
+    # 정규형: dedupe 에 영향을 주는 ctx 는 (signal_date, stock_code) 만 — 그 외 프로듀서별 키는 버린다.
+    ctx = {
+        key: aggregate_ctx[key]
+        for key in ("signal_date", "stock_code")
+        if aggregate_ctx.get(key) is not None
+    }
     ctx.setdefault("priority", priority)
     return await queue.enqueue(
         stock_id=stock_id,

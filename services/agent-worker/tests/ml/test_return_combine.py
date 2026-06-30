@@ -48,6 +48,17 @@ class _FakeAnalysis:
         return {"id": 1, **kwargs} if self._found else None
 
 
+class _FakeQueue:
+    """enqueue 대역 — H1: RETURN_COMBINE 완료 후 AGGREGATE 재인큐를 기록·검증한다."""
+
+    def __init__(self):
+        self.calls = []
+
+    async def enqueue(self, **kwargs):
+        self.calls.append(kwargs)
+        return len(self.calls)
+
+
 def _inf(model_name, pred, *, gate=True):
     return {"model_name": model_name, "pred_value": pred, "gate_passed": gate}
 
@@ -60,6 +71,7 @@ def test_return_combine_persists_return_columns():
     analysis = _FakeAnalysis()
     handler = ReturnCombineTaskHandler(
         connection=object(),
+        queue=_FakeQueue(),
         inferences=inferences,
         meta=meta,
         collection=_FakeCollection(),
@@ -120,6 +132,7 @@ def test_return_combine_ignores_non_src_and_gated_rows():
     meta = _FakeMeta()
     handler = ReturnCombineTaskHandler(
         connection=object(),
+        queue=_FakeQueue(),
         inferences=inferences,
         meta=meta,
         collection=_FakeCollection(),
@@ -146,6 +159,7 @@ def test_return_combine_includes_src_dart():
     meta = _FakeMeta()
     handler = ReturnCombineTaskHandler(
         connection=object(),
+        queue=_FakeQueue(),
         inferences=inferences,
         meta=meta,
         collection=_FakeCollection(),
@@ -170,6 +184,7 @@ def test_return_combine_uses_report_features_with_linear_model():
     model = {"intercept": 0.0, "coef": {"src_datalab": 1.0, "report__peer_gap_avg": -1.0}}
     handler = ReturnCombineTaskHandler(
         connection=object(),
+        queue=_FakeQueue(),
         inferences=inferences,
         meta=meta,
         collection=_FakeCollection(facts),
@@ -193,6 +208,7 @@ def test_per_source_fusion_anchors_price():
     meta = _FakeMeta()
     handler = ReturnCombineTaskHandler(
         connection=object(),
+        queue=_FakeQueue(),
         inferences=inferences,
         meta=meta,
         collection=_FakeCollection(),
@@ -223,6 +239,7 @@ def test_per_source_fusion_anchors_price():
 def test_return_combine_requires_asof():
     handler = ReturnCombineTaskHandler(
         connection=object(),
+        queue=_FakeQueue(),
         inferences=_FakeInferences([]),
         meta=_FakeMeta(),
         collection=_FakeCollection(),
