@@ -102,8 +102,16 @@ flowchart LR
 
 > **배포 토폴로지**: 이 5 유닛 + 2 DB 는 **GKE + Argo CD(GitOps)** 매니페스트로 배포한다 —
 > `deploy/k8s/`(kustomize: web·main-server·agent-worker·collector·scheduler Deployment + alt-data CronJob +
-> Postgres ×2 StatefulSet + 마이그 Job ×2) / `deploy/argocd/`(Application). 가이드: [deploy/README.md](../deploy/README.md),
-> [k8s-argocd-deployment.md](./k8s-argocd-deployment.md).
+> Postgres ×2 StatefulSet + 마이그 Job ×2) / `deploy/argocd/`(Application). prod 환경값(`APP_ENV`/`CORS_ALLOW_ORIGINS`/
+> `COOKIE_*`)은 `deploy/overlays/cloudsql/` ConfigMap 패치로 주입(base/dev 불변).
+
+> **도메인·HTTPS 진입(#672)**: 외부 트래픽은 **GKE Ingress 멀티호스트**(`deploy/k8s/ingress.yaml`, `ingressClassName: gce`,
+> 글로벌 고정 IP `sa-ingress-ip`)로 들어와 **서브도메인 분리**된다 — `www.<도메인>`→web, `api.<도메인>`→main-server.
+> HTTPS 는 **`ManagedCertificate`**(`deploy/k8s/managed-cert.yaml`, www+api), CORS·쿠키(`COOKIE_DOMAIN=.<도메인>`+SameSite=Lax)는
+> **BE 한 곳(`api`)**에서 처리하고 FE 는 `api` 서브도메인으로 재빌드한다. DNS 는 `www`·`api` **A 레코드 → 고정 IP**.
+> 가이드: [deploy/README.md](../deploy/README.md), [k8s-argocd-deployment.md](./k8s-argocd-deployment.md),
+> 재개~도메인 **마스터 런북** [gcp-deploy-resume-and-domain.md](./gcp-deploy-resume-and-domain.md)
+> (CORS·쿠키·OAuth/PortOne 정본 [gabia-domain-cors-setup.md](./gabia-domain-cors-setup.md)).
 
 > 다이어그램에 **없는 화살표가 곧 경계**입니다: `main-server`는 `agent-worker`를 런타임에 직접
 > 호출하지 않고(워커 산출물은 `api.*` view로만 읽음), worker base 테이블(`final_signals` 등)에

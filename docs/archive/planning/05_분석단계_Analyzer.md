@@ -52,7 +52,7 @@
 - `scenario_band`는 내재 배수 중앙값과 분산 기반 범위를 내부 구조화 값으로 저장한다.
 - RAG 기반 evidence_chunks는 현재 런타임에 연결되어 있지 않으며, 복구 시 별도 설계와 테스트가 필요하다.
 - 사용자-facing 출력은 Bear/Base/Bull을 투자 행동 제안이 아니라 데이터 시나리오 밴드로 표현한다.
-- 상세 기준은 [`docs/spec/report-valuation-reinterpretation-strategy.md`](../spec/report-valuation-reinterpretation-strategy.md)를 따른다.
+- 상세 기준은 [`docs/spec/report-valuation-reinterpretation-strategy.md`](../../spec/report-valuation-reinterpretation-strategy.md)를 따른다.
 
 ---
 

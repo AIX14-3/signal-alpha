@@ -3,7 +3,7 @@
 > 상태: **선정 완료(2026-06-24) — Tesseract(kor+eng) 채택**. §4 비교표·§4.1 근거 참고.
 > 관련: [#375](https://github.com/AIX14-3/signal-alpha/issues/375) ·
 > [#390](https://github.com/AIX14-3/signal-alpha/issues/390)(Phase 1 벤치마크·선정) ·
-> 설계 [hiring-skill-enrichment-design.md](../spec/hiring-skill-enrichment-design.md)
+> 설계 [hiring-skill-enrichment-design.md](../../spec/hiring-skill-enrichment-design.md)
 
 ## 1. 목적
 

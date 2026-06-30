@@ -23,12 +23,12 @@
 
 ## 관련 문서 (구현 기준)
 
-- 아키텍처·수집 데몬: [`docs/architecture.md`](../architecture.md), [`docs/price-collector.md`](../price-collector.md), [`docs/spec/kiwoom-rest-spec.md`](../spec/kiwoom-rest-spec.md)
-- DB 상세: [`database/README.md`](../../database/README.md), [`database/erd/signal_alpha_core_erd.md`](../../database/erd/signal_alpha_core_erd.md)
+- 아키텍처·수집 데몬: [`docs/architecture.md`](../architecture.md), [`docs/price-collector.md`](../price-collector.md), [`docs/spec/kiwoom-rest-spec.md`](../../spec/kiwoom-rest-spec.md)
+- DB 상세: [`database/README.md`](../../../database/README.md), [`database/erd/signal_alpha_core_erd.md`](../../../database/erd/signal_alpha_core_erd.md)
 
 ## 노션 원본
 
-노션 워크스페이스의 "재재수정안 기획서" 페이지가 원본이다. 단계별 Mermaid ERD 이미지(7장, 각 1~2.5MB)는 용량 문제로 레포에 포함하지 않았다 — ERD는 [`database/erd/signal_alpha_core_erd.md`](../../database/erd/signal_alpha_core_erd.md)를 참조한다.
+노션 워크스페이스의 "재재수정안 기획서" 페이지가 원본이다. 단계별 Mermaid ERD 이미지(7장, 각 1~2.5MB)는 용량 문제로 레포에 포함하지 않았다 — ERD는 [`database/erd/signal_alpha_core_erd.md`](../../../database/erd/signal_alpha_core_erd.md)를 참조한다.
 
 ---
 
