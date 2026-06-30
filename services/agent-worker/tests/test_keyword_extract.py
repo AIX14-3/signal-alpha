@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from app.ml.keywords.extract import _terms, extract_period_keywords, period_key
+from app.ml.keywords.extract import _STOPWORDS, _terms, extract_period_keywords, period_key
 from app.ml.keywords.sources import TextRecord, _parse_yyyymmdd
 
 
@@ -27,6 +27,45 @@ def test_parse_yyyymmdd():
     assert _parse_yyyymmdd("20160331") == date(2016, 3, 31)
     assert _parse_yyyymmdd("") is None
     assert _parse_yyyymmdd("bad") is None
+
+
+def test_terms_extra_stopwords_extends_defaults():
+    # extra_stopwords add to (not replace) the patent defaults.
+    base = _terms("보고서 반도체")
+    assert "보고서" in base and "반도체" in base
+    pruned = _terms("보고서 반도체", frozenset({"보고서"}) | _STOPWORDS)
+    assert "보고서" not in pruned and "반도체" in pruned
+
+
+def test_extract_period_keywords_honors_extra_stopwords():
+    recs = [
+        TextRecord("005930", date(2016, 1, 5), "보고서 공급계약"),
+        TextRecord("005930", date(2016, 2, 5), "보고서 공급계약"),
+        TextRecord("005930", date(2016, 3, 5), "보고서 공급계약"),
+    ]
+    kws = {k.keyword for k in extract_period_keywords(recs, extra_stopwords={"보고서"})}
+    assert "공급계약" in kws and "보고서" not in kws
+
+
+def test_dart_title_source_uses_rcept_dt_as_pit_anchor(tmp_path):
+    import json
+
+    from app.ml.keywords.sources import DartTitleSource
+
+    path = tmp_path / "disc.json"
+    path.write_text(
+        json.dumps(
+            {"005930": [{"rcept_dt": "20180312", "report_nm": "유상증자결정"},
+                        {"rcept_dt": "bad", "report_nm": "drop me"},
+                        {"rcept_dt": "20180401", "report_nm": ""}]},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    recs = list(DartTitleSource(str(path)).records("005930"))
+    assert len(recs) == 1  # bad date and empty title dropped
+    assert recs[0].avail_date == date(2018, 3, 12)
+    assert recs[0].text == "유상증자결정"
 
 
 def test_emerging_term_surfaces_in_its_period_not_before():

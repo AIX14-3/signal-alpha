@@ -51,9 +51,9 @@ def period_key(d: date, *, months: int) -> str:
     raise ValueError("months must be 3, 6, or 12")
 
 
-def _terms(text: str) -> list[str]:
+def _terms(text: str, stopwords: frozenset[str] = _STOPWORDS) -> list[str]:
     """Unigrams + bigrams of non-stopword tokens (len>=2). Bigrams skip stopwords."""
-    toks = [t for t in _TOKEN_RE.findall(text) if len(t) >= 2 and t not in _STOPWORDS]
+    toks = [t for t in _TOKEN_RE.findall(text) if len(t) >= 2 and t not in stopwords]
     terms = list(toks)
     for a, b in zip(toks, toks[1:]):
         if a != b:  # skip degenerate repeats (e.g. "컴퓨터 컴퓨터")
@@ -77,13 +77,20 @@ def extract_period_keywords(
     months: int = 6,
     top_k: int = 15,
     min_count: int = 3,
+    extra_stopwords: Iterable[str] | None = None,
 ) -> list[PeriodKeyword]:
     """Per period, the top-``top_k`` terms (count>=``min_count``) by surge score.
 
     Surge score = (term's share this period / its share in all prior periods)
     * log1p(count). First period has no prior, so its frequent terms all rank by
     frequency (everything is "new" at t0) — expected and harmless downstream.
+
+    ``extra_stopwords`` are added to the patent-tuned defaults — pass per-source
+    boilerplate (e.g. DART 보고서/신고서/정정) so structural words never surface as
+    keywords. (Constant boilerplate is already suppressed by the surge baseline;
+    this just cleans the long tail.)
     """
+    stopwords = _STOPWORDS | frozenset(extra_stopwords or ())
     recs = list(records)
     ticker = recs[0].ticker if recs else ""
 
@@ -98,7 +105,7 @@ def extract_period_keywords(
     for p in periods:
         df: Counter = Counter()
         for r in by_period[p]:
-            for term in set(_terms(r.text)):  # document frequency (per-title presence)
+            for term in set(_terms(r.text, stopwords)):  # document frequency (per-title presence)
                 df[term] += 1
                 key = (p, term)
                 if key not in first_seen or r.avail_date < first_seen[key]:

@@ -59,3 +59,28 @@ class PatentTitleSource:
             title = (rec.get("title") or "").strip()
             if avail and title:
                 yield TextRecord(ticker=ticker, avail_date=avail, text=title)
+
+
+class DartTitleSource:
+    """DART disclosure titles from ``collect_dart_disclosures.py --out`` JSON.
+
+    ``avail_date`` = ``rcept_dt`` (the disclosure's public receipt date). Unlike
+    patents there is no publication lag — a disclosure is public on ``rcept_dt`` —
+    so the title is honestly knowable from that date forward. JSON shape:
+    ``{ticker: [{"rcept_dt": "YYYYMMDD", "report_nm": "..."}, ...]}``.
+    """
+
+    def __init__(self, json_path: str | Path) -> None:
+        self._data: dict[str, list[dict]] = json.loads(
+            Path(json_path).read_text(encoding="utf-8")
+        )
+
+    def tickers(self) -> list[str]:
+        return list(self._data)
+
+    def records(self, ticker: str) -> Iterable[TextRecord]:
+        for rec in self._data.get(ticker, []):
+            avail = _parse_yyyymmdd(rec.get("rcept_dt"))
+            title = (rec.get("report_nm") or "").strip()
+            if avail and title:
+                yield TextRecord(ticker=ticker, avail_date=avail, text=title)
