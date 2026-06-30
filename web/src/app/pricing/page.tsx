@@ -58,7 +58,7 @@ export default function PricingPage() {
   const yearlySavings = monthlyPrice * 12 - yearlyPrice;
 
   return (
-    <div className="py-12">
+    <div className="py-12" data-page="pricing">
       <h1 className="text-[32px] font-extrabold">요금 안내</h1>
       <p className="mt-1 text-[14px] text-muted">필요한 만큼 선택하세요. 언제든 취소할 수 있고, 남은 무료 열람은 보존됩니다.</p>
 

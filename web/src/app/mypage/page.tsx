@@ -52,7 +52,7 @@ export default function MyPage() {
   }
 
   return (
-    <div className="py-12">
+    <div className="py-12" data-page="mypage">
       <h1 className="text-[32px] font-extrabold">
         마이페이지 <span className="pill flat align-middle text-[13px]" style={{ padding: "3px 9px" }}>{user.member_code}</span>
       </h1>
