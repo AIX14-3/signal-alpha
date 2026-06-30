@@ -207,8 +207,13 @@ class TestPatentCollectorInsert(unittest.IsolatedAsyncioTestCase):
     async def test_status_partial_when_some_failed(self):
         self.assertEqual(_run_status(3, 0, 1), "partial")
 
-    async def test_status_failed_when_none_inserted_or_skipped(self):
+    async def test_status_failed_when_all_records_failed(self):
         self.assertEqual(_run_status(0, 0, 1), "failed")
+
+    async def test_status_success_when_empty_run(self):
+        # 빈 결과(0건)는 실패가 아니다 — 진짜 에러는 호출자가 except 에서 직접
+        # 'failed' 로 기록한다. (0,0,0) 을 failed 로 세면 실패율이 부풀려진다.
+        self.assertEqual(_run_status(0, 0, 0), "success")
 
     async def test_collector_does_not_write_to_forbidden_tables(self):
         record = _make_record()

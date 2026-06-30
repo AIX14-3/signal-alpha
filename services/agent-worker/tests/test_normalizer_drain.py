@@ -1,0 +1,58 @@
+"""run_normalizers._drain_source 병렬 드레인 — N 워커가 큐를 끝까지 비우고 집계."""
+from __future__ import annotations
+
+import asyncio
+import unittest
+from unittest.mock import patch
+
+import run_normalizers
+
+
+class _FakeAcquire:
+    async def __aenter__(self):
+        return object()
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class FakePool:
+    def acquire(self):
+        return _FakeAcquire()
+
+
+class FakeRunner:
+    """run_task 가 호출될 때마다 남은 작업이 있으면 success, 없으면 idle 반환.
+
+    asyncio 단일 스레드 + run_task 내부에 await 없음 → 체크+감소가 원자적이라
+    여러 워커가 동시에 호출해도 정확히 ``remaining`` 건만 success 로 처리된다.
+    """
+
+    remaining = 0
+
+    def __init__(self, conn, handlers):
+        pass
+
+    async def run_task(self, task_type):
+        if FakeRunner.remaining > 0:
+            FakeRunner.remaining -= 1
+            return {"status": "success", "task_id": FakeRunner.remaining}
+        return {"status": "idle"}
+
+
+class TestDrainConcurrency(unittest.TestCase):
+    def test_workers_drain_all_tasks_and_aggregate(self):
+        FakeRunner.remaining = 25
+        with patch.dict(run_normalizers._SOURCES,
+                        {"PATENT": ("NORMALIZE_PATENT", lambda conn: object())}), \
+                patch.object(run_normalizers, "QueueTaskRunner", FakeRunner):
+            counts = asyncio.run(
+                run_normalizers._drain_source(FakePool(), "PATENT", concurrency=4)
+            )
+        self.assertEqual(counts["success"], 25, "모든 작업이 정확히 한 번씩 처리돼야 한다")
+        self.assertEqual(counts["error"], 0)
+        self.assertEqual(FakeRunner.remaining, 0)
+
+
+if __name__ == "__main__":
+    unittest.main()

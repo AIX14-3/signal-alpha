@@ -42,6 +42,13 @@ from app.orchestrator.queue.task_types import (
 )
 from app.orchestrator.queue.tasks import QueueTaskRunner
 
+# Windows 콘솔(cp949)에서 ⚠️ 등 비-ASCII 기호 print 시 UnicodeEncodeError 방지.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
+    except (AttributeError, ValueError):
+        pass
+
 ROOT = Path(__file__).resolve().parents[2]
 
 # source → (task_type, handler factory). Each handler takes a single connection,
@@ -96,26 +103,41 @@ def resolve_ssl(host: str) -> Any:
     return False if host in _LOCAL_HOSTS else "require"
 
 
-async def _drain_source(pool: asyncpg.Pool, source: str) -> dict[str, int]:
+async def _drain_source(pool: asyncpg.Pool, source: str, concurrency: int) -> dict[str, int]:
+    """Drain one source's NORMALIZE queue with ``concurrency`` parallel workers.
+
+    안전하게 병렬화 가능: ``claim_next_pending`` 이 ``FOR UPDATE SKIP LOCKED`` 라
+    워커들이 같은 태스크를 잡지 않는다. 각 워커는 자기 커넥션으로 claim→처리 루프를
+    돌며 큐가 idle(=잡을 게 없음)을 반환할 때까지 비운다. 직렬 1건씩이던 기존 구조는
+    대량 백로그(예: 특허 정규화 ~15만건)를 90분 워크플로 안에 못 비웠다 → N배 처치량.
+    """
     task_type, handler_factory = _SOURCES[source]
-    counts = {"success": 0, "skipped": 0, "error": 0}
-    for _ in range(_MAX_TASKS_PER_SOURCE):
-        async with pool.acquire() as conn:
-            runner = QueueTaskRunner(conn, {task_type: handler_factory(conn)})
-            result = await runner.run_task(task_type)
-        status = result["status"]
-        if status == "idle":
-            break
-        if status == "success":
-            counts["success"] += 1
-        elif status == "skipped":
-            counts["skipped"] += 1
-        else:  # failed — isolate and keep draining
-            counts["error"] += 1
-            print(f"  {task_type} task_id={result.get('task_id')}: {status} {result.get('error', '')}")
-    else:
-        print(f"  ⚠️ {task_type}: hit {_MAX_TASKS_PER_SOURCE} task cap — stopping (possible re-claim loop)")
-    return counts
+
+    async def _worker() -> dict[str, int]:
+        counts = {"success": 0, "skipped": 0, "error": 0}
+        for _ in range(_MAX_TASKS_PER_SOURCE):
+            async with pool.acquire() as conn:
+                runner = QueueTaskRunner(conn, {task_type: handler_factory(conn)})
+                result = await runner.run_task(task_type)
+            status = result["status"]
+            if status == "idle":  # SKIP LOCKED: 잡을 pending 이 없음(다른 워커가 처리 중 포함)
+                break
+            if status == "success":
+                counts["success"] += 1
+            elif status == "skipped":
+                counts["skipped"] += 1
+            else:  # failed — isolate and keep draining
+                counts["error"] += 1
+                print(f"  {task_type} task_id={result.get('task_id')}: {status} {result.get('error', '')}")
+        else:
+            print(f"  WARN {task_type}: hit per-worker cap {_MAX_TASKS_PER_SOURCE} — stopping (possible re-claim loop)")
+        return counts
+
+    totals = {"success": 0, "skipped": 0, "error": 0}
+    for partial in await asyncio.gather(*(_worker() for _ in range(max(1, concurrency)))):
+        for key in totals:
+            totals[key] += partial[key]
+    return totals
 
 
 async def run_once(args: argparse.Namespace) -> None:
@@ -130,21 +152,24 @@ async def run_once(args: argparse.Namespace) -> None:
     }
     wanted = {s for s, on in only_flags.items() if on} or set(_SOURCES)
 
+    # 병렬 드레인 워커 수. 기본 8(env NORMALIZE_CONCURRENCY 또는 --concurrency 로 조정).
+    concurrency = max(1, int(args.concurrency or os.getenv("NORMALIZE_CONCURRENCY", "8")))
+
     params = parse_dsn(dsn)
     pool = await asyncpg.create_pool(
         **params,
         min_size=1,
-        max_size=4,
+        max_size=max(4, concurrency + 1),  # 워커당 커넥션 1개 + 여유
         ssl=resolve_ssl(params["host"]),
         statement_cache_size=0,
     )
     try:
         print("\nALTERNATIVE NORMALIZER")
         print("=" * 60)
-        print(f"draining sources={sorted(wanted)}")
+        print(f"draining sources={sorted(wanted)} (concurrency={concurrency})")
         totals = {"success": 0, "skipped": 0, "error": 0}
         for source in sorted(wanted):
-            counts = await _drain_source(pool, source)
+            counts = await _drain_source(pool, source, concurrency)
             print(f"  {source}: {counts}")
             for key in totals:
                 totals[key] += counts[key]
@@ -160,6 +185,10 @@ async def main() -> None:
     parser.add_argument("--patent-only", action="store_true")
     parser.add_argument("--datalab-only", action="store_true")
     parser.add_argument("--hiring-only", action="store_true")
+    parser.add_argument(
+        "--concurrency", type=int, default=0,
+        help="Parallel drain workers per source (default: env NORMALIZE_CONCURRENCY or 8).",
+    )
     parser.add_argument("--loop", action="store_true", help="Repeat draining until interrupted.")
     parser.add_argument("--interval-seconds", type=int, default=3600)
     args = parser.parse_args()

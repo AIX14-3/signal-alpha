@@ -38,19 +38,26 @@ def failure_rate(collected: int, failed: int) -> float | None:
 
 
 def calculate_run_status(inserted: int, skipped: int, failed: int) -> str:
-    """collector_runs.status 판정 — usable(inserted|skipped) / failed 기반 3분기.
+    """collector_runs.status 판정 — usable(inserted|skipped) / failed 기반.
 
     A skip is NOT a failure (see module docstring): usable = inserted | skipped.
-      - failed == 0 & usable        → "success"
-      - failed > 0  & usable        → "partial"
-      - 전건 실패(0,0,>0) 또는 빈 런(0,0,0) → "failed"
+    빈 결과(0건)도 실패가 아니다 — 진짜 에러(예외)는 호출자가 except 에서 직접
+    status='failed' 로 기록하므로, 이 함수에 도달한 (0,0,0)은 "정상 실행했으나
+    그날 검색량/특허가 없었다"는 뜻이다(특히 DataLab 롱테일 키워드). 빈결과를 failed
+    로 세면 실패율이 크게 부풀려진다(prod DATALAB 실패의 ~99%가 이 케이스였음).
+      - usable & failed == 0   → "success"
+      - usable & failed > 0    → "partial"
+      - 전건 적재 실패(0,0,>0)  → "failed"
+      - 빈 런(0,0,0)           → "success"  (데이터 없음 ≠ 실패)
+
+    참고: collector_runs.status CHECK 제약은 {running,success,partial,failed}만 허용
+    하므로 빈결과 전용 상태("no_data")는 쓰지 않고 success 로 흡수한다.
     """
     has_usable = inserted > 0 or skipped > 0
-    if failed == 0 and has_usable:
-        return "success"
-    if failed > 0 and has_usable:
-        return "partial"
-    return "failed"
+    if has_usable:
+        return "success" if failed == 0 else "partial"
+    # usable 0건: 적재 시도가 전부 실패했을 때만 failed, 그 외(아예 0건)는 success.
+    return "failed" if failed > 0 else "success"
 
 
 @dataclass(frozen=True)
