@@ -11,7 +11,8 @@ name: AltData Collect
 #   NAVER_CLIENT_ID / NAVER_CLIENT_SECRET   (DataLab 수집 — 현재 등록됨)
 #   KIPRIS_API_KEY        (특허 수집 — ⚠️ 현재 미등록. 없으면 특허는 빈 키로 돌아 수집 0)
 #   COLLECTOR_VERSION     (선택)
-# (특허 BigQuery 백필은 별도 스크립트/ADC 경로이며 이 워크플로와 무관 — GOOGLE_CLOUD_PROJECT 불필요)
+# (특허 BigQuery 백필은 별도 워크플로 altdata-collect-bigquery.yml(주1회·GCP_SA_KEY 인증)이
+#  담당하며 이 워크플로와 무관 — 여기선 GOOGLE_CLOUD_PROJECT 불필요)
 
 on:
   schedule:

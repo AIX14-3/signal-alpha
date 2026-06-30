@@ -165,6 +165,12 @@ async def run_once(args: argparse.Namespace) -> None:
         ssl="require",
         statement_cache_size=0,
     )
+    # 타깃별 장애 격리용 집계. 한 종목/카테고리의 API 에러(KIPRIS 쿼터 소진 등)는
+    # 격리하고 나머지를 계속 수집하되, 한 소스의 *모든* 타깃이 터지면 비-제로 종료해
+    # CI 가 빨갛게 보이도록 한다. (워크플로는 step 단위로 --patent-only/--datalab-only
+    # 를 따로 돌리므로 "all attempted failed" == "그 소스 전체 실패".)
+    attempted = 0
+    isolated_failures = 0
     try:
         collector_ver = os.getenv("COLLECTOR_VERSION", "1.0")
 
@@ -177,15 +183,22 @@ async def run_once(args: argparse.Namespace) -> None:
             print("=" * 60)
             for target in patent_targets:
                 print(f"\n> {target['ticker']} {target['stock_name']}")
-                result = await patent_collector.run(
-                    stock_id=target["stock_id"],
-                    stock_code=target["ticker"],
-                    stock_name=target["stock_name"],
-                    applicant_names=target["applicant_names"],
-                    start_date=patent_date(args.start_date),
-                    end_date=patent_date(args.end_date),
-                )
-                print(result)
+                attempted += 1
+                try:
+                    result = await patent_collector.run(
+                        stock_id=target["stock_id"],
+                        stock_code=target["ticker"],
+                        stock_name=target["stock_name"],
+                        applicant_names=target["applicant_names"],
+                        start_date=patent_date(args.start_date),
+                        end_date=patent_date(args.end_date),
+                    )
+                    print(result)
+                except Exception as exc:
+                    # 타깃별 격리: run() 은 예외 전에 collector_runs 행을
+                    # status='failed' 로 이미 닫는다. 여기서는 다음 타깃으로 진행.
+                    isolated_failures += 1
+                    print(f"✗ patent collect failed for {target['ticker']} {target['stock_name']}: {exc}")
 
         if not args.patent_only:
             naver_client = NaverDataLabClient(
@@ -199,17 +212,30 @@ async def run_once(args: argparse.Namespace) -> None:
             print("=" * 60)
             for category in categories:
                 print(f"\n> {category['category_name']} ({len(category['keywords'])} keywords)")
-                result = await datalab_collector.run(
-                    category_id=category["category_id"],
-                    category_name=category["category_name"],
-                    keyword_group=category["keyword_group"],
-                    keywords=list(category["keywords"]),
-                    start_date=datalab_date(args.start_date),
-                    end_date=datalab_date(args.end_date),
-                )
-                print(result)
+                attempted += 1
+                try:
+                    result = await datalab_collector.run(
+                        category_id=category["category_id"],
+                        category_name=category["category_name"],
+                        keyword_group=category["keyword_group"],
+                        keywords=list(category["keywords"]),
+                        start_date=datalab_date(args.start_date),
+                        end_date=datalab_date(args.end_date),
+                    )
+                    print(result)
+                except Exception as exc:
+                    # 타깃별 격리(특허와 동일): run() 은 예외 전에 collector_runs 행을
+                    # status='failed' 로 닫는다. 한 카테고리 실패가 나머지를 막지 않는다.
+                    isolated_failures += 1
+                    print(f"✗ datalab collect failed for {category['category_name']}: {exc}")
     finally:
         await pool.close()
+
+    if attempted:
+        print(f"\n수집 요약: 시도 {attempted} · 격리된 실패 {isolated_failures}")
+    # 한 소스의 모든 타깃이 터졌을 때만 실패로 종료(부분 실패는 격리하고 0 종료).
+    if attempted and isolated_failures == attempted:
+        raise SystemExit(f"All {attempted} collection target(s) failed.")
 
 
 async def main() -> None:
