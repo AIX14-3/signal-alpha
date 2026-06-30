@@ -47,6 +47,10 @@ on:
         description: "쉼표구분 종목(비우면 스크립트 기본 005930,000660,035420)"
         required: false
         default: ""
+      limit_per_stock:
+        description: "종목당 최대 적재 건수(스모크 테스트용; 비우면 전체)"
+        required: false
+        default: ""
 
 concurrency:
   group: altdata-collect-bigquery
@@ -97,13 +101,15 @@ jobs:
           INPUT_START_YEAR: ${{ inputs.start_year }}
           INPUT_END_YEAR: ${{ inputs.end_year }}
           INPUT_TICKERS: ${{ inputs.tickers }}
+          INPUT_LIMIT: ${{ inputs.limit_per_stock }}
         run: |
           args=()
           # inputs 는 workflow_dispatch 에서만 채워진다. 스케줄 실행은 전부 빈 값 →
-          # dry-run 미적용(실적재) + 연도/종목은 스크립트 기본값 사용.
+          # dry-run 미적용(실적재) + 연도/종목/건수는 스크립트 기본값 사용.
           [ "$INPUT_DRY_RUN" = "true" ] && args+=(--dry-run)
           [ -n "$INPUT_START_YEAR" ] && args+=(--start-year "$INPUT_START_YEAR")
           [ -n "$INPUT_END_YEAR" ] && args+=(--end-year "$INPUT_END_YEAR")
           [ -n "$INPUT_TICKERS" ] && args+=(--tickers "$INPUT_TICKERS")
+          [ -n "$INPUT_LIMIT" ] && args+=(--limit-per-stock "$INPUT_LIMIT")
           echo "backfill args: ${args[*]:-<defaults>}"
           uv run --with google-cloud-bigquery python scripts/backfill_patents_bigquery.py "${args[@]}"
