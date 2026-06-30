@@ -38,7 +38,14 @@
    (DB 쓰기 없음). 통과하면 스케줄(또는 `dry_run=false` 수동)로 실적재.
 4. `bq_rows`/`build_records`는 `app/collectors/patent/bigquery_source.py`에 있으므로 별도 드라이버에서도 재사용 가능.
 
-> ⚠️ `GCP_SA_KEY` 미등록 상태에서는 auth 스텝이 실패한다(워크플로는 `continue-on-error`로 격리되어 잡 자체는 통과). 등록 전까지 이 워크플로의 백필 스텝은 no-op로 본다.
+> ⚠️ **시크릿 위치 주의**: `GCP_SA_KEY`/`GOOGLE_CLOUD_PROJECT`는 *Settings > Secrets and
+> variables > **Actions** 탭 > Repository secrets*에 넣어야 한다. Environment 시크릿이나
+> Dependabot 시크릿에 넣으면 이 워크플로가 못 읽어 `${{ secrets.GCP_SA_KEY }}`가 빈값이 된다
+> (auth 액션이 *"must specify exactly one of ... credentials_json"* 로 실패).
+>
+> `GCP_SA_KEY` 미등록/빈값이면 **auth 스텝이 실패하고 잡이 red** 가 된다(설정 오류를 드러내는
+> 의도된 신호 — auth 는 `continue-on-error` 아님). 백필 스텝만 `continue-on-error`라 BigQuery
+> 일시 장애·데이터 이슈는 잡을 죽이지 않는다. `gh secret list` 로 등록 여부를 확인할 수 있다.
 
 ## 검증
 

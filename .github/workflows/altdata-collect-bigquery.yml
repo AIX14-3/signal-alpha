@@ -9,10 +9,13 @@ name: AltData Collect (BigQuery)
 #   UNIQUE 제약에서 자동 dedup → 재실행 idempotent.
 # 런북: docs/runbooks/patent-dual-source.md
 #
-# ⚠️ 필요한 리포 Secrets(Settings > Secrets and variables > Actions):
+# ⚠️ 필요한 리포 Secrets — 반드시 Settings > Secrets and variables > "Actions" 탭의
+#    "Repository secrets" 에 넣어야 한다(Environment/Dependabot 시크릿은 이 워크플로가
+#    못 읽는다). 이름은 대소문자 정확히.
 #   GCP_SA_KEY            (필수) GCP 서비스계정 JSON 키 전체. SA 권한: BigQuery Job User
-#                         + 공개 데이터셋(patents-public-data) 읽기. ⚠️ 현재 미등록 —
-#                         등록 전에는 auth 스텝이 실패한다(continue-on-error 로 격리됨).
+#                         + 공개 데이터셋(patents-public-data) 읽기. 미등록/빈값이면 auth
+#                         스텝이 실패하고 잡이 red 가 된다(= "시크릿 설정하라"는 신호).
+#                         등록 후 dry_run=true 로 재실행하면 통과.
 #   GOOGLE_CLOUD_PROJECT  (필수) 청구/조회 프로젝트(예: patent-bq-reader). 없으면 스크립트가
 #                         DEFAULT_BQ_PROJECT="patent-bq-reader" 로 폴백.
 #   DATABASE_URL          (실적재 시 필수) dry-run 은 DB 미접속이라 불필요.
