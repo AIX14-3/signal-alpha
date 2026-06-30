@@ -196,6 +196,13 @@ async def get_source_detail(
     event_type = _SOURCE_TO_EVENT_TYPE[source]
     items = [_evidence(e) for e in events if str(e.get("source_type", "")).upper() == event_type]
 
+    # 분석 근거 서술(score_breakdown.{SRC}.narrative_points). PRICE 처럼 signal_events 가 없는
+    # 소스도 이 불릿으로 근거를 노출한다(DART/REPORT 는 items 표로 노출). 저장된 서술도, 이벤트
+    # 근거도 없는 소스(주가 등 문서 비기반)는 발행된 score_breakdown 필드에서 근거 불릿을 파생한다.
+    narrative_points = _narrative_points(source, breakdown)
+    if not narrative_points and not items:
+        narrative_points = _derive_points(source, breakdown)
+
     return {
         "stock": _stock(row),
         "source": source,
@@ -203,6 +210,7 @@ async def get_source_detail(
         "score": block.get("score"),
         "data_status": block.get("data_status"),
         "summary": block.get("summary"),
+        "narrative_points": narrative_points,
         # REPORT 는 밸류에이션 fact(목표주가/방법론 등)를 추가 노출. 그 외 소스는 None.
         "valuation": _report_valuation(breakdown) if source == "report" else None,
         "items": items,
@@ -285,6 +293,48 @@ def _source_block(source: str, breakdown: dict[str, Any], *, locked: bool) -> di
         "summary": detail.get("summary"),
         "locked": False,
     }
+
+
+def _narrative_points(source: str, breakdown: dict[str, Any]) -> list[str]:
+    """score_breakdown.{SRC}.narrative_points 를 문자열 리스트로 정규화해 노출. 없으면 []."""
+    detail = breakdown.get(_SOURCE_TO_BREAKDOWN[source])
+    if not isinstance(detail, dict):
+        return []
+    points = detail.get("narrative_points")
+    if not isinstance(points, list):
+        return []
+    return [str(p) for p in points if isinstance(p, str) and p.strip()]
+
+
+_DIRECTION_KO = {
+    "positive": "긍정",
+    "negative": "부정",
+    "neutral": "중립",
+    "mixed": "혼조",
+    "unknown": "판단 보류",
+}
+
+
+def _derive_points(source: str, breakdown: dict[str, Any]) -> list[str]:
+    """저장된 narrative_points/이벤트 근거가 모두 없는 소스(주가 등 문서 비기반)를 위해
+    발행된 score_breakdown 필드(방향·AI 예측 점수·데이터 상태·리스크 플래그)에서 근거 불릿을
+    파생한다. 새 값을 만들지 않고 이미 발행된 수치만 사람이 읽기 쉽게 풀어 쓴다."""
+    detail = breakdown.get(_SOURCE_TO_BREAKDOWN[source])
+    if not isinstance(detail, dict):
+        return []
+    points: list[str] = []
+    direction = str(detail.get("direction") or "").lower()
+    if direction and direction != "unknown":
+        points.append(f"데이터 방향성은 {_DIRECTION_KO.get(direction, direction)} 방향입니다.")
+    score_100 = _number(detail.get("score_100"))
+    if score_100 is not None:
+        points.append(f"주가 BASE 기반 AI 예측 점수는 {score_100}점입니다(0–100, 50=중립).")
+    flags = detail.get("risk_flags")
+    if isinstance(flags, list) and flags:
+        joined = ", ".join(str(f) for f in flags if str(f).strip())
+        if joined:
+            points.append(f"유의 플래그: {joined}")
+    return points
 
 
 def _report_valuation(breakdown: dict[str, Any]) -> dict[str, Any] | None:

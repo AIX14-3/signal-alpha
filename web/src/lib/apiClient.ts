@@ -202,6 +202,8 @@ export type SourceDetail = {
   score: number | null;
   data_status?: string;
   summary: string | null;
+  // 분석 근거 서술 불릿(주식정보처럼 signal_events 가 없는 소스의 근거). 없으면 빈 배열.
+  narrative_points?: string[] | null;
   valuation?: ReportValuation | null;
   items: SourceDetailItem[];
   notice: string;

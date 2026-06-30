@@ -107,35 +107,48 @@ export default function SourceDetailPage() {
             </div>
           )}
 
-          <div className="card mt-4 overflow-hidden">
-            <table className="w-full text-[13.5px]">
-              <thead>
-                <tr className="text-muted">
-                  <th className="px-4 py-3 text-left font-semibold">{source === "report" ? "리포트 제목" : "제목"}</th>
-                  <th className="px-4 py-3 text-left font-semibold">{source === "report" ? "발행일" : "날짜"}</th>
-                  <th className="px-4 py-3 text-left font-semibold">{source === "report" ? "증권사" : "출처"}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {detail.items.length === 0 && (
-                  <tr><td className="px-4 py-6 text-center text-muted" colSpan={3}>표시할 근거가 없습니다.</td></tr>
-                )}
-                {detail.items.map((it, i) => (
-                  <tr key={i} className="border-t border-line">
-                    <td className="px-4 py-3">
-                      {it.evidence_url ? (
-                        <a href={it.evidence_url} target="_blank" rel="noreferrer" className="text-sky-deep">{it.title ?? "근거"} ↗</a>
-                      ) : (
-                        it.title ?? "근거"
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-muted">{it.event_date?.slice(0, 10) ?? "—"}</td>
-                    <td className="px-4 py-3 text-muted">{it.source_name ?? "—"}</td>
-                  </tr>
+          {detail.narrative_points && detail.narrative_points.length > 0 && (
+            <div className="card mt-4 p-6">
+              <div className="text-[13px] font-semibold text-muted">분석 근거</div>
+              <ul className="mt-3 list-disc space-y-2 pl-5 text-[13.5px] text-navy-soft">
+                {detail.narrative_points.map((p, i) => (
+                  <li key={i}>{p}</li>
                 ))}
-              </tbody>
-            </table>
-          </div>
+              </ul>
+            </div>
+          )}
+
+          {(detail.items.length > 0 || !(detail.narrative_points && detail.narrative_points.length > 0)) && (
+            <div className="card mt-4 overflow-hidden">
+              <table className="w-full text-[13.5px]">
+                <thead>
+                  <tr className="text-muted">
+                    <th className="px-4 py-3 text-left font-semibold">{source === "report" ? "리포트 제목" : "제목"}</th>
+                    <th className="px-4 py-3 text-left font-semibold">{source === "report" ? "발행일" : "날짜"}</th>
+                    <th className="px-4 py-3 text-left font-semibold">{source === "report" ? "증권사" : "출처"}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {detail.items.length === 0 && (
+                    <tr><td className="px-4 py-6 text-center text-muted" colSpan={3}>표시할 근거가 없습니다.</td></tr>
+                  )}
+                  {detail.items.map((it, i) => (
+                    <tr key={i} className="border-t border-line">
+                      <td className="px-4 py-3">
+                        {it.evidence_url ? (
+                          <a href={it.evidence_url} target="_blank" rel="noreferrer" className="text-sky-deep">{it.title ?? "근거"} ↗</a>
+                        ) : (
+                          it.title ?? "근거"
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-muted">{it.event_date?.slice(0, 10) ?? "—"}</td>
+                      <td className="px-4 py-3 text-muted">{it.source_name ?? "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
           <p className="mt-6 rounded-[12px] bg-surface-2 p-4 text-[12.5px] text-muted">{detail.notice}</p>
         </>
       )}
