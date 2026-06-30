@@ -126,7 +126,7 @@ Agent·ML의 분석 결과와 최종 시그널.
 
 ## Legacy — report MVP (013_legacy_report_mvp.sql) ⚠️ 폐기 예정
 
-신규 코드 참조 금지. 공용 경로(`raw_documents` → `report_raw_details` → `report_chunks`)로 이전 후 DROP 예정.
+신규 코드 참조 금지. 현재 Report 런타임은 `raw_documents` → `report_raw_details` 이후 `source_documents` / `signal_events` / `signal_metrics`와 분석 테이블을 사용합니다. `report_chunks`는 RAG 복구 후보 스키마이며 현재 런타임 저장 경로가 아닙니다. 기존 환경 호환성과 추후 DROP migration 준비를 위해 보존합니다.
 
 | 테이블 | 역할 |
 | --- | --- |
