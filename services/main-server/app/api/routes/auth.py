@@ -24,7 +24,7 @@ from app.core.security import (
 from signal_alpha_data_access.backend import UserBillingRepository, UserSessionRepository
 
 
-NOTICE = "Signal Alpha는 매수·매도 추천이 아니라 데이터 방향성과 근거를 제공하는 서비스입니다."
+NOTICE = "Signal Alpha는 데이터 방향성, 근거, 소스 간 일치도를 제공해 사용자 판단 보조를 돕는 서비스입니다."
 
 # member_code = 영문 대문자 4 + 숫자 4 (혼동 문자 I/O/0/1 제외).
 _CODE_LETTERS = "ABCDEFGHJKLMNPQRSTUVWXYZ"
