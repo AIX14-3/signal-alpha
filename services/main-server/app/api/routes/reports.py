@@ -9,15 +9,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from app.api.routes.auth import (
     NOTICE,
     _subscription_active,
-    get_current_user,
     get_current_user_optional,
 )
-from app.core.config import Settings, get_settings
 from app.core.database import get_database_pool
-from signal_alpha_data_access.backend import (
-    ReportIssuanceRepository,
-    SignalRepository,
-)
+from signal_alpha_data_access.backend import SignalRepository
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
 
@@ -57,28 +52,7 @@ _PREDICTION_RATE_RUN_KEY = {
     "patent": "SRC_PATENT",
     "report": "SRC_REPORT",
 }
-_BLIND_NOTICE = "전체 리포트는 로그인 후 무료 3회까지 열람할 수 있습니다. 비회원은 DART·네이버 데이터만 확인할 수 있습니다."
-
-
-@router.get("/quota")
-async def get_quota(
-    current_user: dict[str, Any] = Depends(get_current_user),
-    pool: Any = Depends(get_database_pool),
-    settings: Settings = Depends(get_settings),
-) -> dict[str, Any]:
-    async with pool.acquire() as connection:
-        free_used = await ReportIssuanceRepository(connection).count_free_used(
-            user_id=int(current_user["id"])
-        )
-        subscription_active = await _subscription_active(connection, int(current_user["id"]))
-    quota = settings.free_report_quota
-    return {
-        "free_quota": quota,
-        "free_used": free_used,
-        "free_remaining": max(0, quota - free_used),
-        "subscription_active": subscription_active,
-        "notice": NOTICE,
-    }
+_BLIND_NOTICE = "전체 리포트는 구독 시 열람할 수 있습니다. 비구독자는 DART·네이버 데이터만 확인할 수 있습니다."
 
 
 @router.get("/{stock_code}")
@@ -95,66 +69,8 @@ async def get_report(
         is_member = current_user is not None
         unlocked = False
         if is_member:
-            unlocked = await _is_unlocked(connection, int(current_user["id"]), int(row["id"]))
+            unlocked = await _is_unlocked(connection, int(current_user["id"]))
     return _report_response(row, unlocked=unlocked, is_member=is_member)
-
-
-@router.post("/{stock_code}/issue")
-async def issue_report(
-    stock_code: str,
-    current_user: dict[str, Any] = Depends(get_current_user),
-    pool: Any = Depends(get_database_pool),
-    settings: Settings = Depends(get_settings),
-) -> dict[str, Any]:
-    user_id = int(current_user["id"])
-    async with pool.acquire() as connection:
-        row = await SignalRepository(connection).get_current_by_ticker(stock_code)
-        if row is None:
-            raise _api_error(404, "REPORT_NOT_FOUND", "발행된 리포트가 없습니다.")
-        row = dict(row)
-        final_signal_id = int(row["id"])
-        issuance_repo = ReportIssuanceRepository(connection)
-
-        existing = await issuance_repo.get_issuance(user_id=user_id, final_signal_id=final_signal_id)
-        subscription_active = await _subscription_active(connection, user_id)
-        free_used = await issuance_repo.count_free_used(user_id=user_id)
-        quota = settings.free_report_quota
-
-        if existing is not None:
-            issued_via = existing["issued_via"]
-        elif subscription_active:
-            await issuance_repo.insert_issuance(
-                user_id=user_id,
-                stock_id=int(row["stock_id"]),
-                final_signal_id=final_signal_id,
-                run_key=str(row.get("run_key") or "AGGREGATED"),
-                issued_via="subscription",
-            )
-            issued_via = "subscription"
-        elif quota - free_used > 0:
-            await issuance_repo.insert_issuance(
-                user_id=user_id,
-                stock_id=int(row["stock_id"]),
-                final_signal_id=final_signal_id,
-                run_key=str(row.get("run_key") or "AGGREGATED"),
-                issued_via="free",
-            )
-            issued_via = "free"
-            free_used += 1
-        else:
-            raise _api_error(
-                402,
-                "REPORT_QUOTA_EXCEEDED",
-                "무료 리포트 열람 횟수를 모두 사용했습니다. 구독 시 무제한으로 열람할 수 있습니다.",
-            )
-
-    return _report_response(
-        row,
-        unlocked=True,
-        is_member=True,
-        issued_via=issued_via,
-        free_remaining=max(0, quota - free_used),
-    )
 
 
 @router.get("/{stock_code}/sources/{source}")
@@ -174,19 +90,17 @@ async def get_source_detail(
             raise _api_error(404, "REPORT_NOT_FOUND", "발행된 리포트가 없습니다.")
         row = dict(row)
         is_member = current_user is not None
-        unlocked = is_member and await _is_unlocked(
-            connection, int(current_user["id"]), int(row["id"])
-        )
+        unlocked = is_member and await _is_unlocked(connection, int(current_user["id"]))
 
-        # 접근 통제: 공개 소스(dart/datalab)는 누구나. 그 외는 회원+언락 필요.
+        # 접근 통제: 공개 소스(dart/datalab)는 누구나. 그 외는 구독자만 열람.
         if source not in PUBLIC_SOURCES:
             if not is_member:
                 raise _api_error(401, "MEMBERSHIP_REQUIRED", "로그인 후 열람할 수 있습니다.")
             if not unlocked:
                 raise _api_error(
                     402,
-                    "REPORT_QUOTA_EXCEEDED",
-                    "리포트를 먼저 발행(열람)해야 소스 상세를 볼 수 있습니다.",
+                    "SUBSCRIPTION_REQUIRED",
+                    "구독 시 전체 소스 상세를 열람할 수 있습니다.",
                 )
 
         detail = await SignalRepository(connection).get_detail_by_id(int(row["id"]))
@@ -222,13 +136,9 @@ async def get_source_detail(
 # ----- helpers -----
 
 
-async def _is_unlocked(connection: Any, user_id: int, final_signal_id: int) -> bool:
-    if await _subscription_active(connection, user_id):
-        return True
-    issuance = await ReportIssuanceRepository(connection).get_issuance(
-        user_id=user_id, final_signal_id=final_signal_id
-    )
-    return issuance is not None
+async def _is_unlocked(connection: Any, user_id: int) -> bool:
+    """전체 리포트 열람은 활성 구독자만 가능하다(무료 3회 열람 폐지)."""
+    return await _subscription_active(connection, user_id)
 
 
 def _report_response(
@@ -236,8 +146,6 @@ def _report_response(
     *,
     unlocked: bool,
     is_member: bool,
-    issued_via: str | None = None,
-    free_remaining: int | None = None,
 ) -> dict[str, Any]:
     breakdown = _json_object(row.get("score_breakdown"))
     sources = [
@@ -253,10 +161,6 @@ def _report_response(
         for s in _PREDICTION_RATE_SOURCES
     ]
     access: dict[str, Any] = {"unlocked": unlocked, "is_member": is_member}
-    if issued_via is not None:
-        access["issued_via"] = issued_via
-    if free_remaining is not None:
-        access["free_remaining"] = free_remaining
 
     return {
         "stock": _stock(row),

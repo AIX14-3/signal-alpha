@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect } from "react";
-import { ApiError, type PredictionRate, type ReportSource } from "@/lib/apiClient";
+import { type PredictionRate, type ReportSource } from "@/lib/apiClient";
 import { WatchlistButton } from "@/components/WatchlistButton";
 import {
   directionLabel,
@@ -15,7 +15,6 @@ import {
 } from "@/lib/format";
 import { useAuthStore } from "@/stores/authStore";
 import { useReportStore } from "@/stores/reportStore";
-import { useToastStore } from "@/stores/toastStore";
 
 export default function ReportPage() {
   const params = useParams<{ ticker: string }>();
@@ -24,8 +23,7 @@ export default function ReportPage() {
 
   const user = useAuthStore((s) => s.user);
   const status = useAuthStore((s) => s.status);
-  const { report, quota, loading, issuing, error, load, issue, loadQuota } = useReportStore();
-  const showToast = useToastStore((s) => s.show);
+  const { report, loading, error, load } = useReportStore();
 
   useEffect(() => {
     // 리포트(/api/reports/{code})는 공개 엔드포인트라 토큰이 없으면 401 이 아니라
@@ -36,24 +34,6 @@ export default function ReportPage() {
     if (status === "idle" || status === "loading") return;
     void load(ticker);
   }, [ticker, load, status]);
-
-  useEffect(() => {
-    if (user) void loadQuota();
-  }, [user, loadQuota]);
-
-  async function onIssue() {
-    try {
-      await issue(ticker);
-      await loadQuota();
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 402) {
-        showToast("무료 열람을 모두 사용했습니다. 구독하면 무제한으로 볼 수 있어요.", "info");
-        router.push("/pricing");
-        return;
-      }
-      showToast((err as Error).message, "error");
-    }
-  }
 
   // hydrate 가 끝나기 전(idle/loading)에는 아직 로드를 시작하지 않으므로 로딩 표시를 유지한다.
   if (loading || status === "idle" || status === "loading")
@@ -73,14 +53,9 @@ export default function ReportPage() {
   const byKey = new Map(report.sources.map((s) => [s.source, s] as const));
   const byPred = new Map((report.prediction_rates ?? []).map((p) => [p.source, p] as const));
   const loginHref = `/login?returnTo=${encodeURIComponent(`/report/${ticker}`)}`;
-  const issueLabel = quota?.subscription_active
-    ? "리포트 열람"
-    : quota
-      ? `무료로 열람하기 (${quota.free_remaining}회 남음)`
-      : "리포트 발행(열람)";
+  // 무료 3회 열람 폐지 → 전체 리포트는 구독자만. 비구독 회원은 구독(/pricing), 비회원은 로그인으로.
   const onUnlock = () => {
-    if (isMember) void onIssue();
-    else router.push(loginHref);
+    router.push(isMember ? "/pricing" : loginHref);
   };
 
   return (
@@ -97,9 +72,9 @@ export default function ReportPage() {
           )}
         </div>
         <div className="text-right">
-          {user && quota && (
+          {user && unlocked && (
             <span className="pill" style={{ background: "rgba(14,165,233,.12)", color: "#0284c7", padding: "5px 11px" }}>
-              {quota.subscription_active ? "구독 중 · 무제한" : `무료 ${quota.free_remaining}회 남음`}
+              구독 중
             </span>
           )}
           <div className="mt-2">
@@ -143,12 +118,12 @@ export default function ReportPage() {
             <p className="mt-1 text-[14px] text-muted">{report.notice}</p>
             <div className="mt-4">
               {isMember ? (
-                <button onClick={() => void onIssue()} disabled={issuing} className="brand-grad rounded-full px-6 py-3 text-[15px] font-bold text-white disabled:opacity-60">
-                  {issuing ? "열람 중…" : issueLabel}
-                </button>
+                <Link href="/pricing" className="brand-grad inline-block rounded-full px-6 py-3 text-[15px] font-bold text-white">
+                  구독하고 전체 리포트 열람
+                </Link>
               ) : (
                 <Link href={loginHref} className="brand-grad inline-block rounded-full px-6 py-3 text-[15px] font-bold text-white">
-                  로그인하고 무료 3회 열람
+                  로그인하고 구독하기
                 </Link>
               )}
             </div>
@@ -170,7 +145,6 @@ export default function ReportPage() {
                 sourceKey={key}
                 rate={byPred.get(key)}
                 isMember={isMember}
-                busy={issuing}
                 onUnlock={onUnlock}
               />
             ))}
@@ -189,7 +163,6 @@ export default function ReportPage() {
               src={src}
               ticker={ticker}
               isMember={isMember}
-              busy={issuing}
               onUnlock={onUnlock}
             />
           );
@@ -206,14 +179,12 @@ function SourceCard({
   src,
   ticker,
   isMember,
-  busy,
   onUnlock,
 }: {
   sourceKey: "price" | "dart" | "hiring" | "datalab" | "patent" | "report";
   src: ReportSource | undefined;
   ticker: string;
   isMember: boolean;
-  busy: boolean;
   onUnlock: () => void;
 }) {
   const meta = SOURCE_META[sourceKey];
@@ -222,14 +193,13 @@ function SourceCard({
       <button
         type="button"
         onClick={onUnlock}
-        disabled={busy}
         className="card relative grid min-h-[140px] place-items-center overflow-hidden p-5 text-center disabled:opacity-70"
       >
         <div className="font-bold">{meta.icon} {meta.label}</div>
         <div className="absolute inset-0 grid place-items-center bg-surface/60 backdrop-blur-[6px]">
           <div className="text-[22px]">🔒</div>
           <div className="text-[12.5px] font-semibold text-navy-soft">
-            {busy ? "열람 중…" : isMember ? "클릭해서 무료 열람" : "로그인하고 열람"}
+            {isMember ? "구독하고 열람" : "로그인하고 열람"}
           </div>
         </div>
       </button>
@@ -253,13 +223,11 @@ function PredictionRateCard({
   sourceKey,
   rate,
   isMember,
-  busy,
   onUnlock,
 }: {
   sourceKey: "price" | "dart" | "datalab" | "hiring" | "patent" | "report";
   rate: PredictionRate | undefined;
   isMember: boolean;
-  busy: boolean;
   onUnlock: () => void;
 }) {
   const meta = SOURCE_META[sourceKey];
@@ -268,14 +236,13 @@ function PredictionRateCard({
       <button
         type="button"
         onClick={onUnlock}
-        disabled={busy}
         className="card relative grid min-h-[104px] place-items-center overflow-hidden p-3 text-center disabled:opacity-70"
       >
         <div className="text-[13px] font-bold">{meta.icon} {meta.label}</div>
         <div className="absolute inset-0 grid place-items-center bg-surface/60 backdrop-blur-[6px]">
           <div className="text-[18px]">🔒</div>
           <div className="text-[11.5px] font-semibold text-navy-soft">
-            {busy ? "열람 중…" : isMember ? "클릭해 열람" : "로그인"}
+            {isMember ? "구독" : "로그인"}
           </div>
         </div>
       </button>
