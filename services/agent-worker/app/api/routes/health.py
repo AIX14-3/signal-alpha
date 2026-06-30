@@ -39,6 +39,9 @@ async def health_check(
             "queue_drain_daemon": {
                 "enabled": settings.queue_drain_daemon_enabled,
                 "state": _task_state(getattr(request.app.state, "queue_drain_task", None)),
+                **_queue_drain_status(
+                    getattr(request.app.state, "queue_drain_status", None)
+                ),
             },
         },
     }
@@ -52,3 +55,16 @@ def _task_state(task: Any | None) -> str:
     if task.done():
         return "stopped"
     return "running"
+
+
+def _queue_drain_status(status: Any | None) -> dict[str, Any]:
+    empty = {
+        "cycles_completed": 0,
+        "last_started_at": None,
+        "last_finished_at": None,
+        "last_cycle": None,
+        "last_error": None,
+    }
+    if status is None:
+        return empty
+    return {**empty, **status.snapshot()}

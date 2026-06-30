@@ -108,8 +108,9 @@ flowchart LR
 > 인큐)만 하며, **워커의 드레인 데몬이 큐를 끝단(발행)까지 연속 소비**한다. 수집기·드레인은 수집 DB 에
 > `signal_worker` 롤로 접근하고, 스케줄러는 추가로 발행용 백엔드 연결(`BACKEND_DATABASE_URL`)로
 > `collection_schedules` 만 읽고/상태를 쓴다. 엔트리포인트: `run_collector_instance.py` /
-> `run_scheduler_instance.py` / 워커 lifespan 드레인 데몬(`QUEUE_DRAIN_DAEMON_ENABLED`, 단발 검증은
-> `run_worker_drain.py`). 단일 통합 인스턴스로도 기동 가능(`PRICE_COLLECTOR_ENABLED`+드레인 동시 on).
+> `run_scheduler_instance.py` / 워커 lifespan 드레인 데몬(`QUEUE_DRAIN_DAEMON_ENABLED`, `QueueCycleRunner`
+> bounded fair cycle, 단발 검증은 `run_worker_drain.py`). 단일 통합 인스턴스로도 기동 가능
+> (`PRICE_COLLECTOR_ENABLED`+드레인 동시 on).
 
 > **어드민 제어 평면**: 스케줄 on/off·시각·대상·수동 실행은 웹 어드민 → `main-server`(`/api/admin/schedules*`,
 > `signal_backend` DML) → `collection_schedules` 쓰기로 이뤄지고, 워커측 스케줄러가 같은 행을 폴링해 따른다.
