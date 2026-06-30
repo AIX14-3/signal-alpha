@@ -19,7 +19,7 @@ from app.ml.meta_learner import combine_return, load_return_model, return_to_sco
 from app.ml.source_features import assemble_features
 from app.ml.source_inference import DEFAULT_HORIZON
 from app.ml.source_models import SOURCE_MODELS, SOURCE_RUN_KEY
-from app.orchestrator.queue.context import parse_task_context
+from app.orchestrator.queue.context import enqueue_aggregate, parse_task_context
 
 # 주가 BASE 앵커 모델. 모든 소스별 예측률은 이 값을 앵커로 포함해 융합한다(C안).
 PRICE_MODEL = "src_price"
@@ -44,26 +44,30 @@ class ReturnCombineTaskHandler:
         meta: Any | None = None,
         collection: Any | None = None,
         analysis: Any | None = None,
+        queue: Any | None = None,
         run_key: str = SOURCE_RUN_KEY,
         return_model: Mapping | None = None,
     ) -> None:
-        if inferences is None or meta is None or collection is None or analysis is None:
+        if inferences is None or meta is None or collection is None or analysis is None or queue is None:
             from signal_alpha_data_access.repositories import (
                 AnalysisRepository,
                 CollectionRepository,
                 MetaSignalRepository,
                 MlInferenceRepository,
+                ProcessingQueueRepository,
             )
 
             inferences = inferences or MlInferenceRepository(connection)
             meta = meta or MetaSignalRepository(connection)
             collection = collection or CollectionRepository(connection)
             analysis = analysis or AnalysisRepository(connection)
+            queue = queue or ProcessingQueueRepository(connection)
 
         self._inferences = inferences
         self._meta = meta
         self._collection = collection
         self._analysis = analysis
+        self._queue = queue
         self._run_key = run_key
         # 학습 산출물은 핸들러 수명 동안 1회 로드(없으면 base 예측 균등 폴백).
         self._return_model = return_model if return_model is not None else load_return_model()
@@ -155,6 +159,17 @@ class ReturnCombineTaskHandler:
             ml_confidence=integrated.confidence,
             source_predictions=source_predictions,
         )
+        # 헤드라인 갱신 트리거(H1): meta_signals(run_key='SRC') 가 이제 채워졌으니 AGGREGATE 를 재인큐한다.
+        # AGGREGATE 가 PRICE 체인에서 SRC 준비 전에 먼저 실행돼 중립(50) 헤드라인을 발행했더라도, 이 재실행이
+        # `_src_headline` 로 실제 통합 예측을 읽어 final_score 를 갱신한다. dedupe(정규형 ctx)로 1건만,
+        # AGGREGATE→SYNTHESIZE→PUBLISH 는 RETURN_COMBINE 을 다시 인큐하지 않으므로 루프가 생기지 않는다.
+        stock_code = ctx.get("stock_code") or ctx.get("ticker")
+        aggregate_task_id = await enqueue_aggregate(
+            self._queue,
+            stock_id=stock_id,
+            aggregate_ctx={"signal_date": as_of.isoformat(), "stock_code": stock_code},
+            priority=str(ctx.get("priority") or "batch"),
+        )
         return {
             "stock_id": stock_id,
             "run_key": self._run_key,
@@ -167,6 +182,7 @@ class ReturnCombineTaskHandler:
             "model_count": integrated.model_count,
             "per_source": {run_key: res.final_score for run_key, res in per_source},
             "final_signal_overlaid": overlaid is not None,
+            "aggregate_task_id": aggregate_task_id,
         }
 
     def _fuse_with_price(

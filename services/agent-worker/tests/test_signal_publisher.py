@@ -53,7 +53,8 @@ class _FakeSource:
 class _FakeBackend:
     def __init__(self, columns_by_table=None):
         self.executed = []  # (table-ish sql, rows)
-        # None → 컬럼 조회가 빈 결과 → publisher 가 원본 컬럼으로 폴백(기존 동작).
+        # 테이블별 실존 컬럼 맵. 맵에 없거나 None → 컬럼 조회 빈 결과(=백엔드에 테이블 없음).
+        # M6 이후 빈 결과인 테이블에 복사할 행이 있으면 publisher 가 명시적 RuntimeError 를 던진다.
         self._columns_by_table = columns_by_table
 
     async def fetch(self, sql, table):
@@ -77,7 +78,12 @@ def test_publish_stock_copies_in_order_and_skips_empty():
             # 나머지 테이블은 빈 결과 → executemany 미호출.
         }
     )
-    backend = _FakeBackend()
+    backend = _FakeBackend(
+        columns_by_table={
+            "stocks": ["id", "ticker"],
+            "final_signals": ["id", "stock_id", "ml_direction"],
+        }
+    )
 
     counts = asyncio.run(publish_stock(source, backend, stock_id=1))
 

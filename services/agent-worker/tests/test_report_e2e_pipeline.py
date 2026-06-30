@@ -551,7 +551,9 @@ class ReportE2EPipelineTest(unittest.IsolatedAsyncioTestCase):
         agg_task = conn.task("aggregate_signal")
         agg_context = json.loads(agg_task["task_context"])
         self.assertEqual(agg_context["signal_date"], "2026-06-24")
-        self.assertEqual(agg_context["run_key"], "AGGREGATED")
+        # H2: dedupe 키 정규화 — run_key/aggregation_key 는 ctx 에서 제거됨.
+        self.assertNotIn("run_key", agg_context)
+        self.assertNotIn("aggregation_key", agg_context)
 
     async def test_report_pipeline_runs_through_queue_runner_to_normalize(self):
         conn = FakeReportPipelineConnection()

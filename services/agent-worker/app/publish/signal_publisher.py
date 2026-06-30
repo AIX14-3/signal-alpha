@@ -69,10 +69,18 @@ async def _upsert_rows(backend_conn: Any, table: str, rows: Sequence[Any]) -> in
     # 백엔드에 실제로 존재하는 컬럼만 복사한다. 수집 DB 가 추가 마이그(예: source_predictions)를
     # 먼저 받고 백엔드가 아직이면, 옛 동작은 INSERT 가 "column ... does not exist" 로 전체 발행을
     # 종목 단위로 하드페일시켰다(마이그 윈도우 동안 모든 발행 차단). 누락 컬럼은 건너뛰고 경고만
-    # 남겨 우아하게 강등한다(백엔드가 마이그를 받으면 다음 발행부터 자동 포함). 컬럼 조회가 비면
-    # (테이블 자체 미존재 등) 기존처럼 원본 컬럼으로 진행해 진짜 결손은 시끄럽게 실패시킨다.
+    # 남겨 우아하게 강등한다(백엔드가 마이그를 받으면 다음 발행부터 자동 포함).
     backend_columns = await _backend_columns(backend_conn, table)
-    columns = [c for c in source_columns if c in backend_columns] if backend_columns else source_columns
+    # M6: 컬럼 조회가 비면 = 백엔드에 테이블 자체가 없음(존재하는 테이블은 항상 컬럼이 있음). 옛 동작은
+    # source_columns 로 폴백해 없는 테이블에 INSERT → 모든 종목이 암호같은 "column does not exist" 로
+    # 매번 실패·dead-letter 했다. 테이블 누락은 부가(nullable) 컬럼 드리프트가 아니라 배포 결손이므로,
+    # 무엇이 빠졌는지 명확한 메시지로 즉시 실패시킨다(운영자가 백엔드 마이그를 적용하도록).
+    if not backend_columns:
+        raise RuntimeError(
+            f"publish target table '{table}' does not exist in the backend DB — "
+            f"apply the backend migration before publishing."
+        )
+    columns = [c for c in source_columns if c in backend_columns]
     # 우아한 강등은 **부가(nullable) 컬럼 부재**만 대상. id(ON CONFLICT 키)가 빠지면 SQL 이
     # 깨지고(`ON CONFLICT (id)` 참조 불가/빈 컬럼 INSERT), 그건 부가가 아닌 구조적 드리프트다 →
     # 원본 컬럼으로 되돌려 시끄럽게 실패시킨다(조용한 부분 발행 금지). NOT NULL 컬럼이 빠진 경우도

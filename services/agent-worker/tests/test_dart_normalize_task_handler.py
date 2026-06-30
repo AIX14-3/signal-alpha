@@ -234,7 +234,10 @@ class DartAnalyzeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         # AGGREGATE 는 fan-in — DART 단일 분석결과 id 를 더 이상 싣지 않는다.
         self.assertNotIn("source_analysis_result_ids", task_context)
         self.assertEqual(task_context["signal_date"], "2026-06-08")
-        self.assertEqual(task_context["run_key"], "AGGREGATED")
+        # H2: dedupe 키 정규화 — run_key/aggregation_key 는 ctx 에서 제거(핸들러가 안 읽음) →
+        # PRICE·DART·REPORT 가 (stock, date) 기준 한 건으로 dedupe 된다.
+        self.assertNotIn("run_key", task_context)
+        self.assertNotIn("aggregation_key", task_context)
 
     async def test_handler_ignores_llm_even_for_high_impact_dart_event(self):
         connection = FakeConnection(

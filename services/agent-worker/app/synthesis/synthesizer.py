@@ -32,6 +32,11 @@ _PROHIBITED_ADVICE_REGEXES = [
     re.compile(r"\btarget\s+price\b", re.IGNORECASE),
     re.compile(r"매[수도]\s*(?:추천|권장|권유|의견|하세요|하라|해야|하시)"),
     re.compile(r"매[수도](?:를|을)\s*권"),
+    # 패러프레이즈(narrate/base.reject_advice 와 parity) — 토큰을 피한 지시 표현도 차단.
+    re.compile(r"적극\s*매[수도]"),
+    re.compile(r"비중\s*(?:을|를)?\s*(?:확대|축소|늘리|줄이)"),
+    re.compile(r"담으(?:세요|십시오)"),
+    re.compile(r"들어가도\s*좋"),
 ]
 _PROHIBITED_ADVICE_SUBSTRINGS = (
     "목표가",

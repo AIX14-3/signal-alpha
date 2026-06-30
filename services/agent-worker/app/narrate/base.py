@@ -28,14 +28,30 @@ class SourceNarrative:
 
 
 # narration 전용 투자권유 필터. 명백한 권유(매수/매도 추천·의견·권유·하세요, 목표가, 투자추천,
-# target price)만 막고, 공시/지표 서술에 자연히 등장하는 서술어(보유/소유/취득/처분, '매수세' 등)는
+# target price)를 막고, 공시/지표 서술에 자연히 등장하는 서술어(보유/소유/취득/처분, '매수세' 등)는
 # 허용한다. 법적 안전(투자 권유 금지)은 유지.
+#
+# H5/H6: 소스 narrator 출력은 발행물(score_breakdown.summary)에 직접 들어가므로, 끝단 synthesizer 의
+# 강한 필터(synthesizer._reject_investment_advice)와 **동급**이어야 한다. 과거엔 이 필터가 더 약해
+# bare buy/sell/hold·"비중 확대/축소"·"적극 매수/매도" 같은 지시 표현이 소스 서술 채널로 새어나갔다.
+# 아래는 synthesizer 의 금지 셋 + 명백한 한국어 패러프레이즈(담으세요/비중을 늘리·줄이/들어가도 좋)를
+# 합친 것. 위반 시 NarrateError → 호출측이 잡아 기존 요약을 유지(발행은 계속, 위반 텍스트만 정제).
 _ADVICE_REGEXES = (
+    re.compile(r"\bbuy\b", re.IGNORECASE),
+    re.compile(r"\bsell\b", re.IGNORECASE),
+    re.compile(r"\bhold\b", re.IGNORECASE),
     re.compile(r"\btarget\s+price\b", re.IGNORECASE),
     re.compile(r"매[수도]\s*(추천|의견|권유|하세요|하십시오|를\s*추천|를\s*권유)"),
     re.compile(r"매[수도]\s*(하시기|하는\s*것이\s*좋)"),
+    re.compile(r"적극\s*매[수도]"),
+    re.compile(r"비중\s*(을|를)?\s*(확대|축소|늘리|줄이)"),
+    re.compile(r"담으(세요|십시오)"),
+    re.compile(r"들어가도\s*좋"),
 )
-_ADVICE_TERMS = ("목표가", "투자 추천", "투자추천", "추천합니다", "추천드립니다", "사세요", "파세요", "매수의견", "매도의견")
+_ADVICE_TERMS = (
+    "목표가", "투자 추천", "투자추천", "추천합니다", "추천드립니다", "사세요", "파세요",
+    "매수의견", "매도의견", "비중 확대", "비중 축소", "적극 매수", "적극 매도",
+)
 
 
 def reject_advice(values: list[str]) -> None:
