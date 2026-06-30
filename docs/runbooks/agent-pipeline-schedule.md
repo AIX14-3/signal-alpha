@@ -232,6 +232,18 @@ Confirm worker health:
 Invoke-RestMethod -Method Get -Uri "http://localhost:8011/health"
 ```
 
+Check publish readiness:
+
+```powershell
+$health = Invoke-RestMethod -Method Get -Uri "http://localhost:8011/health"
+$health.runtime.publishing
+```
+
+Expected:
+
+- `status = ready` and `mode = backend_db` when `BACKEND_DATABASE_URL` is configured.
+- `status = disabled` and `mode = single_db_noop` means `PUBLISH_SIGNALS` tasks are skipped and backend `api.*` tables will stay empty.
+
 Enqueue DART collection:
 
 ```powershell

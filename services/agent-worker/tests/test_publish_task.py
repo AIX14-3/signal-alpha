@@ -55,6 +55,9 @@ def test_no_backend_url_is_noop():
     )
     result = asyncio.run(handler({"stock_id": 7}))
     assert result["skipped_reason"] == "no_backend_db"
+    assert result["publish_status"] == "disabled"
+    assert result["backend_database_configured"] is False
+    assert "BACKEND_DATABASE_URL" in result["operator_hint"]
 
 
 def test_publishes_to_backend_and_closes():

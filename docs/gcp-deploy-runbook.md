@@ -189,6 +189,8 @@ gcloud compute instances create-with-container sa-worker --zone=$ZONE --machine-
 #     -e DATABASE_URL="$(gcloud secrets versions access latest --secret=WORKER_DATABASE_URL)" \
 #     -e BACKEND_DATABASE_URL="$(gcloud secrets versions access latest --secret=BACKEND_DATABASE_URL)" ...
 # ⚠️ BACKEND_DATABASE_URL 미주입이면 워커는 단일 DB 모드로 동작 → 발행(publish_stock) no-op → 백엔드 api.* 가 0행.
+#    워커 /health 의 runtime.publishing.status=disabled, mode=single_db_noop,
+#    warning="PUBLISH_SIGNALS tasks are skipped" 로도 확인한다.
 # 인터넷 egress(외부 API 수집)가 필요하면 Cloud NAT 구성(내부 전용 VM이라).
 ```
 > Worker 는 **단일 인스턴스**만(가격/ops/드레인 데몬이 advisory lock 으로 중복 기동 방지). 외부 포트(:8011) 방화벽 규칙은 만들지 않는다(내부 전용).
@@ -214,7 +216,9 @@ curl -s -o /dev/null -w "BE /health = %{http_code}\n" $BE_URL/health   # 200 (DB
 > **발행 왕복 스모크(2-인스턴스 핵심):** AGGREGATE 가 final_signal 을 만들면 워커가 `PUBLISH_SIGNALS`
 > 를 인큐 → `publish_stock` 이 PUBLISHED 6테이블을 sa-pg→sa-be 로 멱등 복사한다. 백엔드가 채워졌는지:
 > 백엔드 DSN 으로 `SELECT count(*) FROM api.signals_current;` 가 1 이상이면 발행 도착 OK.
-> (수집 DB 엔 산출물이 있는데 백엔드가 0행이면 → 워커에 `BACKEND_DATABASE_URL` 미주입을 의심, §13.)
+> 수집 DB 엔 산출물이 있는데 백엔드가 0행이면 워커 `/health` 의 `runtime.publishing` 을 먼저 확인한다.
+> `status=disabled`, `mode=single_db_noop`, `warning="PUBLISH_SIGNALS tasks are skipped"` 이면
+> `BACKEND_DATABASE_URL` 미주입을 수정한다(§13).
 
 ## 13. 트러블슈팅
 - **로그인이 안 풀림/쿠키 안 잡힘**: BE `CORS_ALLOW_ORIGINS` 가 정확히 `$FE_URL` 인지, `COOKIE_SECURE=true`·`COOKIE_SAMESITE=none` 인지(Cloud Run 은 HTTPS라 충족). FE↔BE 가 다른 도메인이면 브라우저 fetch 가 `credentials:'include'` 인지.
@@ -222,7 +226,8 @@ curl -s -o /dev/null -w "BE /health = %{http_code}\n" $BE_URL/health   # 200 (DB
 - **/health 503**: DB 연결 실패 — VPC 커넥터·Private IP(둘 중 어느 인스턴스인지)·시크릿 DSN·sslmode 확인.
   BE 는 sa-be, 워커는 sa-pg 가 정답.
 - **화면은 뜨는데 데이터 없음**: 파이프라인(§12) 미실행, 또는 `final_signals.is_published` 미발행, 또는
-  **워커에 `BACKEND_DATABASE_URL` 미주입**(발행 no-op → 백엔드 `api.*` 0행). §11 의 docker run env 2개 확인.
+  **워커에 `BACKEND_DATABASE_URL` 미주입**(발행 no-op → 백엔드 `api.*` 0행).
+  워커 `/health` 의 `runtime.publishing.mode=single_db_noop` 이면 §11 의 docker run env 2개를 확인.
 - **마이그가 한쪽 인스턴스에만 적용됨**: §6 의 2회 실행 중 하나 누락 — 타깃별 secret 매핑(`DATABASE_URL` vs
   `BACKEND_MIGRATE_DATABASE_URL`)과 `--target` 인자가 짝이 맞는지 확인. `status --target` 으로 각자 점검.
 - **백엔드에 수집 테이블이 보이거나 그 반대**: 잘못된 인스턴스에 잘못된 타깃 적용 — 해당 인스턴스를
