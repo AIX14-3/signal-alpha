@@ -1,0 +1,96 @@
+name: AltData Collect (BigQuery)
+
+# 특허 '과거 대량' 백필 — Google Patents 공개 데이터셋(BigQuery)에서 가져온다.
+# KIPRIS(altdata-collect.yml, 최신 1일치)와 상보적: BigQuery 는 ~18개월 지연된
+# 과거 대량 커버리지라 주기(주1회) 백필이 적합하다(daily KIPRIS 경로에 끼우지 않음).
+#   scripts/backfill_patents_bigquery.py → PatentCollector.ingest_records()
+#   → 같은 DB 계약(collector_runs + raw_documents + patent_raw_details + queue).
+#   source_hash = canonicalize_application_no(...) 라 KIPRIS 와 교집합 특허는
+#   UNIQUE 제약에서 자동 dedup → 재실행 idempotent.
+# 런북: docs/runbooks/patent-dual-source.md
+#
+# ⚠️ 필요한 리포 Secrets(Settings > Secrets and variables > Actions):
+#   GCP_SA_KEY            (필수) GCP 서비스계정 JSON 키 전체. SA 권한: BigQuery Job User
+#                         + 공개 데이터셋(patents-public-data) 읽기. ⚠️ 현재 미등록 —
+#                         등록 전에는 auth 스텝이 실패한다(continue-on-error 로 격리됨).
+#   GOOGLE_CLOUD_PROJECT  (필수) 청구/조회 프로젝트(예: patent-bq-reader). 없으면 스크립트가
+#                         DEFAULT_BQ_PROJECT="patent-bq-reader" 로 폴백.
+#   DATABASE_URL          (실적재 시 필수) dry-run 은 DB 미접속이라 불필요.
+# google-cloud-bigquery 는 정식 의존성이 아니라 `uv run --with` 로 임시 주입한다.
+
+on:
+  schedule:
+    - cron: "0 19 * * 0" # 월요일 04:00 KST (주1회)
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "DB 미적재(조회·리포트만). 시크릿 등록 후 첫 검증은 true 권장"
+        type: boolean
+        required: false
+        default: true
+      start_year:
+        description: "출원연도 시작(비우면 스크립트 기본 2021)"
+        required: false
+        default: ""
+      end_year:
+        description: "출원연도 끝(비우면 스크립트 기본 2023)"
+        required: false
+        default: ""
+      tickers:
+        description: "쉼표구분 종목(비우면 스크립트 기본 005930,000660,035420)"
+        required: false
+        default: ""
+
+concurrency:
+  group: altdata-collect-bigquery
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    name: Backfill patent (BigQuery)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install Python (from .python-version)
+        run: uv python install
+
+      - name: Sync dependencies
+        run: uv sync --all-packages --group dev
+
+      # SA 키로 ADC 설정 → 이후 스텝의 bigquery.Client() 가 자격증명을 자동 획득.
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      # KIPRIS 경로와 격리(continue-on-error): BigQuery/GCP 장애가 다른 워크플로를 막지 않음.
+      # dry_run 기본 true(수동) → 시크릿만 들어오면 DB 쓰기 없이 안전 검증. 스케줄은 실적재.
+      - name: Backfill — patent (Google Patents / BigQuery)
+        if: always()
+        continue-on-error: true
+        working-directory: services/agent-worker
+        env:
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+          INPUT_START_YEAR: ${{ inputs.start_year }}
+          INPUT_END_YEAR: ${{ inputs.end_year }}
+          INPUT_TICKERS: ${{ inputs.tickers }}
+        run: |
+          args=()
+          # inputs 는 workflow_dispatch 에서만 채워진다. 스케줄 실행은 전부 빈 값 →
+          # dry-run 미적용(실적재) + 연도/종목은 스크립트 기본값 사용.
+          [ "$INPUT_DRY_RUN" = "true" ] && args+=(--dry-run)
+          [ -n "$INPUT_START_YEAR" ] && args+=(--start-year "$INPUT_START_YEAR")
+          [ -n "$INPUT_END_YEAR" ] && args+=(--end-year "$INPUT_END_YEAR")
+          [ -n "$INPUT_TICKERS" ] && args+=(--tickers "$INPUT_TICKERS")
+          echo "backfill args: ${args[*]:-<defaults>}"
+          uv run --with google-cloud-bigquery python scripts/backfill_patents_bigquery.py "${args[@]}"

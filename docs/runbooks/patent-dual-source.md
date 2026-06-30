@@ -5,7 +5,7 @@
 | 소스 | 커버리지 | 진입점 | 자격증명 | 자동화 |
 |---|---|---|---|---|
 | **KIPRIS** | 최신(어제 1일치) | `run_collectors.py --patent-only` → `PatentCollector.run()` | `KIPRIS_API_KEY` (월 ~1,000건 쿼터) | ✅ `altdata-collect.yml` (06:30 KST) |
-| **BigQuery (Google Patents)** | 과거 대량(~18개월 지연) | `scripts/backfill_patents_bigquery.py` → `PatentCollector.ingest_records()` | GCP ADC + `GOOGLE_CLOUD_PROJECT` | ❌ 수동(자동화는 후속) |
+| **BigQuery (Google Patents)** | 과거 대량(~18개월 지연) | `scripts/backfill_patents_bigquery.py` → `PatentCollector.ingest_records()` | GCP ADC + `GOOGLE_CLOUD_PROJECT` | ⚠️ `altdata-collect-bigquery.yml` (주1회, **시크릿 `GCP_SA_KEY` 등록 대기**) |
 
 ## 중복 제거 (cross-source dedup)
 
@@ -25,17 +25,20 @@
 
 - KIPRIS는 일간(최신), BigQuery는 18개월 지연이라 **주기(주1/월1) 백필**이 적합 — daily KIPRIS 경로에 끼우지 않는다.
 
-## BigQuery를 CI에 자동화하기 (후속 — GCP 인증 필요)
+## BigQuery를 CI에 자동화하기 (워크플로 구현됨 — 시크릿 등록만 남음)
 
-현재 BigQuery는 수동이다. 자동 failover를 실제로 켜려면:
+워크플로 `altdata-collect-bigquery.yml`이 추가되어 있다(주1회 cron + `workflow_dispatch`).
+`google-github-actions/auth@v2`로 `GCP_SA_KEY`를 ADC로 설정한 뒤
+`uv run --with google-cloud-bigquery python scripts/backfill_patents_bigquery.py`를
+`continue-on-error: true`로 돌려 KIPRIS 경로와 격리한다. **남은 것은 GCP/GitHub 쪽 설정뿐:**
 
 1. **GCP 서비스계정 생성** — `patents-public-data` 조회 권한(BigQuery Job User + 공개 데이터셋 읽기).
-2. 서비스계정 **JSON 키를 리포 Actions Secret**으로 등록(예: `GCP_SA_KEY`), `GOOGLE_CLOUD_PROJECT` 시크릿도 등록.
-3. **주기 워크플로**(예: `altdata-collect-bigquery.yml`, 주1회) 추가:
-   - `google-github-actions/auth@v2`로 SA 키 인증 → ADC 설정.
-   - `uv run --with google-cloud-bigquery python scripts/backfill_patents_bigquery.py`(필요 시 `--start-year/--end-year` 최근 창으로).
-   - 스텝 `continue-on-error: true`로 KIPRIS 경로와 격리.
+2. 서비스계정 **JSON 키를 리포 Actions Secret `GCP_SA_KEY`**로 등록, `GOOGLE_CLOUD_PROJECT` 시크릿도 등록.
+3. 등록 후 **`workflow_dispatch`를 `dry_run=true`(기본)로 1회 실행**해 인증·조회를 안전 검증
+   (DB 쓰기 없음). 통과하면 스케줄(또는 `dry_run=false` 수동)로 실적재.
 4. `bq_rows`/`build_records`는 `app/collectors/patent/bigquery_source.py`에 있으므로 별도 드라이버에서도 재사용 가능.
+
+> ⚠️ `GCP_SA_KEY` 미등록 상태에서는 auth 스텝이 실패한다(워크플로는 `continue-on-error`로 격리되어 잡 자체는 통과). 등록 전까지 이 워크플로의 백필 스텝은 no-op로 본다.
 
 ## 검증
 
