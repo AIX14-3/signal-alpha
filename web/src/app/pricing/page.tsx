@@ -79,7 +79,7 @@ export default function PricingPage() {
 
         <div className="card flex flex-col border-2 border-sky p-7">
           <div className="flex items-center justify-between">
-            <div className="text-[13px] font-bold uppercase tracking-[0.1em] text-sky-deep">유료 구독 · 추천</div>
+            <div className="text-[13px] font-bold uppercase tracking-[0.1em] text-sky-deep">유료 구독 · 주요 플랜</div>
             <div className="flex rounded-full bg-surface-2 p-0.5 text-[12px] font-semibold">
               <button type="button" onClick={() => setCycle("monthly")} className={`rounded-full px-3 py-1 ${cycle === "monthly" ? "bg-surface text-navy shadow-sm" : "text-muted"}`}>월간</button>
               <button type="button" onClick={() => setCycle("yearly")} className={`rounded-full px-3 py-1 ${cycle === "yearly" ? "bg-surface text-navy shadow-sm" : "text-muted"}`}>연간</button>
