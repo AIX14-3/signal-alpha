@@ -22,7 +22,7 @@ CORS·쿠키·FE 재빌드·OAuth/PortOne 갱신은 그대로 채택**하되, **
 | 라우팅 | 서비스별 `gcloud run domain-mappings` | **Ingress 멀티호스트**(`deploy/k8s/ingress.yaml`: www→web / api→main-server) |
 | BE env 주입 | `gcloud run services update --update-env-vars` | **ConfigMap(cloudsql 오버레이 패치) + Secret(AUTH_SECRET_KEY)** |
 
-> `<도메인>` 을 채울 곳: ingress host ×2 · managed-cert domains ×2 · cloudsql 오버레이 CORS/COOKIE ·
+> `signal-alpha.cloud` 를 적용할 곳: ingress host ×2 · managed-cert domains ×2 · cloudsql 오버레이 CORS/COOKIE ·
 > web build-arg(**api** 서브도메인) · OAuth/PortOne 콘솔. **전부 같은 상위도메인이어야** 인증서·CORS·쿠키가 맞물린다.
 
 ---
@@ -31,7 +31,7 @@ CORS·쿠키·FE 재빌드·OAuth/PortOne 갱신은 그대로 채택**하되, **
 ```bash
 export PROJECT=signal-alpha-demo REGION=asia-northeast3 ZONE=asia-northeast3-a VPC=sa-vpc
 export AR=$REGION-docker.pkg.dev/$PROJECT/signal-alpha
-export DOMAIN=<구매한-도메인>          # 예: example.com  (www/api 는 서브도메인)
+export DOMAIN=signal-alpha.cloud      # www/api 는 서브도메인
 gcloud config set project $PROJECT
 ```
 
@@ -98,7 +98,7 @@ kubectl -n signal-alpha create secret generic signal-alpha-secrets \
   --from-literal=INTERNAL_API_TOKEN='...'
 ```
 > `AUTH_SECRET_KEY` 는 `dev-` 접두 금지(G5 가드). CORS/쿠키 env(APP_ENV·CORS_ALLOW_ORIGINS·COOKIE_*)는
-> 비밀이 아니라 **cloudsql 오버레이 ConfigMap 패치**에 이미 들어 있다(§A 매니페스트, `example.com` 을 실제 도메인으로).
+> 비밀이 아니라 **cloudsql 오버레이 ConfigMap 패치**에 이미 들어 있다(§A 매니페스트, `signal-alpha.cloud` 를 실제 도메인으로).
 
 ## 6. Argo CD + Application (cloudsql 오버레이 = 관리형 Cloud SQL)
 ```bash
@@ -115,7 +115,7 @@ kubectl apply -f deploy/argocd/project.yaml -f deploy/overlays/cloudsql/applicat
 |---|---|---|
 | `www` | A | `$ING_IP` |
 | `api` | A | `$ING_IP` |
-| `@`(apex, 선택) | A → `$ING_IP` (+ ingress/cert/CORS 에 apex 추가) **또는** 가비아 웹포워딩 `@`→`https://www.<도메인>` 301 |
+| `@`(apex, 선택) | A → `$ING_IP` (+ ingress/cert/CORS 에 apex 추가) **또는** 가비아 웹포워딩 `@`→`https://www.signal-alpha.cloud` 301 |
 
 > ⚠️ Cloud Run 의 `CNAME → ghs.googlehosted.com` 은 **쓰지 않는다**(그건 Cloud Run 전용). GKE 는 **A 레코드 → 고정 IP**.
 > apex(`@`)는 CNAME 불가지만 A 레코드는 가능 — 직접 서빙하려면 ingress host·cert domains·CORS 에 apex 도 추가.
@@ -152,7 +152,7 @@ curl -i -X OPTIONS https://api.$DOMAIN/api/users/me \
 | 증상 | 점검 |
 |------|------|
 | main-server 리비전 CrashLoop | 로그 `Invalid production configuration` → G5/G6: `AUTH_SECRET_KEY`(dev- 금지)·`CORS_ALLOW_ORIGINS`(빈값/`*` 금지)·SameSite=none↔Secure |
-| CORS 에러 / Allow-Origin 없음 | `CORS_ALLOW_ORIGINS`(오버레이 ConfigMap)가 `https://www.<도메인>` 과 **정확히** 일치(스킴·끝슬래시·철자) |
-| 로그인 풀림 / 새로고침 로그아웃 | ① `COOKIE_DOMAIN` 앞 점(`.<도메인>`) ② Secure/SameSite 짝 ③ **FE 가 옛 주소 호출**(§3 재빌드 누락) |
+| CORS 에러 / Allow-Origin 없음 | `CORS_ALLOW_ORIGINS`(오버레이 ConfigMap)가 `https://www.signal-alpha.cloud` 와 **정확히** 일치(스킴·끝슬래시·철자) |
+| 로그인 풀림 / 새로고침 로그아웃 | ① `COOKIE_DOMAIN` 앞 점(`.signal-alpha.cloud`) ② Secure/SameSite 짝 ③ **FE 가 옛 주소 호출**(§3 재빌드 누락) |
 | 인증서 pending | DNS 전파 + ManagedCertificate Provision 대기. `describe managedcertificate` 상태 확인 |
 | 화면은 뜨는데 데이터 빔 | CORS 무관 — 워커 `BACKEND_DATABASE_URL` 미주입(발행 no-op) |
