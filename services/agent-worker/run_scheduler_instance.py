@@ -60,7 +60,9 @@ async def _build_backend_pool(max_pool_size: int = 4) -> Any:
 def _internal_headers() -> dict[str, str]:
     """워커 /internal/* 호출용 공유 시크릿 헤더(설정 시). Phase 6 인증 가드와 짝."""
     token = os.getenv("INTERNAL_API_TOKEN", "").strip()
-    return {"X-Internal-Token": token} if token else {}
+    if not token:
+        raise RuntimeError("INTERNAL_API_TOKEN is required for scheduler /internal/* calls.")
+    return {"X-Internal-Token": token}
 
 
 def _scheduled_today(now: datetime, run_at: Any) -> datetime:

@@ -58,7 +58,7 @@ class TaskRouteTest(unittest.TestCase):
 
         app.dependency_overrides[get_database_pool] = lambda: FakePool()
         app.dependency_overrides[get_task_handler_factory] = lambda: lambda connection: {"normalize_report": handler}
-        client = TestClient(app)
+        client = TestClient(app, headers={"X-Internal-Token": "test-internal-token"})
 
         response = client.post("/internal/tasks/normalize_report/run")
 
@@ -91,7 +91,7 @@ class TaskRouteTest(unittest.TestCase):
 
     def test_enqueue_task_uses_dedupe_by_default(self):
         app.dependency_overrides[get_database_pool] = lambda: FakePool()
-        client = TestClient(app)
+        client = TestClient(app, headers={"X-Internal-Token": "test-internal-token"})
 
         response = client.post(
             "/internal/tasks/collect_dart/enqueue",

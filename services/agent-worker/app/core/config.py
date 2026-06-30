@@ -19,6 +19,7 @@ class Settings:
         self.backend_database_url = getenv("BACKEND_DATABASE_URL")
         # /internal/* 호출 공유 시크릿. 설정 시 X-Internal-Token 헤더 일치 요구(스케줄러 등
         # 신뢰된 호출자만 통과). 빈 값이면 검사 비활성(네트워크 격리에만 의존 — 기존 동작).
+        # Empty values fail closed for /internal/* endpoints.
         self.internal_api_token = getenv("INTERNAL_API_TOKEN", "")
         self.parsed_reports_path: Path = (
             Path(__file__).resolve().parents[4] / "data" / "parsed_reports.json"

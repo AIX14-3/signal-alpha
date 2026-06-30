@@ -48,7 +48,7 @@ class ScheduleRouteTest(unittest.TestCase):
 
     def test_schedule_dart_collection_enqueues_active_stocks(self):
         app.dependency_overrides[get_database_pool] = lambda: FakePool()
-        client = TestClient(app)
+        client = TestClient(app, headers={"X-Internal-Token": "test-internal-token"})
 
         response = client.post(
             "/internal/schedules/dart/collect",

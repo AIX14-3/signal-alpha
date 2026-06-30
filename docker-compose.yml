@@ -58,6 +58,7 @@ services:
       SERVICE_VERSION: ${SERVICE_VERSION:-0.1.0}
       # worker 롤. 컷오버(Phase 1d) 전까지 기본값은 owner 라 그대로 동작.
       DATABASE_URL: ${WORKER_DATABASE_URL:-postgresql://signal_alpha:signal_alpha_password@postgres:5432/signal_alpha}
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?INTERNAL_API_TOKEN is required for agent-worker /internal/*}
       PYTHONPATH: /workspace/services/agent-worker:/workspace/packages/data-access
       WATCHFILES_FORCE_POLLING: "true"
       LLM_API_KEY: ${LLM_API_KEY:-}

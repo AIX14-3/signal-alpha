@@ -59,7 +59,7 @@ class PriceRouteTest(unittest.TestCase):
 
     def test_analyze_returns_price_source_result(self):
         app.dependency_overrides[get_database_pool] = lambda: FakePool()
-        client = TestClient(app)
+        client = TestClient(app, headers={"X-Internal-Token": "test-internal-token"})
 
         response = client.post("/internal/price/analyze/005930")
 
@@ -72,7 +72,7 @@ class PriceRouteTest(unittest.TestCase):
         self.assertIn("risk_flags", body)
 
     def test_analyze_without_database_pool_is_503(self):
-        client = TestClient(app)
+        client = TestClient(app, headers={"X-Internal-Token": "test-internal-token"})
 
         response = client.post("/internal/price/analyze/005930")
 

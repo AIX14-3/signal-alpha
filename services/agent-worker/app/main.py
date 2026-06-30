@@ -19,7 +19,7 @@ def create_app() -> FastAPI:
         title="Signal Alpha Agent Worker",
         version=settings.version,
         summary="Internal data collection and LLM analysis worker for Signal Alpha",
-        lifespan=lifespan_with_database
+        lifespan=lifespan_with_database,
     )
     app.include_router(health_router)
     app.include_router(dart_router)
@@ -32,13 +32,19 @@ def create_app() -> FastAPI:
 
     @app.middleware("http")
     async def _require_internal_token(request: Request, call_next):  # type: ignore[no-untyped-def]
-        """INTERNAL_API_TOKEN 설정 시 /internal/* 는 X-Internal-Token 일치를 요구.
-
-        토큰 미설정이면 검사하지 않는다(기존 동작 — 네트워크 격리 전제). /health 등
-        /internal 외 경로는 항상 통과.
-        """
-        token = settings.internal_api_token
-        if token and request.url.path.startswith("/internal"):
+        """/internal/* requires a configured X-Internal-Token shared secret."""
+        if request.url.path.startswith("/internal"):
+            token = settings.internal_api_token.strip()
+            if not token:
+                return JSONResponse(
+                    {
+                        "detail": {
+                            "code": "INTERNAL_AUTH_NOT_CONFIGURED",
+                            "message": "internal API token is not configured",
+                        }
+                    },
+                    status_code=503,
+                )
             if request.headers.get("X-Internal-Token") != token:
                 return JSONResponse(
                     {"detail": {"code": "INTERNAL_AUTH_REQUIRED", "message": "invalid internal token"}},
