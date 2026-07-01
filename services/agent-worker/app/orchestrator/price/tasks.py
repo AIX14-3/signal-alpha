@@ -18,7 +18,7 @@ from datetime import date, datetime
 from typing import Any
 
 from app.agents.base import SourceAgentInput
-from app.agents.price import build_price_agent
+from app.agents.price import PRICE_PROMPT_VERSION, build_price_agent
 from app.collectors.price.ohlcv_reader import OhlcvReader
 from app.orchestrator.queue.context import enqueue_aggregate
 from app.orchestrator.queue.task_types import SRC_INFER
@@ -34,7 +34,8 @@ PRICE_RUN_KEY = "PRICE"
 # DATALAB=D-3; PRICE takes the next free code so its agent_result never collides
 # with another source on the (result_id, debate_method) unique key.
 PRICE_DEBATE_METHOD = "D-4"
-PRICE_VERSION = "price-rules-v1"
+# 규칙 버전 꼬리표는 에이전트 모듈이 소유(단일 진실원천). 저장 version/prompt_ver 로 재사용한다.
+PRICE_VERSION = PRICE_PROMPT_VERSION
 
 
 class PriceAnalyzeTaskHandler:
