@@ -28,3 +28,13 @@ test("api client exposes the contracted endpoints", async () => {
     assert.match(apiClient, new RegExp(`export async function ${fn}`));
   }
 });
+
+test("admin UI exposes split schedule rows and schedule run history", async () => {
+  const page = await readFile(new URL("../src/app/admin/page.tsx", import.meta.url), "utf8");
+  const apiClient = await readFile(new URL("../src/lib/apiClient.ts", import.meta.url), "utf8");
+
+  assert.match(apiClient, /export async function adminListScheduleRuns/);
+  assert.match(page, /adminListScheduleRuns/);
+  assert.match(page, /schedules\.map/);
+  assert.match(page, /"price", "dart", "report", "alternative"/);
+});

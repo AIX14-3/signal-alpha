@@ -51,6 +51,10 @@ def test_worker_runbooks_match_current_queue_and_auth_contracts():
     assert "Queue cycle execution | `POST /internal/queue/run-cycle`" in schedule
     assert "DB-backed scheduler agent" in schedule
     assert "run_scheduler_instance.py" in schedule
+    assert "price-collection" in schedule
+    assert "dart-collection" in schedule
+    assert "report-collection" in schedule
+    assert "alternative-collection" in schedule
     assert "Price collection trigger | `POST /internal/price/collect`" in schedule
     assert "Report collection enqueue | `POST /internal/schedules/report/collect`" in schedule
     assert "Alternative target | local collector/analyzer CLIs" in schedule

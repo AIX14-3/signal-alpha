@@ -31,7 +31,16 @@ Existing internal endpoints:
 
 Use the DB-backed scheduler agent for managed operations.
 
-The scheduler agent is `services/agent-worker/run_scheduler_instance.py`. It polls the backend-owned `collection_schedules` table, evaluates `enabled`, `run_at_local`, `timezone`, `targets`, and `manual_trigger_requested_at`, then triggers the selected worker entrypoints. It records `last_run_at`, `last_status`, `last_detail`, and `next_run_at` back to the same row.
+The scheduler agent is `services/agent-worker/run_scheduler_instance.py`. It polls the backend-owned `collection_schedules` table, evaluates `enabled`, `run_at_local`, `timezone`, `targets`, and `manual_trigger_requested_at`, then triggers the selected worker entrypoints. It records `last_run_at`, `last_status`, `last_detail`, and `next_run_at` back to each fired row.
+
+The default backend seed uses source-specific rows so each source can keep a separate cadence:
+
+- `price-collection`
+- `dart-collection`
+- `report-collection`
+- `alternative-collection`
+
+The legacy `daily-collection` row is disabled by the split-source migration to avoid duplicate PRICE/DART firing.
 
 The `alternative` target runs Patent/DataLab collection through `run_collectors.py` and Hiring/Patent/DataLab analysis through `run_analyzers.py`. Hiring collection remains the dedicated hiring crawler CronJob.
 
@@ -45,7 +54,7 @@ The DB-backed scheduler uses a PostgreSQL advisory lock before firing due or man
 
 Every fired run also writes a row to `collection_schedule_runs`, then updates `collection_schedules.last_*` for the current summary. Operators can inspect recent history through `GET /api/admin/schedules/{schedule_id}/runs`.
 
-Keep exactly one scheduler agent active for a schedule row. The advisory lock prevents duplicate firing during overlap, but one active scheduler remains the simplest operating model.
+Keep exactly one scheduler agent active for the schedule table. The advisory lock prevents duplicate firing during overlap, but one active scheduler remains the simplest operating model.
 
 ## 3. Collection Cadence
 
