@@ -142,3 +142,67 @@ class CollectionScheduleRepository:
             detail_json,
             next_run_at,
         )
+
+    async def start_run(
+        self,
+        *,
+        schedule_id: int,
+        schedule_name: str,
+        trigger_reason: str,
+        targets: list[str],
+    ) -> Any:
+        """Insert a scheduler execution history row before firing targets."""
+        targets_json = json.dumps(targets)
+        return await self._connection.fetchrow(
+            """
+            INSERT INTO collection_schedule_runs (
+                schedule_id,
+                schedule_name,
+                trigger_reason,
+                targets
+            )
+            VALUES ($1, $2, $3, $4::jsonb)
+            RETURNING *
+            """,
+            schedule_id,
+            schedule_name,
+            trigger_reason,
+            targets_json,
+        )
+
+    async def finish_run(
+        self,
+        *,
+        run_id: int,
+        status: str,
+        detail: Any | None,
+    ) -> Any:
+        """Mark a scheduler execution history row complete."""
+        detail_json = json.dumps(detail) if detail is not None else None
+        return await self._connection.fetchrow(
+            """
+            UPDATE collection_schedule_runs
+            SET status = $2,
+                detail = $3::jsonb,
+                finished_at = NOW()
+            WHERE id = $1
+            RETURNING *
+            """,
+            run_id,
+            status,
+            detail_json,
+        )
+
+    async def list_recent_runs(self, *, schedule_id: int, limit: int = 20) -> list[Any]:
+        """List recent scheduler execution history rows for one schedule."""
+        return await self._connection.fetch(
+            """
+            SELECT *
+            FROM collection_schedule_runs
+            WHERE schedule_id = $1
+            ORDER BY started_at DESC
+            LIMIT $2
+            """,
+            schedule_id,
+            limit,
+        )

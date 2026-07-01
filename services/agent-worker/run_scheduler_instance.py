@@ -1,22 +1,10 @@
-"""스케줄러 인스턴스 — 백엔드 DB `collection_schedules` config 기반 일일 수집 트리거.
+"""Scheduler instance backed by backend DB collection_schedules config.
 
-팀 스케줄러 경계(`docs/runbooks/agent-pipeline-schedule.md`): **스케줄러는 수집/분석 로직을
-직접 들지 않고 워커의 내부 엔드포인트만 호출**한다. 이전엔 `--interval-seconds` 고정 루프로
-DART/report 만 인큐했지만, 이제 **백엔드 DB 의 단일 config 행을 폴링**해 매일 `run_at_local`
-(타임존, 기본 04:30 KST)에 1회 발화하고, 어드민이 설정한 `enabled`/대상/`manual_trigger`
-를 따른다. 발화 시 대상별로 워커 내부 엔드포인트를 호출한다:
-  - price  → POST /internal/price/collect (mode 별: flows, snapshot)
-  - dart   → POST /internal/schedules/dart/collect (limit, priority=batch)
-  - report → POST /internal/schedules/report/collect (limit, days_back, max_pages, priority=batch)
-인큐된 COLLECT_* 는 워커 **큐 드레인 데몬**(`QUEUE_DRAIN_DAEMON_ENABLED`)이 발행까지 소비한다.
-
-config 는 어드민(main-server)이 `collection_schedules` 에 쓰고, 이 프로세스는 발행용
-백엔드 연결(`BACKEND_DATABASE_URL`, 미설정 시 `DATABASE_URL`)로 같은 행을 읽고/상태를 쓴다 —
-`main-server → worker` 직접 호출은 없다(설계도 경계 유지).
-
-  uv run python run_scheduler_instance.py                  # 폴링 데몬(기본)
-  uv run python run_scheduler_instance.py --once           # 1회 평가 후 종료(cron 호환)
-  uv run python run_scheduler_instance.py --poll-seconds 30
+This process is a trigger orchestrator. It reads one schedule row from the
+backend database, decides whether the schedule is due, triggers existing worker
+entrypoints, and writes run state back to the control table. Collection,
+normalization, analysis, aggregation, synthesis, and publishing stay inside
+agent-worker handlers and daemons.
 """
 
 from __future__ import annotations
@@ -50,6 +38,7 @@ DEFAULT_REPORT_MAX_PAGES = 20
 DEFAULT_PRIORITY = "batch"
 DEFAULT_ALTERNATIVE_COLLECT_TIMEOUT_SECONDS = 3600.0
 DEFAULT_ALTERNATIVE_ANALYZE_TIMEOUT_SECONDS = 3600.0
+_SCHEDULER_ADVISORY_LOCK_KEY = 0x53434844
 _SERVICE_DIR = Path(__file__).resolve().parent
 
 
@@ -58,7 +47,7 @@ class CommandRunner(Protocol):
 
 
 async def _build_backend_pool(max_pool_size: int = 4) -> Any:
-    """config 폴링용 백엔드 DB 풀. BACKEND_DATABASE_URL 우선, 없으면 DATABASE_URL(단일 DB 모드)."""
+    """Build the backend DB pool used for schedule config and state."""
     from signal_alpha_data_access import DatabaseSettings, create_pool
 
     dsn = os.getenv("BACKEND_DATABASE_URL") or os.getenv("DATABASE_URL")
@@ -70,11 +59,23 @@ async def _build_backend_pool(max_pool_size: int = 4) -> Any:
 
 
 def _internal_headers() -> dict[str, str]:
-    """워커 /internal/* 호출용 공유 시크릿 헤더(설정 시). Phase 6 인증 가드와 짝."""
+    """Shared token header for worker /internal/* calls."""
     token = os.getenv("INTERNAL_API_TOKEN", "").strip()
     if not token:
         raise RuntimeError("INTERNAL_API_TOKEN is required for scheduler /internal/* calls.")
     return {"X-Internal-Token": token}
+
+
+async def _try_scheduler_lock(connection: Any) -> bool:
+    return bool(
+        await connection.fetchval(
+            "SELECT pg_try_advisory_lock($1)", _SCHEDULER_ADVISORY_LOCK_KEY
+        )
+    )
+
+
+async def _release_scheduler_lock(connection: Any) -> None:
+    await connection.fetchval("SELECT pg_advisory_unlock($1)", _SCHEDULER_ADVISORY_LOCK_KEY)
 
 
 def _tail(text: str, *, limit: int = 2000) -> str:
@@ -111,12 +112,12 @@ async def _run_command(argv: list[str], *, timeout: float) -> dict[str, Any]:
 
 
 def _scheduled_today(now: datetime, run_at: Any) -> datetime:
-    """now 와 같은 타임존에서 오늘의 run_at_local 시각(tz-aware)."""
+    """Return today's local scheduled timestamp in the same timezone as now."""
     return now.replace(hour=run_at.hour, minute=run_at.minute, second=0, microsecond=0)
 
 
 def _next_run_at(now: datetime, run_at: Any) -> datetime:
-    """다음 발화 예정 시각 — 오늘 시각이 지났으면 내일."""
+    """Return the next local scheduled timestamp after now."""
     candidate = _scheduled_today(now, run_at)
     if candidate <= now:
         candidate += timedelta(days=1)
@@ -124,7 +125,7 @@ def _next_run_at(now: datetime, run_at: Any) -> datetime:
 
 
 def _should_fire(schedule: dict[str, Any], now: datetime) -> tuple[bool, str]:
-    """(발화여부, 사유). enabled + (오늘 정시 도달·미실행) 또는 수동 트리거."""
+    """Return whether the schedule should fire and why."""
     if not schedule.get("enabled"):
         return False, "disabled"
     last_run_at = schedule.get("last_run_at")
@@ -144,7 +145,7 @@ async def _fire(
     schedule: dict[str, Any],
     command_runner: CommandRunner = _run_command,
 ) -> dict[str, Any]:
-    """대상별 워커 엔드포인트 호출. {target: 결과/에러} 요약 반환."""
+    """Trigger worker entrypoints by target and return a per-target summary."""
     base = base_url.rstrip("/")
     headers = _internal_headers()
     summary: dict[str, Any] = {}
@@ -162,8 +163,8 @@ async def _fire(
                 {"limit": int(schedule.get("dart_limit") or 10), "priority": DEFAULT_PRIORITY},
             )
             summary["dart"] = dart.get("scheduled_count") if isinstance(dart, dict) else dart
-        except Exception as exc:  # noqa: BLE001 - 한 대상 실패가 다른 대상/상태기록을 막지 않게
-            logger.warning("dart/collect 실패: %s", exc)
+        except Exception as exc:  # noqa: BLE001 - one target must not block the rest
+            logger.warning("dart/collect failed: %s", exc)
             summary["dart"] = f"error: {exc}"
 
     if "report" in targets:
@@ -180,8 +181,8 @@ async def _fire(
             summary["report"] = (
                 report.get("scheduled_count") if isinstance(report, dict) else report
             )
-        except Exception as exc:  # noqa: BLE001 - 한 대상 실패가 다른 대상/상태기록을 막지 않게
-            logger.warning("report/collect 실패: %s", exc)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("report/collect failed: %s", exc)
             summary["report"] = f"error: {exc}"
 
     if "alternative" in targets:
@@ -213,7 +214,7 @@ async def _fire(
                 res = await _post("/internal/price/collect", {"mode": mode})
                 price_summary[mode] = "ok" if isinstance(res, dict) else res
             except Exception as exc:  # noqa: BLE001
-                logger.warning("price/collect(%s) 실패: %s", mode, exc)
+                logger.warning("price/collect(%s) failed: %s", mode, exc)
                 price_summary[mode] = f"error: {exc}"
         summary["price"] = price_summary
 
@@ -221,11 +222,11 @@ async def _fire(
 
 
 def _overall_status(summary: dict[str, Any]) -> str:
-    """요약에 'error:' 가 있으면 partial, 비었으면 noop, 아니면 ok."""
+    """Summarize target results as noop, partial, or ok."""
     flat = repr(summary)
     if not summary:
         return "noop"
-    return "partial" if "error:" in flat else "ok"
+    return "partial" if "error" in summary or "error:" in flat else "ok"
 
 
 async def run_cycle(
@@ -235,7 +236,7 @@ async def run_cycle(
     base_url: str,
     schedule_name: str,
 ) -> str:
-    """1 폴링 주기: config 읽기 → 발화 판단 → (발화 시) 호출 + 상태 기록. 사유 반환."""
+    """Run one scheduler evaluation cycle."""
     from signal_alpha_data_access.backend import CollectionScheduleRepository, parse_schedule_row
 
     async with pool.acquire() as connection:
@@ -243,7 +244,7 @@ async def run_cycle(
         row = await repo.get_by_name(schedule_name) or await repo.get_primary()
         schedule = parse_schedule_row(row)
         if schedule is None:
-            logger.warning("collection_schedules 에 스케줄이 없습니다(name=%s).", schedule_name)
+            logger.warning("collection_schedules row not found (name=%s)", schedule_name)
             return "no-schedule"
 
         tz = ZoneInfo(schedule.get("timezone") or "Asia/Seoul")
@@ -252,35 +253,59 @@ async def run_cycle(
         if not fire:
             return reason
 
-        logger.info("스케줄 발화(%s) — targets=%s", reason, schedule.get("targets"))
-        summary = await _fire(client, base_url=base_url, schedule=schedule)
-        status = _overall_status(summary)
-        await repo.record_run(
-            schedule_id=int(schedule["id"]),
-            last_run_at=now,
-            last_status=status,
-            last_detail=summary,
-            next_run_at=_next_run_at(now, schedule["run_at_local"]),
-        )
-        logger.info("스케줄 실행 완료: status=%s summary=%s", status, summary)
-        return f"fired:{reason}:{status}"
+        if not await _try_scheduler_lock(connection):
+            logger.warning("scheduler advisory lock is held elsewhere")
+            return "lock-held"
+
+        try:
+            logger.info("schedule firing (%s): targets=%s", reason, schedule.get("targets"))
+            run_row = await repo.start_run(
+                schedule_id=int(schedule["id"]),
+                schedule_name=str(schedule.get("name") or schedule_name),
+                trigger_reason=reason,
+                targets=list(schedule.get("targets") or []),
+            )
+            try:
+                summary = await _fire(client, base_url=base_url, schedule=schedule)
+            except Exception as exc:  # noqa: BLE001 - close the run history row deterministically
+                logger.exception("schedule firing failed")
+                summary = {"error": str(exc)}
+            status = _overall_status(summary)
+            try:
+                await repo.record_run(
+                    schedule_id=int(schedule["id"]),
+                    last_run_at=now,
+                    last_status=status,
+                    last_detail=summary,
+                    next_run_at=_next_run_at(now, schedule["run_at_local"]),
+                )
+                return f"fired:{reason}:{status}"
+            finally:
+                await repo.finish_run(
+                    run_id=int(run_row["id"]),
+                    status=status,
+                    detail=summary,
+                )
+                logger.info("schedule run completed: status=%s summary=%s", status, summary)
+        finally:
+            await _release_scheduler_lock(connection)
 
 
 async def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Signal alpha scheduler: collection_schedules config 폴링 → 일일 수집 트리거."
+        description="Signal Alpha scheduler: poll collection_schedules and trigger collection."
     )
-    parser.add_argument("--once", action="store_true", help="1회 평가 후 종료(루프 없이).")
-    parser.add_argument("--poll-seconds", type=int, default=30, help="폴링 간격(초). 기본 30.")
+    parser.add_argument("--once", action="store_true", help="Evaluate once and exit.")
+    parser.add_argument("--poll-seconds", type=int, default=30, help="Poll interval seconds.")
     parser.add_argument(
         "--base-url",
         default=os.getenv("WORKER_BASE_URL", DEFAULT_BASE_URL),
-        help=f"워커 내부 URL. 기본 env WORKER_BASE_URL 또는 {DEFAULT_BASE_URL}.",
+        help=f"Worker base URL. Defaults to env WORKER_BASE_URL or {DEFAULT_BASE_URL}.",
     )
     parser.add_argument(
         "--schedule-name",
         default=os.getenv("SCHEDULE_NAME", DEFAULT_SCHEDULE_NAME),
-        help=f"제어할 스케줄 행 이름. 기본 {DEFAULT_SCHEDULE_NAME}.",
+        help=f"Schedule row name. Defaults to {DEFAULT_SCHEDULE_NAME}.",
     )
     args = parser.parse_args()
 
@@ -296,8 +321,8 @@ async def main() -> None:
                         base_url=args.base_url,
                         schedule_name=args.schedule_name,
                     )
-                except Exception:  # noqa: BLE001 - 한 주기 실패가 스케줄러를 죽이지 않게
-                    logger.exception("스케줄러 주기 실패 — 다음 주기에 재시도")
+                except Exception:  # noqa: BLE001 - scheduler loop must survive cycle failures
+                    logger.exception("scheduler cycle failed; retrying next interval")
                 if args.once:
                     break
                 await asyncio.sleep(args.poll_seconds)

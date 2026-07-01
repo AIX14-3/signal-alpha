@@ -60,6 +60,9 @@ def test_worker_runbooks_match_current_queue_and_auth_contracts():
     assert "ml_infer" not in schedule
     assert "meta_combine" not in schedule
     assert "risk_veto" not in schedule
+    assert "PostgreSQL advisory lock" in schedule
+    assert "collection_schedule_runs" in schedule
+    assert "`GET /api/admin/schedules/{schedule_id}/runs`" in schedule
     assert "/internal/queue/$task/run-batch" not in schedule
     assert "X-Internal-Token: $INTERNAL_API_TOKEN" in schedule
     assert "internal/tasks/collect_report/enqueue" in report_smoke

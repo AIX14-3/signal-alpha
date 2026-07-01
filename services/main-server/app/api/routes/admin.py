@@ -503,6 +503,21 @@ async def update_schedule(
     return _schedule_row(parse_schedule_row(updated))
 
 
+@admin_router.get("/schedules/{schedule_id}/runs")
+async def list_schedule_runs(
+    schedule_id: int,
+    limit: int = Query(default=20, ge=1, le=100),
+    _admin: dict[str, Any] = Depends(get_current_admin),
+    pool: Any = Depends(get_database_pool),
+) -> dict[str, Any]:
+    async with pool.acquire() as connection:
+        rows = await CollectionScheduleRepository(connection).list_recent_runs(
+            schedule_id=schedule_id,
+            limit=limit,
+        )
+    return {"items": [_schedule_run_row(dict(row)) for row in rows]}
+
+
 @admin_router.post("/schedules/{schedule_id}/trigger")
 async def trigger_schedule(
     schedule_id: int,
@@ -576,6 +591,32 @@ def _schedule_row(row: dict[str, Any] | None) -> dict[str, Any]:
         "manual_trigger_requested_at": _timestamp(row.get("manual_trigger_requested_at")),
         "updated_by": row.get("updated_by"),
         "updated_at": _timestamp(row.get("updated_at")),
+    }
+
+
+def _json_value(value: Any, fallback: Any) -> Any:
+    if value is None:
+        return fallback
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except (ValueError, TypeError):
+            return fallback
+    return value
+
+
+def _schedule_run_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": row.get("id"),
+        "schedule_id": row.get("schedule_id"),
+        "schedule_name": row.get("schedule_name"),
+        "trigger_reason": row.get("trigger_reason"),
+        "targets": _json_value(row.get("targets"), []),
+        "status": row.get("status"),
+        "detail": _json_value(row.get("detail"), None),
+        "started_at": _timestamp(row.get("started_at")),
+        "finished_at": _timestamp(row.get("finished_at")),
+        "created_at": _timestamp(row.get("created_at")),
     }
 
 
