@@ -66,7 +66,6 @@ def build_datalab_cause_agent(
         classifier=DataLabCauseClassifier(client),
         price_provider=provider,
         lookback_days=config.lookback_days,
-        cause_score_threshold=config.positive_threshold,
     )
 
 

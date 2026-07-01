@@ -46,14 +46,12 @@ class DataLabAnalysisAgent:
         classifier: DataLabCauseClassifier | None = None,
         price_provider: Any | None = None,
         lookback_days: int = 30,
-        cause_score_threshold: float = 0.2,
     ) -> None:
         self._analyzer = analyzer or DataLabAnalyzer()
         self._classifier = classifier
         # async (stock_id, as_of) -> [{"trade_date", "close"}]; None → no price.
         self._price_provider = price_provider
         self._lookback_days = lookback_days
-        self._cause_score_threshold = cause_score_threshold
 
     # -- composed entrypoint (langgraph-free) ------------------------------- #
     async def analyze(self, input_data: SourceAgentInput) -> SourceAgentOutput:

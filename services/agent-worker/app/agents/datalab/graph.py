@@ -45,7 +45,7 @@ class DataLabAnalysisGraphAgent:
         **agent_kwargs: Any,
     ) -> None:
         # Accept a prebuilt agent or the agent's kwargs (analyzer/classifier/
-        # price_provider/lookback_days/cause_score_threshold).
+        # price_provider/lookback_days).
         self._agent = analysis_agent or DataLabAnalysisAgent(**agent_kwargs)
         self._graph = self._build_graph()
 
