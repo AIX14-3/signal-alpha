@@ -51,6 +51,10 @@ def test_worker_runbooks_match_current_queue_and_auth_contracts():
     assert "Queue cycle execution | `POST /internal/queue/run-cycle`" in schedule
     assert "DB-backed scheduler agent" in schedule
     assert "run_scheduler_instance.py" in schedule
+    assert "price-collection" in schedule
+    assert "dart-collection" in schedule
+    assert "report-collection" in schedule
+    assert "alternative-collection" in schedule
     assert "Price collection trigger | `POST /internal/price/collect`" in schedule
     assert "Report collection enqueue | `POST /internal/schedules/report/collect`" in schedule
     assert "Alternative target | local collector/analyzer CLIs" in schedule
@@ -60,6 +64,16 @@ def test_worker_runbooks_match_current_queue_and_auth_contracts():
     assert "ml_infer" not in schedule
     assert "meta_combine" not in schedule
     assert "risk_veto" not in schedule
+    assert "PostgreSQL advisory lock" in schedule
+    assert "collection_schedule_runs" in schedule
+    assert "scheduler-agent decision metadata" in schedule
+    assert "SCHEDULER_BACKPRESSURE_MAX_WAITING" in schedule
+    assert "queue-backlog" in schedule
+    assert "recent-failures" in schedule
+    assert "`GET /api/admin/schedules/{schedule_id}/runs`" in schedule
+    assert "frequency_minutes" in schedule
+    assert "active_from_local" in schedule
+    assert "active_until_local" in schedule
     assert "/internal/queue/$task/run-batch" not in schedule
     assert "X-Internal-Token: $INTERNAL_API_TOKEN" in schedule
     assert "internal/tasks/collect_report/enqueue" in report_smoke

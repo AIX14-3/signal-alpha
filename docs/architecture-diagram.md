@@ -4,8 +4,9 @@
 > 텍스트 개요는 [architecture.md](./architecture.md), DB 스키마 기준은 `database/migrations/` 입니다.
 > 배포는 **frontend / backend / worker / collector / scheduler 5 컴퓨트 유닛 + DB 2 인스턴스**(수집 DB /
 > 백엔드 DB)로 분리합니다(#11 워커 영역 완성: 수집기·스케줄러를 워커에서 분리). 수집기는 원천 수집만,
-> 스케줄러는 **백엔드 DB `collection_schedules` config 를 폴링**해 매일 `run_at_local`(기본 04:30 KST)에
-> 워커 수집 엔드포인트(price·dart)를 호출, **워커는 큐 드레인 데몬으로 큐를 끝단(발행)까지 연속 소비**합니다.
+> 스케줄러는 **백엔드 DB `collection_schedules` config 를 폴링**해 소스별 `run_at_local`,
+> `frequency_minutes`, 활성 시간대에 맞춰 워커 수집 엔드포인트를 호출하고,
+> **워커는 큐 드레인 데몬으로 큐를 끝단(발행)까지 연속 소비**합니다.
 > 스케줄 on/off·시각·대상·수동 실행은 **웹 어드민이 `main-server` 를 통해 `collection_schedules` 에 기록**하고
 > 스케줄러가 폴링해 따릅니다(어드민 제어 평면 — `main-server → worker` 직접 호출 없음).
 > backend와 worker는 런타임에 직접 호출하지 않고, 워커가 산출물을 백엔드 DB 로 **앱레벨 발행(publish)**
@@ -26,7 +27,7 @@ flowchart LR
     end
 
     subgraph SCH["스케줄러 유닛"]
-        sch["scheduler<br/>run_scheduler_instance.py<br/>collection_schedules config 폴링<br/>매일 04:30 KST → 워커 price·dart 호출"]
+        sch["scheduler<br/>run_scheduler_instance.py<br/>collection_schedules config 폴링<br/>소스별 주기/윈도우 → 워커 수집 트리거"]
     end
 
     subgraph COL["수집기 유닛"]
@@ -104,7 +105,7 @@ flowchart LR
 ```
 
 > **유닛 경계(수집/스케줄/드레인 분리)**: 수집기는 외부 API에서 원천만 적재하고, 스케줄러는
-> 백엔드 DB `collection_schedules` config 를 폴링해 매일 정시에 워커 수집 엔드포인트를 호출(=`processing_queue`
+> 백엔드 DB `collection_schedules` config 를 폴링해 소스별 주기와 활성 시간대에 맞춰 워커 수집 엔드포인트를 호출(=`processing_queue`
 > 인큐)만 하며, **워커의 드레인 데몬이 큐를 끝단(발행)까지 연속 소비**한다. 수집기·드레인은 수집 DB 에
 > `signal_worker` 롤로 접근하고, 스케줄러는 추가로 발행용 백엔드 연결(`BACKEND_DATABASE_URL`)로
 > `collection_schedules` 만 읽고/상태를 쓴다. 엔트리포인트: `run_collector_instance.py` /
@@ -118,7 +119,7 @@ flowchart LR
 
 > **수집기 연결점**: collector 는 **인바운드 트리거가 없는 상시 데몬**이 정상이다 — 시장시간(평일
 > 09:00–15:30 KST) 게이트로 스스로 폴링하며 advisory lock 으로 단일 수집을 보장한다. 가격은 두 경로로
-> 수집 DB 에 적재된다: (1) **collector** = 장중 실시간 OHLCV/스냅샷, (2) **scheduler 04:30** → 워커
+> 수집 DB 에 적재된다: (1) **collector** = 장중 실시간 OHLCV/스냅샷, (2) **scheduler cadence** → 워커
 > `/internal/price/collect` = 전일 확정 flows 정산+종가. patent/datalab 은 **alt-data CronJob**(매일 04:30)이
 > 적재한다. 5-유닛 분리 배포에선 worker `PRICE_COLLECTOR_ENABLED=false`(가격 데몬은 collector 전담).
 
@@ -206,7 +207,7 @@ flowchart TB
 
 ```mermaid
 flowchart TB
-    sch2["스케줄러: collection_schedules config 폴링 — 매일 04:30 KST 1회(price·dart). 대상/시각/on·off 는 웹 어드민이 제어"]
+    sch2["스케줄러: collection_schedules config 폴링 — 소스별 주기/윈도우. 대상/시각/on·off 는 웹 어드민이 제어"]
     subgraph fan["소스 분석 (워커 드레인 데몬이 processing_queue 에서 소비)"]
         price["ANALYZE_PRICE — 주가 예측률 BASE<br/>(기술지표 규칙; ML/DL 주가는 src_price)"]
         dart["DART 공시 분석"]

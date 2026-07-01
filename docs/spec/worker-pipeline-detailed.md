@@ -171,3 +171,50 @@ flowchart LR
 - 대체 4모델은 데이터가 적재·학습돼야 예측에 기여한다(현재는 `src_price` 만 실값).
 - 메타러너 예측 정확도는 데이터량에 비례하며 현 단계는 PoC — 발행 신뢰도 자료로 단정하지 말 것.
 - **결정론 헤드라인 점수·RISK_VETO·run_recommend 는 폐기 완료**(7 예측률 무조건 발행으로 재작성됨 — 위 PR 스택, 머지 대기).
+
+## 부록: 하락데이터 수집·저장 (라인 미신설)
+
+> 하락데이터(공매도·신용·대차·프로그램 + 환율)는 **수집·저장만** 한다. 예측률 결합·집계·발행
+> **파이프라인 라인은 신설하지 않는다** — 위 7 예측률 흐름은 그대로 유지된다. 저장된 데이터는 향후
+> ad-hoc 조회·분석·모델 실험용 원천으로만 둔다.
+>
+> 배경: 현 파이프라인은 방향 근거가 사실상 주가 기술지표뿐이라 **상방 편향**이다. 하락을 대칭적으로 볼
+> 원천 데이터를 **먼저 확보(저장)** 해 두고, 실제 분석/편입 여부는 이후 별도 검증·결정한다.
+
+### 수집·저장 범위 (구현·적재 완료)
+
+- **수집:** 키움 조회 TR — 공매도추이 `ka10014` · 신용매매동향 `ka10013` · 대차거래추이 `ka20068` ·
+  프로그램매매 `ka90013` (+ 환율 USD/KRW: 별도 소스).
+- **저장:** `short_selling_trend` · `credit_trade_trend` · `securities_lending_trend`(신규, #716 머지) +
+  `program_trading` · `fx_rates`(기존 재사용). collection DB, Neon 적재 완료(35종목).
+- **파이프라인 미연결:** `SRC_INFER`/`RETURN_COMBINE`/`AGGREGATE_SIGNAL`/`SYNTHESIZE` 어디에도
+  연결하지 않는다. **7 예측률·발행 흐름 불변**(8 예측률로 늘리지 않는다).
+
+### 향후 (옵션 · 미결정)
+
+저장된 하락데이터를 파이프라인에 편입할지는 **별도 검증 후 결정**한다(예: `ANALYZE_SHORT` 신설, 예측률 편입
+또는 `caution_evidence` 오버레이). 현 단계는 **저장까지만**.
+
+```mermaid
+flowchart TB
+  subgraph MAIN["기존 7 예측률 파이프라인 (불변)"]
+    Q[("processing_queue")] --> pipe["6 소스 → SRC_INFER → RETURN_COMBINE<br/>→ 7 예측률 → AGGREGATE → SYNTHESIZE → PUBLISH"]
+  end
+
+  subgraph STORE["하락데이터 — 수집·저장만 (분석 라인 미신설)"]
+    cron2["스케줄러 (평일 매일)"] --> dc["하락데이터 수집<br/>키움 공매도 ka10014 · 신용 ka10013 · 대차 ka20068 · 프로그램 ka90013 · 환율 USD/KRW"]
+    dc --> DT[("저장 테이블 (collection DB)<br/>short_selling_trend · credit_trade_trend<br/>securities_lending_trend · program_trading · fx_rates")]
+    DT -. "향후 옵션 (미결정)" .-> ghost["(미신설) ANALYZE_SHORT / 예측률·주의근거 편입"]
+  end
+
+  note["● 저장 테이블은 위 파이프라인에 연결하지 않는다 — 저장만.<br/>7 예측률·발행 흐름 불변 (8 로 늘리지 않음)."]
+
+  classDef down fill:#ffebee,stroke:#c62828,color:#b71c1c;
+  classDef ghost fill:#f5f5f5,stroke:#bbbbbb,color:#999999,stroke-dasharray:4 3;
+  classDef mainc fill:#eeeeff,stroke:#8888aa,color:#444466;
+  classDef notec fill:#fffde7,stroke:#f9a825,color:#e65100;
+  class dc,DT down;
+  class ghost ghost;
+  class Q,pipe mainc;
+  class note notec;
+```

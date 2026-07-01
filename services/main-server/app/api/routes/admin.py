@@ -72,6 +72,9 @@ class UpdateScheduleRequest(BaseModel):
     targets: list[str] | None = None
     dart_limit: int | None = None
     price_modes: list[str] | None = None
+    frequency_minutes: int | None = None
+    active_from_local: str | None = None
+    active_until_local: str | None = None
 
 
 # member_code = 영문 대문자 4 + 숫자 4 (혼동 문자 I/O/0/1 제외). auth._new_member_code 와 동일 규칙.
@@ -471,12 +474,28 @@ async def update_schedule(
     pool: Any = Depends(get_database_pool),
 ) -> dict[str, Any]:
     run_at = _parse_schedule_time(payload.run_at_local) if payload.run_at_local is not None else None
+    active_from = (
+        _parse_schedule_time(payload.active_from_local)
+        if payload.active_from_local is not None
+        else None
+    )
+    active_until = (
+        _parse_schedule_time(payload.active_until_local)
+        if payload.active_until_local is not None
+        else None
+    )
     targets = _validate_targets(payload.targets) if payload.targets is not None else None
     price_modes = (
         _validate_price_modes(payload.price_modes) if payload.price_modes is not None else None
     )
     if payload.dart_limit is not None and not (1 <= payload.dart_limit <= 1000):
         raise admin_error(400, "INVALID_DART_LIMIT", "dart_limit 은 1~1000 이어야 합니다.")
+    if payload.frequency_minutes is not None and not (1 <= payload.frequency_minutes <= 1440):
+        raise admin_error(
+            400,
+            "INVALID_FREQUENCY_MINUTES",
+            "frequency_minutes 는 1~1440 이어야 합니다.",
+        )
     async with pool.acquire() as connection:
         repo = CollectionScheduleRepository(connection)
         before = await repo.get_by_id(schedule_id)
@@ -490,6 +509,9 @@ async def update_schedule(
             targets=targets,
             dart_limit=payload.dart_limit,
             price_modes=price_modes,
+            frequency_minutes=payload.frequency_minutes,
+            active_from_local=active_from,
+            active_until_local=active_until,
             updated_by=str(admin.get("admin_email") or admin.get("admin_id")),
         )
         await AdminRepository(connection).record_audit_log(
@@ -501,6 +523,21 @@ async def update_schedule(
             after=_audit_json(parse_schedule_row(updated)),
         )
     return _schedule_row(parse_schedule_row(updated))
+
+
+@admin_router.get("/schedules/{schedule_id}/runs")
+async def list_schedule_runs(
+    schedule_id: int,
+    limit: int = Query(default=20, ge=1, le=100),
+    _admin: dict[str, Any] = Depends(get_current_admin),
+    pool: Any = Depends(get_database_pool),
+) -> dict[str, Any]:
+    async with pool.acquire() as connection:
+        rows = await CollectionScheduleRepository(connection).list_recent_runs(
+            schedule_id=schedule_id,
+            limit=limit,
+        )
+    return {"items": [_schedule_run_row(dict(row)) for row in rows]}
 
 
 @admin_router.post("/schedules/{schedule_id}/trigger")
@@ -554,6 +591,8 @@ def _validate_price_modes(modes: list[str]) -> list[str]:
 def _schedule_row(row: dict[str, Any] | None) -> dict[str, Any]:
     row = row or {}
     run_at = row.get("run_at_local")
+    active_from = row.get("active_from_local")
+    active_until = row.get("active_until_local")
     detail = row.get("last_detail")
     if isinstance(detail, str):
         try:
@@ -569,6 +608,13 @@ def _schedule_row(row: dict[str, Any] | None) -> dict[str, Any]:
         "targets": row.get("targets") or [],
         "dart_limit": row.get("dart_limit"),
         "price_modes": row.get("price_modes") or [],
+        "frequency_minutes": row.get("frequency_minutes"),
+        "active_from_local": (
+            active_from.strftime("%H:%M") if hasattr(active_from, "strftime") else active_from
+        ),
+        "active_until_local": (
+            active_until.strftime("%H:%M") if hasattr(active_until, "strftime") else active_until
+        ),
         "last_run_at": _timestamp(row.get("last_run_at")),
         "last_status": row.get("last_status"),
         "last_detail": detail,
@@ -576,6 +622,32 @@ def _schedule_row(row: dict[str, Any] | None) -> dict[str, Any]:
         "manual_trigger_requested_at": _timestamp(row.get("manual_trigger_requested_at")),
         "updated_by": row.get("updated_by"),
         "updated_at": _timestamp(row.get("updated_at")),
+    }
+
+
+def _json_value(value: Any, fallback: Any) -> Any:
+    if value is None:
+        return fallback
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except (ValueError, TypeError):
+            return fallback
+    return value
+
+
+def _schedule_run_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": row.get("id"),
+        "schedule_id": row.get("schedule_id"),
+        "schedule_name": row.get("schedule_name"),
+        "trigger_reason": row.get("trigger_reason"),
+        "targets": _json_value(row.get("targets"), []),
+        "status": row.get("status"),
+        "detail": _json_value(row.get("detail"), None),
+        "started_at": _timestamp(row.get("started_at")),
+        "finished_at": _timestamp(row.get("finished_at")),
+        "created_at": _timestamp(row.get("created_at")),
     }
 
 

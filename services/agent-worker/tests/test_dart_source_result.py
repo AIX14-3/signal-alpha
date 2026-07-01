@@ -87,3 +87,89 @@ class DartSourceResultTest(unittest.TestCase):
         self.assertEqual(result.direction, "unknown")
         self.assertEqual(result.score, 0.0)
         self.assertEqual(result.method_detail["direction_counts"], {"positive": 1, "negative": 1})
+
+    # ------- Wave 2: derived_features (additive) -------
+
+    def test_derived_features_additive_values(self):
+        result = build_dart_analysis_result(
+            [
+                {
+                    "id": 20,
+                    "event_type": "supply_contract",
+                    "event_date": date(2026, 6, 8),
+                    "signal_direction": "positive",
+                    "impact_level": "high",
+                    "is_official": True,
+                    "needs_review": False,
+                },
+                {
+                    "id": 21,
+                    "event_type": "financing",
+                    "event_date": date(2026, 6, 10),
+                    "signal_direction": "negative",
+                    "impact_level": "high",
+                    "is_official": True,
+                    "needs_review": False,
+                },
+                {
+                    "id": 22,
+                    "event_type": "correction",
+                    "event_date": date(2026, 6, 5),
+                    "signal_direction": "neutral",
+                    "impact_level": "low",
+                    "needs_review": True,
+                },
+            ]
+        )
+
+        features = result.method_detail["derived_features"]
+        self.assertEqual(features["total_events"], 3)
+        self.assertEqual(features["distinct_event_types"], 3)
+        self.assertEqual(features["high_impact_count"], 2)  # medium/high 이상만
+        self.assertEqual(features["impact_weighted_count"], 7.0)  # 3+3+1
+        self.assertEqual(features["correction_count"], 1)
+        self.assertEqual(features["needs_review_count"], 1)
+        self.assertEqual(features["official_count"], 2)
+        self.assertEqual(features["latest_event_date"], "2026-06-10")
+        # 숫자 판정은 여전히 없음 — 피처만.
+        self.assertEqual(result.direction, "unknown")
+        self.assertEqual(result.score, 0.0)
+
+    def test_empty_events_derived_features_zeroed(self):
+        features = build_dart_analysis_result([]).method_detail["derived_features"]
+        self.assertEqual(features["total_events"], 0)
+        self.assertEqual(features["impact_weighted_count"], 0.0)
+        self.assertIsNone(features["latest_event_date"])
+
+    def test_existing_method_detail_keys_unchanged(self):
+        # Wave 3 융합이 그대로 읽는 기존 키/형태는 불변 — derived_features 만 additive.
+        populated = build_dart_analysis_result(
+            [
+                {
+                    "id": 30,
+                    "event_type": "periodic_report",
+                    "event_date": date(2026, 6, 8),
+                    "signal_direction": "neutral",
+                    "impact_level": "medium",
+                    "needs_review": False,
+                }
+            ]
+        ).method_detail
+        self.assertEqual(
+            set(populated),
+            {
+                "source",
+                "data_status",
+                "event_count",
+                "direction_counts",
+                "event_type_counts",
+                "impact_level_counts",
+                "events",
+                "derived_features",
+            },
+        )
+        empty = build_dart_analysis_result([]).method_detail
+        self.assertEqual(
+            set(empty),
+            {"source", "data_status", "event_count", "events", "derived_features"},
+        )
