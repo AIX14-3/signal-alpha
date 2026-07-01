@@ -52,10 +52,12 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
     from app.synthesis.tasks import SynthesizeTaskHandler
 
     settings = get_settings()
-    # 소스별 생성형 LLM은 판정 경로에서 제거됨(결정론 전처리 원칙 — docs/archive/design/worker-redesign.md).
-    # DART 분석기는 규칙추출(+공시 임베딩)만 사용한다. LLM 모듈(analyzers/dart/llm.py)은
-    # 보존하되 와이어링하지 않는다 — 끝단 SYNTHESIZE만이 유일한 생성형 LLM이다.
-    llm_analyzer = None
+    # 숫자(방향/점수)는 결정론이 소유한다(불변식). LLM 은 근거만.
+    # Wave 2: DART_USE_LLM=on + provider/model/key 설정 시에만 고임팩트 공시 '근거' 추출기를 배선한다
+    # (verdict 아님 — direction/score 불변). 미설정(기본)이면 None → 규칙 피처만, 프로덕션 회귀 0.
+    from app.agents.dart.evidence import build_dart_evidence_extractor
+
+    dart_evidence_extractor = build_dart_evidence_extractor(settings)
     from app.orchestrator.report.tasks import (
         ReportCollectTaskHandler,
         ReportAnalyzeTaskHandler,
@@ -70,9 +72,7 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
         ),
         NORMALIZE_DART: DartNormalizeTaskHandler(connection),
         ANALYZE_DART: DartAnalyzeTaskHandler(
-            connection,
-            llm_analyzer=llm_analyzer,
-            llm_high_impact_only=settings.dart_llm_high_impact_only,
+            connection, evidence_extractor=dart_evidence_extractor
         ),
         ANALYZE_PRICE: PriceAnalyzeTaskHandler(connection),
         AGGREGATE_SIGNAL: AggregateSignalTaskHandler(connection),

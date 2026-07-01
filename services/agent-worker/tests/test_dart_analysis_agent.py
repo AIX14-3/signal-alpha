@@ -42,19 +42,3 @@ class DartAnalysisAgentTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(result.llm_error)
         self.assertEqual(result.method_detail["source"], "DART")
         self.assertEqual(result.method_detail["event_count"], 1)
-
-    async def test_agent_ignores_llm_analyzer(self):
-        # LLM 판정 경로 제거 — llm_analyzer 가 주입돼도 무시하고 피처만 산출(D1).
-        class _ShouldNotBeCalled:
-            async def analyze(self, **kwargs):  # noqa: ANN003
-                raise AssertionError("LLM 판정 경로는 제거됐다")
-
-        agent = DartAnalysisAgent(llm_analyzer=_ShouldNotBeCalled())
-
-        result = await agent.analyze(
-            SourceAgentInput(source="DART", stock_code="005930", events=[periodic_report_event()])
-        )
-
-        self.assertEqual(result.direction, "unknown")
-        self.assertEqual(result.analysis_source, "features")
-        self.assertIsNone(result.llm_model)
