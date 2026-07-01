@@ -172,85 +172,49 @@ flowchart LR
 - 메타러너 예측 정확도는 데이터량에 비례하며 현 단계는 PoC — 발행 신뢰도 자료로 단정하지 말 것.
 - **결정론 헤드라인 점수·RISK_VETO·run_recommend 는 폐기 완료**(7 예측률 무조건 발행으로 재작성됨 — 위 PR 스택, 머지 대기).
 
-## 부록: 하락데이터 확장 설계 (제안 — 미구현)
+## 부록: 하락데이터 수집·저장 (라인 미신설)
 
-> ⚠️ **제안 단계다.** 하락데이터(공매도·신용·대차·프로그램 + 환율)는 현재 **수집·적재만 완료**(키움 조회 TR →
-> 신규 테이블, Neon 적재)돼 있고, 아래 파이프라인 편입(분석·예측률·발행)은 **미구현 후속**이다.
+> 하락데이터(공매도·신용·대차·프로그램 + 환율)는 **수집·저장만** 한다. 예측률 결합·집계·발행
+> **파이프라인 라인은 신설하지 않는다** — 위 7 예측률 흐름은 그대로 유지된다. 저장된 데이터는 향후
+> ad-hoc 조회·분석·모델 실험용 원천으로만 둔다.
 >
-> 배경: 현 파이프라인은 방향 근거가 사실상 주가 기술지표뿐이고 대체데이터가 성장/수요 감지라 **상방 편향**이다.
-> 하락을 대칭적으로 잡기 위해 **포지셔닝/레버리지 스트레스** 데이터를 신규 소스로 편입한다.
+> 배경: 현 파이프라인은 방향 근거가 사실상 주가 기술지표뿐이라 **상방 편향**이다. 하락을 대칭적으로 볼
+> 원천 데이터를 **먼저 확보(저장)** 해 두고, 실제 분석/편입 여부는 이후 별도 검증·결정한다.
 
-### 편입 방식
+### 수집·저장 범위 (구현·적재 완료)
 
-- **수집(신규):** 키움 공매도(`ka10014`)·신용(`ka10013`)·대차(`ka20068`)·프로그램(`ka90013`) + 환율 USD/KRW(ECOS)
-  → `short_selling_trend`·`credit_trade_trend`·`securities_lending_trend`·`program_trading`·`fx_rates`.
-- **분석(신규 `ANALYZE_SHORT`):** 하락 스트레스 지표 산출 — 공매도비중 z↑ · 대차잔고↑(공매도 선행) ·
-  신용잔고율↑(반대매매 취약) · 프로그램 순매도 · 환율↑(매크로 역풍) → **부호 있는 negative score**.
-- **① 예측률 편입:** `SRC_INFER`에 신규 base 모델 `src_short` → `RETURN_COMBINE`에서
-  **대체 6 + 주가 1 + 통합 1 = 8 예측률**(하락 소스가 대칭적으로 ↓ 기여). 기존 7 예측률의 상방 편향을 균형.
-- **② 주의 근거 오버레이:** `AGGREGATE_SIGNAL`의 `caution_evidence`/`bear_point`를 다중 소스 하락 근거로 강화
-  → 끝단 LLM이 "하락 주의 근거"로 서술(숫자 미개입).
-- **노출(신규):** `source_predictions` 8 + 리포트 '하락 케이스 패널'·조기경보.
+- **수집:** 키움 조회 TR — 공매도추이 `ka10014` · 신용매매동향 `ka10013` · 대차거래추이 `ka20068` ·
+  프로그램매매 `ka90013` (+ 환율 USD/KRW: 별도 소스).
+- **저장:** `short_selling_trend` · `credit_trade_trend` · `securities_lending_trend`(신규, #716 머지) +
+  `program_trading` · `fx_rates`(기존 재사용). collection DB, Neon 적재 완료(35종목).
+- **파이프라인 미연결:** `SRC_INFER`/`RETURN_COMBINE`/`AGGREGATE_SIGNAL`/`SYNTHESIZE` 어디에도
+  연결하지 않는다. **7 예측률·발행 흐름 불변**(8 예측률로 늘리지 않는다).
 
-### 불변식 (그대로 유지)
+### 향후 (옵션 · 미결정)
 
-- 숫자(방향/점수)는 **결정론/메타러너 소유**, LLM은 서술만.
-- 하락은 "매도" 조언이 아니라 **주의 근거** — 법적 금지단어 필터 유지.
-
-### 후속 작업
-
-- `task_type` 신규 `COLLECT_SHORT`/`NORMALIZE_SHORT`/`ANALYZE_SHORT` + `drain_daemon` 배선.
-- `ANALYZE_SHORT` 규칙(하락 지표 → negative score) + `src_short` 학습 하니스.
-- `RETURN_COMBINE` 8-소스 확장 + `caution_evidence` 집계 + 프론트 하락 패널.
-- 환율 최신화 소스(ECOS) 배선(현재 `fx_rates` 는 2026-06-19 까지 적재, 이후 스테일).
+저장된 하락데이터를 파이프라인에 편입할지는 **별도 검증 후 결정**한다(예: `ANALYZE_SHORT` 신설, 예측률 편입
+또는 `caution_evidence` 오버레이). 현 단계는 **저장까지만**.
 
 ```mermaid
 flowchart TB
-  cron["스케줄러 (run_scheduler_instance.py)"]
-  cron -->|"평일 매일 1회"| pc["주가 수집<br/>키움 OHLCV → ohlcv_data"]
-  cron -->|"소스별 스케줄(일·주) · 없으면 last-known"| ac["대체데이터 수집<br/>DART · 리포트 · 채용 · 특허 · 데이터랩"]
-  cron -->|"평일 매일 (신규)"| dc["하락데이터 수집 (신규)<br/>키움 공매도 ka10014 · 신용 ka10013 · 대차 ka20068 · 프로그램 ka90013<br/>+ 환율 USD/KRW (ECOS)"]
+  subgraph MAIN["기존 7 예측률 파이프라인 (불변)"]
+    Q[("processing_queue")] --> pipe["6 소스 → SRC_INFER → RETURN_COMBINE<br/>→ 7 예측률 → AGGREGATE → SYNTHESIZE → PUBLISH"]
+  end
 
-  pc --> Q[("processing_queue")]
-  ac --> Q
-  dc --> DT[("short_selling_trend · credit_trade_trend<br/>securities_lending_trend · program_trading · fx_rates")]
-  DT --> Q
+  subgraph STORE["하락데이터 — 수집·저장만 (분석 라인 미신설)"]
+    cron2["스케줄러 (평일 매일)"] --> dc["하락데이터 수집<br/>키움 공매도 ka10014 · 신용 ka10013 · 대차 ka20068 · 프로그램 ka90013 · 환율 USD/KRW"]
+    dc --> DT[("저장 테이블 (collection DB)<br/>short_selling_trend · credit_trade_trend<br/>securities_lending_trend · program_trading · fx_rates")]
+    DT -. "향후 옵션 (미결정)" .-> ghost["(미신설) ANALYZE_SHORT / 예측률·주의근거 편입"]
+  end
 
-  Q --> ad["DART<br/>COLLECT → NORMALIZE → ANALYZE"]
-  Q --> ar["REPORT<br/>COLLECT → PROCESS → NORMALIZE → ANALYZE"]
-  Q --> ah["HIRING<br/>NORMALIZE → ENRICH → ANALYZE"]
-  Q --> apa["PATENT<br/>NORMALIZE → ENRICH → ANALYZE"]
-  Q --> adl["DATALAB<br/>NORMALIZE → ANALYZE"]
-  Q --> ap["ANALYZE_PRICE<br/>★ 주가 예측률 BASE (앵커)"]
-  Q --> ash["ANALYZE_SHORT (신규) · 하락 스트레스 지표<br/>공매도비중 z↑ · 대차잔고↑(공매도 선행) · 신용잔고율↑(반대매매) · 프로그램 순매도 · 환율↑(매크로 역풍)<br/>→ 부호 있는 negative score"]
+  note["● 저장 테이블은 위 파이프라인에 연결하지 않는다 — 저장만.<br/>7 예측률·발행 흐름 불변 (8 로 늘리지 않음)."]
 
-  ad --> si
-  ar --> si
-  ah --> si
-  apa --> si
-  adl --> si
-  ash --> si
-  ap --> si["SRC_INFER (ml/source_inference.py)<br/>소스별 base 모델(LightGBM) + src_short (신규)"]
-
-  si --> rc["RETURN_COMBINE (ml/return_combine.py)<br/>주가 BASE ⊕ 각 소스 (부정 ↓ / 긍정 ↑)<br/>대체 6 + 주가 1 + 통합 1 = 8 예측률 (하락 소스가 대칭적으로 ↓ 기여)"]
-
-  rc --> agg["AGGREGATE_SIGNAL<br/>8 예측률 → final_signals · meta_signals · ★ 무조건 발행"]
-  ap --> agg
-  ash -. "negative 근거(숫자 미개입)" .-> cev["caution_evidence / bear_point 강화 (신규)"]
-  cev --> agg
-
-  agg --> sy["SYNTHESIZE — 끝단 LLM 서술<br/>8 예측률 + 하락 '주의 근거' 설명 · 법적 금지단어 필터만"]
-  sy --> pub["PUBLISH_SIGNALS (signal_publisher → 백엔드 DB)"]
-  pub --> api["api.signals_current / signal_detail<br/>source_predictions 8 · caution_evidence"]
-  api --> web["web 대시보드 · 리포트 prediction_rates<br/>+ '하락 케이스 패널' · 조기경보 (신규)"]
-
-  classDef base fill:#e3f2fd,stroke:#1565c0,color:#0d47a1;
-  classDef down fill:#ffebee,stroke:#c62828,color:#b71c1c,stroke-width:2px;
-  classDef combine fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20;
-  classDef publish fill:#fff8e1,stroke:#f9a825,color:#e65100;
-  class ap base;
-  class dc,DT,ash,cev down;
-  class si,rc combine;
-  class agg,sy,pub,api,web publish;
+  classDef down fill:#ffebee,stroke:#c62828,color:#b71c1c;
+  classDef ghost fill:#f5f5f5,stroke:#bbbbbb,color:#999999,stroke-dasharray:4 3;
+  classDef mainc fill:#eeeeff,stroke:#8888aa,color:#444466;
+  classDef notec fill:#fffde7,stroke:#f9a825,color:#e65100;
+  class dc,DT down;
+  class ghost ghost;
+  class Q,pipe mainc;
+  class note notec;
 ```
-
