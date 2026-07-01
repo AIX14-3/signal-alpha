@@ -352,6 +352,18 @@ class ReportProcessTaskHandler:
 _MAX_CHUNKS_PER_DOC = 80
 
 
+def _rows_affected(tag: Any) -> int:
+    """asyncpg execute() 태그(예: 'INSERT 0 1' / 'INSERT 0 0')에서 실제 반영 행수를 파싱.
+
+    ON CONFLICT DO NOTHING 으로 스킵되면 마지막 숫자가 0 이라 실제 적재분만 센다. 태그 형식이
+    예상과 다르면(모의 커넥션 등) 보수적으로 1 로 간주한다.
+    """
+    try:
+        return int(str(tag).split()[-1])
+    except (ValueError, IndexError, TypeError):
+        return 1
+
+
 def _chunk_report_text(text: str) -> list[str]:
     """Lazy wrapper so ``report.tasks`` import stays free of langchain (chunker dep).
 
@@ -447,9 +459,10 @@ class ReportEmbedTaskHandler:
 
         # 부분 적재 방지: 전 청크를 한 트랜잭션으로 커밋 → 중간 크래시 시 0 으로 롤백돼 멱등
         # pre-check(청크 존재 여부)가 항상 정확하게 유지된다(부분 적재 후 재실행 시 나머지 유실 방지).
+        inserted = 0
         async with self._connection.transaction():
             for index, (chunk, vector) in enumerate(zip(chunks, vectors, strict=True)):
-                await self._connection.execute(
+                tag = await self._connection.execute(
                     """
                     INSERT INTO report_chunks
                         (report_raw_detail_id, chunk_index, chunk_text, embedding, token_count)
@@ -462,8 +475,15 @@ class ReportEmbedTaskHandler:
                     to_pgvector(vector),
                     len(chunk.split()),
                 )
+                inserted += _rows_affected(tag)
 
-        return {"status": "success", "raw_document_id": raw_document_id, "chunks": len(chunks)}
+        # chunks=실제 적재 행수(ON CONFLICT 로 스킵된 건 제외), attempted=시도 청크 수.
+        return {
+            "status": "success",
+            "raw_document_id": raw_document_id,
+            "chunks": inserted,
+            "attempted": len(chunks),
+        }
 
     async def _resolve_text(self, row: Mapping[str, Any]) -> str:
         """전체 PDF 본문(옵션2 재추출); PDF 없거나 실패 시 2000자 프리뷰로 폴백."""

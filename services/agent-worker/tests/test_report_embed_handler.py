@@ -75,7 +75,8 @@ class EmbedHandlerConn:
 
     async def execute(self, sql, *args):
         self.executed.append((sql, args))
-        return "OK"
+        # 실제 asyncpg 처럼 INSERT 태그를 반환 → 핸들러의 실제-적재-카운트(_rows_affected) 검증.
+        return "INSERT 0 1" if "INSERT INTO report_chunks" in sql else "OK"
 
     def _chunk_inserts(self):
         return [(sql, args) for sql, args in self.executed if "INSERT INTO report_chunks" in sql]
@@ -103,7 +104,8 @@ class ReportEmbedTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         result = await handler({"task_context": {"raw_document_id": 42}})
 
         self.assertEqual(result["status"], "success")
-        self.assertEqual(result["chunks"], 2)
+        self.assertEqual(result["chunks"], 2)  # 실제 적재 행수(태그 'INSERT 0 1' 파싱)
+        self.assertEqual(result["attempted"], 2)  # 시도 청크 수
         # option 2: full PDF re-extracted from storage, not the 2000-char preview.
         self.assertEqual(storage.downloaded_keys, ["reports/x.pdf"])
         self.assertEqual(embedder.batches, [["chunk one", "chunk two"]])
@@ -156,6 +158,30 @@ class ReportEmbedTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result["status"], "no_text")
         self.assertEqual(conn._chunk_inserts(), [])
+
+    async def test_chunks_counts_actual_inserts_not_attempts(self):
+        # ON CONFLICT 로 일부가 스킵('INSERT 0 0')되면 chunks 는 실제 적재분만, attempted 는 시도수.
+        report_tasks._chunk_report_text = lambda text: ["a", "b", "c"]
+        report_tasks._extract_pdf_text = lambda pdf_bytes: "full text"
+
+        class _SkipSecondConn(EmbedHandlerConn):
+            async def execute(self, sql, *args):
+                self.executed.append((sql, args))
+                if "INSERT INTO report_chunks" in sql:
+                    # 두 번째 청크(chunk_index=1)만 충돌로 스킵.
+                    return "INSERT 0 0" if args[1] == 1 else "INSERT 0 1"
+                return "OK"
+
+        conn = _SkipSecondConn()
+        handler = ReportEmbedTaskHandler(
+            connection=conn, settings=object(), storage=FakeStorage(), embedder=FakeEmbedder()
+        )
+
+        result = await handler({"task_context": {"raw_document_id": 42}})
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["chunks"], 2)  # 실제 적재 2 (한 건 스킵)
+        self.assertEqual(result["attempted"], 3)  # 시도 3
 
     async def test_skips_when_not_parsed(self):
         conn = EmbedHandlerConn(parsing_status="pending")
