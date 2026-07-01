@@ -54,6 +54,7 @@ from dataclasses import dataclass
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
+from app.collectors.hiring.closing_date import parse_closing_date
 from app.observability import calculate_run_status
 from app.utils.hash_utils import make_source_hash
 
@@ -457,6 +458,16 @@ class BaseCollector(ABC):
         observed_date = (
             _to_kst_date(observed_override) if observed_override is not None else _kst_today()
         )
+        # 마감일 정규화: 소스별 raw 표기(D-22 / 06/15(월) 마감 / ISO / 상시채용)를 표준 파생
+        # 키(closing_date_parsed·display·is_always_open)로 추가한다. 원본 closing_date 키는
+        # 보존하고 파생 키만 얹는다(비파괴). parse_closing_date 는 total function 이라 None/
+        # 깨진 값에도 예외를 던지지 않지만, 수집을 절대 깨지 않도록 이중으로 감싼다.
+        try:
+            extra_payload.update(
+                parse_closing_date(extra_payload.get("closing_date"), observed_date)
+            )
+        except Exception as _closing_err:  # pragma: no cover - 방어 in depth
+            logger.warning("closing_date 파싱 스킵: %s", _closing_err)
         db.execute(
             text("""
                 INSERT INTO hiring_raw_details (
