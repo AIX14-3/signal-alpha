@@ -9,6 +9,7 @@ or aggregator change.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from os import getenv
 from typing import Any, Callable
@@ -43,6 +44,49 @@ RUN_KEYS = {
     "DATALAB": "DATALAB",
 }
 
+logger = logging.getLogger(__name__)
+
+_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def _env_enabled(name: str) -> bool:
+    return (getenv(name) or "").strip().lower() in _TRUTHY
+
+
+def _hiring_agent_factory(
+    config: HiringRuleConfig,
+) -> Callable[[Any], Any] | None:
+    """Tier-B HIRING agent factory, gated by ``HIRING_LLM_ENABLED`` (default off).
+
+    Off → returns None so the handler drives the pure analyzer through
+    ``RuleSourceAgent`` (byte-identical to the current path). On → returns a
+    per-task factory that builds ``HiringAnalysisAgent`` with a single-shot Gemini
+    skill/duty-focus classifier. A missing GEMINI_API_KEY degrades the agent to
+    the deterministic focus summary (classifier=None), never stalling analysis.
+    The score/direction stay owned by the rule analyzer on every path.
+    """
+    if not _env_enabled("HIRING_LLM_ENABLED"):
+        return None
+
+    def factory(_connection: Any) -> Any:
+        from app.agents.hiring import HiringAnalysisAgent, HiringSkillClassifier
+
+        return HiringAnalysisAgent(config=config, classifier=_build_hiring_classifier(HiringSkillClassifier))
+
+    return factory
+
+
+def _build_hiring_classifier(classifier_cls: type) -> Any | None:
+    """A Gemini-backed focus classifier, or None when the key/transport is absent."""
+    try:
+        from app.clients.gemini_client import GeminiJsonClient
+        from app.core.config import get_settings
+
+        return classifier_cls(GeminiJsonClient(api_key=get_settings().gemini_api_key))
+    except Exception as exc:  # noqa: BLE001 — missing key/deps: degrade, don't stall
+        logger.warning("HIRING focus classifier 미구성 (%s) — 결정론 포커스로 폴백", exc)
+        return None
+
 
 @dataclass(frozen=True)
 class SourceRegistration:
@@ -55,10 +99,11 @@ class SourceRegistration:
     # ``resolved_run_key`` which falls back to the source name.
     run_key: str | None = None
     # Optional graph/LLM agent for this source, built per-task from the DB
-    # connection (e.g. the DataLab cause agent needs price access). When None the
-    # handler drives the pure analyzer through ``RuleSourceAgent`` (current path) —
-    # so leaving it unset is byte-identical to before. Only DATALAB sets it, and
-    # only when ``DATALAB_LLM_ENABLED`` is on.
+    # connection. When None the handler drives the pure analyzer through
+    # ``RuleSourceAgent`` (current path) — so leaving it unset is byte-identical to
+    # before. HIRING sets it (gated by ``HIRING_LLM_ENABLED``, default off) for the
+    # Tier-B skill/duty-focus agent; the score/direction still come from the rule
+    # analyzer, the agent only attaches focus evidence.
     agent_factory: Callable[[Any], Any] | None = None
 
     def build_loader(self, repository: Any) -> EvidenceLoader:
@@ -104,6 +149,7 @@ def build_registry(
             loader_factory=lambda repo, cfg=hiring_config: HiringEvidenceLoader(
                 repo, lookback_days=cfg.lookback_days
             ),
+            agent_factory=_hiring_agent_factory(hiring_config),
         ),
         SourceRegistration(
             source="PATENT",
