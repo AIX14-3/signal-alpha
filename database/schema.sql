@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict WBEDHJtlNyruyfPOCXZvdUI9IdhTUr5cXRDJGfrAB1YynfH2VfzBap6A8XQUn5y
+\restrict h9AoeZhRHoEHV2gP2qNbvb5X9FFFm6gNe3OshNDshM0KcAVbP46LslBH16S9VsF
 
 -- Dumped from database version 16.14 (Debian 16.14-1.pgdg12+1)
 -- Dumped by pg_dump version 16.14 (Debian 16.14-1.pgdg12+1)
@@ -2341,7 +2341,7 @@ CREATE TABLE public.short_selling_trend (
     volume bigint,
     short_volume bigint,
     short_weight_pct numeric(8,2),
-    short_value_krw bigint,
+    short_value_thousand_krw bigint,
     short_avg_price bigint,
     created_at timestamp with time zone DEFAULT now() NOT NULL
 );
@@ -5238,20 +5238,6 @@ CREATE UNIQUE INDEX uq_final_signal_current ON public.final_signals USING btree 
 
 
 --
--- Name: uq_fx_rates_pair_date; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX uq_fx_rates_pair_date ON public.fx_rates USING btree (pair, trade_date);
-
-
---
--- Name: uq_program_trading_stock_date; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX uq_program_trading_stock_date ON public.program_trading USING btree (stock_id, trade_date);
-
-
---
 -- Name: uq_source_doc_external; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -5434,7 +5420,7 @@ ALTER TABLE ONLY public.backtest_results
 --
 
 ALTER TABLE ONLY public.credit_trade_trend
-    ADD CONSTRAINT credit_trade_trend_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id) ON DELETE CASCADE;
+    ADD CONSTRAINT credit_trade_trend_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
 
 
 --
@@ -5914,7 +5900,7 @@ ALTER TABLE ONLY public.score_history
 --
 
 ALTER TABLE ONLY public.securities_lending_trend
-    ADD CONSTRAINT securities_lending_trend_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id) ON DELETE CASCADE;
+    ADD CONSTRAINT securities_lending_trend_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
 
 
 --
@@ -5922,7 +5908,7 @@ ALTER TABLE ONLY public.securities_lending_trend
 --
 
 ALTER TABLE ONLY public.short_selling_trend
-    ADD CONSTRAINT short_selling_trend_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id) ON DELETE CASCADE;
+    ADD CONSTRAINT short_selling_trend_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
 
 
 --
@@ -6073,5 +6059,5 @@ ALTER TABLE ONLY public.watchlists
 -- PostgreSQL database dump complete
 --
 
-\unrestrict WBEDHJtlNyruyfPOCXZvdUI9IdhTUr5cXRDJGfrAB1YynfH2VfzBap6A8XQUn5y
+\unrestrict h9AoeZhRHoEHV2gP2qNbvb5X9FFFm6gNe3OshNDshM0KcAVbP46LslBH16S9VsF
 

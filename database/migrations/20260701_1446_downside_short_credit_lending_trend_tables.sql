@@ -22,14 +22,14 @@
 -- ----------------------------------------------------------------------------
 CREATE TABLE public.short_selling_trend (
     id               bigserial      PRIMARY KEY,
-    stock_id         bigint NOT NULL REFERENCES public.stocks(id) ON DELETE CASCADE,
+    stock_id         bigint NOT NULL REFERENCES public.stocks(id),
     trade_date       date   NOT NULL,
     close_price      bigint,           -- close_pric 종가
     change_rate      numeric(8,2),     -- flu_rt 등락률
     volume           bigint,           -- trde_qty 거래량
     short_volume     bigint,           -- shrts_qty 공매도량
     short_weight_pct numeric(8,2),     -- trde_wght 공매도 매매비중(%)
-    short_value_krw  bigint,           -- shrts_trde_prica 공매도 거래대금(천원)
+    short_value_thousand_krw bigint,   -- shrts_trde_prica 공매도 거래대금(천원 단위)
     short_avg_price  bigint,           -- shrts_avg_pric 공매도 평균가
     created_at       timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT uq_short_selling_trend_stock_date UNIQUE (stock_id, trade_date)
@@ -41,7 +41,7 @@ CREATE INDEX idx_short_selling_trend_date ON public.short_selling_trend (trade_d
 -- ----------------------------------------------------------------------------
 CREATE TABLE public.credit_trade_trend (
     id             bigserial      PRIMARY KEY,
-    stock_id       bigint NOT NULL REFERENCES public.stocks(id) ON DELETE CASCADE,
+    stock_id       bigint NOT NULL REFERENCES public.stocks(id),
     trade_date     date   NOT NULL,
     cur_price      bigint,             -- cur_prc 현재가
     volume         bigint,             -- trde_qty 거래량
@@ -61,7 +61,7 @@ CREATE INDEX idx_credit_trade_trend_date ON public.credit_trade_trend (trade_dat
 -- ----------------------------------------------------------------------------
 CREATE TABLE public.securities_lending_trend (
     id                     bigserial      PRIMARY KEY,
-    stock_id               bigint NOT NULL REFERENCES public.stocks(id) ON DELETE CASCADE,
+    stock_id               bigint NOT NULL REFERENCES public.stocks(id),
     trade_date             date   NOT NULL,
     lending_contract       bigint,     -- dbrt_trde_cntrcnt 대차 체결주수
     lending_repay          bigint,     -- dbrt_trde_rpy 대차 상환주수
