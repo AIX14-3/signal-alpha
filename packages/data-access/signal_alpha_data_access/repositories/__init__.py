@@ -16,6 +16,7 @@ from signal_alpha_data_access.repositories.observability import ObservabilityRep
 from signal_alpha_data_access.repositories.processing_queue import ProcessingQueueRepository
 from signal_alpha_data_access.repositories.raw_details import RawDetailRepository
 from signal_alpha_data_access.repositories.scoring import ScoringRepository
+from signal_alpha_data_access.repositories.signal_episodes import SignalEpisodeRepository
 from signal_alpha_data_access.repositories.signals import SignalRepository
 from signal_alpha_data_access.repositories.stocks import StockRepository
 from signal_alpha_data_access.repositories.user_signals import UserSignalRepository
@@ -41,6 +42,7 @@ __all__ = [
     "ProcessingQueueRepository",
     "RawDetailRepository",
     "ScoringRepository",
+    "SignalEpisodeRepository",
     "SignalRepository",
     "StockRepository",
     "UserSignalRepository",

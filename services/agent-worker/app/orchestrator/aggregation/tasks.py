@@ -9,7 +9,10 @@ from decimal import Decimal
 from typing import Any
 
 from app.ml.meta_learner import return_to_score_100
-from app.orchestrator.queue.task_types import SYNTHESIZE
+from app.orchestrator.aggregation.detect import detect_disagreement
+from app.orchestrator.aggregation.judge import build_memory_reference, judge_with_memory
+from app.orchestrator.aggregation.requery import MAX_REQUERY_ROUNDS
+from app.orchestrator.queue.task_types import REQUERY_SOURCE, SYNTHESIZE
 from signal_alpha_data_access.repositories import (
     AnalysisRepository,
     MetaSignalRepository,
@@ -59,11 +62,28 @@ class NormalizedSourceResult:
 
 
 class AggregateSignalTaskHandler:
-    def __init__(self, connection: Any) -> None:
+    def __init__(
+        self,
+        connection: Any,
+        *,
+        episode_writer: Any | None = None,
+        episode_recall: Any | None = None,
+        requery_enabled: bool | None = None,
+    ) -> None:
         self._analysis_repository = AnalysisRepository(connection)
         self._normalization_repository = NormalizationRepository(connection)
         self._queue_repository = ProcessingQueueRepository(connection)
         self._meta_repository = MetaSignalRepository(connection)
+        # Episodic memory (Wave-3 Stage 2) — optional/degradable. When unset the
+        # aggregator behaves exactly as before (no recall/write). Built by the
+        # queue handler factory when GEMINI_API_KEY is present.
+        self._episode_writer = episode_writer
+        self._episode_recall = episode_recall
+        # Conditional bidirectional re-query. Default follows whether memory/agents
+        # are wired; explicit False keeps the pure fan-in path (used by legacy tests
+        # via the default constructor, which passes None → resolved to enabled only
+        # when a recall/writer is attached is NOT required — re-query is independent).
+        self._requery_enabled = True if requery_enabled is None else bool(requery_enabled)
 
     async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
         stock_id = int(task["stock_id"])
@@ -119,6 +139,38 @@ class AggregateSignalTaskHandler:
         coarse = _coalesce_by_source(normalized)
         aggregate = _aggregate(coarse)
         source_signal_event_ids = _source_signal_event_ids(normalized)
+
+        # --- orchestrator: detect → conditional re-query → judge (Wave-3) --------
+        # detect (deterministic): does the fan-in disagree / is coverage thin?
+        requery_round = int(task_context.get("requery_round") or 0)
+        disagreement = detect_disagreement(
+            signal=aggregate["signal"],
+            source_agreement=aggregate["source_agreement"],
+            breakdown=aggregate["score_breakdown"],
+            agreement_rate=aggregate["agreement_rate"],
+            available_source_count=aggregate["available_source_count"],
+        )
+        # conditional re-query: fire ONE bounded round only when disagreement is
+        # real AND the round bound is not yet hit (else skip — no extra LLM cost).
+        requery_task_id = await self._maybe_requery(
+            stock_id=stock_id,
+            disagreement=disagreement,
+            task_context=task_context,
+            signal_date=signal_date,
+            requery_round=requery_round,
+        )
+        # judge: fold episodic memory (recalled similar past situations) into the
+        # evidence framing as a *reference* — never into the headline number.
+        memory_reference = build_memory_reference(
+            await self._recall_episodes(stock_id, signal_date, aggregate)
+        )
+        aggregate = judge_with_memory(
+            aggregate,
+            memory_reference,
+            disagreement_reasons=disagreement.reasons,
+            requery_rounds=requery_round,
+        )
+
         warning = "; ".join(aggregate["risk_flags"]) or None
 
         # 발행 헤드라인 = 통합 SRC 예측(메타러너 return 채널). RETURN_COMBINE 이 meta_signals
@@ -152,7 +204,7 @@ class AggregateSignalTaskHandler:
             signal=headline_signal,
             source_agreement=aggregate["source_agreement"],
             warning_level=aggregate["warning_level"],
-            score_breakdown=aggregate["score_breakdown"],
+            score_breakdown=_score_breakdown_with_meta(aggregate),
             summary=aggregate["summary"],
             bull_point=aggregate["bull_point"],
             bear_point=aggregate["bear_point"],
@@ -165,6 +217,17 @@ class AggregateSignalTaskHandler:
         )
         priority = str(task_context.get("priority") or "batch")
         stock_code = task_context.get("stock_code")
+
+        # 에피소드 메모리 기록(Wave-3 Stage 2) — 발행된 상황을 임베딩해 upsert. best-effort:
+        # 임베딩/DB 실패는 삼켜지고 발행에 영향 없다(writer 가 내부에서 degrade). 헤드라인이 아니라
+        # 상황(어느 소스 발화·방향·근거요약)만 기록한다.
+        await self._write_episode(
+            stock_id=stock_id,
+            signal_date=signal_date,
+            signal=headline_signal,
+            final_score=headline_score,
+            breakdown=aggregate["score_breakdown"],
+        )
 
         # 발행은 무조건. 모든 집계 신호를 끝단 LLM 종합(SYNTHESIZE)으로 보내고, SYNTHESIZE 가
         # 법적 금지단어 필터만 거쳐 곧장 PUBLISH_SIGNALS 를 인큐한다(발행 차단 게이트 폐기).
@@ -199,7 +262,93 @@ class AggregateSignalTaskHandler:
             "needs_review": aggregate["needs_review"],
             "is_published": aggregate["is_published"],
             "synthesize_task_id": synthesize_task_id,
+            # Wave-3 orchestration provenance (None when no round was triggered).
+            "requery_task_id": requery_task_id,
+            "memory_reference_count": len(memory_reference),
         }
+
+    async def _maybe_requery(
+        self,
+        *,
+        stock_id: int,
+        disagreement: Any,
+        task_context: dict[str, Any],
+        signal_date: date,
+        requery_round: int,
+    ) -> int | None:
+        """Enqueue ONE bounded re-query round iff disagreement is detected.
+
+        Skips silently when re-query is disabled, the round bound is reached, or no
+        re-queryable target diverges — so 80–90% of stocks (agreeing / thin-but-
+        clean / single-source) spend no extra LLM round. The re-query hop carries
+        ``requery_round+1``; the aggregator it re-enqueues re-checks this bound, so
+        assemble→detect→requery→assemble can never loop unbounded (queue dedupe
+        collapses duplicate hops on top of the cap).
+        """
+        if not self._requery_enabled or requery_round >= MAX_REQUERY_ROUNDS:
+            return None
+        if not disagreement.should_requery:
+            return None
+        return await self._queue_repository.enqueue(
+            stock_id=stock_id,
+            task_type=REQUERY_SOURCE,
+            priority=str(task_context.get("priority") or "batch"),
+            task_context={
+                "target_sources": disagreement.target_sources,
+                "focus": disagreement.reasons,
+                "requery_round": requery_round + 1,
+                "signal_date": signal_date.isoformat(),
+                "as_of": signal_date.isoformat(),
+                **({"stock_code": task_context["stock_code"]} if task_context.get("stock_code") else {}),
+                **({"priority": task_context["priority"]} if task_context.get("priority") else {}),
+            },
+            dedupe=True,
+        )
+
+    async def _recall_episodes(
+        self, stock_id: int, signal_date: date, aggregate: dict[str, Any]
+    ) -> list[Any]:
+        """Recall cosine-nearest past episodes (reference only). [] when unwired."""
+        if self._episode_recall is None:
+            return []
+        return await self._episode_recall.recall(
+            signal=aggregate["signal"],
+            breakdown=aggregate["score_breakdown"],
+            exclude_stock_id=stock_id,
+            exclude_signal_date=signal_date,
+        )
+
+    async def _write_episode(
+        self,
+        *,
+        stock_id: int,
+        signal_date: date,
+        signal: str,
+        final_score: float,
+        breakdown: dict[str, Any],
+    ) -> None:
+        if self._episode_writer is None:
+            return
+        await self._episode_writer.write(
+            stock_id=stock_id,
+            signal_date=signal_date,
+            run_key=AGGREGATE_RUN_KEY,
+            signal=signal,
+            final_score=final_score,
+            breakdown=breakdown,
+        )
+
+
+def _score_breakdown_with_meta(aggregate: dict[str, Any]) -> dict[str, Any]:
+    """Per-source breakdown + reserved orchestration/memory keys (JSONB, no schema
+    change). ``memory_reference`` / ``orchestration`` are display-only reference the
+    synthesis LLM may cite; they never influence the persisted numbers."""
+    breakdown = dict(aggregate["score_breakdown"])
+    if aggregate.get("memory_reference"):
+        breakdown["_memory_reference"] = aggregate["memory_reference"]
+    if aggregate.get("orchestration"):
+        breakdown["_orchestration"] = aggregate["orchestration"]
+    return breakdown
 
 
 def _normalize_source_result(row: dict[str, Any]) -> NormalizedSourceResult | None:
@@ -367,6 +516,9 @@ def _aggregate(results: list[NormalizedSourceResult]) -> dict[str, Any]:
         "final_score": _to_100(aggregate_score),
         "source_agreement": source_agreement,
         "consensus_score": consensus_score,
+        # Detect inputs (deterministic re-query trigger) — meta only, not persisted.
+        "agreement_rate": agreement_rate,
+        "available_source_count": len(available),
         "warning_level": warning_level,
         "needs_review": needs_review,
         "is_published": is_published,

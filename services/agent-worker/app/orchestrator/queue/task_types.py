@@ -3,6 +3,12 @@ NORMALIZE_DART = "normalize_dart"
 ANALYZE_DART = "analyze_dart"
 AGGREGATE_SIGNAL = "aggregate_signal"
 
+# 오케스트레이터 조건부 되묻기(re-query) — 집계기가 소스 불일치/커버리지 얇음/mixed 를 감지하면
+# 문제 소스에게만 집중 질문으로 다시 분석을 요청한다(에이전트화 Wave 3, 양방향 피드백). 이미 수집된
+# 원자료를 재해석할 뿐 재수집이 아니다. bounded: task_context.round 상한 + 큐 dedupe 로 무한루프 차단.
+# 되묻기 완료 후 AGGREGATE_SIGNAL 을 재인큐해 갱신된 소스 결과로 재종합한다. 13 chars (VARCHAR(50)).
+REQUERY_SOURCE = "requery_source"
+
 # PRICE 소스 분석 — ohlcv_data 를 PriceAnalyzer 로 분석해 analysis_result+agent_result 적재.
 # DART/ALTERNATIVE 와 달리 별도 NORMALIZE 단계 없이(가격은 signal_events 없음) 바로 분석한다.
 # fan-in AGGREGATE 가 (stock,date)로 집어가는 PRICE 피어를 만든다. 13 chars (VARCHAR(50)).
