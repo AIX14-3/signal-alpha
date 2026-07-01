@@ -67,6 +67,9 @@ def test_worker_runbooks_match_current_queue_and_auth_contracts():
     assert "PostgreSQL advisory lock" in schedule
     assert "collection_schedule_runs" in schedule
     assert "scheduler-agent decision metadata" in schedule
+    assert "SCHEDULER_BACKPRESSURE_MAX_WAITING" in schedule
+    assert "queue-backlog" in schedule
+    assert "recent-failures" in schedule
     assert "`GET /api/admin/schedules/{schedule_id}/runs`" in schedule
     assert "frequency_minutes" in schedule
     assert "active_from_local" in schedule

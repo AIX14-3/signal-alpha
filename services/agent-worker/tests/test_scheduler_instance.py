@@ -7,7 +7,7 @@ import signal_alpha_data_access.backend as backend
 
 import run_scheduler_instance
 from run_scheduler_instance import _fire, _next_run_at, _overall_status, _should_fire, run_cycle
-from run_scheduler_instance import _evaluate_schedule
+from run_scheduler_instance import _backpressure_reason, _evaluate_schedule
 
 
 class FakeResponse:
@@ -51,6 +51,20 @@ class RecordingClient:
             return FakeResponse({"scheduled_count": 3}, url=url)
         if path == "/internal/price/collect":
             return FakeResponse({"status": "ok"}, url=url)
+        raise AssertionError(f"Unexpected path: {path}")
+
+    async def get(self, url, *, headers, timeout):
+        path = url.removeprefix("http://worker")
+        self.posts.append(
+            {
+                "path": path,
+                "json": None,
+                "headers": headers,
+                "timeout": timeout,
+            }
+        )
+        if path == "/internal/stats/queue":
+            return FakeResponse({"totals_by_status": {}}, url=url)
         raise AssertionError(f"Unexpected path: {path}")
 
 
@@ -215,6 +229,16 @@ def test_evaluate_schedule_returns_skip_decision_for_outside_active_window():
     }
 
 
+def test_backpressure_reason_detects_queue_backlog():
+    reason = _backpressure_reason(
+        {"totals_by_status": {"pending": 7, "retrying": 4, "failed": 0}},
+        max_waiting=10,
+        max_failed=5,
+    )
+
+    assert reason == "queue-backlog"
+
+
 def test_fire_calls_report_collect_with_default_batch_payload(monkeypatch):
     monkeypatch.setenv("INTERNAL_API_TOKEN", "secret")
     client = RecordingClient()
@@ -358,6 +382,75 @@ def test_run_cycle_returns_lock_held_without_firing_when_scheduler_lock_is_taken
     assert repository is not None
     assert repository.recorded_runs == []
     assert any("pg_try_advisory_lock" in sql for sql, _args in connection.fetchval_calls)
+
+
+def test_run_cycle_skips_scheduled_fire_when_queue_backlog_exceeds_limit(
+    monkeypatch,
+):
+    repository = None
+
+    class BacklogClient(RecordingClient):
+        async def get(self, url, *, headers, timeout):
+            path = url.removeprefix("http://worker")
+            self.posts.append(
+                {
+                    "path": path,
+                    "json": None,
+                    "headers": headers,
+                    "timeout": timeout,
+                }
+            )
+            if path == "/internal/stats/queue":
+                return FakeResponse(
+                    {"totals_by_status": {"pending": 11, "retrying": 0, "failed": 0}},
+                    url=url,
+                )
+            raise AssertionError(f"Unexpected path: {path}")
+
+    class ScheduledRepository(FakeScheduleRepository):
+        async def get_by_name(self, name):
+            return {
+                **await super().get_by_name(name),
+                "run_at_local": time(0, 0),
+                "last_run_at": None,
+                "manual_trigger_requested_at": None,
+            }
+
+    def repo_factory(connection):
+        nonlocal repository
+        repository = ScheduledRepository(connection)
+        return repository
+
+    async def fire_should_not_run(*args, **kwargs):
+        raise AssertionError("_fire must not run when queue backlog blocks the schedule")
+
+    monkeypatch.setenv("INTERNAL_API_TOKEN", "secret")
+    monkeypatch.setenv("SCHEDULER_BACKPRESSURE_MAX_WAITING", "10")
+    monkeypatch.setattr(backend, "CollectionScheduleRepository", repo_factory)
+    monkeypatch.setattr(run_scheduler_instance, "_fire", fire_should_not_run)
+
+    client = BacklogClient()
+    connection = FakeConnection(lock_acquired=True)
+    result = asyncio.run(
+        run_cycle(
+            FakePool(connection),
+            client,
+            base_url="http://worker",
+            schedule_name="daily-collection",
+        )
+    )
+
+    assert result == "queue-backlog"
+    assert repository is not None
+    assert repository.started_runs == []
+    assert client.posts == [
+        {
+            "path": "/internal/stats/queue",
+            "json": None,
+            "headers": {"X-Internal-Token": "secret"},
+            "timeout": 30.0,
+        }
+    ]
 
 
 def test_run_cycle_records_execution_history_around_fired_schedule(monkeypatch):

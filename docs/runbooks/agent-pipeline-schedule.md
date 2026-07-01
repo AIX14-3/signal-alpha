@@ -66,6 +66,8 @@ Every fired run also writes a row to `collection_schedule_runs`, then updates `c
 Each fired run stores scheduler-agent decision metadata in the JSON detail:
 `decision` records the scheduler policy, action, trigger reason, schedule identity, and selected targets; `targets` records the per-target trigger result. This keeps the scheduler explainable without moving collection or analysis logic into the scheduler layer.
 
+Before scheduled runs fire, the scheduler agent reads `/internal/stats/queue` and applies a conservative backpressure policy. If pending plus retrying work exceeds `SCHEDULER_BACKPRESSURE_MAX_WAITING`, the scheduled fire is skipped with `queue-backlog`. If failed work exceeds `SCHEDULER_BACKPRESSURE_MAX_FAILED`, the scheduled fire is skipped with `recent-failures`. Manual triggers bypass backpressure so operators can still force a controlled run.
+
 Keep exactly one scheduler agent active for the schedule table. The advisory lock prevents duplicate firing during overlap, but one active scheduler remains the simplest operating model.
 
 ## 3. Collection Cadence
