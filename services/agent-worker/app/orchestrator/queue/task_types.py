@@ -35,6 +35,12 @@ PROCESS_REPORT = "process_report"
 NORMALIZE_REPORT = "normalize_report"
 ANALYZE_REPORT = "analyze_report"
 
+# Report RAG 임베딩 적재 — 파싱된 리포트 PDF 본문을 청킹→Gemini 임베딩→report_chunks(#709)
+# 적재. 결정론 점수 경로(process→normalize→analyze)와 분리된 사이드 태스크로, PROCESS 뒤에서
+# REPORT_USE_LLM=true 일 때만 인큐된다(NORMALIZE 아님 — 정규화는 임베딩을 기다리지 않는다).
+# 하류 enqueue 없음. 12 chars (task_type VARCHAR(50)).
+EMBED_REPORT = "embed_report"
+
 # Alternative sources (hiring/patent/datalab). The values MUST match the strings
 # the collectors enqueue verbatim: BaseCollector / DataLabCollector / PatentCollector
 # all enqueue f"NORMALIZE_{SOURCE_TYPE}" with an UPPERCASE source type, so these
