@@ -33,8 +33,15 @@ class EpisodeWriter:
         final_score: float | None,
         breakdown: Mapping[str, Any],
         sources: Any | None = None,
+        situation_signal: str | None = None,
     ) -> bool:
         """Embed the situation and upsert one episode. Returns True on success.
+
+        ``situation_signal`` is what goes into the *embedding text* and MUST match
+        what recall uses (the deterministic ``aggregate["signal"]``, the only value
+        available at both write- and recall-time) — otherwise the cosine neighbors
+        are meaningless. ``signal``/``final_score`` are the *published* headline,
+        stored as the episode's ``direction``/``score`` for later outcome analysis.
 
         Degrades to False (no raise) on any embedding/DB error so the publish path
         is unaffected — episodic memory is an optional reference layer.
@@ -42,7 +49,9 @@ class EpisodeWriter:
         if self._embedder is None or self._repository is None:
             return False
         try:
-            text = build_situation_text(SituationInput(signal=signal, breakdown=breakdown))
+            text = build_situation_text(
+                SituationInput(signal=situation_signal or signal, breakdown=breakdown)
+            )
             embedding = await self._embedder.embed(text)
             await self._repository.upsert_episode(
                 stock_id=stock_id,

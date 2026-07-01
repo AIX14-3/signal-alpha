@@ -88,6 +88,36 @@ class SituationTextTest(unittest.TestCase):
         self.assertNotIn("confidence", text.lower())
 
 
+class WriterRecallSignalConsistencyTest(unittest.IsolatedAsyncioTestCase):
+    """K: writer 는 situation_signal(=aggregate 신호)로 임베딩하되 저장 direction 은
+    발행 headline 을 유지한다. recall 도 aggregate 신호로 임베딩 → 텍스트 byte-identical
+    (headline 이 aggregate 와 달라도 이웃이 유효)."""
+
+    async def test_situation_signal_makes_writer_recall_text_identical(self):
+        embedder = FakeEmbedder()
+        repo = FakeEpisodeRepository()
+        breakdown = {"HIRING": {"direction": "positive", "score": 0.4, "data_status": "ok"}}
+        await EpisodeWriter(embedder=embedder, repository=repo).write(
+            stock_id=1,
+            signal_date="2026-07-01",
+            run_key="AGGREGATED",
+            signal="positive",  # 발행 headline (메타러너)
+            final_score=0.6,
+            breakdown=breakdown,
+            situation_signal="mixed",  # aggregate 신호 (임베딩 텍스트용)
+        )
+        await EpisodeRecall(embedder=embedder, repository=repo).recall(
+            signal="mixed",  # recall 은 aggregate 신호만 가용
+            breakdown=breakdown,
+            exclude_stock_id=2,
+            exclude_signal_date="2026-07-02",
+        )
+        # writer·recall 이 동일 텍스트를 임베딩 → 코사인 이웃 유효(재현성).
+        self.assertEqual(embedder.calls[0], embedder.calls[1])
+        # 저장 direction 은 발행 headline (사후 outcome 분석용), aggregate 신호 아님.
+        self.assertEqual(repo.upserts[0]["direction"], "positive")
+
+
 class EpisodeRoundTripTest(unittest.IsolatedAsyncioTestCase):
     async def test_write_then_recall_round_trip(self):
         embedder = FakeEmbedder()

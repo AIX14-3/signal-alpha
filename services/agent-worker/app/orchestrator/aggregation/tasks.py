@@ -227,6 +227,9 @@ class AggregateSignalTaskHandler:
             signal=headline_signal,
             final_score=headline_score,
             breakdown=aggregate["score_breakdown"],
+            # 임베딩 텍스트는 aggregate 신호로(recall 과 동일 — 재현성). 저장 direction/score 는
+            # 발행 headline 유지(사후 outcome 분석용).
+            situation_signal=aggregate["signal"],
         )
 
         # 발행은 무조건. 모든 집계 신호를 끝단 LLM 종합(SYNTHESIZE)으로 보내고, SYNTHESIZE 가
@@ -327,6 +330,7 @@ class AggregateSignalTaskHandler:
         signal: str,
         final_score: float,
         breakdown: dict[str, Any],
+        situation_signal: str | None = None,
     ) -> None:
         if self._episode_writer is None:
             return
@@ -337,6 +341,7 @@ class AggregateSignalTaskHandler:
             signal=signal,
             final_score=final_score,
             breakdown=breakdown,
+            situation_signal=situation_signal,
         )
 
 
