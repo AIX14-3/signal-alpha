@@ -16,7 +16,8 @@ from app.agents.base import SourceAnalysisAgent
 from app.agents.rule_source_agent import RuleSourceAgent
 from app.analyzers.price.analyzer import PriceAnalyzer
 
-# orchestrator/price/tasks.py 의 PRICE_VERSION 과 동일 값 — 저장 prompt_ver 와 일치시킨다.
+# 주가 규칙 버전 꼬리표의 단일 진실원천. orchestrator/price/tasks.py 가 이 값을 import 해
+# 저장 version/prompt_ver 로 재사용한다(중복 상수 없음).
 PRICE_PROMPT_VERSION = "price-rules-v1"
 
 
