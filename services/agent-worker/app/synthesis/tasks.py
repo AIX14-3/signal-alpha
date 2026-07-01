@@ -207,6 +207,11 @@ class SynthesizeTaskHandler:
                 )
             except Exception:  # noqa: BLE001
                 logger.exception("REPORT narrate 실패 — 기존 요약 유지 (stock_id=%s)", stock_id)
+        if _source_narrate_enabled(self._settings, "HIRING") and not _already_narrated(score_breakdown, "HIRING"):
+            try:
+                await self._narrate_hiring(stock_id, stock_code, score_breakdown, source_predictions)
+            except Exception:  # noqa: BLE001 — 서술 실패가 발행을 막지 않음
+                logger.exception("HIRING narrate 실패 — 기존 요약 유지 (stock_id=%s)", stock_id)
 
     def _narrate_client(self, source_key: str) -> tuple[Any, str, float] | None:
         """소스별 LLM 클라이언트/모델/타임아웃 — 키 없으면 None. ({SRC}_LLM_PROVIDER/MODEL env)."""
@@ -328,6 +333,37 @@ class SynthesizeTaskHandler:
             len(picked),
             len(narrative.key_facts),
         )
+
+    async def _narrate_hiring(
+        self,
+        stock_id: int,
+        stock_code: str,
+        score_breakdown: dict[str, Any] | None,
+        source_predictions: dict[str, Any] | None,
+    ) -> None:
+        """HIRING(채용) 소스 LLM 서술. PRICE 와 동형(피처형) — score_breakdown['HIRING'](analyzer 가
+        공고수·증감·기술을 담은 summary)만 입력으로 쓴다(새 수집 없음). LLM 은 서술만, 수치 불변."""
+        from app.narrate.hiring import HiringNarrator
+
+        built = self._narrate_client("HIRING")
+        if built is None:
+            return
+        client, model, timeout = built
+        hiring_analysis = (score_breakdown or {}).get("HIRING")
+        if not isinstance(hiring_analysis, dict):
+            return  # HIRING 항목 없음 — no-op(결정론 요약 유지)
+        pred = (source_predictions or {}).get("SRC_HIRING")
+        narrator = HiringNarrator(client=client, model=model, timeout_seconds=timeout)
+        narrative = await narrator.narrate(
+            stock_code=stock_code, analysis=hiring_analysis, prediction_rate=pred
+        )
+        await self._analysis.update_source_narrative(
+            stock_id=stock_id,
+            source="HIRING",
+            summary=narrative.summary,
+            narrative_points=narrative.key_facts,
+        )
+        logger.info("HIRING narrate 적용 stock_id=%s facts=%d", stock_id, len(narrative.key_facts))
 
 
 def _already_narrated(score_breakdown: dict[str, Any] | None, source: str) -> bool:
