@@ -6,6 +6,7 @@ import sys
 import unittest
 from datetime import date
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "packages" / "data-access"))
 
@@ -188,7 +189,10 @@ class PatentAgentInvarianceTest(unittest.IsolatedAsyncioTestCase):
 
 class PatentAgentFactoryTest(unittest.IsolatedAsyncioTestCase):
     async def test_no_client_degrades_to_rule_source_agent(self):
-        agent = build_patent_agent(connection=None, client=None)
+        # Force "no Gemini key/client" deterministically — CI sets GEMINI_API_KEY,
+        # so patch the builder rather than depend on the ambient environment.
+        with patch("app.agents.patent._try_build_gemini", return_value=None):
+            agent = build_patent_agent(connection=None, client=None)
         self.assertIsInstance(agent, RuleSourceAgent)
         # And it behaves like the pure rule path — no materiality tag.
         out = await agent.analyze(_input(_notable_rows()))
