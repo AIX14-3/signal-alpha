@@ -317,15 +317,57 @@ def _overall_status(summary: dict[str, Any]) -> str:
     return "partial" if "error" in summary or "error:" in flat else "ok"
 
 
+def _scheduler_decision(
+    schedule: dict[str, Any],
+    *,
+    action: str,
+    reason: str,
+) -> dict[str, Any]:
+    """Return the scheduler agent's decision for one schedule evaluation."""
+    return {
+        "agent": "scheduler",
+        "policy": "scheduler-agent-v1",
+        "action": action,
+        "reason": reason,
+        "schedule_id": int(schedule["id"]),
+        "schedule_name": str(schedule.get("name") or schedule["id"]),
+        "targets": list(schedule.get("targets") or []),
+    }
+
+
+def _evaluate_schedule(
+    schedule: dict[str, Any],
+    now: datetime,
+) -> tuple[bool, dict[str, Any]]:
+    should_fire, reason = _should_fire(schedule, now)
+    return should_fire, _scheduler_decision(
+        schedule,
+        action="fire" if should_fire else "skip",
+        reason=reason,
+    )
+
+
+def _run_detail(
+    *,
+    decision: dict[str, Any],
+    target_summary: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "decision": decision,
+        "targets": target_summary,
+    }
+
+
 async def _run_one_schedule(
     repo: Any,
     client: httpx.AsyncClient,
     *,
     base_url: str,
     schedule: dict[str, Any],
-    trigger_reason: str,
+    decision: dict[str, Any],
     now: datetime,
 ) -> str:
+    trigger_reason = str(decision["reason"])
     logger.info(
         "schedule firing (%s): name=%s targets=%s",
         trigger_reason,
@@ -344,12 +386,13 @@ async def _run_one_schedule(
         logger.exception("schedule firing failed")
         summary = {"error": str(exc)}
     status = _overall_status(summary)
+    detail = _run_detail(decision=decision, target_summary=summary)
     try:
         await repo.record_run(
             schedule_id=int(schedule["id"]),
             last_run_at=now,
             last_status=status,
-            last_detail=summary,
+            last_detail=detail,
             next_run_at=_next_run_at(now, schedule),
         )
         return status
@@ -357,7 +400,7 @@ async def _run_one_schedule(
         await repo.finish_run(
             run_id=int(run_row["id"]),
             status=status,
-            detail=summary,
+            detail=detail,
         )
         logger.info(
             "schedule run completed: name=%s status=%s summary=%s",
@@ -393,16 +436,16 @@ async def run_cycle(
             logger.warning("collection_schedules row not found (name=%s)", schedule_name or "*")
             return "no-schedule"
 
-        due: list[tuple[dict[str, Any], str, datetime]] = []
+        due: list[tuple[dict[str, Any], dict[str, Any], datetime]] = []
         skipped_reasons: list[str] = []
         for schedule in schedules:
             tz = ZoneInfo(schedule.get("timezone") or "Asia/Seoul")
             now = datetime.now(tz)
-            fire, reason = _should_fire(schedule, now)
+            fire, decision = _evaluate_schedule(schedule, now)
             if fire:
-                due.append((schedule, reason, now))
+                due.append((schedule, decision, now))
             else:
-                skipped_reasons.append(reason)
+                skipped_reasons.append(str(decision["reason"]))
 
         if not due:
             if schedule_name and skipped_reasons:
@@ -415,18 +458,18 @@ async def run_cycle(
 
         try:
             statuses: list[str] = []
-            for schedule, reason, now in due:
+            for schedule, decision, now in due:
                 status = await _run_one_schedule(
                     repo,
                     client,
                     base_url=base_url,
                     schedule=schedule,
-                    trigger_reason=reason,
+                    decision=decision,
                     now=now,
                 )
                 statuses.append(status)
             if schedule_name:
-                return f"fired:{due[0][1]}:{statuses[0]}"
+                return f"fired:{due[0][1]['reason']}:{statuses[0]}"
             overall = "partial" if any(status != "ok" for status in statuses) else "ok"
             return f"fired:{len(statuses)}:{overall}"
         finally:
