@@ -62,7 +62,8 @@ class ReportRetrieverTest(unittest.IsolatedAsyncioTestCase):
 
         sql, args = conn.fetched[0]
         self.assertIn("embedding <=> $1::vector", sql)
-        self.assertIn("WHERE rd.stock_id = $2", sql)
+        self.assertIn("WHERE rc.stock_id = $2", sql)  # 1B: report_chunks.stock_id 직접 필터
+        self.assertNotIn("JOIN raw_documents", sql)   # raw_documents 조인 제거(exact 스캔)
         self.assertIn("LIMIT $3", sql)
         # $1 is the embedded query, bound as a pgvector literal string.
         self.assertTrue(str(args[0]).startswith("["))
