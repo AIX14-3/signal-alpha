@@ -6,6 +6,7 @@ from datetime import date, datetime, timedelta
 from typing import Any
 
 from app.agents import SourceAgentInput, SourceAnalysisAgent
+from app.agents.dart.evidence import DartLlmEvidenceExtractor
 from app.agents.dart.graph import DartAnalysisGraphAgent
 from app.analyzers.dart.financials import extract_dart_financial_metrics
 from app.analyzers.dart.rules import classify_dart_report, make_dart_event_hash
@@ -185,12 +186,16 @@ class DartAnalyzeTaskHandler:
         self,
         connection: Any,
         *,
+        evidence_extractor: DartLlmEvidenceExtractor | None = None,
         analysis_agent: SourceAnalysisAgent | None = None,
     ) -> None:
         self._normalization_repository = NormalizationRepository(connection)
         self._analysis_repository = AnalysisRepository(connection)
         self._queue_repository = ProcessingQueueRepository(connection)
-        self._analysis_agent = analysis_agent or DartAnalysisGraphAgent()
+        # Wave 2: 근거 추출기(옵션) 주입 — 미주입이면 규칙 피처만(기본). 숫자는 어느 경우든 결정론.
+        self._analysis_agent = analysis_agent or DartAnalysisGraphAgent(
+            evidence_extractor=evidence_extractor
+        )
 
     async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
         stock_id = int(task["stock_id"])

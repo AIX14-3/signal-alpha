@@ -18,6 +18,7 @@ from dataclasses import replace
 
 from app.agents.base import SourceAgentInput, SourceAgentOutput
 from app.agents.dart.agent import DartAnalysisAgent
+from app.agents.dart.evidence import DartLlmEvidenceExtractor
 from app.schemas.evidence import SourceType
 
 DART_ANALYSIS_GRAPH_NAME = "dart_analysis_v1"
@@ -30,9 +31,13 @@ class DartAnalysisGraphAgent:
     def __init__(
         self,
         *,
+        evidence_extractor: DartLlmEvidenceExtractor | None = None,
         analysis_agent: DartAnalysisAgent | None = None,
     ) -> None:
-        self._analysis_agent = analysis_agent or DartAnalysisAgent()
+        # Wave 2: 근거 추출기는 검증 통과 시 위임하는 DartAnalysisAgent 로 흘린다(근거만, 숫자 불변).
+        self._analysis_agent = analysis_agent or DartAnalysisAgent(
+            evidence_extractor=evidence_extractor
+        )
 
     async def analyze(self, input_data: SourceAgentInput) -> SourceAgentOutput:
         nodes = ["validate_input"]
