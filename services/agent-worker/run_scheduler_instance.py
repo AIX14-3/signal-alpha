@@ -31,7 +31,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("scheduler_instance")
 
 DEFAULT_BASE_URL = "http://localhost:8011"
-DEFAULT_SCHEDULE_NAME = "daily-collection"
+DEFAULT_SCHEDULE_NAME = ""
 DEFAULT_REPORT_LIMIT = 100
 DEFAULT_REPORT_DAYS_BACK = 7
 DEFAULT_REPORT_MAX_PAGES = 20
@@ -229,6 +229,56 @@ def _overall_status(summary: dict[str, Any]) -> str:
     return "partial" if "error" in summary or "error:" in flat else "ok"
 
 
+async def _run_one_schedule(
+    repo: Any,
+    client: httpx.AsyncClient,
+    *,
+    base_url: str,
+    schedule: dict[str, Any],
+    trigger_reason: str,
+    now: datetime,
+) -> str:
+    logger.info(
+        "schedule firing (%s): name=%s targets=%s",
+        trigger_reason,
+        schedule.get("name"),
+        schedule.get("targets"),
+    )
+    run_row = await repo.start_run(
+        schedule_id=int(schedule["id"]),
+        schedule_name=str(schedule.get("name") or schedule["id"]),
+        trigger_reason=trigger_reason,
+        targets=list(schedule.get("targets") or []),
+    )
+    try:
+        summary = await _fire(client, base_url=base_url, schedule=schedule)
+    except Exception as exc:  # noqa: BLE001 - close the run history row deterministically
+        logger.exception("schedule firing failed")
+        summary = {"error": str(exc)}
+    status = _overall_status(summary)
+    try:
+        await repo.record_run(
+            schedule_id=int(schedule["id"]),
+            last_run_at=now,
+            last_status=status,
+            last_detail=summary,
+            next_run_at=_next_run_at(now, schedule["run_at_local"]),
+        )
+        return status
+    finally:
+        await repo.finish_run(
+            run_id=int(run_row["id"]),
+            status=status,
+            detail=summary,
+        )
+        logger.info(
+            "schedule run completed: name=%s status=%s summary=%s",
+            schedule.get("name"),
+            status,
+            summary,
+        )
+
+
 async def run_cycle(
     pool: Any,
     client: httpx.AsyncClient,
@@ -241,52 +291,56 @@ async def run_cycle(
 
     async with pool.acquire() as connection:
         repo = CollectionScheduleRepository(connection)
-        row = await repo.get_by_name(schedule_name) or await repo.get_primary()
-        schedule = parse_schedule_row(row)
-        if schedule is None:
-            logger.warning("collection_schedules row not found (name=%s)", schedule_name)
+        if schedule_name:
+            rows = [await repo.get_by_name(schedule_name) or await repo.get_primary()]
+        else:
+            rows = await repo.list_all()
+
+        schedules = [
+            schedule
+            for schedule in (parse_schedule_row(row) for row in rows)
+            if schedule is not None
+        ]
+        if not schedules:
+            logger.warning("collection_schedules row not found (name=%s)", schedule_name or "*")
             return "no-schedule"
 
-        tz = ZoneInfo(schedule.get("timezone") or "Asia/Seoul")
-        now = datetime.now(tz)
-        fire, reason = _should_fire(schedule, now)
-        if not fire:
-            return reason
+        due: list[tuple[dict[str, Any], str, datetime]] = []
+        skipped_reasons: list[str] = []
+        for schedule in schedules:
+            tz = ZoneInfo(schedule.get("timezone") or "Asia/Seoul")
+            now = datetime.now(tz)
+            fire, reason = _should_fire(schedule, now)
+            if fire:
+                due.append((schedule, reason, now))
+            else:
+                skipped_reasons.append(reason)
+
+        if not due:
+            if schedule_name and skipped_reasons:
+                return skipped_reasons[0]
+            return "not-due"
 
         if not await _try_scheduler_lock(connection):
             logger.warning("scheduler advisory lock is held elsewhere")
             return "lock-held"
 
         try:
-            logger.info("schedule firing (%s): targets=%s", reason, schedule.get("targets"))
-            run_row = await repo.start_run(
-                schedule_id=int(schedule["id"]),
-                schedule_name=str(schedule.get("name") or schedule_name),
-                trigger_reason=reason,
-                targets=list(schedule.get("targets") or []),
-            )
-            try:
-                summary = await _fire(client, base_url=base_url, schedule=schedule)
-            except Exception as exc:  # noqa: BLE001 - close the run history row deterministically
-                logger.exception("schedule firing failed")
-                summary = {"error": str(exc)}
-            status = _overall_status(summary)
-            try:
-                await repo.record_run(
-                    schedule_id=int(schedule["id"]),
-                    last_run_at=now,
-                    last_status=status,
-                    last_detail=summary,
-                    next_run_at=_next_run_at(now, schedule["run_at_local"]),
+            statuses: list[str] = []
+            for schedule, reason, now in due:
+                status = await _run_one_schedule(
+                    repo,
+                    client,
+                    base_url=base_url,
+                    schedule=schedule,
+                    trigger_reason=reason,
+                    now=now,
                 )
-                return f"fired:{reason}:{status}"
-            finally:
-                await repo.finish_run(
-                    run_id=int(run_row["id"]),
-                    status=status,
-                    detail=summary,
-                )
-                logger.info("schedule run completed: status=%s summary=%s", status, summary)
+                statuses.append(status)
+            if schedule_name:
+                return f"fired:{due[0][1]}:{statuses[0]}"
+            overall = "partial" if any(status != "ok" for status in statuses) else "ok"
+            return f"fired:{len(statuses)}:{overall}"
         finally:
             await _release_scheduler_lock(connection)
 
@@ -305,7 +359,7 @@ async def main() -> None:
     parser.add_argument(
         "--schedule-name",
         default=os.getenv("SCHEDULE_NAME", DEFAULT_SCHEDULE_NAME),
-        help=f"Schedule row name. Defaults to {DEFAULT_SCHEDULE_NAME}.",
+        help="Schedule row name. Defaults to all configured rows.",
     )
     args = parser.parse_args()
 

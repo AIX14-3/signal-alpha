@@ -112,6 +112,9 @@ class FakeScheduleRepository:
     async def get_primary(self):
         raise AssertionError("primary schedule should not be fetched")
 
+    async def list_all(self):
+        raise AssertionError("all schedules should not be fetched")
+
     async def record_run(self, **kwargs):
         self.recorded_runs.append(kwargs)
         return kwargs
@@ -342,3 +345,68 @@ def test_run_cycle_finishes_execution_history_when_fire_raises(monkeypatch):
     ]
     assert repository.recorded_runs[0]["last_status"] == "partial"
     assert any("pg_advisory_unlock" in sql for sql, _args in connection.fetchval_calls)
+
+
+def test_run_cycle_fires_each_due_schedule_when_schedule_name_is_empty(monkeypatch):
+    repository = None
+    fired_schedule_names = []
+
+    def due_schedule(schedule_id, name, targets):
+        return {
+            "id": schedule_id,
+            "name": name,
+            "enabled": True,
+            "run_at_local": time(4, 30),
+            "timezone": "Asia/Seoul",
+            "targets": targets,
+            "dart_limit": 10,
+            "price_modes": ["snapshot"],
+            "last_run_at": None,
+            "manual_trigger_requested_at": datetime(
+                2026, 7, 1, 5, 0, tzinfo=ZoneInfo("Asia/Seoul")
+            ),
+        }
+
+    class MultiScheduleRepository(FakeScheduleRepository):
+        async def get_by_name(self, name):
+            raise AssertionError("named schedule should not be fetched")
+
+        async def get_primary(self):
+            raise AssertionError("primary schedule should not be fetched")
+
+        async def list_all(self):
+            return [
+                due_schedule(1, "price-collection", ["price"]),
+                due_schedule(2, "report-collection", ["report"]),
+            ]
+
+    def repo_factory(connection):
+        nonlocal repository
+        repository = MultiScheduleRepository(connection)
+        return repository
+
+    async def fire_success(_client, *, base_url, schedule):
+        fired_schedule_names.append(schedule["name"])
+        return {schedule["targets"][0]: 1}
+
+    monkeypatch.setattr(backend, "CollectionScheduleRepository", repo_factory)
+    monkeypatch.setattr(run_scheduler_instance, "_fire", fire_success)
+
+    connection = FakeConnection(lock_acquired=True)
+    result = asyncio.run(
+        run_cycle(
+            FakePool(connection),
+            object(),
+            base_url="http://worker",
+            schedule_name="",
+        )
+    )
+
+    assert result == "fired:2:ok"
+    assert fired_schedule_names == ["price-collection", "report-collection"]
+    assert repository is not None
+    assert [run["schedule_name"] for run in repository.started_runs] == [
+        "price-collection",
+        "report-collection",
+    ]
+    assert [run["schedule_id"] for run in repository.recorded_runs] == [1, 2]
