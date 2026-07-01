@@ -8,7 +8,7 @@ ERD 다이어그램([`../erd/signal_alpha_core_erd.md`](../erd/signal_alpha_core
 > - 워커/에이전트가 **어떤 테이블을 쓰는지**(역할→테이블 방향)는 [`table_responsibility.md`](./table_responsibility.md)를 참고하세요. 이 문서는 그 반대인 **테이블→역할** 방향입니다.
 > - **새 테이블을 추가하는 마이그레이션 PR은 이 문서에도 한 줄 설명을 반드시 추가해야 합니다** (`database/README.md` §4).
 
-총 56개 테이블 (러너가 자동 관리하는 `schema_migrations` 원장 제외).
+총 59개 테이블 (러너가 자동 관리하는 `schema_migrations` 원장 제외).
 
 ---
 
@@ -22,6 +22,9 @@ ERD 다이어그램([`../erd/signal_alpha_core_erd.md`](../erd/signal_alpha_core
 | `ohlcv_data` | 일봉 시계열(시가/고가/저가/종가/거래량)과 외국인·기관 순매수. 장 마감 후 적재 |
 | `fundamentals` | 종목별 재무 지표(매출·PER·PBR·ROE 등). 연간/분기 단위 |
 | `price_snapshots` | 장중 현재가 스냅샷(시점별 누적 거래량 포함). 일봉과 달리 실시간 캡처 |
+| `short_selling_trend` | 종목별 일별 공매도추이(공매도량·매매비중·거래대금·평균가). 키움 ka10014. 하락 압력 근거 |
+| `credit_trade_trend` | 종목별 일별 신용매매동향(신규/상환/융자잔고/잔고율). 키움 ka10013. 반대매매 취약성 근거 |
+| `securities_lending_trend` | 종목별 일별 대차거래추이(체결/상환/증감/대차잔고). 키움 ka20068. 공매도 선행지표 |
 
 ## Zone C — Collection 핵심 (003_collection_core.sql)
 
