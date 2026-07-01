@@ -46,9 +46,11 @@ class FakeAnalyzer:
     def __init__(self, *, fail=False):
         self.fail = fail
         self.calls = 0
+        self.received_events = None
 
     async def analyze(self, *, events, rule_result, stock_code):
         self.calls += 1
+        self.received_events = events
         if self.fail:
             raise RuntimeError("LLM timeout")
         return DartLlmAnalysis(
@@ -97,6 +99,33 @@ class DartEvidenceExtractorTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.llm_model, "fake-model")
         self.assertTrue(result.needs_review)
         self.assertIsNone(result.llm_error)
+
+    async def test_caps_event_count_and_evidence_text(self):
+        analyzer = FakeAnalyzer()
+        extractor = DartLlmEvidenceExtractor(analyzer=analyzer)
+        # 30건(1건은 고임팩트 게이트 통과용) + 초대형 본문.
+        events = [high_impact_event()]
+        for i in range(30):
+            events.append(
+                {
+                    "id": 600 + i,
+                    "event_type": "material_event",
+                    "event_date": date(2026, 5, 1),
+                    "signal_direction": "neutral",
+                    "impact_level": "high",
+                    "title": f"e{i}",
+                    "evidence_text": "x" * 50000,
+                    "needs_review": False,
+                }
+            )
+
+        await extractor.extract(events, stock_code="005930", rule_result=_rule_result(events))
+
+        self.assertLessEqual(len(analyzer.received_events), 12)  # 이벤트 수 상한
+        for event in analyzer.received_events:
+            text = event.get("evidence_text")
+            if isinstance(text, str):
+                self.assertLessEqual(len(text), 20000)  # 본문 절단
 
     async def test_llm_failure_falls_back_to_features(self):
         analyzer = FakeAnalyzer(fail=True)
