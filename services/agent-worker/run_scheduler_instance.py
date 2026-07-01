@@ -5,8 +5,9 @@
 DART/report 만 인큐했지만, 이제 **백엔드 DB 의 단일 config 행을 폴링**해 매일 `run_at_local`
 (타임존, 기본 04:30 KST)에 1회 발화하고, 어드민이 설정한 `enabled`/대상/`manual_trigger`
 를 따른다. 발화 시 대상별로 워커 내부 엔드포인트를 호출한다:
-  - price → POST /internal/price/collect (mode 별: flows, snapshot)
-  - dart  → POST /internal/schedules/dart/collect (limit, priority=batch)
+  - price  → POST /internal/price/collect (mode 별: flows, snapshot)
+  - dart   → POST /internal/schedules/dart/collect (limit, priority=batch)
+  - report → POST /internal/schedules/report/collect (limit, days_back, max_pages, priority=batch)
 인큐된 COLLECT_* 는 워커 **큐 드레인 데몬**(`QUEUE_DRAIN_DAEMON_ENABLED`)이 발행까지 소비한다.
 
 config 는 어드민(main-server)이 `collection_schedules` 에 쓰고, 이 프로세스는 발행용
@@ -43,6 +44,10 @@ logger = logging.getLogger("scheduler_instance")
 
 DEFAULT_BASE_URL = "http://localhost:8011"
 DEFAULT_SCHEDULE_NAME = "daily-collection"
+DEFAULT_REPORT_LIMIT = 100
+DEFAULT_REPORT_DAYS_BACK = 7
+DEFAULT_REPORT_MAX_PAGES = 20
+DEFAULT_PRIORITY = "batch"
 
 
 async def _build_backend_pool(max_pool_size: int = 4) -> Any:
@@ -113,12 +118,30 @@ async def _fire(
         try:
             dart = await _post(
                 "/internal/schedules/dart/collect",
-                {"limit": int(schedule.get("dart_limit") or 10), "priority": "batch"},
+                {"limit": int(schedule.get("dart_limit") or 10), "priority": DEFAULT_PRIORITY},
             )
             summary["dart"] = dart.get("scheduled_count") if isinstance(dart, dict) else dart
         except Exception as exc:  # noqa: BLE001 - 한 대상 실패가 다른 대상/상태기록을 막지 않게
             logger.warning("dart/collect 실패: %s", exc)
             summary["dart"] = f"error: {exc}"
+
+    if "report" in targets:
+        try:
+            report = await _post(
+                "/internal/schedules/report/collect",
+                {
+                    "limit": DEFAULT_REPORT_LIMIT,
+                    "days_back": DEFAULT_REPORT_DAYS_BACK,
+                    "max_pages": DEFAULT_REPORT_MAX_PAGES,
+                    "priority": DEFAULT_PRIORITY,
+                },
+            )
+            summary["report"] = (
+                report.get("scheduled_count") if isinstance(report, dict) else report
+            )
+        except Exception as exc:  # noqa: BLE001 - 한 대상 실패가 다른 대상/상태기록을 막지 않게
+            logger.warning("report/collect 실패: %s", exc)
+            summary["report"] = f"error: {exc}"
 
     if "price" in targets:
         price_summary: dict[str, Any] = {}
