@@ -13,6 +13,7 @@ from app.orchestrator.queue.task_types import (
     ANALYZE_REPORT,
     COLLECT_DART,
     COLLECT_REPORT,
+    EMBED_REPORT,
     ENRICH_HIRING,
     ENRICH_PATENT,
     NORMALIZE_DART,
@@ -59,6 +60,7 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
     from app.orchestrator.report.tasks import (
         ReportCollectTaskHandler,
         ReportAnalyzeTaskHandler,
+        ReportEmbedTaskHandler,
         ReportNormalizeTaskHandler,
         ReportProcessTaskHandler,
     )
@@ -87,7 +89,10 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
         COLLECT_REPORT: ReportCollectTaskHandler(connection=connection, settings=settings),
         PROCESS_REPORT: ReportProcessTaskHandler(connection=connection, settings=settings),
         NORMALIZE_REPORT: ReportNormalizeTaskHandler(connection=connection),
-        ANALYZE_REPORT: ReportAnalyzeTaskHandler(connection=connection),
+        # RAG 임베딩 적재(#709) — REPORT_USE_LLM=true 일 때 PROCESS 가 인큐. 하류 enqueue 없음.
+        EMBED_REPORT: ReportEmbedTaskHandler(connection=connection, settings=settings),
+        # ANALYZE 는 settings 를 받아 REPORT_USE_LLM 시 RAG 재해석을 method_detail.report_rag 로 가법.
+        ANALYZE_REPORT: ReportAnalyzeTaskHandler(connection=connection, settings=settings),
         # Alternative sources (hiring/patent/datalab) — converged onto the queue.
         NORMALIZE_HIRING: HiringNormalizeTaskHandler(connection),
         NORMALIZE_PATENT: PatentNormalizeTaskHandler(connection),
