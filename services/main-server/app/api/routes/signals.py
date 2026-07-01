@@ -27,16 +27,23 @@ router = APIRouter(tags=["signals"])
 
 
 @router.get("/signals/{ticker}")
-async def get_current_signal(ticker: str, pool: Any = Depends(get_database_pool)) -> dict[str, Any]:
+async def get_current_signal(
+    ticker: str,
+    current_user: dict[str, Any] = Depends(get_current_user),
+    pool: Any = Depends(get_database_pool),
+) -> dict[str, Any]:
+    # 인증 필수 + 큐레이션 응답. 과거엔 무인증으로 dict(row)(=SELECT * api.signals_current)를
+    # 그대로 반환해 final_score/ml_*/score_breakdown 등 내부 컬럼이 비회원에게 노출됐다.
+    # /api/signals/by-stock/{stock_code} 와 동일한 보호·필드 투영을 적용한다.
     from signal_alpha_data_access.backend import SignalRepository
 
     async with pool.acquire() as connection:
         row = await SignalRepository(connection).get_current_by_ticker(ticker)
 
     if row is None:
-        raise HTTPException(status_code=404, detail="Signal not found.")
+        raise _api_error(404, "SIGNAL_NOT_FOUND", "시그널을 찾을 수 없습니다.")
 
-    return dict(row)
+    return _signal_by_stock_response(dict(row))
 
 
 @router.get("/api/signals/by-stock/{stock_code}")

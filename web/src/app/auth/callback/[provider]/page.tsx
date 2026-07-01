@@ -37,7 +37,10 @@ export default function SocialCallbackPage() {
 
     if (oauthError || !code) return fail("인증이 취소되었거나 실패했습니다.");
     if (!saved || saved.provider !== provider) return fail("잘못된 콜백 요청입니다.");
-    if (returnedState && saved.state !== returnedState) return fail("보안 검증(state)에 실패했습니다.");
+    // CSRF 방지: state 는 필수다. 과거엔 `returnedState && ...` 라 state 를 빼면 검증이 통째로
+    // 스킵돼 로그인 CSRF/계정연결 하이재킹이 가능했다 → 저장 nonce 와 정확히 일치해야만 통과.
+    if (!saved.state || !returnedState || saved.state !== returnedState)
+      return fail("보안 검증(state)에 실패했습니다.");
 
     const body = {
       code,

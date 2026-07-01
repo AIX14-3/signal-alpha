@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ApiError, getSourceDetail, type SourceDetail, type SourceKey } from "@/lib/apiClient";
-import { directionLabel, SOURCE_META, won } from "@/lib/format";
+import { directionLabel, safeHttpUrl, SOURCE_META, won } from "@/lib/format";
 
 const VALID: SourceKey[] = ["price", "dart", "hiring", "datalab", "patent", "report"];
 
@@ -135,8 +135,8 @@ export default function SourceDetailPage() {
                   {detail.items.map((it, i) => (
                     <tr key={i} className="border-t border-line">
                       <td className="px-4 py-3">
-                        {it.evidence_url ? (
-                          <a href={it.evidence_url} target="_blank" rel="noreferrer" className="text-sky-deep">{it.title ?? "근거"} ↗</a>
+                        {safeHttpUrl(it.evidence_url) ? (
+                          <a href={safeHttpUrl(it.evidence_url)!} target="_blank" rel="noreferrer" className="text-sky-deep">{it.title ?? "근거"} ↗</a>
                         ) : (
                           it.title ?? "근거"
                         )}

@@ -9,6 +9,17 @@ metadata:
     app.kubernetes.io/part-of: signal-alpha
 data:
   SERVICE_VERSION: "0.1.0"
+  # 배포 환경. production 이면 main-server 부팅 시 _validate_production 가드가 켜져
+  # 기본 JWT 시크릿/비-Secure 쿠키/와일드카드 CORS/웹훅 시크릿 누락을 즉시 거부(fail-closed).
+  # 비-프로덕션 클러스터(샌드박스)에 base 를 띄울 때만 해당 오버레이에서 development 로 덮어쓴다.
+  # (로컬 개발은 docker-compose 라 이 ConfigMap 과 무관.)
+  APP_ENV: "production"
+  # HTTPS(Ingress) 뒤 배포 — refresh/admin 쿠키 Secure 필수.
+  COOKIE_SECURE: "true"
+  # ⚠️ 아래 둘은 실도메인으로 반드시 덮어써야 한다(cloudsql 오버레이가 패치). 기본 localhost
+  #    값이면 프론트 CORS·TrustedHost 가 막힌다(부팅은 되지만 요청 거부).
+  #   CORS_ALLOW_ORIGINS: "https://www.<도메인>"
+  #   ALLOWED_HOSTS: "api.<도메인>,www.<도메인>"
   # 워커 내부 URL — scheduler 가 수집 엔드포인트 호출 시 사용(클러스터 DNS).
   WORKER_BASE_URL: "http://agent-worker:8011"
   # 큐 드레인 데몬 순회 대기(초).

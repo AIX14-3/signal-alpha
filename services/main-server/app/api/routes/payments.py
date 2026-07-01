@@ -107,6 +107,14 @@ async def confirm(
         raise _api_error(400, "PAYMENT_VERIFICATION_FAILED", "결제 검증에 실패했습니다.")
 
     async with pool.acquire() as connection:
+        # 소유권 검증(IDOR 방지): paymentId↔user 매핑은 checkout 에서 status=ready 로 미리 적재된다.
+        # 호출자가 그 결제의 소유자가 아니면(또는 매핑이 없으면) 확정 거부 — 타인의 결제로 본인
+        # 구독을 활성화하지 못하게 한다. webhook 경로는 매핑의 user_id 를 쓰므로 영향 없음.
+        record = await UserBillingRepository(connection).get_payment_verification_by_imp_uid(
+            imp_uid=payload.payment_id
+        )
+        if record is None or int(record["user_id"]) != user_id:
+            raise _api_error(403, "PAYMENT_OWNER_MISMATCH", "본인 결제만 확정할 수 있습니다.")
         subscription = await _grant_or_extend(connection, user_id, payment, payload.payment_id, settings)
     if subscription is None:
         raise _api_error(404, "PLAN_NOT_FOUND", "구독 상품을 찾을 수 없습니다.")
@@ -274,6 +282,11 @@ async def webhook(
     if settings.portone_webhook_secret:
         if not _verify_webhook_signature(request.headers, body, settings.portone_webhook_secret):
             raise _api_error(400, "WEBHOOK_SIGNATURE_INVALID", "웹훅 서명 검증에 실패했습니다.")
+    elif settings.app_env == "production":
+        # 프로덕션에서 시크릿 미설정이면 무서명 웹훅을 처리하지 않는다(위조 결제 이벤트 방지).
+        # 설정 자체는 config._validate_production 이 부팅 시 강제하지만, 런타임에서도 fail-closed.
+        logger.error("PORTONE_WEBHOOK_SECRET 미설정 — 프로덕션 웹훅 거부")
+        raise _api_error(503, "WEBHOOK_SECRET_MISSING", "웹훅 서명 시크릿이 설정되지 않았습니다.")
     try:
         event = json.loads(body or b"{}")
     except json.JSONDecodeError:

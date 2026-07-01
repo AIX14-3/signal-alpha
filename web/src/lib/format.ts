@@ -120,3 +120,15 @@ export function sourceLabel(source: string): string {
 export function won(amount: number): string {
   return `₩${amount.toLocaleString("ko-KR")}`;
 }
+
+// 수집/LLM 유래 URL은 신뢰할 수 없다 — href 로 렌더하기 전 http(s) 스킴만 허용한다.
+// javascript:/data:/vbscript: 등은 클릭 시 앱 오리진에서 스크립트가 실행돼 토큰 탈취로 이어질 수 있다.
+export function safeHttpUrl(value: string | null | undefined): string | null {
+  if (!value) return null;
+  try {
+    const u = new URL(value, "https://invalid.local");
+    return u.protocol === "http:" || u.protocol === "https:" ? value : null;
+  } catch {
+    return null;
+  }
+}

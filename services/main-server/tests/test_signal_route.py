@@ -104,12 +104,21 @@ class SignalRouteTest(unittest.TestCase):
     def auth_headers(self):
         return {"Authorization": f"Bearer {self.token}"}
 
-    def test_get_signal_by_ticker_returns_current_signal(self):
+    def test_get_signal_by_ticker_requires_authentication(self):
         response = self.client.get("/signals/005930")
 
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json()["detail"]["code"], "AUTH_REQUIRED")
+
+    def test_get_signal_by_ticker_returns_curated_signal(self):
+        response = self.client.get("/signals/005930", headers=self.auth_headers())
+
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["ticker"], "005930")
-        self.assertEqual(response.json()["signal"], "neutral")
+        body = response.json()
+        # 큐레이션 응답만 노출 — 원시 내부 컬럼(score_breakdown/ml_* 등)은 직접 노출되지 않는다.
+        self.assertEqual(body["stock"]["stock_code"], "005930")
+        self.assertEqual(body["direction"], "neutral")
+        self.assertNotIn("score_breakdown", body)
 
     def test_get_signal_by_stock_requires_authentication(self):
         response = self.client.get("/api/signals/by-stock/005930")

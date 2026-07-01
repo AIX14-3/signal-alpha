@@ -18,6 +18,7 @@ class ProductionConfigGuardTest(unittest.TestCase):
             "CORS_ALLOW_ORIGINS": "https://app.example.com",
             "COOKIE_SAMESITE": "none",
             "COOKIE_SECURE": "true",
+            "PORTONE_WEBHOOK_SECRET": "whsec_example",
         }
         base.update(overrides)
         return base
@@ -39,6 +40,13 @@ class ProductionConfigGuardTest(unittest.TestCase):
 
     def test_samesite_none_without_secure_raises(self) -> None:  # G6
         with mock.patch.dict(os.environ, self._env(COOKIE_SECURE="false"), clear=False):
+            with self.assertRaises(ValueError):
+                Settings()
+
+    def test_webhook_secret_required_raises(self) -> None:  # G9
+        env = self._env()
+        env.pop("PORTONE_WEBHOOK_SECRET")
+        with mock.patch.dict(os.environ, env, clear=True):
             with self.assertRaises(ValueError):
                 Settings()
 

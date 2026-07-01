@@ -9,6 +9,18 @@ DEFAULT_DISCLAIMER = (
     "투자 권유가 아닙니다. 투자 판단과 책임은 사용자 본인에게 있습니다."
 )
 
+# 종목의 "현재 발행 대표(AGGREGATED) 신호" 1건만 선택한다($1 = stock_id).
+# is_current 는 (stock_id, signal_date, run_key) 단위로만 유일해 종목당 여러 행(소스별 run_key·
+# 과거 signal_date)이 동시에 is_current=TRUE 일 수 있다. 오버레이/서술 UPDATE 가 이 모두를
+# 덮어써 무관한 소스·과거일자 행을 오염시키던 버그를 막기 위해, run_key='AGGREGATED' + 최신
+# signal_date 단일 행으로 좁힌다(없으면 0행 → no-op, 기존 "체인 순서상 없으면 다음 사이클" 보존).
+_CURRENT_AGG_SUBQUERY = """(
+    SELECT id FROM final_signals
+    WHERE stock_id = $1 AND is_current = TRUE AND run_key = 'AGGREGATED'
+    ORDER BY signal_date DESC, id DESC
+    LIMIT 1
+)"""
+
 
 class AnalysisRepository:
     def __init__(self, connection: Any) -> None:
@@ -603,7 +615,9 @@ class AnalysisRepository:
                                 THEN jsonb_build_object('data_status', 'ok') ELSE '{}'::jsonb END,
                     TRUE
                 )
-                WHERE stock_id = $1 AND is_current = TRUE
+                WHERE id = """
+                + _CURRENT_AGG_SUBQUERY
+                + """
                 RETURNING id
                 """,
                 stock_id,
@@ -619,7 +633,9 @@ class AnalysisRepository:
                 COALESCE(score_breakdown -> $2, '{}'::jsonb) || $3::jsonb,
                 TRUE
             )
-            WHERE stock_id = $1 AND is_current = TRUE
+            WHERE id = """
+            + _CURRENT_AGG_SUBQUERY
+            + """
             RETURNING id
             """,
             stock_id,
@@ -653,8 +669,9 @@ class AnalysisRepository:
             )
             FROM final_signals fs
             WHERE fs.analysis_result_id = ar.id
-              AND fs.stock_id = $1
-              AND fs.is_current = TRUE
+              AND fs.id = """
+            + _CURRENT_AGG_SUBQUERY
+            + """
             """,
             stock_id,
             [int(e) for e in event_ids],
@@ -684,7 +701,9 @@ class AnalysisRepository:
                 ml_direction = $3,
                 ml_confidence = $4,
                 source_predictions = $5::jsonb
-            WHERE stock_id = $1 AND is_current = TRUE
+            WHERE id = """
+            + _CURRENT_AGG_SUBQUERY
+            + """
             RETURNING *
             """,
             stock_id,
