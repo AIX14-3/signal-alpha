@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict 1oMh0apgt2SybTgbo11qHDbnDqr6qXcyI9AGKjVDgroP4og1dKHGmXfCuDlnR5u
+\restrict WBEDHJtlNyruyfPOCXZvdUI9IdhTUr5cXRDJGfrAB1YynfH2VfzBap6A8XQUn5y
 
 -- Dumped from database version 16.14 (Debian 16.14-1.pgdg12+1)
 -- Dumped by pg_dump version 16.14 (Debian 16.14-1.pgdg12+1)
@@ -769,6 +769,45 @@ CREATE SEQUENCE public.collector_runs_id_seq
 --
 
 ALTER SEQUENCE public.collector_runs_id_seq OWNED BY public.collector_runs.id;
+
+
+--
+-- Name: credit_trade_trend; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.credit_trade_trend (
+    id bigint NOT NULL,
+    stock_id bigint NOT NULL,
+    trade_date date NOT NULL,
+    cur_price bigint,
+    volume bigint,
+    credit_new bigint,
+    credit_repay bigint,
+    credit_balance bigint,
+    credit_amount bigint,
+    credit_net bigint,
+    balance_ratio numeric(8,2),
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: credit_trade_trend_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.credit_trade_trend_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: credit_trade_trend_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.credit_trade_trend_id_seq OWNED BY public.credit_trade_trend.id;
 
 
 --
@@ -2254,6 +2293,80 @@ ALTER SEQUENCE public.score_history_id_seq OWNED BY public.score_history.id;
 
 
 --
+-- Name: securities_lending_trend; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.securities_lending_trend (
+    id bigint NOT NULL,
+    stock_id bigint NOT NULL,
+    trade_date date NOT NULL,
+    lending_contract bigint,
+    lending_repay bigint,
+    lending_change bigint,
+    lending_balance bigint,
+    lending_balance_amount bigint,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: securities_lending_trend_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.securities_lending_trend_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: securities_lending_trend_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.securities_lending_trend_id_seq OWNED BY public.securities_lending_trend.id;
+
+
+--
+-- Name: short_selling_trend; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.short_selling_trend (
+    id bigint NOT NULL,
+    stock_id bigint NOT NULL,
+    trade_date date NOT NULL,
+    close_price bigint,
+    change_rate numeric(8,2),
+    volume bigint,
+    short_volume bigint,
+    short_weight_pct numeric(8,2),
+    short_value_krw bigint,
+    short_avg_price bigint,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: short_selling_trend_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.short_selling_trend_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: short_selling_trend_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.short_selling_trend_id_seq OWNED BY public.short_selling_trend.id;
+
+
+--
 -- Name: signal_episodes; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -2893,6 +3006,13 @@ ALTER TABLE ONLY public.collector_runs ALTER COLUMN id SET DEFAULT nextval('publ
 
 
 --
+-- Name: credit_trade_trend id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.credit_trade_trend ALTER COLUMN id SET DEFAULT nextval('public.credit_trade_trend_id_seq'::regclass);
+
+
+--
 -- Name: dart_corp_codes id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -3124,6 +3244,20 @@ ALTER TABLE ONLY public.score_history ALTER COLUMN id SET DEFAULT nextval('publi
 
 
 --
+-- Name: securities_lending_trend id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.securities_lending_trend ALTER COLUMN id SET DEFAULT nextval('public.securities_lending_trend_id_seq'::regclass);
+
+
+--
+-- Name: short_selling_trend id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.short_selling_trend ALTER COLUMN id SET DEFAULT nextval('public.short_selling_trend_id_seq'::regclass);
+
+
+--
 -- Name: signal_episodes id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -3352,6 +3486,14 @@ ALTER TABLE ONLY public.collection_schedules
 
 ALTER TABLE ONLY public.collector_runs
     ADD CONSTRAINT collector_runs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: credit_trade_trend credit_trade_trend_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.credit_trade_trend
+    ADD CONSTRAINT credit_trade_trend_pkey PRIMARY KEY (id);
 
 
 --
@@ -3811,6 +3953,22 @@ ALTER TABLE ONLY public.score_history
 
 
 --
+-- Name: securities_lending_trend securities_lending_trend_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.securities_lending_trend
+    ADD CONSTRAINT securities_lending_trend_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: short_selling_trend short_selling_trend_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.short_selling_trend
+    ADD CONSTRAINT short_selling_trend_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: signal_episodes signal_episodes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -3952,6 +4110,14 @@ ALTER TABLE ONLY public.agent_results
 
 ALTER TABLE ONLY public.analysis_results
     ADD CONSTRAINT uq_analysis UNIQUE (stock_id, analysis_date, analysis_mode, run_key, version);
+
+
+--
+-- Name: credit_trade_trend uq_credit_trade_trend_stock_date; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.credit_trade_trend
+    ADD CONSTRAINT uq_credit_trade_trend_stock_date UNIQUE (stock_id, trade_date);
 
 
 --
@@ -4128,6 +4294,22 @@ ALTER TABLE ONLY public.report_chunks
 
 ALTER TABLE ONLY public.report_issuances
     ADD CONSTRAINT uq_report_issuance UNIQUE (user_id, final_signal_id);
+
+
+--
+-- Name: securities_lending_trend uq_securities_lending_trend_stock_date; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.securities_lending_trend
+    ADD CONSTRAINT uq_securities_lending_trend_stock_date UNIQUE (stock_id, trade_date);
+
+
+--
+-- Name: short_selling_trend uq_short_selling_trend_stock_date; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.short_selling_trend
+    ADD CONSTRAINT uq_short_selling_trend_stock_date UNIQUE (stock_id, trade_date);
 
 
 --
@@ -4353,6 +4535,13 @@ CREATE INDEX idx_collector_runs_status ON public.collector_runs USING btree (sta
 --
 
 CREATE INDEX idx_collector_runs_type_time ON public.collector_runs USING btree (collector_type, started_at DESC);
+
+
+--
+-- Name: idx_credit_trade_trend_date; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_credit_trade_trend_date ON public.credit_trade_trend USING btree (trade_date);
 
 
 --
@@ -4895,6 +5084,20 @@ CREATE INDEX idx_score_history_stock ON public.score_history USING btree (stock_
 
 
 --
+-- Name: idx_securities_lending_trend_date; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_securities_lending_trend_date ON public.securities_lending_trend USING btree (trade_date);
+
+
+--
+-- Name: idx_short_selling_trend_date; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_short_selling_trend_date ON public.short_selling_trend USING btree (trade_date);
+
+
+--
 -- Name: idx_signal_episodes_embedding; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -5032,6 +5235,20 @@ CREATE UNIQUE INDEX uq_employee_stats ON public.dart_employee_stats USING btree 
 --
 
 CREATE UNIQUE INDEX uq_final_signal_current ON public.final_signals USING btree (stock_id, signal_date, run_key) WHERE (is_current = true);
+
+
+--
+-- Name: uq_fx_rates_pair_date; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_fx_rates_pair_date ON public.fx_rates USING btree (pair, trade_date);
+
+
+--
+-- Name: uq_program_trading_stock_date; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_program_trading_stock_date ON public.program_trading USING btree (stock_id, trade_date);
 
 
 --
@@ -5210,6 +5427,14 @@ ALTER TABLE ONLY public.backtest_results
 
 ALTER TABLE ONLY public.backtest_results
     ADD CONSTRAINT backtest_results_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
+
+
+--
+-- Name: credit_trade_trend credit_trade_trend_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.credit_trade_trend
+    ADD CONSTRAINT credit_trade_trend_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id) ON DELETE CASCADE;
 
 
 --
@@ -5685,6 +5910,22 @@ ALTER TABLE ONLY public.score_history
 
 
 --
+-- Name: securities_lending_trend securities_lending_trend_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.securities_lending_trend
+    ADD CONSTRAINT securities_lending_trend_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id) ON DELETE CASCADE;
+
+
+--
+-- Name: short_selling_trend short_selling_trend_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.short_selling_trend
+    ADD CONSTRAINT short_selling_trend_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id) ON DELETE CASCADE;
+
+
+--
 -- Name: signal_episodes signal_episodes_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5832,5 +6073,5 @@ ALTER TABLE ONLY public.watchlists
 -- PostgreSQL database dump complete
 --
 
-\unrestrict 1oMh0apgt2SybTgbo11qHDbnDqr6qXcyI9AGKjVDgroP4og1dKHGmXfCuDlnR5u
+\unrestrict WBEDHJtlNyruyfPOCXZvdUI9IdhTUr5cXRDJGfrAB1YynfH2VfzBap6A8XQUn5y
 

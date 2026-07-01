@@ -57,7 +57,7 @@ docker compose run --rm db-migrate apply --seeds
 
 | Zone | 테이블 |
 | --- | --- |
-| A Market | `stocks`, `ohlcv_data`, `fundamentals`, `price_snapshots` |
+| A Market | `stocks`, `ohlcv_data`, `fundamentals`, `price_snapshots`, `short_selling_trend`, `credit_trade_trend`, `securities_lending_trend`, `program_trading`, `fx_rates` |
 | C Collection 핵심 | `collector_runs`, `raw_documents`, `dart_raw_details`, `report_raw_details`, `hiring_raw_details`, `patent_raw_details` |
 | C Collection DART | `dart_corp_codes`, `dart_collection_states` |
 | C Collection DataLab | `datalab_categories`, `datalab_category_stocks`, `datalab_category_keywords`, `datalab_raw_documents`, `datalab_raw_details` |
