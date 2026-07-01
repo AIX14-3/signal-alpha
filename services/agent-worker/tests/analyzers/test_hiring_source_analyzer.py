@@ -59,25 +59,44 @@ class HiringAnalyzerTest(unittest.IsolatedAsyncioTestCase):
             _row(55, 100), _row(60, 100), _row(65, 100), _row(70, 100), _row(75, 100),
         ]
         result = await HiringAnalyzer(CONFIG).analyze("005930", _evidence(rows))
+        # 판정은 여전히 없음(피처 전용) — 이 계약은 불변.
         self.assertEqual(result.direction, "unknown")
         self.assertEqual(result.score, 0.0)
         self.assertEqual(result.data_status, "no_signal")
         self.assertEqual(result.risk_flags, [])
-        self.assertIn("피처 산출", result.summary)
+        # 핵심 본질: 행이 있으면 서술 summary 가 생성된다 — 새 자연어 형식("…채용공고 N건…").
+        self.assertIn("채용공고", result.summary)
+        # 내부용어는 사용자 노출 summary 에서 제거됐다(형식 변경의 목적).
+        self.assertNotIn("피처 산출", result.summary)
+        self.assertNotIn("메타러너", result.summary)
 
-    async def test_keyword_fusion_surfaces_tech_and_titles(self):
-        """Loader-attached tech_stack/job_title 는 판정과 무관하게 summary + 포커스 evidence 로 노출."""
+    async def test_momentum_surfaced_as_percent(self):
+        """추세(momentum)가 있으면 자연어 %로 노출된다(최근 150 > 직전 100 → +50%)."""
         rows = [
-            _row(5, 150, change_pct=20), _row(10, 150, change_pct=20), _row(15, 150, change_pct=20),
+            _row(5, 150), _row(10, 150), _row(15, 150),
+            _row(55, 100), _row(60, 100), _row(65, 100), _row(70, 100), _row(75, 100),
+        ]
+        result = await HiringAnalyzer(CONFIG).analyze("005930", _evidence(rows))
+        self.assertIn("직전 대비", result.summary)
+        self.assertIn("%", result.summary)
+
+    async def test_tech_surfaced_but_job_title_noise_excluded(self):
+        """tech_stack 은 summary·포커스 evidence 로 노출하되, job_title(스케줄·'모집' 등 노이즈)은 제외한다."""
+        rows = [
+            _row(5, 150), _row(10, 150), _row(15, 150),
             _row(55, 100), _row(60, 100), _row(65, 100), _row(70, 100), _row(75, 100),
         ]
         for r in rows[:3]:
             r["tech_stack"] = ["Python", "LLM"]
-            r["job_title"] = "백엔드 엔지니어"  # "엔지니어" is a stopword -> "백엔드"
+            r["job_title"] = "[주3일, 9시] 물류 모집"  # 스케줄·'모집' 노이즈
         fused = await HiringAnalyzer(CONFIG).analyze("005930", _evidence(rows))
+        # 소재 반영(본질): 기술은 노출 + 포커스 evidence 존재.
         self.assertIn("Python", fused.summary)
-        self.assertIn("백엔드", fused.summary)
         self.assertTrue(any("포커스" in e.title for e in fused.evidence_items))
+        # 노이즈 차단(회귀 핵심): job_title 의 '모집'·스케줄 토큰이 summary 에 안 들어간다.
+        self.assertNotIn("모집", fused.summary)
+        self.assertNotIn("주3일", fused.summary)
+        self.assertNotIn("9시", fused.summary)
         # 판정은 여전히 없음(피처 전용).
         self.assertEqual(fused.direction, "unknown")
         self.assertEqual(fused.score, 0.0)

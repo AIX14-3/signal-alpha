@@ -51,31 +51,30 @@ class HiringAnalyzer:
         # AGGREGATE 점수·방향 집계에서 빠진다. 피처는 별도 PIT 경로(assemble_features)가 DB 에서 읽는다.
         latest = indicators.latest_observed_date or as_of.isoformat()
         momentum = indicators.momentum_pct
-        summary = (
-            f"{latest} 기준 최근 {self._config.lookback_days}일 채용 공고 {indicators.observations}건 "
-            f"피처 산출"
-            + (f"(모멘텀 {momentum:+.3f})" if momentum is not None else "")
-            + ". 판정은 학습형 메타러너가 수행."
+        count = metadata.get("posting_count") or indicators.observations or 0
+        # 사용자 노출용 자연어 한 줄 — 내부용어(피처 산출/메타러너) 없이 서술만. 판정 유보는
+        # direction=unknown·data_status=no_signal(구조)로 이미 정직하게 표현된다.
+        head = (
+            f"최근 {self._config.lookback_days}일 채용공고 {count}건"
+            + (f"(직전 대비 {momentum * 100:+.0f}%)" if momentum is not None else "")
         )
 
-        # Descriptive keyword/tech surfacing — what the hiring is FOR. Purely
-        # informational (does not touch the score); empty when the loader did not
-        # attach posting descriptors.
-        top_techs, top_keywords = _hiring_focus(rows)
+        # Descriptive surfacing — 기술스택만. 판정과 무관(점수 불변). job_title 은 노이즈가 많고,
+        # keyword 선두 [..]도 소스마다 사업부/회사명/고용형태(계약직·경력)/스케줄이 섞여(실측)
+        # 신뢰할 수 있는 '사업부'가 아니라서 서술에서 제외한다.
+        top_techs = _hiring_focus(rows)
         focus_bits: list[str] = []
         if top_techs:
-            focus_bits.append(f"주요 기술: {', '.join(top_techs)}")
-        if top_keywords:
-            focus_bits.append(f"주요 직무: {', '.join(top_keywords)}")
+            focus_bits.append(f"주요 기술: {'·'.join(top_techs)}")
+
+        summary = head + (", " + " · ".join(focus_bits) if focus_bits else "") + "."
 
         evidence_items: list[EvidenceItem] = []
         if focus_bits:
-            focus_desc = " · ".join(focus_bits)
-            summary = f"{summary} | {focus_desc}"
             evidence_items.append(
                 EvidenceItem(
-                    title="채용 직무·기술 포커스",
-                    summary=focus_desc,
+                    title="채용 기술 포커스",
+                    summary=" · ".join(focus_bits),
                     published_at=latest,
                     source_name="HIRING",
                 )
@@ -101,43 +100,20 @@ def _extract_rows(evidence: list[RawEvidence]) -> list[dict]:
     return []
 
 
-# Common job-title noise filtered out before keyword counting (ported from the
-# legacy inline HiringAnalyzer so its descriptive surfacing is preserved here).
-_JOB_TITLE_STOPWORDS = {
-    "engineer", "researcher", "developer", "analyst",
-    "개발", "연구", "엔지니어", "분석", "팀",
-    "부", "팀장", "리드", "lead",
-}
+def _hiring_focus(rows: list[dict]) -> list[str]:
+    """Top tech stacks across the postings (descriptive only — never affects the
+    score). Returns [] when rows carry no ``tech_stack``.
 
-
-def _hiring_focus(rows: list[dict]) -> tuple[list[str], list[str]]:
-    """Top tech stacks and job-title keywords across the postings.
-
-    Descriptive only — never affects the score. Returns ([], []) when rows carry
-    no ``tech_stack`` / ``job_title`` (e.g. loader did not attach descriptors).
+    직무명(job_title)은 스케줄 표기·'모집' 같은 노이즈가 많아 서술에서 제외한다 — 사업부(keyword
+    선두 [..], 로더가 metadata.business_units 로 제공)와 기술스택만 노출한다.
     """
     tech_counter: Counter[str] = Counter()
-    titles: list[str] = []
     for row in rows:
         techs = row.get("tech_stack") or []
         if isinstance(techs, str):
             techs = [t.strip() for t in techs.split(",")]
         tech_counter.update(t for t in techs if t)
-        title = row.get("job_title")
-        if title:
-            titles.append(str(title))
-    top_techs = [t for t, _ in tech_counter.most_common(3)]
-    return top_techs, _title_keywords(titles, k=3)
-
-
-def _title_keywords(job_titles: list[str], k: int = 3) -> list[str]:
-    words: list[str] = []
-    for title in job_titles:
-        parts = title.replace("/", " ").replace("-", " ").split()
-        words.extend(
-            w.strip() for w in parts if w.strip().lower() not in _JOB_TITLE_STOPWORDS
-        )
-    return [w for w, _ in Counter(words).most_common(k)]
+    return [t for t, _ in tech_counter.most_common(3)]
 
 
 def _as_of(metadata: dict) -> date:
