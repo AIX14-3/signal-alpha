@@ -118,9 +118,83 @@ def _scheduled_today(now: datetime, run_at: Any) -> datetime:
 
 def _next_run_at(now: datetime, run_at: Any) -> datetime:
     """Return the next local scheduled timestamp after now."""
+    if isinstance(run_at, dict):
+        schedule = run_at
+        frequency_minutes = _frequency_minutes(schedule)
+        if frequency_minutes < 1440:
+            return _next_interval_run_at(now, schedule, frequency_minutes)
+        run_at = schedule["run_at_local"]
     candidate = _scheduled_today(now, run_at)
     if candidate <= now:
         candidate += timedelta(days=1)
+    return candidate
+
+
+def _frequency_minutes(schedule: dict[str, Any]) -> int:
+    try:
+        minutes = int(schedule.get("frequency_minutes") or 1440)
+    except (TypeError, ValueError):
+        return 1440
+    return max(1, minutes)
+
+
+def _local_dt(value: datetime, now: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=now.tzinfo)
+    return value.astimezone(now.tzinfo)
+
+
+def _active_window(schedule: dict[str, Any], now: datetime) -> tuple[datetime, datetime | None]:
+    start_time = schedule.get("active_from_local") or schedule["run_at_local"]
+    end_time = schedule.get("active_until_local")
+    start = _scheduled_today(now, start_time)
+    end = _scheduled_today(now, end_time) if end_time is not None else None
+    if end is not None and end < start:
+        if now <= end:
+            start -= timedelta(days=1)
+        else:
+            end += timedelta(days=1)
+    return start, end
+
+
+def _inside_active_window(schedule: dict[str, Any], now: datetime) -> bool:
+    start, end = _active_window(schedule, now)
+    if now < start:
+        return False
+    return end is None or now <= end
+
+
+def _next_window_start(schedule: dict[str, Any], now: datetime) -> datetime:
+    start, end = _active_window(schedule, now)
+    if now < start:
+        return start
+    if end is not None and now <= end:
+        return start
+    return _scheduled_today(
+        now + timedelta(days=1),
+        schedule.get("active_from_local") or schedule["run_at_local"],
+    )
+
+
+def _next_interval_run_at(
+    now: datetime,
+    schedule: dict[str, Any],
+    frequency_minutes: int,
+) -> datetime:
+    start, end = _active_window(schedule, now)
+    if now < start:
+        return start
+    if end is not None and now >= end:
+        return _scheduled_today(
+            now + timedelta(days=1),
+            schedule.get("active_from_local") or schedule["run_at_local"],
+        )
+    candidate = now + timedelta(minutes=frequency_minutes)
+    if end is not None and candidate > end:
+        return _scheduled_today(
+            now + timedelta(days=1),
+            schedule.get("active_from_local") or schedule["run_at_local"],
+        )
     return candidate
 
 
@@ -132,6 +206,20 @@ def _should_fire(schedule: dict[str, Any], now: datetime) -> tuple[bool, str]:
     manual_at = schedule.get("manual_trigger_requested_at")
     if manual_at is not None and (last_run_at is None or manual_at > last_run_at):
         return True, "manual"
+    frequency_minutes = _frequency_minutes(schedule)
+    if frequency_minutes < 1440:
+        if not _inside_active_window(schedule, now):
+            return False, "outside-window"
+        if last_run_at is None:
+            return True, "scheduled"
+        last_local = _local_dt(last_run_at, now)
+        window_start = _next_window_start(schedule, now)
+        if last_local < window_start:
+            return True, "scheduled"
+        due_at = last_local + timedelta(minutes=frequency_minutes)
+        if now >= due_at:
+            return True, "scheduled"
+        return False, "not-due"
     todays = _scheduled_today(now, schedule["run_at_local"])
     if now >= todays and (last_run_at is None or last_run_at < todays):
         return True, "scheduled"
@@ -262,7 +350,7 @@ async def _run_one_schedule(
             last_run_at=now,
             last_status=status,
             last_detail=summary,
-            next_run_at=_next_run_at(now, schedule["run_at_local"]),
+            next_run_at=_next_run_at(now, schedule),
         )
         return status
     finally:

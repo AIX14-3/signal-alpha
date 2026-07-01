@@ -72,6 +72,9 @@ class UpdateScheduleRequest(BaseModel):
     targets: list[str] | None = None
     dart_limit: int | None = None
     price_modes: list[str] | None = None
+    frequency_minutes: int | None = None
+    active_from_local: str | None = None
+    active_until_local: str | None = None
 
 
 # member_code = 영문 대문자 4 + 숫자 4 (혼동 문자 I/O/0/1 제외). auth._new_member_code 와 동일 규칙.
@@ -471,12 +474,28 @@ async def update_schedule(
     pool: Any = Depends(get_database_pool),
 ) -> dict[str, Any]:
     run_at = _parse_schedule_time(payload.run_at_local) if payload.run_at_local is not None else None
+    active_from = (
+        _parse_schedule_time(payload.active_from_local)
+        if payload.active_from_local is not None
+        else None
+    )
+    active_until = (
+        _parse_schedule_time(payload.active_until_local)
+        if payload.active_until_local is not None
+        else None
+    )
     targets = _validate_targets(payload.targets) if payload.targets is not None else None
     price_modes = (
         _validate_price_modes(payload.price_modes) if payload.price_modes is not None else None
     )
     if payload.dart_limit is not None and not (1 <= payload.dart_limit <= 1000):
         raise admin_error(400, "INVALID_DART_LIMIT", "dart_limit 은 1~1000 이어야 합니다.")
+    if payload.frequency_minutes is not None and not (1 <= payload.frequency_minutes <= 1440):
+        raise admin_error(
+            400,
+            "INVALID_FREQUENCY_MINUTES",
+            "frequency_minutes 는 1~1440 이어야 합니다.",
+        )
     async with pool.acquire() as connection:
         repo = CollectionScheduleRepository(connection)
         before = await repo.get_by_id(schedule_id)
@@ -490,6 +509,9 @@ async def update_schedule(
             targets=targets,
             dart_limit=payload.dart_limit,
             price_modes=price_modes,
+            frequency_minutes=payload.frequency_minutes,
+            active_from_local=active_from,
+            active_until_local=active_until,
             updated_by=str(admin.get("admin_email") or admin.get("admin_id")),
         )
         await AdminRepository(connection).record_audit_log(
@@ -569,6 +591,8 @@ def _validate_price_modes(modes: list[str]) -> list[str]:
 def _schedule_row(row: dict[str, Any] | None) -> dict[str, Any]:
     row = row or {}
     run_at = row.get("run_at_local")
+    active_from = row.get("active_from_local")
+    active_until = row.get("active_until_local")
     detail = row.get("last_detail")
     if isinstance(detail, str):
         try:
@@ -584,6 +608,13 @@ def _schedule_row(row: dict[str, Any] | None) -> dict[str, Any]:
         "targets": row.get("targets") or [],
         "dart_limit": row.get("dart_limit"),
         "price_modes": row.get("price_modes") or [],
+        "frequency_minutes": row.get("frequency_minutes"),
+        "active_from_local": (
+            active_from.strftime("%H:%M") if hasattr(active_from, "strftime") else active_from
+        ),
+        "active_until_local": (
+            active_until.strftime("%H:%M") if hasattr(active_until, "strftime") else active_until
+        ),
         "last_run_at": _timestamp(row.get("last_run_at")),
         "last_status": row.get("last_status"),
         "last_detail": detail,

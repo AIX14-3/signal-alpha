@@ -541,6 +541,9 @@ export type AdminSchedule = {
   targets: string[];
   dart_limit: number | null;
   price_modes: string[];
+  frequency_minutes: number | null;
+  active_from_local: string | null;
+  active_until_local: string | null;
   last_run_at: string | null;
   last_status: string | null;
   last_detail: unknown;
@@ -583,6 +586,9 @@ export async function adminUpdateSchedule(
     targets?: string[];
     dart_limit?: number;
     price_modes?: string[];
+    frequency_minutes?: number;
+    active_from_local?: string;
+    active_until_local?: string;
   },
 ): Promise<AdminSchedule> {
   return apiFetch(`/api/admin/schedules/${scheduleId}`, {

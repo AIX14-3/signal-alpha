@@ -1,4 +1,5 @@
 import unittest
+from datetime import time
 
 from signal_alpha_data_access.repositories.collection_schedules import (
     CollectionScheduleRepository,
@@ -19,6 +20,46 @@ class FakeConnection:
 
 
 class CollectionScheduleRunsTest(unittest.IsolatedAsyncioTestCase):
+    async def test_update_config_updates_cadence_and_active_window_fields(self):
+        connection = FakeConnection()
+        repository = CollectionScheduleRepository(connection)
+
+        await repository.update_config(
+            schedule_id=1,
+            enabled=True,
+            run_at_local=time(8, 30),
+            timezone="Asia/Seoul",
+            targets=["dart"],
+            dart_limit=100,
+            price_modes=["snapshot"],
+            frequency_minutes=60,
+            active_from_local=time(8, 30),
+            active_until_local=time(20, 30),
+            updated_by="admin@example.com",
+        )
+
+        kind, sql, args = connection.calls[0]
+        self.assertEqual(kind, "fetchrow")
+        self.assertIn("frequency_minutes = COALESCE", sql)
+        self.assertIn("active_from_local = COALESCE", sql)
+        self.assertIn("active_until_local = COALESCE", sql)
+        self.assertEqual(
+            args,
+            (
+                1,
+                True,
+                time(8, 30),
+                "Asia/Seoul",
+                '["dart"]',
+                100,
+                '["snapshot"]',
+                60,
+                time(8, 30),
+                time(20, 30),
+                "admin@example.com",
+            ),
+        )
+
     async def test_start_run_inserts_schedule_run_with_json_targets(self):
         connection = FakeConnection()
         repository = CollectionScheduleRepository(connection)

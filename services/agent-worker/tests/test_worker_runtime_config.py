@@ -67,6 +67,9 @@ def test_worker_runbooks_match_current_queue_and_auth_contracts():
     assert "PostgreSQL advisory lock" in schedule
     assert "collection_schedule_runs" in schedule
     assert "`GET /api/admin/schedules/{schedule_id}/runs`" in schedule
+    assert "frequency_minutes" in schedule
+    assert "active_from_local" in schedule
+    assert "active_until_local" in schedule
     assert "/internal/queue/$task/run-batch" not in schedule
     assert "X-Internal-Token: $INTERNAL_API_TOKEN" in schedule
     assert "internal/tasks/collect_report/enqueue" in report_smoke

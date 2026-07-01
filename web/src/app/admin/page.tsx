@@ -276,6 +276,33 @@ const TARGET_LABEL: Record<string, string> = {
   alternative: '\ub300\uccb4 \ub370\uc774\ud130',
 };
 
+type ScheduleDraft = {
+  runAt: string;
+  targets: string[];
+  frequencyMinutes: string;
+  activeFrom: string;
+  activeUntil: string;
+};
+
+const DEFAULT_SCHEDULE_DRAFT: ScheduleDraft = {
+  runAt: '04:30',
+  targets: [],
+  frequencyMinutes: '1440',
+  activeFrom: '04:30',
+  activeUntil: '04:30',
+};
+
+function draftFromSchedule(schedule: AdminSchedule): ScheduleDraft {
+  const activeFrom = schedule.active_from_local ?? schedule.run_at_local ?? '04:30';
+  return {
+    runAt: schedule.run_at_local ?? '04:30',
+    targets: schedule.targets ?? [],
+    frequencyMinutes: String(schedule.frequency_minutes ?? 1440),
+    activeFrom,
+    activeUntil: schedule.active_until_local ?? activeFrom,
+  };
+}
+
 function fmtDateTime(value: string | null): string {
   if (!value) return '-';
   const d = new Date(value);
@@ -284,7 +311,7 @@ function fmtDateTime(value: string | null): string {
 
 function ScheduleCard({ onError }: { onError: (msg: string | null) => void }) {
   const [schedules, setSchedules] = useState<AdminSchedule[]>([]);
-  const [drafts, setDrafts] = useState<Record<number, { runAt: string; targets: string[] }>>({});
+  const [drafts, setDrafts] = useState<Record<number, ScheduleDraft>>({});
   const [runsBySchedule, setRunsBySchedule] = useState<Record<number, AdminScheduleRun[]>>({});
   const [busy, setBusy] = useState(false);
 
@@ -296,10 +323,7 @@ function ScheduleCard({ onError }: { onError: (msg: string | null) => void }) {
         Object.fromEntries(
           items.map((schedule) => [
             schedule.id,
-            {
-              runAt: schedule.run_at_local ?? '04:30',
-              targets: schedule.targets ?? [],
-            },
+            draftFromSchedule(schedule),
           ]),
         ),
       );
@@ -334,10 +358,7 @@ function ScheduleCard({ onError }: { onError: (msg: string | null) => void }) {
       setSchedules((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
       setDrafts((prev) => ({
         ...prev,
-        [updated.id]: {
-          runAt: updated.run_at_local ?? '04:30',
-          targets: updated.targets ?? [],
-        },
+        [updated.id]: draftFromSchedule(updated),
       }));
     } catch (err) {
       onError((err as Error).message);
@@ -362,18 +383,27 @@ function ScheduleCard({ onError }: { onError: (msg: string | null) => void }) {
   }
 
   function setRunAt(scheduleId: number, runAt: string) {
+    setDrafts((prev) => {
+      const schedule = schedules.find((item) => item.id === scheduleId);
+      const current = prev[scheduleId] ?? (schedule ? draftFromSchedule(schedule) : DEFAULT_SCHEDULE_DRAFT);
+      return { ...prev, [scheduleId]: { ...current, runAt } };
+    });
+  }
+
+  function setDraftField(schedule: AdminSchedule, key: keyof ScheduleDraft, value: string) {
     setDrafts((prev) => ({
       ...prev,
-      [scheduleId]: {
-        runAt,
-        targets: prev[scheduleId]?.targets ?? [],
+      [schedule.id]: {
+        ...(prev[schedule.id] ?? draftFromSchedule(schedule)),
+        [key]: value,
       },
     }));
   }
 
   function toggleTarget(scheduleId: number, key: string) {
     setDrafts((prev) => {
-      const current = prev[scheduleId] ?? { runAt: '04:30', targets: [] };
+      const schedule = schedules.find((item) => item.id === scheduleId);
+      const current = prev[scheduleId] ?? (schedule ? draftFromSchedule(schedule) : DEFAULT_SCHEDULE_DRAFT);
       const nextTargets = current.targets.includes(key)
         ? current.targets.filter((target) => target !== key)
         : [...current.targets, key];
@@ -395,7 +425,11 @@ function ScheduleCard({ onError }: { onError: (msg: string | null) => void }) {
           const draft = drafts[schedule.id] ?? {
             runAt: schedule.run_at_local ?? '04:30',
             targets: schedule.targets ?? [],
+            frequencyMinutes: String(schedule.frequency_minutes ?? 1440),
+            activeFrom: schedule.active_from_local ?? schedule.run_at_local ?? '04:30',
+            activeUntil: schedule.active_until_local ?? schedule.active_from_local ?? schedule.run_at_local ?? '04:30',
           };
+          const frequencyMinutes = Number(draft.frequencyMinutes);
           const runs = runsBySchedule[schedule.id] ?? [];
           return (
             <div key={schedule.id} className="rounded-xl border border-line p-4">
@@ -404,6 +438,7 @@ function ScheduleCard({ onError }: { onError: (msg: string | null) => void }) {
                   <h3 className="text-[15px] font-bold">{schedule.name ?? `schedule-${schedule.id}`}</h3>
                   <p className="mt-0.5 text-[12.5px] text-muted">
                     {schedule.timezone ?? 'Asia/Seoul'} {schedule.run_at_local ?? '-'} {' - '}
+                    {schedule.frequency_minutes ?? 1440}{'\ubd84 \uc8fc\uae30'} {' - '}
                     {schedule.enabled ? '\ud65c\uc131' : '\ube44\ud65c\uc131'}
                   </p>
                 </div>
@@ -462,6 +497,42 @@ function ScheduleCard({ onError }: { onError: (msg: string | null) => void }) {
                       {'\ub300\uc0c1 \uc800\uc7a5'}
                     </button>
                   </div>
+
+                  <label className="mt-4 block text-[12.5px] font-semibold text-muted">{'\ubc18\ubcf5 \uc8fc\uae30 / \ud65c\uc131 \uc2dc\uac04'}</label>
+                  <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                    <input
+                      type="number"
+                      min={1}
+                      max={1440}
+                      value={draft.frequencyMinutes}
+                      onChange={(e) => setDraftField(schedule, 'frequencyMinutes', e.target.value)}
+                      className="card px-3 py-2 text-[14px] outline-none focus:border-sky"
+                    />
+                    <input
+                      type="time"
+                      value={draft.activeFrom}
+                      onChange={(e) => setDraftField(schedule, 'activeFrom', e.target.value)}
+                      className="card px-3 py-2 text-[14px] outline-none focus:border-sky"
+                    />
+                    <input
+                      type="time"
+                      value={draft.activeUntil}
+                      onChange={(e) => setDraftField(schedule, 'activeUntil', e.target.value)}
+                      className="card px-3 py-2 text-[14px] outline-none focus:border-sky"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void save(schedule, {
+                      frequency_minutes: frequencyMinutes,
+                      active_from_local: draft.activeFrom,
+                      active_until_local: draft.activeUntil,
+                    })}
+                    disabled={busy || !Number.isInteger(frequencyMinutes) || frequencyMinutes < 1 || frequencyMinutes > 1440}
+                    className="mt-2 text-[13px] font-semibold text-sky-deep disabled:opacity-50"
+                  >
+                    {'\uc8fc\uae30 \uc800\uc7a5'}
+                  </button>
                 </div>
 
                 <div className="rounded-xl bg-surface-2 p-4">

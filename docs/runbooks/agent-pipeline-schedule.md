@@ -31,7 +31,7 @@ Existing internal endpoints:
 
 Use the DB-backed scheduler agent for managed operations.
 
-The scheduler agent is `services/agent-worker/run_scheduler_instance.py`. It polls the backend-owned `collection_schedules` table, evaluates `enabled`, `run_at_local`, `timezone`, `targets`, and `manual_trigger_requested_at`, then triggers the selected worker entrypoints. It records `last_run_at`, `last_status`, `last_detail`, and `next_run_at` back to each fired row.
+The scheduler agent is `services/agent-worker/run_scheduler_instance.py`. It polls the backend-owned `collection_schedules` table, evaluates `enabled`, `run_at_local`, `frequency_minutes`, `active_from_local`, `active_until_local`, `timezone`, `targets`, and `manual_trigger_requested_at`, then triggers the selected worker entrypoints. It records `last_run_at`, `last_status`, `last_detail`, and `next_run_at` back to each fired row.
 
 The default backend seed uses source-specific rows so each source can keep a separate cadence:
 
@@ -41,6 +41,15 @@ The default backend seed uses source-specific rows so each source can keep a sep
 - `alternative-collection`
 
 The legacy `daily-collection` row is disabled by the split-source migration to avoid duplicate PRICE/DART firing.
+
+Cadence fields:
+
+- `run_at_local`: daily anchor time and default active-window start.
+- `frequency_minutes`: repeat interval in minutes. `1440` keeps daily behavior.
+- `active_from_local`: optional local time when repeat firing can start.
+- `active_until_local`: optional local time when repeat firing stops for the day.
+
+The scheduler fires a repeat row when it is inside the active window and `last_run_at + frequency_minutes` has elapsed. Manual triggers still bypass cadence checks and fire on the next polling cycle.
 
 The `alternative` target runs Patent/DataLab collection through `run_collectors.py` and Hiring/Patent/DataLab analysis through `run_analyzers.py`. Hiring collection remains the dedicated hiring crawler CronJob.
 
@@ -68,6 +77,15 @@ Suggested starting cadence:
 | Queue drain | Every 1-5 minutes | Every 1-5 minutes | Drain is cheap when queues are empty and lets source-specific jobs complete independently. |
 
 Collection and analysis cadences should stay separate. Collection adds source work to `processing_queue`; queue drain workers decide how quickly normalization, analysis, and aggregation catch up.
+
+Default source-specific scheduler rows:
+
+| Row | `frequency_minutes` | Active Window (KST) | Targets |
+|---|---:|---:|---|
+| `price-collection` | 60 | 09:05-15:30 | `price` |
+| `dart-collection` | 60 | 08:30-20:30 | `dart` |
+| `report-collection` | 720 | 06:00-18:00 | `report` |
+| `alternative-collection` | 720 | 05:30-17:30 | `alternative` |
 
 ## 4. Queue Drain Order
 
