@@ -17,7 +17,8 @@ from collections.abc import Mapping
 from datetime import date, datetime
 from typing import Any
 
-from app.analyzers.price.analyzer import PriceAnalyzer
+from app.agents.base import SourceAgentInput
+from app.agents.price import build_price_agent
 from app.collectors.price.ohlcv_reader import OhlcvReader
 from app.orchestrator.queue.context import enqueue_aggregate
 from app.orchestrator.queue.task_types import SRC_INFER
@@ -45,7 +46,9 @@ class PriceAnalyzeTaskHandler:
             market_data=MarketDataRepository(connection),
         )
         self._queue = ProcessingQueueRepository(connection)
-        self._analyzer = PriceAnalyzer()
+        # Tier C: 규칙 분석기를 SourceAnalysisAgent 계약으로 감싼 peer. 점수/방향은 규칙 소유로
+        # 그대로 흐른다(RuleSourceAgent 투명 매핑) — 분석기 직접 호출과 byte-identical.
+        self._agent = build_price_agent()
 
     async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
         stock_id = int(task["stock_id"])
@@ -56,7 +59,15 @@ class PriceAnalyzeTaskHandler:
         )
 
         evidence = await self._reader.collect(stock_code)
-        result = await self._analyzer.analyze(stock_code, evidence)
+        result = await self._agent.analyze(
+            SourceAgentInput(
+                source="PRICE",
+                stock_code=stock_code,
+                stock_id=stock_id,
+                analysis_date=analysis_date,
+                evidence=evidence,
+            )
+        )
 
         analysis_result = await self._analysis_repository.upsert_analysis_result(
             stock_id=stock_id,
