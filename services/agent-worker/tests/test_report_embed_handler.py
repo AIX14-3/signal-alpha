@@ -38,6 +38,14 @@ class RaisingEmbedder:
         raise EmbeddingError("boom")
 
 
+class FakeTransaction:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
 class EmbedHandlerConn:
     def __init__(self, *, already=False, parsing_status="success", s3_key="reports/x.pdf", extracted_text="preview"):
         self.executed = []
@@ -45,6 +53,9 @@ class EmbedHandlerConn:
         self._parsing_status = parsing_status
         self._s3_key = s3_key
         self._extracted_text = extracted_text
+
+    def transaction(self):
+        return FakeTransaction()
 
     async def fetchrow(self, sql, *args):
         if "FROM report_raw_details" in sql:

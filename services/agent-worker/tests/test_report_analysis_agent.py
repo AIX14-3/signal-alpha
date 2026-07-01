@@ -73,6 +73,48 @@ class ReportAnalysisAgentTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rag["status"], "ok")
         self.assertEqual(rag["evidence"][0]["raw_document_id"], 42)
 
+    async def test_evidence_provenance_is_grounded_not_llm_authored(self):
+        # Retrieved rows carry the trusted broker/date. The LLM cites a real id (42) with a
+        # WRONG broker, and also invents an ungrounded id (999). Output must: keep 42 with the
+        # DB's broker (not the LLM's), and drop 999 entirely.
+        rows = [{"chunk_text": "근거", "raw_document_id": 42, "broker": "신한", "publish_date": "2026-06-24"}]
+        payload = {
+            "summary": "요약",
+            "risk_flags": [],
+            "evidence": [
+                {"point": "실제 근거", "raw_document_id": 42, "broker": "가짜증권", "publish_date": "1999-01-01"},
+                {"point": "환각 근거", "raw_document_id": 999, "broker": "없음", "publish_date": "2030-01-01"},
+            ],
+            "needs_review": False,
+        }
+        agent = ReportAnalysisAgent(
+            connection=object(), embedder=FakeEmbedder(), llm=FakeLLM(payload),
+            retriever=_retriever_returning(rows),
+        )
+
+        out = await agent.analyze(_input())
+
+        evidence = out.method_detail["report_rag"]["evidence"]
+        self.assertEqual(len(evidence), 1)  # hallucinated id 999 dropped
+        self.assertEqual(evidence[0]["raw_document_id"], 42)
+        self.assertEqual(evidence[0]["broker"], "신한")  # DB truth, not "가짜증권"
+        self.assertEqual(evidence[0]["publish_date"], "2026-06-24")
+
+    async def test_guardrail_rejects_upside_language(self):
+        # 상승여력/추천/upside are forbidden by the prompt but not by the shared pattern set;
+        # the agent's extra patterns must catch them.
+        rows = [{"chunk_text": "근거", "raw_document_id": 42, "broker": "신한", "publish_date": "2026-06-24"}]
+        payload = {"summary": "상승여력이 20% 남았습니다.", "risk_flags": [], "evidence": [], "needs_review": False}
+        agent = ReportAnalysisAgent(
+            connection=object(), embedder=FakeEmbedder(), llm=FakeLLM(payload),
+            retriever=_retriever_returning(rows),
+        )
+
+        out = await agent.analyze(_input(direction="positive", score=0.8))
+
+        self.assertEqual(out.method_detail["report_rag"]["status"], "advice_language_rejected")
+        self.assertEqual(out.score, 0.8)
+
     async def test_fallback_when_no_chunks(self):
         agent = ReportAnalysisAgent(
             connection=object(), embedder=FakeEmbedder(), llm=FakeLLM({"summary": "x"}),

@@ -9,9 +9,25 @@ class FakeEmbedder:
         return [0.1] * 768
 
 
+class FakeTransaction:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
 class RetrieverConn:
     def __init__(self):
         self.fetched = []
+        self.executed = []
+
+    def transaction(self):
+        return FakeTransaction()
+
+    async def execute(self, sql, *args):
+        self.executed.append((sql, args))
+        return "SET"
 
     async def fetch(self, sql, *args):
         self.fetched.append((sql, args))
@@ -42,6 +58,8 @@ class ReportRetrieverTest(unittest.IsolatedAsyncioTestCase):
         # provenance returned for grounding/citation.
         self.assertEqual(rows[0]["broker"], "신한투자증권")
         self.assertEqual(rows[0]["raw_document_id"], 42)
+        # ef_search raised (transaction-local) to protect stock-filtered recall.
+        self.assertTrue(any("hnsw.ef_search" in sql for sql, _ in conn.executed))
 
 
 if __name__ == "__main__":

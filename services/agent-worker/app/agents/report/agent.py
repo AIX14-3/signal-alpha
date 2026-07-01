@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
 from app.agents.base import SourceAgentInput, SourceAgentOutput
@@ -26,6 +27,14 @@ from app.clients.gemini_client import GeminiError, GeminiJsonClient
 from app.collectors.report.parsers.valuation_llm import FORBIDDEN_ADVICE_PATTERNS
 
 logger = logging.getLogger(__name__)
+
+# 공유 FORBIDDEN_ADVICE_PATTERNS(valuation_llm)가 못 잡는데 이 에이전트의 프롬프트는 금지하는
+# 표현들 — 상승여력/추천(단독)/upside. 공유 패턴을 건드리지 않고 여기서만 보강한다.
+_EXTRA_ADVICE_PATTERNS = (
+    re.compile(r"상승\s*여력"),
+    re.compile(r"추천"),
+    re.compile(r"\bupside\b", re.IGNORECASE),
+)
 
 PROMPT_VER = "report-rag-v1"
 QUESTIONS = (
@@ -121,7 +130,7 @@ class ReportAnalysisAgent:
             )
 
         try:
-            summary, risk_flags, evidence, needs_review = _validate(payload)
+            summary, risk_flags, evidence, needs_review = _validate(payload, chunks)
         except ValueError as exc:
             logger.warning(
                 "report_rag_guardrail_rejected stock_id=%s error=%s", input_data.stock_id, exc
@@ -220,31 +229,55 @@ def _safe_build(factory: Any) -> Any | None:
         return None
 
 
-def _validate(payload: Any) -> tuple[str, list[str], list[dict[str, Any]], bool]:
+def _validate(
+    payload: Any, chunks: list[dict[str, Any]]
+) -> tuple[str, list[str], list[dict[str, Any]], bool]:
     if not isinstance(payload, dict):
         raise ValueError("RAG payload must be a JSON object.")
     summary = str(payload.get("summary") or "").strip()
     risk_flags = [str(flag).strip() for flag in (payload.get("risk_flags") or []) if str(flag).strip()]
-    evidence = _safe_evidence(payload.get("evidence"))
+    evidence = _safe_evidence(payload.get("evidence"), _provenance(chunks))
     needs_review = bool(payload.get("needs_review", False)) or not summary
     _reject_advice(summary, risk_flags, evidence)
     return summary, risk_flags, evidence, needs_review
 
 
-def _safe_evidence(items: Any) -> list[dict[str, Any]]:
-    """Keep only short paraphrased points + provenance — never long verbatim text."""
+def _provenance(chunks: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Trusted provenance from the ACTUALLY retrieved rows, keyed by raw_document_id.
+
+    Evidence citations are grounded against this map (never the LLM's self-reported
+    ids/broker/date), so a hallucinated ``raw_document_id`` — or advice text smuggled
+    into a broker/date field — can never be persisted as if it were a real citation.
+    """
+    prov: dict[str, dict[str, Any]] = {}
+    for row in chunks:
+        rid = row.get("raw_document_id")
+        prov.setdefault(
+            str(rid),
+            {"raw_document_id": rid, "broker": row.get("broker"), "publish_date": _date_str(row.get("publish_date"))},
+        )
+    return prov
+
+
+def _safe_evidence(items: Any, prov: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep only short paraphrased points whose citation matches a retrieved chunk.
+
+    Provenance (broker/publish_date/raw_document_id) is sourced from ``prov`` (the DB
+    rows), NOT from the LLM. Items citing an unretrieved id are dropped as ungrounded.
+    """
     out: list[dict[str, Any]] = []
     for item in items if isinstance(items, list) else []:
         if not isinstance(item, dict):
             continue
         point = str(item.get("point") or "").strip()[:_MAX_EXCERPT_CHARS]
-        if not point:
+        meta = prov.get(str(item.get("raw_document_id")))
+        if not point or meta is None:
             continue
         out.append({
             "point": point,
-            "raw_document_id": item.get("raw_document_id"),
-            "broker": item.get("broker"),
-            "publish_date": item.get("publish_date"),
+            "raw_document_id": meta["raw_document_id"],
+            "broker": meta["broker"],
+            "publish_date": meta["publish_date"],
         })
     return out
 
@@ -252,7 +285,7 @@ def _safe_evidence(items: Any) -> list[dict[str, Any]]:
 def _reject_advice(summary: str, risk_flags: list[str], evidence: list[dict[str, Any]]) -> None:
     parts = [summary, *risk_flags, *[str(item.get("point") or "") for item in evidence]]
     text = "\n".join(part for part in parts if part)
-    for pattern in FORBIDDEN_ADVICE_PATTERNS:
+    for pattern in (*FORBIDDEN_ADVICE_PATTERNS, *_EXTRA_ADVICE_PATTERNS):
         if pattern.search(text):
             raise ValueError("RAG output contains investment advice language.")
 

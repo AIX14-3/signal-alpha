@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import functools
 import hashlib
 import json
@@ -433,8 +434,9 @@ class ReportEmbedTaskHandler:
         if not chunks:
             return {"status": "no_text", "raw_document_id": raw_document_id}
 
-        embedder = self._embedder or GeminiEmbeddingClient()
         try:
+            # 임베더 구성도 try 안에서 — GEMINI_API_KEY 미설정 시 EmbeddingError 를 여기서 삼킨다.
+            embedder = self._embedder or GeminiEmbeddingClient()
             vectors = await embedder.embed_batch(chunks)
         except EmbeddingError as exc:
             # 일시 오류 내성: 청크 없이 남겨두고 재인큐 가능. 점수 경로로 예외 전파 금지.
@@ -443,24 +445,25 @@ class ReportEmbedTaskHandler:
             )
             return {"status": "embed_error", "raw_document_id": raw_document_id, "error": str(exc)}
 
-        inserted = 0
-        for index, (chunk, vector) in enumerate(zip(chunks, vectors, strict=True)):
-            await self._connection.execute(
-                """
-                INSERT INTO report_chunks
-                    (report_raw_detail_id, chunk_index, chunk_text, embedding, token_count)
-                VALUES ($1, $2, $3, $4::vector, $5)
-                ON CONFLICT (report_raw_detail_id, chunk_index) DO NOTHING
-                """,
-                raw_document_id,
-                index,
-                chunk,
-                to_pgvector(vector),
-                len(chunk.split()),
-            )
-            inserted += 1
+        # 부분 적재 방지: 전 청크를 한 트랜잭션으로 커밋 → 중간 크래시 시 0 으로 롤백돼 멱등
+        # pre-check(청크 존재 여부)가 항상 정확하게 유지된다(부분 적재 후 재실행 시 나머지 유실 방지).
+        async with self._connection.transaction():
+            for index, (chunk, vector) in enumerate(zip(chunks, vectors, strict=True)):
+                await self._connection.execute(
+                    """
+                    INSERT INTO report_chunks
+                        (report_raw_detail_id, chunk_index, chunk_text, embedding, token_count)
+                    VALUES ($1, $2, $3, $4::vector, $5)
+                    ON CONFLICT (report_raw_detail_id, chunk_index) DO NOTHING
+                    """,
+                    raw_document_id,
+                    index,
+                    chunk,
+                    to_pgvector(vector),
+                    len(chunk.split()),
+                )
 
-        return {"status": "success", "raw_document_id": raw_document_id, "chunks": inserted}
+        return {"status": "success", "raw_document_id": raw_document_id, "chunks": len(chunks)}
 
     async def _resolve_text(self, row: Mapping[str, Any]) -> str:
         """전체 PDF 본문(옵션2 재추출); PDF 없거나 실패 시 2000자 프리뷰로 폴백."""
@@ -764,7 +767,9 @@ class ReportAnalyzeTaskHandler:
                     stock_code=str(stock_code or ""),
                     stock_id=stock_id,
                     context={
-                        "report_quant": report_quant,
+                        # deep copy — 에이전트가 실수로 in-place 변경해도 지속되는 피처 키(report_quant)를
+                        # 훼손하지 못하게 격리(ML 가드레일 방어). 에이전트는 읽기 전용으로만 쓴다.
+                        "report_quant": copy.deepcopy(report_quant),
                         "direction": direction,
                         "source_score": source_score,
                     },
