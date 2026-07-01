@@ -455,6 +455,9 @@ erDiagram
         JSONB targets "기본 [price,dart]"
         INTEGER dart_limit
         JSONB price_modes
+        INTEGER frequency_minutes "반복 주기(분)"
+        TIME active_from_local "활성 시작"
+        TIME active_until_local "활성 종료"
         TIMESTAMPTZ manual_trigger_requested_at
     }
 
@@ -474,7 +477,7 @@ erDiagram
 
 `stocks ||--o{ watchlists / report_issuances`, `final_signals ||--o{ signal_journals / user_signal_reads / report_issuances` (Zone E 참조 — 단 PUBLISHED/BACKEND 간 cross-DB라 물리 FK 아님).
 
-`payments`(결제/환불 이력), `report_issuances`(회원별 리포트 발행 이력), `collection_schedules`(04:30 정기 수집 스케줄·수동 트리거 제어, `20260629_0900`)가 백엔드 DB에 추가됐다. 사용자-소유 테이블의 `user_id` FK는 **하드 삭제** 지원을 위해 `ON DELETE CASCADE`다(`20260626_0244`).
+`payments`(결제/환불 이력), `report_issuances`(회원별 리포트 발행 이력), `collection_schedules`(소스별 수집 주기·활성 시간대·수동 트리거 제어, `20260629_0900` + `20260701_1600`)가 백엔드 DB에 추가됐다. 사용자-소유 테이블의 `user_id` FK는 **하드 삭제** 지원을 위해 `ON DELETE CASCADE`다(`20260626_0244`).
 
 ## Zone E — Analysis [PUBLISHED + COLLECTION 혼재]
 

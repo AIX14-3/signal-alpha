@@ -6,7 +6,7 @@ import httpx
 import signal_alpha_data_access.backend as backend
 
 import run_scheduler_instance
-from run_scheduler_instance import _fire, _overall_status, run_cycle
+from run_scheduler_instance import _fire, _next_run_at, _overall_status, _should_fire, run_cycle
 
 
 class FakeResponse:
@@ -126,6 +126,69 @@ class FakeScheduleRepository:
     async def finish_run(self, **kwargs):
         self.finished_runs.append(kwargs)
         return kwargs
+
+
+def _interval_schedule(*, last_run_at=None):
+    return {
+        "id": 1,
+        "name": "dart-collection",
+        "enabled": True,
+        "run_at_local": time(8, 30),
+        "timezone": "Asia/Seoul",
+        "targets": ["dart"],
+        "dart_limit": 100,
+        "price_modes": ["snapshot"],
+        "frequency_minutes": 60,
+        "active_from_local": time(8, 30),
+        "active_until_local": time(20, 30),
+        "last_run_at": last_run_at,
+        "manual_trigger_requested_at": None,
+    }
+
+
+def test_interval_schedule_fires_after_frequency_inside_active_window():
+    tz = ZoneInfo("Asia/Seoul")
+    schedule = _interval_schedule(
+        last_run_at=datetime(2026, 7, 1, 8, 30, tzinfo=tz)
+    )
+
+    assert _should_fire(schedule, datetime(2026, 7, 1, 9, 31, tzinfo=tz)) == (
+        True,
+        "scheduled",
+    )
+
+
+def test_interval_schedule_waits_until_frequency_elapsed():
+    tz = ZoneInfo("Asia/Seoul")
+    schedule = _interval_schedule(
+        last_run_at=datetime(2026, 7, 1, 8, 30, tzinfo=tz)
+    )
+
+    assert _should_fire(schedule, datetime(2026, 7, 1, 9, 15, tzinfo=tz)) == (
+        False,
+        "not-due",
+    )
+
+
+def test_interval_schedule_waits_outside_active_window():
+    tz = ZoneInfo("Asia/Seoul")
+    schedule = _interval_schedule(
+        last_run_at=datetime(2026, 7, 1, 19, 30, tzinfo=tz)
+    )
+
+    assert _should_fire(schedule, datetime(2026, 7, 1, 21, 0, tzinfo=tz)) == (
+        False,
+        "outside-window",
+    )
+
+
+def test_next_run_at_interval_schedule_rolls_to_next_window_after_cutoff():
+    tz = ZoneInfo("Asia/Seoul")
+    schedule = _interval_schedule()
+
+    assert _next_run_at(datetime(2026, 7, 1, 20, 10, tzinfo=tz), schedule) == datetime(
+        2026, 7, 2, 8, 30, tzinfo=tz
+    )
 
 
 def test_fire_calls_report_collect_with_default_batch_payload(monkeypatch):

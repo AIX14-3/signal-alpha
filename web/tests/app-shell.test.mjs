@@ -34,7 +34,13 @@ test("admin UI exposes split schedule rows and schedule run history", async () =
   const apiClient = await readFile(new URL("../src/lib/apiClient.ts", import.meta.url), "utf8");
 
   assert.match(apiClient, /export async function adminListScheduleRuns/);
+  assert.match(apiClient, /frequency_minutes: number \| null/);
+  assert.match(apiClient, /active_from_local: string \| null/);
+  assert.match(apiClient, /active_until_local: string \| null/);
   assert.match(page, /adminListScheduleRuns/);
   assert.match(page, /schedules\.map/);
+  assert.match(page, /frequency_minutes/);
+  assert.match(page, /active_from_local/);
+  assert.match(page, /active_until_local/);
   assert.match(page, /"price", "dart", "report", "alternative"/);
 });
