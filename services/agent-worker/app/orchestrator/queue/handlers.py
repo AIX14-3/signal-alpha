@@ -53,9 +53,9 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
 
     settings = get_settings()
     # 소스별 생성형 LLM은 판정 경로에서 제거됨(결정론 전처리 원칙 — docs/archive/design/worker-redesign.md).
-    # DART 분석기는 규칙추출(+공시 임베딩)만 사용한다. LLM 모듈(analyzers/dart/llm.py)은
-    # 보존하되 와이어링하지 않는다 — 끝단 SYNTHESIZE만이 유일한 생성형 LLM이다.
-    llm_analyzer = None
+    # DART 분석기는 규칙추출(+공시 임베딩)만 사용한다 — 끝단 SYNTHESIZE만이 유일한 생성형 LLM이다.
+    # (Tier-C 정리: DART 분석 핸들러의 llm_analyzer 배관 제거. analyzers/dart/llm.py 의 클라이언트는
+    # SYNTHESIZE 가 재사용하므로 보존한다.)
     from app.orchestrator.report.tasks import (
         ReportCollectTaskHandler,
         ReportAnalyzeTaskHandler,
@@ -69,11 +69,7 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
             settings=settings,
         ),
         NORMALIZE_DART: DartNormalizeTaskHandler(connection),
-        ANALYZE_DART: DartAnalyzeTaskHandler(
-            connection,
-            llm_analyzer=llm_analyzer,
-            llm_high_impact_only=settings.dart_llm_high_impact_only,
-        ),
+        ANALYZE_DART: DartAnalyzeTaskHandler(connection),
         ANALYZE_PRICE: PriceAnalyzeTaskHandler(connection),
         AGGREGATE_SIGNAL: AggregateSignalTaskHandler(connection),
         # 소스별 base 모델 추론(#525 Phase 3). run_key=SRC 로 분리 적재(D4). 성공 예측이

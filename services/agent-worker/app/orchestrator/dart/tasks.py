@@ -8,7 +8,6 @@ from typing import Any
 from app.agents import SourceAgentInput, SourceAnalysisAgent
 from app.agents.dart.graph import DartAnalysisGraphAgent
 from app.analyzers.dart.financials import extract_dart_financial_metrics
-from app.analyzers.dart.llm import DartLlmAnalyzer
 from app.analyzers.dart.rules import classify_dart_report, make_dart_event_hash
 from app.collectors.dart.disclosure import DartCollector, DartDisclosureClient
 from app.orchestrator.persistence import CollectionPersistence
@@ -186,17 +185,12 @@ class DartAnalyzeTaskHandler:
         self,
         connection: Any,
         *,
-        llm_analyzer: DartLlmAnalyzer | None = None,
-        llm_high_impact_only: bool = True,
         analysis_agent: SourceAnalysisAgent | None = None,
     ) -> None:
         self._normalization_repository = NormalizationRepository(connection)
         self._analysis_repository = AnalysisRepository(connection)
         self._queue_repository = ProcessingQueueRepository(connection)
-        self._analysis_agent = analysis_agent or DartAnalysisGraphAgent(
-            llm_analyzer=llm_analyzer,
-            llm_high_impact_only=llm_high_impact_only,
-        )
+        self._analysis_agent = analysis_agent or DartAnalysisGraphAgent()
 
     async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
         stock_id = int(task["stock_id"])

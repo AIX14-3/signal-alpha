@@ -48,10 +48,24 @@ class DartAnalysisGraphAgentTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result.source, "DART")
         self.assertEqual(result.stock_code, "")
-        self.assertEqual(result.direction, "neutral")
+        # 판정 없음 = "unknown" (verdict 인 "neutral" 아님). 진짜 계약 위반(빈 stock_code)이라 failed.
+        self.assertEqual(result.direction, "unknown")
         self.assertEqual(result.score, 0)
         self.assertTrue(result.needs_review)
         self.assertEqual(result.data_status, "failed")
         self.assertEqual(result.analysis_source, "graph_validation")
         self.assertEqual(result.prompt_ver, "dart-graph-v1")
         self.assertIn("stock_code_required", result.risk_flags)
+
+    async def test_graph_agent_treats_empty_events_as_no_signal_not_failure(self):
+        # 빈 events 는 계약 위반이 아니다 — 에이전트에 위임돼 no_signal 로 처리(features 경로와 일치).
+        agent = DartAnalysisGraphAgent()
+
+        result = await agent.analyze(SourceAgentInput(source="DART", stock_code="005930", events=[]))
+
+        self.assertEqual(result.direction, "unknown")
+        self.assertEqual(result.data_status, "no_signal")
+        self.assertEqual(result.analysis_source, "features")
+        self.assertEqual(result.prompt_ver, "dart-features-v1")
+        self.assertNotIn("events_required", result.risk_flags)
+        self.assertEqual(result.method_detail["graph_nodes"], ["validate_input", "analyze", "validate_output"])

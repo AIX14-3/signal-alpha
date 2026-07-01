@@ -56,32 +56,6 @@ class FakeConnection:
         return self.next_id
 
 
-class FakeLlmAnalyzer:
-    model = "test-llm"
-    prompt_version = "dart-llm-v1"
-
-    def __init__(self, *, fail=False):
-        self.fail = fail
-        self.calls = []
-
-    async def analyze(self, *, events, rule_result, stock_code):
-        self.calls.append({"events": events, "rule_result": rule_result, "stock_code": stock_code})
-        if self.fail:
-            raise RuntimeError("LLM timeout")
-
-        from app.analyzers.dart.llm import DartLlmAnalysis
-
-        return DartLlmAnalysis(
-            direction="positive",
-            score=0.73,
-            summary="LLM reviewed the disclosure and found improving performance.",
-            key_facts=["Revenue improved", "Operating profit improved"],
-            risk_flags=[],
-            needs_review=False,
-            confidence=82,
-        )
-
-
 class DartNormalizeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
     async def test_handler_normalizes_dart_raw_documents(self):
         connection = FakeConnection()
@@ -239,7 +213,7 @@ class DartAnalyzeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("run_key", task_context)
         self.assertNotIn("aggregation_key", task_context)
 
-    async def test_handler_ignores_llm_even_for_high_impact_dart_event(self):
+    async def test_handler_emits_features_and_ignores_use_llm_flag(self):
         connection = FakeConnection(
             rows=[
                 {
@@ -265,8 +239,7 @@ class DartAnalyzeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
                 }
             ]
         )
-        llm_analyzer = FakeLlmAnalyzer()
-        handler = DartAnalyzeTaskHandler(connection, llm_analyzer=llm_analyzer)
+        handler = DartAnalyzeTaskHandler(connection)
 
         result = await handler(
             {
@@ -281,7 +254,6 @@ class DartAnalyzeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["direction"], "unknown")
         self.assertEqual(result["score"], 0.0)
         self.assertEqual(result["analysis_source"], "features")
-        self.assertEqual(len(llm_analyzer.calls), 0)  # LLM 미호출
         analysis_call = next(call for call in connection.calls if "INSERT INTO analysis_results" in call[1])
         self.assertEqual(analysis_call[2][5], 50.0)
         self.assertEqual(analysis_call[2][11], "dart-features-v1")
@@ -294,55 +266,6 @@ class DartAnalyzeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(method_detail["source_score"], 0.0)
         self.assertEqual(method_detail["analysis_source"], "features")
         self.assertEqual(method_detail["data_status"], "no_signal")
-
-    async def test_handler_ignores_failing_llm_and_emits_features(self):
-        connection = FakeConnection(
-            rows=[
-                {
-                    "id": 501,
-                    "stock_id": 1,
-                    "source_document_id": 401,
-                    "event_hash": "hash",
-                    "source_type": "DART",
-                    "event_type": "quarter_report",
-                    "event_date": date(2026, 5, 15),
-                    "signal_direction": "neutral",
-                    "impact_level": "medium",
-                    "title": "Quarterly report",
-                    "summary": "DART disclosure: Quarterly report",
-                    "evidence_text": "Revenue was stable.",
-                    "evidence_url": "https://dart.example/receipt",
-                    "needs_review": False,
-                    "source_name": "OpenDART",
-                    "source_url": "https://dart.example/receipt",
-                    "published_at": datetime(2026, 5, 15),
-                    "reliability_level": "high",
-                    "is_official": True,
-                }
-            ]
-        )
-        handler = DartAnalyzeTaskHandler(connection, llm_analyzer=FakeLlmAnalyzer(fail=True))
-
-        result = await handler(
-            {
-                "id": 30,
-                "stock_id": 1,
-                "source_signal_event_ids": [501],
-                "task_context": {"stock_code": "005930", "use_llm": True},
-            }
-        )
-
-        # Phase 0(#546): LLM 미호출이라 실패 폴백도 없음 — 항상 피처 전용.
-        self.assertEqual(result["direction"], "unknown")
-        self.assertEqual(result["analysis_source"], "features")
-        analysis_call = next(call for call in connection.calls if "INSERT INTO analysis_results" in call[1])
-        self.assertEqual(analysis_call[2][11], "dart-features-v1")
-        agent_call = next(call for call in connection.calls if "INSERT INTO agent_results" in call[1])
-        self.assertEqual(agent_call[2][9], None)
-        self.assertEqual(agent_call[2][10], "dart-features-v1")
-        method_detail = json.loads(agent_call[2][6])
-        self.assertEqual(method_detail["analysis_source"], "features")
-        self.assertNotIn("llm_error", method_detail)
 
     async def test_handler_with_event_ids_analyzes_only_requested_dart_event(self):
         connection = FakeConnection(
