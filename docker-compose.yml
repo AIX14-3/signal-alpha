@@ -4,9 +4,10 @@
 
 services:
   postgres:
-    # 임베딩/pgvector 기능 제거 완료 — 마이그레이션에 vector 확장/타입이 전혀 없으므로
-    # 일반 postgres 이미지로 동작한다(pgvector 이미지 불필요).
-    image: postgres:16
+    # #709 이후 마이그레이션(20260701_1218)이 `CREATE EXTENSION vector` + `vector(768)` 을
+    # 사용하므로 pgvector 선설치 이미지가 필요하다(일반 postgres:16 은 CREATE EXTENSION 에서 실패).
+    # CI(migrations 잡)와 동일 이미지로 로컬-CI 정합 유지.
+    image: pgvector/pgvector:pg16
     container_name: signal-alpha-postgres
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-signal_alpha}
