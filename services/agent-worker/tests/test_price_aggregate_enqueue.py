@@ -37,8 +37,10 @@ class _FakeReader:
         return SimpleNamespace(stock_code=stock_code)
 
 
-class _FakeAnalyzer:
-    async def analyze(self, stock_code, evidence):
+class _FakeAgent:
+    """계약 peer 스텁 — 핸들러가 SourceAnalysisAgent(analyze(input_data)) 를 구동함을 반영."""
+
+    async def analyze(self, input_data):
         return SimpleNamespace(
             score=0.18,
             direction="positive",
@@ -51,7 +53,7 @@ class _FakeAnalyzer:
 def _build_handler():
     handler = PriceAnalyzeTaskHandler(connection=object())
     handler._reader = _FakeReader()
-    handler._analyzer = _FakeAnalyzer()
+    handler._agent = _FakeAgent()
     handler._analysis_repository = _FakeAnalysisRepository()
     handler._queue = _FakeQueue()
     return handler
