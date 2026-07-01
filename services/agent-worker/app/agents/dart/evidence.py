@@ -15,6 +15,33 @@ from typing import Any
 from app.analyzers.dart.llm import DartLlmAnalyzer, should_use_dart_llm
 from app.analyzers.dart.source_result import DartAnalysisResult
 
+# LLM 입력 상한 — 사업보고서 등 대용량 evidence_text 의 재무지표 정규식 스캔 + 프롬프트 폭주 방지
+# (narrate 라인과 동일 관례). 고임팩트·최신 우선 상한 N 건 + 건당 본문 절단.
+_MAX_EVIDENCE_EVENTS = 12
+_MAX_EVIDENCE_CHARS = 20000
+_IMPACT_RANK = {"high": 0, "medium": 1, "low": 2}
+
+
+def _prepare_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """LLM 입력용 이벤트 선별: 최신 → 고임팩트 우선 안정정렬, 상한 N 건, 건당 본문 절단."""
+    by_recency = sorted(events, key=_event_date_key, reverse=True)  # 최신 우선
+    ordered = sorted(  # 안정정렬 — 동일 임팩트 내 최신순 유지
+        by_recency,
+        key=lambda e: _IMPACT_RANK.get(str(e.get("impact_level") or "").strip(), 3),
+    )
+    prepared: list[dict[str, Any]] = []
+    for event in ordered[:_MAX_EVIDENCE_EVENTS]:
+        text = event.get("evidence_text")
+        if isinstance(text, str) and len(text) > _MAX_EVIDENCE_CHARS:
+            event = {**event, "evidence_text": text[:_MAX_EVIDENCE_CHARS]}
+        prepared.append(event)
+    return prepared
+
+
+def _event_date_key(event: dict[str, Any]) -> str:
+    value = event.get("event_date")
+    return value.isoformat() if hasattr(value, "isoformat") else str(value or "")
+
 
 @dataclass(frozen=True)
 class DartEvidenceResult:
@@ -43,9 +70,10 @@ class DartLlmEvidenceExtractor:
         # 게이트: 고임팩트 공시가 아니면 LLM 미호출(피처만, 비용/노이즈 절감).
         if not should_use_dart_llm(events, high_impact_only=self._high_impact_only):
             return DartEvidenceResult()
+        prepared = _prepare_events(events)  # 상한 N 건 + 본문 절단(프롬프트/스캔 폭주 방지)
         try:
             analysis = await self._analyzer.analyze(
-                events=events, rule_result=rule_result, stock_code=stock_code
+                events=prepared, rule_result=rule_result, stock_code=stock_code
             )
         except Exception as exc:  # noqa: BLE001 — LLM 실패는 결정론 폴백(파이프라인 불가침).
             return DartEvidenceResult(llm_error=f"{type(exc).__name__}: {exc}"[:300])
