@@ -102,3 +102,61 @@ def test_fire_records_each_target_and_continues_after_report_failure(monkeypatch
         "/internal/price/collect",
     ]
     assert _overall_status(summary) == "partial"
+
+
+def test_fire_runs_alternative_collect_and_analyze_commands(monkeypatch):
+    monkeypatch.setenv("INTERNAL_API_TOKEN", "secret")
+    calls = []
+
+    async def command_runner(argv, *, timeout):
+        calls.append((argv, timeout))
+        return {"returncode": 0, "stdout_tail": "ok", "stderr_tail": ""}
+
+    summary = asyncio.run(
+        _fire(
+            RecordingClient(),
+            base_url="http://worker",
+            schedule={"targets": ["alternative"]},
+            command_runner=command_runner,
+        )
+    )
+
+    assert summary == {
+        "alternative": {
+            "collect": {"returncode": 0, "stdout_tail": "ok", "stderr_tail": ""},
+            "analyze": {"returncode": 0, "stdout_tail": "ok", "stderr_tail": ""},
+        }
+    }
+    assert [argv[-1] for argv, _timeout in calls] == [
+        "run_collectors.py",
+        "run_analyzers.py",
+    ]
+
+
+def test_fire_marks_alternative_partial_when_collect_fails_but_analyze_runs(monkeypatch):
+    monkeypatch.setenv("INTERNAL_API_TOKEN", "secret")
+    calls = []
+
+    async def command_runner(argv, *, timeout):
+        calls.append(argv)
+        if argv[-1] == "run_collectors.py":
+            raise RuntimeError("collect failed")
+        return {"returncode": 0, "stdout_tail": "analysis ok", "stderr_tail": ""}
+
+    summary = asyncio.run(
+        _fire(
+            RecordingClient(),
+            base_url="http://worker",
+            schedule={"targets": ["alternative"]},
+            command_runner=command_runner,
+        )
+    )
+
+    assert summary["alternative"]["collect"] == "error: collect failed"
+    assert summary["alternative"]["analyze"] == {
+        "returncode": 0,
+        "stdout_tail": "analysis ok",
+        "stderr_tail": "",
+    }
+    assert [argv[-1] for argv in calls] == ["run_collectors.py", "run_analyzers.py"]
+    assert _overall_status(summary) == "partial"

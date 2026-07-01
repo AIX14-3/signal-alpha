@@ -28,7 +28,7 @@ import os
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -48,6 +48,13 @@ DEFAULT_REPORT_LIMIT = 100
 DEFAULT_REPORT_DAYS_BACK = 7
 DEFAULT_REPORT_MAX_PAGES = 20
 DEFAULT_PRIORITY = "batch"
+DEFAULT_ALTERNATIVE_COLLECT_TIMEOUT_SECONDS = 3600.0
+DEFAULT_ALTERNATIVE_ANALYZE_TIMEOUT_SECONDS = 3600.0
+_SERVICE_DIR = Path(__file__).resolve().parent
+
+
+class CommandRunner(Protocol):
+    async def __call__(self, argv: list[str], *, timeout: float) -> dict[str, Any]: ...
 
 
 async def _build_backend_pool(max_pool_size: int = 4) -> Any:
@@ -68,6 +75,39 @@ def _internal_headers() -> dict[str, str]:
     if not token:
         raise RuntimeError("INTERNAL_API_TOKEN is required for scheduler /internal/* calls.")
     return {"X-Internal-Token": token}
+
+
+def _tail(text: str, *, limit: int = 2000) -> str:
+    return text[-limit:]
+
+
+async def _run_command(argv: list[str], *, timeout: float) -> dict[str, Any]:
+    proc = await asyncio.create_subprocess_exec(
+        *argv,
+        cwd=_SERVICE_DIR,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except TimeoutError as exc:
+        proc.kill()
+        await proc.communicate()
+        raise RuntimeError(
+            f"command timed out after {timeout:.0f}s: {' '.join(argv)}"
+        ) from exc
+
+    stdout = stdout_bytes.decode("utf-8", errors="replace")
+    stderr = stderr_bytes.decode("utf-8", errors="replace")
+    result = {
+        "returncode": proc.returncode,
+        "stdout_tail": _tail(stdout),
+        "stderr_tail": _tail(stderr),
+    }
+    if proc.returncode != 0:
+        output = _tail(stderr or stdout)
+        raise RuntimeError(f"command failed ({proc.returncode}): {' '.join(argv)}\n{output}")
+    return result
 
 
 def _scheduled_today(now: datetime, run_at: Any) -> datetime:
@@ -102,6 +142,7 @@ async def _fire(
     *,
     base_url: str,
     schedule: dict[str, Any],
+    command_runner: CommandRunner = _run_command,
 ) -> dict[str, Any]:
     """대상별 워커 엔드포인트 호출. {target: 결과/에러} 요약 반환."""
     base = base_url.rstrip("/")
@@ -142,6 +183,28 @@ async def _fire(
         except Exception as exc:  # noqa: BLE001 - 한 대상 실패가 다른 대상/상태기록을 막지 않게
             logger.warning("report/collect 실패: %s", exc)
             summary["report"] = f"error: {exc}"
+
+    if "alternative" in targets:
+        alternative_summary: dict[str, Any] = {}
+        try:
+            alternative_summary["collect"] = await command_runner(
+                [sys.executable, "run_collectors.py"],
+                timeout=DEFAULT_ALTERNATIVE_COLLECT_TIMEOUT_SECONDS,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("alternative collect command failed: %s", exc)
+            alternative_summary["collect"] = f"error: {exc}"
+
+        try:
+            alternative_summary["analyze"] = await command_runner(
+                [sys.executable, "run_analyzers.py"],
+                timeout=DEFAULT_ALTERNATIVE_ANALYZE_TIMEOUT_SECONDS,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("alternative analyze command failed: %s", exc)
+            alternative_summary["analyze"] = f"error: {exc}"
+
+        summary["alternative"] = alternative_summary
 
     if "price" in targets:
         price_summary: dict[str, Any] = {}

@@ -53,6 +53,9 @@ def test_worker_runbooks_match_current_queue_and_auth_contracts():
     assert "run_scheduler_instance.py" in schedule
     assert "Price collection trigger | `POST /internal/price/collect`" in schedule
     assert "Report collection enqueue | `POST /internal/schedules/report/collect`" in schedule
+    assert "Alternative target | local collector/analyzer CLIs" in schedule
+    assert "`alternative` target runs Patent/DataLab collection" in schedule
+    assert "Hiring collection remains the dedicated hiring crawler CronJob" in schedule
     assert "publish_signals" in schedule
     assert "ml_infer" not in schedule
     assert "meta_combine" not in schedule

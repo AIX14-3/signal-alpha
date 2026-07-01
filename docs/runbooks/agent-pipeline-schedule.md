@@ -2,7 +2,7 @@
 
 Updated: 2026-07-01
 
-This runbook describes how to run Price, DART, and Report collection triggers, queue draining, analysis, and final data-direction aggregation on a schedule.
+This runbook describes how to run Price, DART, Report, and alternative-data collection triggers, queue draining, analysis, and final data-direction aggregation on a schedule.
 
 Signal Alpha is not an investment recommendation service. The pipeline produces data direction, evidence, source agreement, and review flags. Do not describe these jobs as producing buy, sell, hold, target return, or timing recommendations.
 
@@ -11,9 +11,11 @@ Signal Alpha is not an investment recommendation service. The pipeline produces 
 The scheduler must not contain collector or analyzer logic.
 
 - `agent-worker` owns collection, normalization, analysis, queue handling, ML inference, aggregation, synthesis, and risk veto.
-- The scheduler layer only calls internal `agent-worker` endpoints and must send `X-Internal-Token`.
+- The scheduler layer only calls internal `agent-worker` endpoints or existing worker CLI entrypoints; it must not implement collection or analysis logic.
+- Internal HTTP calls must send `X-Internal-Token`.
 - `main-server` and `web` do not run collection or analysis jobs.
 - PRICE collection remains the `agent-worker` lifespan daemon. PRICE analyzer reads DB data only.
+- Hiring collection remains the dedicated hiring crawler CronJob because it needs the browser-enabled crawler image.
 
 Existing internal endpoints:
 
@@ -22,13 +24,16 @@ Existing internal endpoints:
 | Price collection trigger | `POST /internal/price/collect` |
 | DART collection enqueue | `POST /internal/schedules/dart/collect` |
 | Report collection enqueue | `POST /internal/schedules/report/collect` |
+| Alternative target | local collector/analyzer CLIs |
 | Queue cycle execution | `POST /internal/queue/run-cycle` |
 
 ## 2. Recommended MVP Scheduling Model
 
 Use the DB-backed scheduler agent for managed operations.
 
-The scheduler agent is `services/agent-worker/run_scheduler_instance.py`. It polls the backend-owned `collection_schedules` table, evaluates `enabled`, `run_at_local`, `timezone`, `targets`, and `manual_trigger_requested_at`, then calls only internal `agent-worker` endpoints. It records `last_run_at`, `last_status`, `last_detail`, and `next_run_at` back to the same row.
+The scheduler agent is `services/agent-worker/run_scheduler_instance.py`. It polls the backend-owned `collection_schedules` table, evaluates `enabled`, `run_at_local`, `timezone`, `targets`, and `manual_trigger_requested_at`, then triggers the selected worker entrypoints. It records `last_run_at`, `last_status`, `last_detail`, and `next_run_at` back to the same row.
+
+The `alternative` target runs Patent/DataLab collection through `run_collectors.py` and Hiring/Patent/DataLab analysis through `run_analyzers.py`. Hiring collection remains the dedicated hiring crawler CronJob.
 
 Recommended choices:
 
@@ -46,6 +51,7 @@ Suggested starting cadence:
 |---|---:|---:|---|
 | DART | Every 30-60 minutes | Every 30-120 minutes, focused around market and disclosure hours | Respect OpenDART limits. Keep active stock count and document fetch settings bounded. |
 | Report | 1-2 times per day | Every 6-24 hours | Report crawling and PDF parsing are heavier than DART. |
+| Alternative | 1-2 times per day | Every 6-24 hours | Scheduler `alternative` handles Patent/DataLab collection and Hiring/Patent/DataLab analysis. Hiring collection stays on the browser-enabled CronJob. |
 | Queue drain | Every 1-5 minutes | Every 1-5 minutes | Drain is cheap when queues are empty and lets source-specific jobs complete independently. |
 
 Collection and analysis cadences should stay separate. Collection adds source work to `processing_queue`; queue drain workers decide how quickly normalization, analysis, and aggregation catch up.
