@@ -10,6 +10,9 @@ dependencies = [
   "google-cloud-storage>=2.18.0",  # report GCS storage adapter
   # price 수집 데몬(키움 REST)이 런타임에 사용 — dev extra로 내리면 --no-dev 컨테이너에서 ImportError
   "httpx>=0.27.0",
+  # DataLab cause agent (app/agents/datalab/graph.py) StateGraph wiring. Only the
+  # opt-in DATALAB_LLM_ENABLED path imports it (lazy, inside the registry factory).
+  "langgraph>=0.2.0",
   "langchain-text-splitters>=0.2.0",  # parsers/chunker.py (RecursiveCharacterTextSplitter)
   "openai>=1.40.0",         # parsers/llm_parser.py
   "psycopg2-binary>=2.9.0",

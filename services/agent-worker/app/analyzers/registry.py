@@ -124,10 +124,21 @@ def build_registry(
     patent_config = patent_config or PatentRuleConfig.from_env()
     datalab_config = datalab_config or DataLabRuleConfig.from_env()
 
-    # DataLab 생성형 cause agent는 판정 경로에서 영구 비활성(결정론 전처리 원칙 —
-    # docs/archive/design/worker-redesign.md). lead_lag 결정론 prelabel이 최종 라벨이고, 검색
-    # 시계열은 통계지표(indicators/rules)로만 피처화한다. cause agent 모듈
-    # (app/agents/datalab/*)은 보존하되 와이어링하지 않으므로 agent_factory를 두지 않는다.
+    # DataLab cause agent (협업안 §4) is opt-in via DATALAB_LLM_ENABLED (default
+    # off). Its job is a **display-only 근거**: it tags WHY a search spike happened
+    # (catalyst/fomo/price_led) beside the deterministic features — it never moves
+    # score/direction (feature-only #525) nor the neutral attention-spike layer.
+    # Numbers/judgment stay deterministic and the Wave-3 meta-learner owns fusion;
+    # the LLM only explains (docs/archive/design/worker-redesign.md — LLM은 근거).
+    # Off → agent_factory stays None → RuleSourceAgent path (byte-identical). The
+    # env is checked inline and the langgraph-dependent agent package is imported
+    # lazily inside the factory, so the rule-only path never imports langgraph.
+    datalab_agent_factory: Callable[[Any], Any] | None = None
+    if _env_enabled("DATALAB_LLM_ENABLED"):
+        def datalab_agent_factory(connection: Any, cfg: DataLabRuleConfig = datalab_config) -> Any:
+            from app.agents.datalab import build_datalab_cause_agent
+
+            return build_datalab_cause_agent(connection, config=cfg)
 
     # Patent significance agent (기획 §2.1) is opt-in. The env is checked inline (no
     # import) and the agent package is imported lazily inside the factory, so the
@@ -171,6 +182,7 @@ def build_registry(
                 lookback_days=cfg.lookback_days,
                 attention_window_days=cfg.attention_window_days,
             ),
+            agent_factory=datalab_agent_factory,
         ),
     ]
 
