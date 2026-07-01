@@ -121,6 +121,9 @@ DEFAULT_CYCLE_PLAN: dict[str, int] = {
     # ML/메타/집계/발행 (가벼움)
     "src_infer": 20,
     "return_combine": 20,
+    # 조건부 되묻기(오케스트레이터) — AGGREGATE 앞에 둬 같은 사이클에서 재분석→재종합.
+    # 이 키가 없으면 라이브 데몬(plan 기반)이 requery task를 영영 claim 못 해 기능이 죽는다.
+    "requery_source": 20,
     "aggregate_signal": 30,
     "synthesize": 20,
     "publish_signals": 20,

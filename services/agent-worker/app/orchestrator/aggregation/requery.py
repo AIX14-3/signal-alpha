@@ -10,8 +10,11 @@ per-source result.
 Invariants / safety:
   - **Bounded.** ``task_context.requery_round`` is incremented each hop and the
     re-enqueued AGGREGATE carries it; the aggregator refuses to spawn another
-    re-query past ``MAX_REQUERY_ROUNDS``. Combined with queue dedupe this makes an
-    infinite assemble→detect→requery→assemble loop impossible.
+    re-query past ``MAX_REQUERY_ROUNDS`` — **this round cap alone bounds the
+    assemble→detect→requery→assemble loop** (detect may stay True every round).
+    Queue dedupe does NOT help here: each re-enqueued AGGREGATE carries a distinct
+    ``requery_round`` in its task_context, so hops are distinct rows; dedupe only
+    collapses duplicate *same-round* enqueues.
   - **Structural skip.** Only re-queryable sources with a live alternative
     registration are driven; DART/PRICE/REPORT (team-owned, no seam yet) are
     skipped, not errored — so the loop degrades gracefully before Wave-2 source

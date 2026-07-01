@@ -282,8 +282,9 @@ class AggregateSignalTaskHandler:
         re-queryable target diverges — so 80–90% of stocks (agreeing / thin-but-
         clean / single-source) spend no extra LLM round. The re-query hop carries
         ``requery_round+1``; the aggregator it re-enqueues re-checks this bound, so
-        assemble→detect→requery→assemble can never loop unbounded (queue dedupe
-        collapses duplicate hops on top of the cap).
+        assemble→detect→requery→assemble can never loop unbounded. The round cap
+        alone bounds it (dedupe collapses only same-round duplicates, not hops —
+        each hop carries a distinct requery_round).
         """
         if not self._requery_enabled or requery_round >= MAX_REQUERY_ROUNDS:
             return None

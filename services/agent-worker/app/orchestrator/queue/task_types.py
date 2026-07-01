@@ -5,7 +5,8 @@ AGGREGATE_SIGNAL = "aggregate_signal"
 
 # 오케스트레이터 조건부 되묻기(re-query) — 집계기가 소스 불일치/커버리지 얇음/mixed 를 감지하면
 # 문제 소스에게만 집중 질문으로 다시 분석을 요청한다(에이전트화 Wave 3, 양방향 피드백). 이미 수집된
-# 원자료를 재해석할 뿐 재수집이 아니다. bounded: task_context.round 상한 + 큐 dedupe 로 무한루프 차단.
+# 원자료를 재해석할 뿐 재수집이 아니다. bounded: task_context.requery_round 상한(MAX)이 종료 보장
+# (dedupe 는 동일 라운드 중복만 collapse). ⚠️ 라이브 데몬은 plan 기반 → DEFAULT_CYCLE_PLAN 편입 필수.
 # 되묻기 완료 후 AGGREGATE_SIGNAL 을 재인큐해 갱신된 소스 결과로 재종합한다. 13 chars (VARCHAR(50)).
 REQUERY_SOURCE = "requery_source"
 

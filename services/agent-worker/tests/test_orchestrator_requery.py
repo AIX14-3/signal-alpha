@@ -17,6 +17,7 @@ from app.orchestrator.aggregation.detect import detect_disagreement
 from app.orchestrator.aggregation.requery import MAX_REQUERY_ROUNDS, RequerySourceTaskHandler
 from app.orchestrator.aggregation.tasks import AggregateSignalTaskHandler
 from app.orchestrator.queue.task_types import AGGREGATE_SIGNAL, REQUERY_SOURCE
+from app.orchestrator.queue.tasks import DEFAULT_CYCLE_PLAN
 
 from tests.test_final_signal_aggregator import FakeConnection, dart_agent_row
 
@@ -261,6 +262,21 @@ class RequerySourceHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["requeried_sources"], [])
         self.assertEqual(result["skipped_sources"], ["HIRING"])
         self.assertIsNotNone(result["aggregate_task_id"])
+
+
+class RequeryDrainPlanTest(unittest.TestCase):
+    """REQUERY_SOURCE 가 라이브 드레인 plan(DEFAULT_CYCLE_PLAN)에 편입돼야 실제로 처리된다.
+
+    핸들러 등록·DRAIN_ORDER 만으로는 부족 — 라이브 데몬은 plan 기반이라, plan 누락 시
+    requery task 가 영영 claim 되지 않아 되묻기 기능이 죽는다(회귀 가드).
+    """
+
+    def test_requery_source_in_default_cycle_plan(self):
+        self.assertIn(REQUERY_SOURCE, DEFAULT_CYCLE_PLAN)
+
+    def test_requery_drains_before_aggregate(self):
+        keys = list(DEFAULT_CYCLE_PLAN)
+        self.assertLess(keys.index(REQUERY_SOURCE), keys.index(AGGREGATE_SIGNAL))
 
 
 if __name__ == "__main__":

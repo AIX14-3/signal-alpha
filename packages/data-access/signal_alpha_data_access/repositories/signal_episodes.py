@@ -52,8 +52,7 @@ class SignalEpisodeRepository:
                 score = EXCLUDED.score,
                 sources = EXCLUDED.sources,
                 embedding = EXCLUDED.embedding,
-                outcome = COALESCE(EXCLUDED.outcome, signal_episodes.outcome),
-                created_at = NOW()
+                outcome = COALESCE(EXCLUDED.outcome, signal_episodes.outcome)
             RETURNING id
             """,
             stock_id,
