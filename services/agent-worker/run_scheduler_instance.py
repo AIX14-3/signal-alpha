@@ -38,6 +38,9 @@ DEFAULT_REPORT_MAX_PAGES = 20
 DEFAULT_PRIORITY = "batch"
 DEFAULT_ALTERNATIVE_COLLECT_TIMEOUT_SECONDS = 3600.0
 DEFAULT_ALTERNATIVE_ANALYZE_TIMEOUT_SECONDS = 3600.0
+DEFAULT_BACKPRESSURE_MAX_WAITING = 1000
+DEFAULT_BACKPRESSURE_MAX_FAILED = 100
+DEFAULT_QUEUE_STATS_TIMEOUT_SECONDS = 30.0
 _SCHEDULER_ADVISORY_LOCK_KEY = 0x53434844
 _SERVICE_DIR = Path(__file__).resolve().parent
 
@@ -317,6 +320,48 @@ def _overall_status(summary: dict[str, Any]) -> str:
     return "partial" if "error" in summary or "error:" in flat else "ok"
 
 
+def _int_env(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+
+
+def _backpressure_limits() -> tuple[int, int]:
+    return (
+        _int_env("SCHEDULER_BACKPRESSURE_MAX_WAITING", DEFAULT_BACKPRESSURE_MAX_WAITING),
+        _int_env("SCHEDULER_BACKPRESSURE_MAX_FAILED", DEFAULT_BACKPRESSURE_MAX_FAILED),
+    )
+
+
+def _backpressure_reason(
+    queue_stats: dict[str, Any],
+    *,
+    max_waiting: int,
+    max_failed: int,
+) -> str | None:
+    totals = queue_stats.get("totals_by_status") or {}
+    waiting = int(totals.get("pending") or 0) + int(totals.get("retrying") or 0)
+    failed = int(totals.get("failed") or 0)
+    if max_waiting > 0 and waiting > max_waiting:
+        return "queue-backlog"
+    if max_failed > 0 and failed > max_failed:
+        return "recent-failures"
+    return None
+
+
+async def _fetch_queue_stats(client: httpx.AsyncClient, *, base_url: str) -> dict[str, Any]:
+    base = base_url.rstrip("/")
+    resp = await client.get(
+        f"{base}/internal/stats/queue",
+        headers=_internal_headers(),
+        timeout=DEFAULT_QUEUE_STATS_TIMEOUT_SECONDS,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    return data if isinstance(data, dict) else {}
+
+
 def _scheduler_decision(
     schedule: dict[str, Any],
     *,
@@ -449,6 +494,38 @@ async def run_cycle(
 
         if not due:
             if schedule_name and skipped_reasons:
+                return skipped_reasons[0]
+            return "not-due"
+
+        max_waiting, max_failed = _backpressure_limits()
+        queue_stats: dict[str, Any] | None = None
+        backpressure_due: list[tuple[dict[str, Any], dict[str, Any], datetime]] = []
+        for schedule, decision, now in due:
+            if decision["reason"] != "manual":
+                if queue_stats is None:
+                    try:
+                        queue_stats = await _fetch_queue_stats(client, base_url=base_url)
+                    except Exception as exc:  # noqa: BLE001 - stats outage must not stop schedules
+                        logger.warning("queue stats unavailable; skipping backpressure: %s", exc)
+                        queue_stats = {}
+                reason = _backpressure_reason(
+                    queue_stats,
+                    max_waiting=max_waiting,
+                    max_failed=max_failed,
+                )
+                if reason is not None:
+                    skipped_reasons.append(reason)
+                    logger.info(
+                        "schedule skipped by backpressure: name=%s reason=%s",
+                        schedule.get("name"),
+                        reason,
+                    )
+                    continue
+            backpressure_due.append((schedule, decision, now))
+        due = backpressure_due
+
+        if not due:
+            if skipped_reasons:
                 return skipped_reasons[0]
             return "not-due"
 
