@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict HCsv7S4NA1rdMFqi3TOWZkBuliWGTEy31BKQQ5YgmFYYORtY65xjhGTfMocyYu5
+\restrict 1oMh0apgt2SybTgbo11qHDbnDqr6qXcyI9AGKjVDgroP4og1dKHGmXfCuDlnR5u
 
 -- Dumped from database version 16.14 (Debian 16.14-1.pgdg12+1)
 -- Dumped by pg_dump version 16.14 (Debian 16.14-1.pgdg12+1)
@@ -23,6 +23,20 @@ SET row_security = off;
 --
 
 CREATE SCHEMA api;
+
+
+--
+-- Name: vector; Type: EXTENSION; Schema: -; Owner: -
+--
+
+CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public;
+
+
+--
+-- Name: EXTENSION vector; Type: COMMENT; Schema: -; Owner: -
+--
+
+COMMENT ON EXTENSION vector IS 'vector data type and ivfflat and hnsw access methods';
 
 
 --
@@ -2059,6 +2073,40 @@ ALTER SEQUENCE public.recommendations_id_seq OWNED BY public.recommendations.id;
 
 
 --
+-- Name: report_chunks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.report_chunks (
+    id bigint NOT NULL,
+    report_raw_detail_id bigint NOT NULL,
+    chunk_index integer NOT NULL,
+    chunk_text text NOT NULL,
+    embedding public.vector(768) NOT NULL,
+    token_count integer,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: report_chunks_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.report_chunks_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: report_chunks_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.report_chunks_id_seq OWNED BY public.report_chunks.id;
+
+
+--
 -- Name: report_issuances; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -2203,6 +2251,43 @@ CREATE SEQUENCE public.score_history_id_seq
 --
 
 ALTER SEQUENCE public.score_history_id_seq OWNED BY public.score_history.id;
+
+
+--
+-- Name: signal_episodes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.signal_episodes (
+    id bigint NOT NULL,
+    stock_id bigint NOT NULL,
+    signal_date date NOT NULL,
+    run_key text NOT NULL,
+    direction text,
+    score double precision,
+    sources jsonb,
+    embedding public.vector(768) NOT NULL,
+    outcome jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: signal_episodes_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.signal_episodes_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: signal_episodes_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.signal_episodes_id_seq OWNED BY public.signal_episodes.id;
 
 
 --
@@ -3018,6 +3103,13 @@ ALTER TABLE ONLY public.recommendations ALTER COLUMN id SET DEFAULT nextval('pub
 
 
 --
+-- Name: report_chunks id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.report_chunks ALTER COLUMN id SET DEFAULT nextval('public.report_chunks_id_seq'::regclass);
+
+
+--
 -- Name: report_issuances id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -3029,6 +3121,13 @@ ALTER TABLE ONLY public.report_issuances ALTER COLUMN id SET DEFAULT nextval('pu
 --
 
 ALTER TABLE ONLY public.score_history ALTER COLUMN id SET DEFAULT nextval('public.score_history_id_seq'::regclass);
+
+
+--
+-- Name: signal_episodes id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.signal_episodes ALTER COLUMN id SET DEFAULT nextval('public.signal_episodes_id_seq'::regclass);
 
 
 --
@@ -3664,6 +3763,14 @@ ALTER TABLE ONLY public.recommendations
 
 
 --
+-- Name: report_chunks report_chunks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.report_chunks
+    ADD CONSTRAINT report_chunks_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: report_issuances report_issuances_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -3701,6 +3808,14 @@ ALTER TABLE ONLY public.schema_migrations
 
 ALTER TABLE ONLY public.score_history
     ADD CONSTRAINT score_history_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: signal_episodes signal_episodes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.signal_episodes
+    ADD CONSTRAINT signal_episodes_pkey PRIMARY KEY (id);
 
 
 --
@@ -4000,11 +4115,27 @@ ALTER TABLE ONLY public.recommendations
 
 
 --
+-- Name: report_chunks uq_report_chunks_detail_chunk; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.report_chunks
+    ADD CONSTRAINT uq_report_chunks_detail_chunk UNIQUE (report_raw_detail_id, chunk_index);
+
+
+--
 -- Name: report_issuances uq_report_issuance; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.report_issuances
     ADD CONSTRAINT uq_report_issuance UNIQUE (user_id, final_signal_id);
+
+
+--
+-- Name: signal_episodes uq_signal_episodes_stock_date_run; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.signal_episodes
+    ADD CONSTRAINT uq_signal_episodes_stock_date_run UNIQUE (stock_id, signal_date, run_key);
 
 
 --
@@ -4687,6 +4818,13 @@ CREATE INDEX idx_recommendations_rank ON public.recommendations USING btree (aso
 
 
 --
+-- Name: idx_report_chunks_embedding; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_report_chunks_embedding ON public.report_chunks USING hnsw (embedding public.vector_cosine_ops);
+
+
+--
 -- Name: idx_report_detail_firm; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -4754,6 +4892,13 @@ CREATE INDEX idx_score_history_final_signal ON public.score_history USING btree 
 --
 
 CREATE INDEX idx_score_history_stock ON public.score_history USING btree (stock_id, signal_date DESC, scored_at DESC);
+
+
+--
+-- Name: idx_signal_episodes_embedding; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_signal_episodes_embedding ON public.signal_episodes USING hnsw (embedding public.vector_cosine_ops);
 
 
 --
@@ -5468,6 +5613,14 @@ ALTER TABLE ONLY public.recommendations
 
 
 --
+-- Name: report_chunks report_chunks_report_raw_detail_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.report_chunks
+    ADD CONSTRAINT report_chunks_report_raw_detail_id_fkey FOREIGN KEY (report_raw_detail_id) REFERENCES public.report_raw_details(raw_document_id) ON DELETE CASCADE;
+
+
+--
 -- Name: report_issuances report_issuances_final_signal_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5529,6 +5682,14 @@ ALTER TABLE ONLY public.score_history
 
 ALTER TABLE ONLY public.score_history
     ADD CONSTRAINT score_history_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
+
+
+--
+-- Name: signal_episodes signal_episodes_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.signal_episodes
+    ADD CONSTRAINT signal_episodes_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
 
 
 --
@@ -5671,5 +5832,5 @@ ALTER TABLE ONLY public.watchlists
 -- PostgreSQL database dump complete
 --
 
-\unrestrict HCsv7S4NA1rdMFqi3TOWZkBuliWGTEy31BKQQ5YgmFYYORtY65xjhGTfMocyYu5
+\unrestrict 1oMh0apgt2SybTgbo11qHDbnDqr6qXcyI9AGKjVDgroP4og1dKHGmXfCuDlnR5u
 

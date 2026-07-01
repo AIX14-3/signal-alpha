@@ -94,7 +94,8 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16
+        # postgres:16 + pgvector 선설치(공식 이미지). 20260701_1218 마이그의 CREATE EXTENSION vector 필요.
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_DB: signal_alpha
           POSTGRES_USER: signal_alpha

@@ -8,7 +8,7 @@ ERD 다이어그램([`../erd/signal_alpha_core_erd.md`](../erd/signal_alpha_core
 > - 워커/에이전트가 **어떤 테이블을 쓰는지**(역할→테이블 방향)는 [`table_responsibility.md`](./table_responsibility.md)를 참고하세요. 이 문서는 그 반대인 **테이블→역할** 방향입니다.
 > - **새 테이블을 추가하는 마이그레이션 PR은 이 문서에도 한 줄 설명을 반드시 추가해야 합니다** (`database/README.md` §4).
 
-총 54개 테이블 (러너가 자동 관리하는 `schema_migrations` 원장 제외).
+총 56개 테이블 (러너가 자동 관리하는 `schema_migrations` 원장 제외).
 
 ---
 
@@ -103,6 +103,15 @@ Agent·ML의 분석 결과와 최종 시그널.
 | `final_signals` | 사용자/프론트에 노출되는 최종 시그널. `final_score`·신호·게시 여부·법적 고지 보유. `is_current` 부분 유니크+트리거로 조합당 현재 시그널 1건. `consensus_score`·`positive_evidence`/`caution_evidence`로 Alternative consensus 출력 |
 | `score_history` | 최종 점수 변동 이력. 시그널/분석 결과별 점수 추적 |
 | `backtest_results` | 최종 시그널의 사후 성과(5일 변화율·적중 여부) 백테스트 |
+
+## Zone E — Agent 임베딩/메모리 (20260701_1218_agent_embeddings_pgvector.sql)
+
+7-에이전트화 Stage 0 임베딩 인프라(pgvector, 768차원). RAG 검색과 에피소드 메모리가 같은 차원을 공용.
+
+| 테이블 | 역할 |
+| --- | --- |
+| `report_chunks` | 증권사 리포트 본문을 청크로 나눠 임베딩(`vector(768)`) 저장하는 RAG 검색용 테이블. `report_raw_details`(PK `raw_document_id`) 파생이라 원본 삭제 시 동반 삭제. `(report_raw_detail_id, chunk_index)` 유니크, HNSW 코사인 인덱스 |
+| `signal_episodes` | 종목·일자·`run_key` 단위 시그널 발화 1건의 에피소드 메모리. 발화 소스/방향/점수 요약(`sources` JSONB)과 임베딩을 보관하고 성패(`outcome` JSONB)는 사후 기록(NULL 시작). `(stock_id, signal_date, run_key)` 유니크, HNSW 코사인 인덱스 |
 
 ## Zone F — User 확장 (010_users_billing_extend.sql)
 
