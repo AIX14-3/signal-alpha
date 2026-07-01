@@ -1,8 +1,8 @@
 # Agent Worker Pipeline Schedule Runbook
 
-Updated: 2026-06-25
+Updated: 2026-07-01
 
-This runbook describes how to run DART and Report collection, normalization, analysis, and final data-direction aggregation on a schedule.
+This runbook describes how to run Price, DART, Report, and alternative-data collection triggers, queue draining, analysis, and final data-direction aggregation on a schedule.
 
 Signal Alpha is not an investment recommendation service. The pipeline produces data direction, evidence, source agreement, and review flags. Do not describe these jobs as producing buy, sell, hold, target return, or timing recommendations.
 
@@ -11,29 +11,37 @@ Signal Alpha is not an investment recommendation service. The pipeline produces 
 The scheduler must not contain collector or analyzer logic.
 
 - `agent-worker` owns collection, normalization, analysis, queue handling, ML inference, aggregation, synthesis, and risk veto.
-- The scheduler layer only calls internal `agent-worker` endpoints and must send `X-Internal-Token`.
+- The scheduler layer only calls internal `agent-worker` endpoints or existing worker CLI entrypoints; it must not implement collection or analysis logic.
+- Internal HTTP calls must send `X-Internal-Token`.
 - `main-server` and `web` do not run collection or analysis jobs.
 - PRICE collection remains the `agent-worker` lifespan daemon. PRICE analyzer reads DB data only.
+- Hiring collection remains the dedicated hiring crawler CronJob because it needs the browser-enabled crawler image.
 
 Existing internal endpoints:
 
 | Purpose | Endpoint |
 |---|---|
+| Price collection trigger | `POST /internal/price/collect` |
 | DART collection enqueue | `POST /internal/schedules/dart/collect` |
 | Report collection enqueue | `POST /internal/schedules/report/collect` |
+| Alternative target | local collector/analyzer CLIs |
 | Queue cycle execution | `POST /internal/queue/run-cycle` |
 
 ## 2. Recommended MVP Scheduling Model
 
-Use an external scheduler first.
+Use the DB-backed scheduler agent for managed operations.
+
+The scheduler agent is `services/agent-worker/run_scheduler_instance.py`. It polls the backend-owned `collection_schedules` table, evaluates `enabled`, `run_at_local`, `timezone`, `targets`, and `manual_trigger_requested_at`, then triggers the selected worker entrypoints. It records `last_run_at`, `last_status`, `last_detail`, and `next_run_at` back to the same row.
+
+The `alternative` target runs Patent/DataLab collection through `run_collectors.py` and Hiring/Patent/DataLab analysis through `run_analyzers.py`. Hiring collection remains the dedicated hiring crawler CronJob.
 
 Recommended choices:
 
-- Local development: manual PowerShell script or Windows Task Scheduler.
-- Linux server: cron or systemd timer.
-- Managed deployment: Cloud Scheduler, Railway Cron, GitHub Actions schedule, or another external scheduler that can reach the internal worker URL.
+- Local development: manual PowerShell script for smoke tests, or `uv run python run_scheduler_instance.py --once` for one DB-backed evaluation.
+- Managed deployment: one scheduler deployment running `python run_scheduler_instance.py`, as shown in `deploy/k8s/scheduler.yaml`.
+- Emergency/manual operations: admin schedule "trigger" updates `manual_trigger_requested_at`; the scheduler agent fires it on the next polling cycle.
 
-Avoid enabling a new `agent-worker` in-process scheduler daemon as the first step. If more than one worker instance is running, an in-process scheduler can enqueue duplicate work unless a distributed lock is added.
+Keep exactly one scheduler agent active for a schedule row. Multiple scheduler replicas can enqueue duplicate collection work unless a distributed lock is added.
 
 ## 3. Collection Cadence
 
@@ -43,39 +51,50 @@ Suggested starting cadence:
 |---|---:|---:|---|
 | DART | Every 30-60 minutes | Every 30-120 minutes, focused around market and disclosure hours | Respect OpenDART limits. Keep active stock count and document fetch settings bounded. |
 | Report | 1-2 times per day | Every 6-24 hours | Report crawling and PDF parsing are heavier than DART. |
+| Alternative | 1-2 times per day | Every 6-24 hours | Scheduler `alternative` handles Patent/DataLab collection and Hiring/Patent/DataLab analysis. Hiring collection stays on the browser-enabled CronJob. |
 | Queue drain | Every 1-5 minutes | Every 1-5 minutes | Drain is cheap when queues are empty and lets source-specific jobs complete independently. |
 
 Collection and analysis cadences should stay separate. Collection adds source work to `processing_queue`; queue drain workers decide how quickly normalization, analysis, and aggregation catch up.
 
 ## 4. Queue Drain Order
 
-Run source-specific tasks first, then shared downstream tasks.
+The scheduler agent only enqueues or triggers collection. Queue consumption is owned by the worker queue drain daemon (`QUEUE_DRAIN_DAEMON_ENABLED`) and by the same bounded fair cycle exposed at `POST /internal/queue/run-cycle`.
+
+The current default fair-cycle plan is:
 
 ```text
 collect_dart
 collect_report
 normalize_dart
+analyze_dart
 process_report
 normalize_report
-analyze_dart
 analyze_report
-ml_infer
-meta_combine
+NORMALIZE_HIRING
+NORMALIZE_PATENT
+NORMALIZE_DATALAB
+ENRICH_PATENT
+ENRICH_HIRING
+ANALYZE_DATALAB
+ANALYZE_HIRING
+ANALYZE_PATENT
+analyze_price
+src_infer
+return_combine
 aggregate_signal
 synthesize
-risk_veto
+publish_signals
 ```
 
 Why this order:
 
 - DART: `collect_dart -> normalize_dart -> analyze_dart`
 - Report: `collect_report -> process_report -> normalize_report -> analyze_report`
-- DART and Report analyzers enqueue `ml_infer`.
-- ML may enqueue `meta_combine` or go directly to `aggregate_signal`.
-- Aggregation writes `final_signals` and may enqueue `synthesize`.
-- Synthesis may enqueue `risk_veto`.
+- PRICE: scheduler triggers collection; `analyze_price` reads DB data only.
+- Alternative data: external collection jobs feed normalize, enrich, and per-source analyze tasks.
+- Downstream tasks infer source returns, combine return evidence, aggregate source results, synthesize user-facing data-direction narratives, and publish approved outputs.
 
-Each queue type is idempotent through existing dedupe and upsert behavior. Still, keep `max_runs` bounded so one source cannot monopolize a scheduled window.
+Each queue type is idempotent through existing dedupe and upsert behavior. The fair-cycle runner processes at most one task per type per pass, so one source cannot monopolize a scheduled window.
 
 ## 5. Local PowerShell Runner
 

@@ -31,7 +31,7 @@ from signal_alpha_data_access.backend import (
 )
 
 # 수집 스케줄 제어 허용값.
-_SCHEDULE_TARGETS = {"price", "dart", "report"}
+_SCHEDULE_TARGETS = {"price", "dart", "report", "alternative"}
 _SCHEDULE_PRICE_MODES = {"flows", "snapshot"}
 
 

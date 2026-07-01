@@ -5,8 +5,9 @@
 DART/report 만 인큐했지만, 이제 **백엔드 DB 의 단일 config 행을 폴링**해 매일 `run_at_local`
 (타임존, 기본 04:30 KST)에 1회 발화하고, 어드민이 설정한 `enabled`/대상/`manual_trigger`
 를 따른다. 발화 시 대상별로 워커 내부 엔드포인트를 호출한다:
-  - price → POST /internal/price/collect (mode 별: flows, snapshot)
-  - dart  → POST /internal/schedules/dart/collect (limit, priority=batch)
+  - price  → POST /internal/price/collect (mode 별: flows, snapshot)
+  - dart   → POST /internal/schedules/dart/collect (limit, priority=batch)
+  - report → POST /internal/schedules/report/collect (limit, days_back, max_pages, priority=batch)
 인큐된 COLLECT_* 는 워커 **큐 드레인 데몬**(`QUEUE_DRAIN_DAEMON_ENABLED`)이 발행까지 소비한다.
 
 config 는 어드민(main-server)이 `collection_schedules` 에 쓰고, 이 프로세스는 발행용
@@ -27,7 +28,7 @@ import os
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -43,6 +44,17 @@ logger = logging.getLogger("scheduler_instance")
 
 DEFAULT_BASE_URL = "http://localhost:8011"
 DEFAULT_SCHEDULE_NAME = "daily-collection"
+DEFAULT_REPORT_LIMIT = 100
+DEFAULT_REPORT_DAYS_BACK = 7
+DEFAULT_REPORT_MAX_PAGES = 20
+DEFAULT_PRIORITY = "batch"
+DEFAULT_ALTERNATIVE_COLLECT_TIMEOUT_SECONDS = 3600.0
+DEFAULT_ALTERNATIVE_ANALYZE_TIMEOUT_SECONDS = 3600.0
+_SERVICE_DIR = Path(__file__).resolve().parent
+
+
+class CommandRunner(Protocol):
+    async def __call__(self, argv: list[str], *, timeout: float) -> dict[str, Any]: ...
 
 
 async def _build_backend_pool(max_pool_size: int = 4) -> Any:
@@ -63,6 +75,39 @@ def _internal_headers() -> dict[str, str]:
     if not token:
         raise RuntimeError("INTERNAL_API_TOKEN is required for scheduler /internal/* calls.")
     return {"X-Internal-Token": token}
+
+
+def _tail(text: str, *, limit: int = 2000) -> str:
+    return text[-limit:]
+
+
+async def _run_command(argv: list[str], *, timeout: float) -> dict[str, Any]:
+    proc = await asyncio.create_subprocess_exec(
+        *argv,
+        cwd=_SERVICE_DIR,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except TimeoutError as exc:
+        proc.kill()
+        await proc.communicate()
+        raise RuntimeError(
+            f"command timed out after {timeout:.0f}s: {' '.join(argv)}"
+        ) from exc
+
+    stdout = stdout_bytes.decode("utf-8", errors="replace")
+    stderr = stderr_bytes.decode("utf-8", errors="replace")
+    result = {
+        "returncode": proc.returncode,
+        "stdout_tail": _tail(stdout),
+        "stderr_tail": _tail(stderr),
+    }
+    if proc.returncode != 0:
+        output = _tail(stderr or stdout)
+        raise RuntimeError(f"command failed ({proc.returncode}): {' '.join(argv)}\n{output}")
+    return result
 
 
 def _scheduled_today(now: datetime, run_at: Any) -> datetime:
@@ -97,6 +142,7 @@ async def _fire(
     *,
     base_url: str,
     schedule: dict[str, Any],
+    command_runner: CommandRunner = _run_command,
 ) -> dict[str, Any]:
     """대상별 워커 엔드포인트 호출. {target: 결과/에러} 요약 반환."""
     base = base_url.rstrip("/")
@@ -113,12 +159,52 @@ async def _fire(
         try:
             dart = await _post(
                 "/internal/schedules/dart/collect",
-                {"limit": int(schedule.get("dart_limit") or 10), "priority": "batch"},
+                {"limit": int(schedule.get("dart_limit") or 10), "priority": DEFAULT_PRIORITY},
             )
             summary["dart"] = dart.get("scheduled_count") if isinstance(dart, dict) else dart
         except Exception as exc:  # noqa: BLE001 - 한 대상 실패가 다른 대상/상태기록을 막지 않게
             logger.warning("dart/collect 실패: %s", exc)
             summary["dart"] = f"error: {exc}"
+
+    if "report" in targets:
+        try:
+            report = await _post(
+                "/internal/schedules/report/collect",
+                {
+                    "limit": DEFAULT_REPORT_LIMIT,
+                    "days_back": DEFAULT_REPORT_DAYS_BACK,
+                    "max_pages": DEFAULT_REPORT_MAX_PAGES,
+                    "priority": DEFAULT_PRIORITY,
+                },
+            )
+            summary["report"] = (
+                report.get("scheduled_count") if isinstance(report, dict) else report
+            )
+        except Exception as exc:  # noqa: BLE001 - 한 대상 실패가 다른 대상/상태기록을 막지 않게
+            logger.warning("report/collect 실패: %s", exc)
+            summary["report"] = f"error: {exc}"
+
+    if "alternative" in targets:
+        alternative_summary: dict[str, Any] = {}
+        try:
+            alternative_summary["collect"] = await command_runner(
+                [sys.executable, "run_collectors.py"],
+                timeout=DEFAULT_ALTERNATIVE_COLLECT_TIMEOUT_SECONDS,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("alternative collect command failed: %s", exc)
+            alternative_summary["collect"] = f"error: {exc}"
+
+        try:
+            alternative_summary["analyze"] = await command_runner(
+                [sys.executable, "run_analyzers.py"],
+                timeout=DEFAULT_ALTERNATIVE_ANALYZE_TIMEOUT_SECONDS,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("alternative analyze command failed: %s", exc)
+            alternative_summary["analyze"] = f"error: {exc}"
+
+        summary["alternative"] = alternative_summary
 
     if "price" in targets:
         price_summary: dict[str, Any] = {}
