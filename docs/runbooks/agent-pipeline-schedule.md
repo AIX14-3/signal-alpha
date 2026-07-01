@@ -41,7 +41,11 @@ Recommended choices:
 - Managed deployment: one scheduler deployment running `python run_scheduler_instance.py`, as shown in `deploy/k8s/scheduler.yaml`.
 - Emergency/manual operations: admin schedule "trigger" updates `manual_trigger_requested_at`; the scheduler agent fires it on the next polling cycle.
 
-Keep exactly one scheduler agent active for a schedule row. Multiple scheduler replicas can enqueue duplicate collection work unless a distributed lock is added.
+The DB-backed scheduler uses a PostgreSQL advisory lock before firing due or manual schedules. If another scheduler instance already holds the lock, the current cycle returns `lock-held` and does not enqueue duplicate collection work.
+
+Every fired run also writes a row to `collection_schedule_runs`, then updates `collection_schedules.last_*` for the current summary. Operators can inspect recent history through `GET /api/admin/schedules/{schedule_id}/runs`.
+
+Keep exactly one scheduler agent active for a schedule row. The advisory lock prevents duplicate firing during overlap, but one active scheduler remains the simplest operating model.
 
 ## 3. Collection Cadence
 

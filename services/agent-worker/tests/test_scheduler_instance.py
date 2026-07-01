@@ -1,8 +1,12 @@
 import asyncio
+from datetime import datetime, time
+from zoneinfo import ZoneInfo
 
 import httpx
+import signal_alpha_data_access.backend as backend
 
-from run_scheduler_instance import _fire, _overall_status
+import run_scheduler_instance
+from run_scheduler_instance import _fire, _overall_status, run_cycle
 
 
 class FakeResponse:
@@ -47,6 +51,78 @@ class RecordingClient:
         if path == "/internal/price/collect":
             return FakeResponse({"status": "ok"}, url=url)
         raise AssertionError(f"Unexpected path: {path}")
+
+
+class FakeAcquire:
+    def __init__(self, connection):
+        self.connection = connection
+
+    async def __aenter__(self):
+        return self.connection
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        return False
+
+
+class FakePool:
+    def __init__(self, connection):
+        self.connection = connection
+
+    def acquire(self):
+        return FakeAcquire(self.connection)
+
+
+class FakeConnection:
+    def __init__(self, *, lock_acquired=True):
+        self.lock_acquired = lock_acquired
+        self.fetchval_calls = []
+
+    async def fetchval(self, sql, *args):
+        self.fetchval_calls.append((sql, args))
+        if "pg_try_advisory_lock" in sql:
+            return self.lock_acquired
+        if "pg_advisory_unlock" in sql:
+            return True
+        raise AssertionError(f"Unexpected fetchval SQL: {sql}")
+
+
+class FakeScheduleRepository:
+    def __init__(self, connection):
+        self.connection = connection
+        self.recorded_runs = []
+        self.started_runs = []
+        self.finished_runs = []
+
+    async def get_by_name(self, name):
+        return {
+            "id": 1,
+            "name": name,
+            "enabled": True,
+            "run_at_local": time(4, 30),
+            "timezone": "Asia/Seoul",
+            "targets": ["dart"],
+            "dart_limit": 10,
+            "price_modes": ["snapshot"],
+            "last_run_at": None,
+            "manual_trigger_requested_at": datetime(
+                2026, 7, 1, 5, 0, tzinfo=ZoneInfo("Asia/Seoul")
+            ),
+        }
+
+    async def get_primary(self):
+        raise AssertionError("primary schedule should not be fetched")
+
+    async def record_run(self, **kwargs):
+        self.recorded_runs.append(kwargs)
+        return kwargs
+
+    async def start_run(self, **kwargs):
+        self.started_runs.append(kwargs)
+        return {"id": 55}
+
+    async def finish_run(self, **kwargs):
+        self.finished_runs.append(kwargs)
+        return kwargs
 
 
 def test_fire_calls_report_collect_with_default_batch_payload(monkeypatch):
@@ -160,3 +236,109 @@ def test_fire_marks_alternative_partial_when_collect_fails_but_analyze_runs(monk
     }
     assert [argv[-1] for argv in calls] == ["run_collectors.py", "run_analyzers.py"]
     assert _overall_status(summary) == "partial"
+
+
+def test_run_cycle_returns_lock_held_without_firing_when_scheduler_lock_is_taken(
+    monkeypatch,
+):
+    repository = None
+
+    def repo_factory(connection):
+        nonlocal repository
+        repository = FakeScheduleRepository(connection)
+        return repository
+
+    async def fire_should_not_run(*args, **kwargs):
+        raise AssertionError("_fire must not run when advisory lock is held")
+
+    monkeypatch.setattr(backend, "CollectionScheduleRepository", repo_factory)
+    monkeypatch.setattr(run_scheduler_instance, "_fire", fire_should_not_run)
+
+    connection = FakeConnection(lock_acquired=False)
+    result = asyncio.run(
+        run_cycle(
+            FakePool(connection),
+            object(),
+            base_url="http://worker",
+            schedule_name="daily-collection",
+        )
+    )
+
+    assert result == "lock-held"
+    assert repository is not None
+    assert repository.recorded_runs == []
+    assert any("pg_try_advisory_lock" in sql for sql, _args in connection.fetchval_calls)
+
+
+def test_run_cycle_records_execution_history_around_fired_schedule(monkeypatch):
+    repository = None
+
+    def repo_factory(connection):
+        nonlocal repository
+        repository = FakeScheduleRepository(connection)
+        return repository
+
+    async def fire_success(*args, **kwargs):
+        return {"dart": 2}
+
+    monkeypatch.setattr(backend, "CollectionScheduleRepository", repo_factory)
+    monkeypatch.setattr(run_scheduler_instance, "_fire", fire_success)
+
+    connection = FakeConnection(lock_acquired=True)
+    result = asyncio.run(
+        run_cycle(
+            FakePool(connection),
+            object(),
+            base_url="http://worker",
+            schedule_name="daily-collection",
+        )
+    )
+
+    assert result == "fired:manual:ok"
+    assert repository is not None
+    assert repository.started_runs == [
+        {
+            "schedule_id": 1,
+            "schedule_name": "daily-collection",
+            "trigger_reason": "manual",
+            "targets": ["dart"],
+        }
+    ]
+    assert repository.finished_runs == [
+        {"run_id": 55, "status": "ok", "detail": {"dart": 2}}
+    ]
+    assert repository.recorded_runs[0]["last_status"] == "ok"
+    assert any("pg_advisory_unlock" in sql for sql, _args in connection.fetchval_calls)
+
+
+def test_run_cycle_finishes_execution_history_when_fire_raises(monkeypatch):
+    repository = None
+
+    def repo_factory(connection):
+        nonlocal repository
+        repository = FakeScheduleRepository(connection)
+        return repository
+
+    async def fire_failure(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(backend, "CollectionScheduleRepository", repo_factory)
+    monkeypatch.setattr(run_scheduler_instance, "_fire", fire_failure)
+
+    connection = FakeConnection(lock_acquired=True)
+    result = asyncio.run(
+        run_cycle(
+            FakePool(connection),
+            object(),
+            base_url="http://worker",
+            schedule_name="daily-collection",
+        )
+    )
+
+    assert result == "fired:manual:partial"
+    assert repository is not None
+    assert repository.finished_runs == [
+        {"run_id": 55, "status": "partial", "detail": {"error": "boom"}}
+    ]
+    assert repository.recorded_runs[0]["last_status"] == "partial"
+    assert any("pg_advisory_unlock" in sql for sql, _args in connection.fetchval_calls)
