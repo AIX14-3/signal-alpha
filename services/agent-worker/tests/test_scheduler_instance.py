@@ -7,6 +7,7 @@ import signal_alpha_data_access.backend as backend
 
 import run_scheduler_instance
 from run_scheduler_instance import _fire, _next_run_at, _overall_status, _should_fire, run_cycle
+from run_scheduler_instance import _evaluate_schedule
 
 
 class FakeResponse:
@@ -191,6 +192,29 @@ def test_next_run_at_interval_schedule_rolls_to_next_window_after_cutoff():
     )
 
 
+def test_evaluate_schedule_returns_skip_decision_for_outside_active_window():
+    tz = ZoneInfo("Asia/Seoul")
+    schedule = _interval_schedule(
+        last_run_at=datetime(2026, 7, 1, 19, 30, tzinfo=tz)
+    )
+
+    should_fire, decision = _evaluate_schedule(
+        schedule,
+        datetime(2026, 7, 1, 21, 0, tzinfo=tz),
+    )
+
+    assert should_fire is False
+    assert decision == {
+        "agent": "scheduler",
+        "policy": "scheduler-agent-v1",
+        "action": "skip",
+        "reason": "outside-window",
+        "schedule_id": 1,
+        "schedule_name": "dart-collection",
+        "targets": ["dart"],
+    }
+
+
 def test_fire_calls_report_collect_with_default_batch_payload(monkeypatch):
     monkeypatch.setenv("INTERNAL_API_TOKEN", "secret")
     client = RecordingClient()
@@ -370,11 +394,51 @@ def test_run_cycle_records_execution_history_around_fired_schedule(monkeypatch):
             "targets": ["dart"],
         }
     ]
-    assert repository.finished_runs == [
-        {"run_id": 55, "status": "ok", "detail": {"dart": 2}}
-    ]
+    assert repository.finished_runs[0]["run_id"] == 55
+    assert repository.finished_runs[0]["status"] == "ok"
+    assert repository.finished_runs[0]["detail"]["targets"] == {"dart": 2}
     assert repository.recorded_runs[0]["last_status"] == "ok"
     assert any("pg_advisory_unlock" in sql for sql, _args in connection.fetchval_calls)
+
+
+def test_run_cycle_records_scheduler_decision_in_execution_detail(monkeypatch):
+    repository = None
+
+    def repo_factory(connection):
+        nonlocal repository
+        repository = FakeScheduleRepository(connection)
+        return repository
+
+    async def fire_success(*args, **kwargs):
+        return {"dart": 2}
+
+    monkeypatch.setattr(backend, "CollectionScheduleRepository", repo_factory)
+    monkeypatch.setattr(run_scheduler_instance, "_fire", fire_success)
+
+    connection = FakeConnection(lock_acquired=True)
+    result = asyncio.run(
+        run_cycle(
+            FakePool(connection),
+            object(),
+            base_url="http://worker",
+            schedule_name="daily-collection",
+        )
+    )
+
+    assert result == "fired:manual:ok"
+    assert repository is not None
+    detail = repository.finished_runs[0]["detail"]
+    assert detail["targets"] == {"dart": 2}
+    assert detail["decision"] == {
+        "agent": "scheduler",
+        "policy": "scheduler-agent-v1",
+        "action": "fire",
+        "reason": "manual",
+        "schedule_id": 1,
+        "schedule_name": "daily-collection",
+        "targets": ["dart"],
+    }
+    assert repository.recorded_runs[0]["last_detail"] == detail
 
 
 def test_run_cycle_finishes_execution_history_when_fire_raises(monkeypatch):
@@ -403,9 +467,9 @@ def test_run_cycle_finishes_execution_history_when_fire_raises(monkeypatch):
 
     assert result == "fired:manual:partial"
     assert repository is not None
-    assert repository.finished_runs == [
-        {"run_id": 55, "status": "partial", "detail": {"error": "boom"}}
-    ]
+    assert repository.finished_runs[0]["run_id"] == 55
+    assert repository.finished_runs[0]["status"] == "partial"
+    assert repository.finished_runs[0]["detail"]["targets"] == {"error": "boom"}
     assert repository.recorded_runs[0]["last_status"] == "partial"
     assert any("pg_advisory_unlock" in sql for sql, _args in connection.fetchval_calls)
 

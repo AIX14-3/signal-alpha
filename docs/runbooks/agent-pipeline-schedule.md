@@ -63,6 +63,9 @@ The DB-backed scheduler uses a PostgreSQL advisory lock before firing due or man
 
 Every fired run also writes a row to `collection_schedule_runs`, then updates `collection_schedules.last_*` for the current summary. Operators can inspect recent history through `GET /api/admin/schedules/{schedule_id}/runs`.
 
+Each fired run stores scheduler-agent decision metadata in the JSON detail:
+`decision` records the scheduler policy, action, trigger reason, schedule identity, and selected targets; `targets` records the per-target trigger result. This keeps the scheduler explainable without moving collection or analysis logic into the scheduler layer.
+
 Keep exactly one scheduler agent active for the schedule table. The advisory lock prevents duplicate firing during overlap, but one active scheduler remains the simplest operating model.
 
 ## 3. Collection Cadence
