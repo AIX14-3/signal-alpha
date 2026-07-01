@@ -5668,6 +5668,153 @@ ALTER TABLE ONLY public.watchlists
 
 
 --
+-- Name: vector; Type: EXTENSION; Schema: -; Owner: -
+-- (agent embeddings Stage 0 / 20260701_1218_agent_embeddings_pgvector.sql)
+--
+
+CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public;
+
+
+--
+-- Name: report_chunks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.report_chunks (
+    id bigint NOT NULL,
+    report_raw_detail_id bigint NOT NULL,
+    chunk_index integer NOT NULL,
+    chunk_text text NOT NULL,
+    embedding public.vector(768) NOT NULL,
+    token_count integer,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: report_chunks_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.report_chunks_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public.report_chunks_id_seq OWNED BY public.report_chunks.id;
+
+
+--
+-- Name: signal_episodes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.signal_episodes (
+    id bigint NOT NULL,
+    stock_id bigint NOT NULL,
+    signal_date date NOT NULL,
+    run_key text NOT NULL,
+    direction text,
+    score double precision,
+    sources jsonb,
+    embedding public.vector(768) NOT NULL,
+    outcome jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: signal_episodes_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.signal_episodes_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public.signal_episodes_id_seq OWNED BY public.signal_episodes.id;
+
+
+--
+-- Name: report_chunks id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.report_chunks ALTER COLUMN id SET DEFAULT nextval('public.report_chunks_id_seq'::regclass);
+
+
+--
+-- Name: signal_episodes id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.signal_episodes ALTER COLUMN id SET DEFAULT nextval('public.signal_episodes_id_seq'::regclass);
+
+
+--
+-- Name: report_chunks report_chunks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.report_chunks
+    ADD CONSTRAINT report_chunks_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: report_chunks uq_report_chunks_detail_chunk; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.report_chunks
+    ADD CONSTRAINT uq_report_chunks_detail_chunk UNIQUE (report_raw_detail_id, chunk_index);
+
+
+--
+-- Name: signal_episodes signal_episodes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.signal_episodes
+    ADD CONSTRAINT signal_episodes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: signal_episodes uq_signal_episodes_stock_date_run; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.signal_episodes
+    ADD CONSTRAINT uq_signal_episodes_stock_date_run UNIQUE (stock_id, signal_date, run_key);
+
+
+--
+-- Name: idx_report_chunks_embedding; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_report_chunks_embedding ON public.report_chunks USING hnsw (embedding public.vector_cosine_ops);
+
+
+--
+-- Name: idx_signal_episodes_embedding; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_signal_episodes_embedding ON public.signal_episodes USING hnsw (embedding public.vector_cosine_ops);
+
+
+--
+-- Name: report_chunks report_chunks_report_raw_detail_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.report_chunks
+    ADD CONSTRAINT report_chunks_report_raw_detail_id_fkey FOREIGN KEY (report_raw_detail_id) REFERENCES public.report_raw_details(raw_document_id) ON DELETE CASCADE;
+
+
+--
+-- Name: signal_episodes signal_episodes_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.signal_episodes
+    ADD CONSTRAINT signal_episodes_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
+
+
+--
 -- PostgreSQL database dump complete
 --
 

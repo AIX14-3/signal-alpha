@@ -65,6 +65,7 @@ docker compose run --rm db-migrate apply --seeds
 | D Processing | `processing_queue`, `dead_letter`, `source_documents`, `signal_events`, `signal_metrics`, `validation_logs` |
 | B User 기본 | `users`, `subscription_plans` |
 | E Analysis | `analysis_requests`, `analysis_results`, `quant_scores`, `ta_scores`, `ai_scores`, `agent_results`, `xgb_model_versions`, `ml_scores`, `final_signals`, `score_history`, `backtest_results` |
+| E Agent 임베딩/메모리 | `report_chunks`, `signal_episodes` (pgvector 768, Stage 0 임베딩 인프라) |
 | F User 확장 | `signal_subscriptions`, `watchlists`, `signal_journals`, `user_signal_reads`, `user_sessions`, `social_accounts`, `portone_verifications`, `terms_agreements` |
 | G Admin | `admin_accounts`, `admin_sessions` |
 | 트리거 | (트리거 함수 2종 + updated_at 트리거 일괄 부착) |
@@ -175,7 +176,7 @@ Frontend는 원칙적으로 `final_signals`를 중심으로 조회합니다.
 | DART 고임팩트 즉시 분석 | `IMMEDIATE` |
 | 수동 재분석 | `MANUAL` |
 
-(리포트 임베딩/RAG 검색 기능은 제거됨 — `report_chunks`/pgvector 폐지.)
+(리포트 임베딩/RAG 는 7-에이전트화 Stage 0 에서 pgvector(768차원)로 재도입됨 — `report_chunks`(RAG 청크)·`signal_episodes`(에피소드 메모리), `20260701_1218_agent_embeddings_pgvector.sql`. 현재는 인프라만 존재하고 에이전트 배선은 Stage 1/2.)
 
 ## 7. Legacy 테이블 (제거됨)
 

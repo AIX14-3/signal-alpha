@@ -756,6 +756,41 @@ erDiagram
 - `users` ← `phone` (025), `status`(active|suspended|deleted) (027). 사용자-소유(BACKEND) 테이블의 `user_id` FK는 `ON DELETE CASCADE`(하드 삭제, `20260626_0244`). `analysis_requests.user_id`(COLLECTION)는 `users`(BACKEND)와 cross-DB 라 **FK 없이 nullable 컬럼**으로 두고, 회원 삭제 시 분리는 앱레벨 publisher 가 담당한다(`20260626_0244`에서 FK 제거).
 - `signal_subscriptions` ← `next_billing_at`, `auto_renew` (027).
 
+## Zone H — Agent 임베딩/메모리 [COLLECTION] (`20260701_1218_agent_embeddings_pgvector.sql`)
+
+7-에이전트화 Stage 0(임베딩 인프라). pgvector 확장 위에 RAG 청크·에피소드 메모리를 768차원으로 저장한다.
+
+```mermaid
+erDiagram
+    report_chunks {
+        BIGINT id PK
+        BIGINT report_raw_detail_id FK "→ report_raw_details.raw_document_id, ON DELETE CASCADE"
+        INT chunk_index "UK(report_raw_detail_id, chunk_index)"
+        TEXT chunk_text
+        VECTOR embedding "vector(768), HNSW cosine"
+        INT token_count "nullable"
+        TIMESTAMPTZ created_at
+    }
+
+    signal_episodes {
+        BIGINT id PK
+        BIGINT stock_id FK "→ stocks.id"
+        DATE signal_date "UK(stock_id, signal_date, run_key)"
+        TEXT run_key
+        TEXT direction
+        DOUBLE score
+        JSONB sources "발화 소스·방향·점수 요약"
+        VECTOR embedding "vector(768), HNSW cosine"
+        JSONB outcome "성패, nullable(나중 채움)"
+        TIMESTAMPTZ created_at
+    }
+
+    report_raw_details ||--o{ report_chunks : "raw_document_id"
+    stocks ||--o{ signal_episodes : ""
+```
+
+`report_chunks`는 리포트 RAG 검색용 청크 임베딩, `signal_episodes`는 시그널 발화 에피소드 메모리(과거 유사상황 회상)다. 둘 다 pgvector `vector(768)` + HNSW cosine ANN 인덱스. 적용 DB에 `vector` 확장 선행 필요(Neon/Supabase 등 지원).
+
 ## Legacy — report MVP [COLLECTION] ✅ 제거됨
 
 레거시 `report_raw` / `report_signal`(구 report RAG MVP, `setup_db.py` 산출)은
@@ -767,5 +802,5 @@ erDiagram
 
 - `schema_migrations(filename PK, checksum, applied_at)` — `database/migrate.py`가 자동 생성·관리하는 적용 원장. 마이그레이션 파일로 만들지 않는다.
 
-전체 테이블 수: **68개** (+ `schema_migrations` 원장). PUBLISHED 6 / COLLECTION 46 / BACKEND 16
+전체 테이블 수: **70개** (+ `schema_migrations` 원장). PUBLISHED 6 / COLLECTION 48 / BACKEND 16
 (BACKEND 는 `collection_schedules` 포함 — `db_partition.py` 기준).
