@@ -97,7 +97,10 @@ class HiringAnalysisAgent:
         rule: SourceResult,
         focus: HiringFocus,
     ) -> SourceAgentOutput:
-        assert self._classifier is not None  # gated by should_dig
+        # Defensive: normally gated by should_dig, but guard here too so a direct
+        # call (or -O stripping asserts) degrades cleanly instead of crashing.
+        if self._classifier is None:
+            return self.build_rules_output(rule)
         try:
             verdict = await self._classifier.classify(
                 stock_code=rule.stock_code,
@@ -165,7 +168,9 @@ class HiringAnalysisAgent:
         evidence_items.append(
             asdict(
                 EvidenceItem(
-                    title="채용 스킬·직무 포커스",
+                    # Distinct from the rule analyzer's descriptive "채용 직무·기술
+                    # 포커스" item — this is the agent's interpretive focus.
+                    title="채용 전략 포커스",
                     summary=rationale,
                     published_at=rule.evidence_items[0].published_at if rule.evidence_items else None,
                     source_name="HIRING",
@@ -173,6 +178,10 @@ class HiringAnalysisAgent:
             )
         )
         detail["evidence_items"] = evidence_items
+        # Structured focus for direct/FE consumers. Note: the alternative pipeline's
+        # _from_output only round-trips evidence_items/summary into the persisted
+        # SourceResult, so this key is transient there — the durable channel is the
+        # focus evidence item + summary above.
         detail["hiring_focus"] = {
             "label": focus_label,
             "top_functions": focus.top_functions,

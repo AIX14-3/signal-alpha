@@ -141,7 +141,7 @@ class HiringAgentFocusTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("채용 포커스", output.summary)
         self.assertIn("AI·백엔드", output.summary)
         titles = [e["title"] for e in output.method_detail["evidence_items"]]
-        self.assertIn("채용 스킬·직무 포커스", titles)
+        self.assertIn("채용 전략 포커스", titles)
         self.assertEqual(output.method_detail["hiring_focus"]["source"], "llm")
         self.assertTrue(output.method_detail["hiring_focus"]["top_functions"])
 
@@ -170,7 +170,7 @@ class HiringAgentFocusTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(restored.direction, "unknown")
         self.assertEqual(restored.source, "HIRING")
         # The focus evidence item survives into the restored SourceResult.
-        self.assertTrue(any(e.title == "채용 스킬·직무 포커스" for e in restored.evidence_items))
+        self.assertTrue(any(e.title == "채용 전략 포커스" for e in restored.evidence_items))
 
 
 class HiringRegistryWiringTest(unittest.TestCase):
