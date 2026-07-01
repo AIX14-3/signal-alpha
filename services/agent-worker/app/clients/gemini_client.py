@@ -106,8 +106,29 @@ class GeminiJsonClient:
             err.retryable = True  # type: ignore[attr-defined]
             raise err from exc
         try:
-            return json.loads(text)
-        except json.JSONDecodeError as exc:
+            return _loads_first_json(text)
+        except ValueError as exc:
             err = GeminiError(f"Gemini did not return valid JSON: {exc}")
             err.retryable = False  # type: ignore[attr-defined]
             raise err from exc
+
+
+def _loads_first_json(text: str) -> Any:
+    """Parse the first JSON value in ``text``, tolerating trailing data / fences.
+
+    Gemini (esp. flash-lite) with ``responseMimeType=application/json`` still
+    occasionally appends extra content after the object — a second JSON value, a
+    trailing newline + prose, or a ```json code fence. Strict ``json.loads``
+    rejects any trailing data ("Extra data"), discarding an otherwise-valid
+    object and forcing a needless fallback. ``raw_decode`` reads just the first
+    JSON value and ignores whatever follows. Raises ``ValueError`` when no JSON
+    value starts the (fence-stripped) text.
+    """
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned[3:]
+        if cleaned[:4].lower() == "json":
+            cleaned = cleaned[4:]
+        cleaned = cleaned.strip()
+    obj, _ = json.JSONDecoder().raw_decode(cleaned)
+    return obj
