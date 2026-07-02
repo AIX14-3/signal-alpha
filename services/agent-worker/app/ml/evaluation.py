@@ -16,6 +16,7 @@ For each model and fold we record four metric groups (see the plan):
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -239,6 +240,63 @@ def within_firm_ic(
             s[m] = np.nan
     ok = np.isfinite(s) & np.isfinite(r)
     return _safe_corr(spearmanr, s[ok], r[ok])
+
+
+@dataclass
+class PerPeriodIC:
+    """Time-series diagnostic of the per-signal-date cross-sectional rank-IC.
+
+    Instead of one pooled IC (which averages away regime structure), we compute a
+    Spearman rank-IC WITHIN each signal date (across that date's stocks) and treat
+    the sequence as a time series. A conditional-reversal effect — e.g. attention
+    flips momentum's sign in some regimes — shows up as a per-period IC that swings
+    sign across dates even when the pooled mean is ~0.
+    """
+
+    n_periods: int
+    mean_ic: float
+    std_ic: float
+    t_stat: float  # mean / (std / sqrt(n)) — Newey-West-free, autocorr caveat noted
+    frac_negative: float  # share of periods with IC < 0 (0.5 == no directional tilt)
+    frac_positive: float
+    ics: list[float]
+
+
+def per_period_ic(
+    scores: np.ndarray,
+    returns: np.ndarray,
+    dates: np.ndarray,
+    *,
+    min_per_date: int = 5,
+) -> PerPeriodIC:
+    """Per-date cross-sectional rank-IC series + its mean/std/t and sign-flip share.
+
+    Only dates with ``>= min_per_date`` scorable stocks contribute an IC (a 3-name
+    cross-section is noise). ``frac_negative`` near 0.5 with a small mean is the
+    signature of a sign-UNSTABLE relationship (conditional reversal by regime),
+    while a consistent tilt pushes ``frac_negative`` toward 0 or 1.
+    """
+    by_date: dict = {}
+    for i, d in enumerate(dates):
+        by_date.setdefault(d, []).append(i)
+    ics: list[float] = []
+    for idx in by_date.values():
+        if len(idx) < min_per_date:
+            continue
+        idx = np.array(idx)
+        ic = _safe_corr(spearmanr, scores[idx], returns[idx])
+        if np.isfinite(ic):
+            ics.append(float(ic))
+    if not ics:
+        return PerPeriodIC(0, float("nan"), float("nan"), float("nan"),
+                           float("nan"), float("nan"), [])
+    arr = np.array(ics, dtype=float)
+    mean = float(arr.mean())
+    std = float(arr.std(ddof=1)) if len(arr) > 1 else float("nan")
+    t = float(mean / (std / math.sqrt(len(arr)))) if (std and std > 0) else float("nan")
+    neg = float(np.mean(arr < 0))
+    pos = float(np.mean(arr > 0))
+    return PerPeriodIC(len(arr), mean, std, t, neg, pos, ics)
 
 
 def _bullish_score(model, X: np.ndarray) -> np.ndarray:

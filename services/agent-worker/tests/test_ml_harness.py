@@ -149,6 +149,32 @@ def test_walk_forward_requires_enough_dates():
         walk_forward_folds(np.array([1, 1, 2, 2]), n_folds=5)
 
 
+def test_per_period_ic_flags_sign_unstable_relationship():
+    # Two dates: on date 1 the score ranks WITH returns (IC ~ +1); on date 2 it
+    # ranks AGAINST them (IC ~ -1). Pooled IC would wash out; the per-period series
+    # must expose the sign flip: mean ~ 0, negFrac == posFrac == 0.5.
+    from app.ml.evaluation import per_period_ic
+
+    scores = np.array([1.0, 2, 3, 4, 5, 1, 2, 3, 4, 5])
+    returns = np.array([1.0, 2, 3, 4, 5, 5, 4, 3, 2, 1])
+    dates = np.array([1, 1, 1, 1, 1, 2, 2, 2, 2, 2])
+    pp = per_period_ic(scores, returns, dates, min_per_date=5)
+    assert pp.n_periods == 2
+    assert pp.frac_negative == pytest.approx(0.5)
+    assert pp.frac_positive == pytest.approx(0.5)
+    assert abs(pp.mean_ic) < 0.1  # the two ±1 ICs cancel
+
+
+def test_per_period_ic_drops_thin_cross_sections():
+    from app.ml.evaluation import per_period_ic
+
+    scores = np.array([1.0, 2, 3])
+    returns = np.array([1.0, 2, 3])
+    dates = np.array([1, 1, 1])  # only 3 names on the single date
+    pp = per_period_ic(scores, returns, dates, min_per_date=5)
+    assert pp.n_periods == 0  # below the min cross-section -> nothing scorable
+
+
 def test_evaluate_model_skips_a_model_that_errors_on_a_fold():
     # A model failing on a (typically tiny, long-horizon) fold must be skipped for
     # that fold, not crash the whole bake-off — e.g. KNN when n_neighbors > train size.

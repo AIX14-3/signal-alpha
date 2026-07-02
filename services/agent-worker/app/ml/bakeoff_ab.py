@@ -25,10 +25,24 @@ Data is self-contained from CSVs (no DB):
   --search  ticker,keyword,period,ratio      (name-search DataLab, daily)
   --revenue ticker,name,year,reprt,account,fs_div,amount  (DART annual, for B)
 
+BRIDGE 2 (this revision) — the stage-2 meta is no longer only a linear main-effect
+combiner. Milestone 1 showed a linear meta on per-source predictions carries no
+DIRECTIONAL signal. The conditional-reversal hypothesis (Eom&Park, KR retail
+attention) is that attention does not move direction on its own but FLIPS/AMPLIFIES
+price momentum's sign. So we re-score the same base OOS predictions with meta
+learners that CAN see interactions — explicit product features for a linear meta
+(mom×attention, sign(mom)×attention, mom×liquidity) and native interaction splits
+for a gradient-boosted meta (toggled on/off via ``interaction_cst`` as a controlled
+contrast). The final label stays DIRECTION (sign of forward excess return); we score
+the bullish score's rank-IC vs the realized return. Reported across horizon 20/60,
+full vs small-cap (bottom liquidity tercile), with a per-period IC sign-flip
+diagnostic to expose regime-conditional reversal. Folds are NON-OVERLAPPING
+(signal step == horizon) + purge/embargo, permutation p, BH-FDR across all configs.
+
 Run:
   python -m app.ml.bakeoff_ab --method both \
       --prices prices_krx250.csv --search stockname_daily_krx250.csv \
-      --revenue dart_krx250.csv --horizon 20 --signal-step 10 --perm 500
+      --revenue dart_krx250.csv --horizons 20,60 --perm 500
 """
 
 from __future__ import annotations
@@ -44,10 +58,12 @@ import numpy as np
 
 from .datalab_dataset import PriceSeries, weekly_signal_dates
 from .evaluation import (
+    PerPeriodIC,
     _decile_spread,
     _safe_corr,
     benjamini_hochberg,
     oos_predictions,
+    per_period_ic,
     permutation_pvalue,
     purged_walk_forward_folds,
     within_firm_ic,
@@ -350,6 +366,7 @@ class ScoreCard:
     within_firm_ic: float
     perm_p: float
     fdr_survive: bool = False
+    ppic: PerPeriodIC | None = None
 
 
 def _long_short_sharpe(
@@ -399,7 +416,8 @@ def _score(
     sharpe = _long_short_sharpe(p, r, d, periods_per_year)
     wfic = within_firm_ic(p, r, sid)
     _, perm_p = permutation_pvalue(p, r, d, n_perm=n_perm, seed=seed, metric="rank_ic")
-    return ScoreCard(name, len(p), ic, ric, hit, ds, sharpe, wfic, perm_p)
+    ppic = per_period_ic(p, r, d)
+    return ScoreCard(name, len(p), ic, ric, hit, ds, sharpe, wfic, perm_p, ppic=ppic)
 
 
 # --------------------------------------------------------------------------- #
@@ -470,6 +488,211 @@ def run_method(
     return cards
 
 
+# --------------------------------------------------------------------------- #
+# BRIDGE 2 — interaction / conditional-reversal meta (DIRECTION target)
+#
+# Milestone 1 stacked per-source predictions with a LINEAR main-effect meta and
+# found no directional signal. The hypothesis here (Eom&Park-style): attention
+# does not move direction on its own but CONDITIONALLY flips/amplifies price
+# momentum's sign. A linear main-effect meta is blind to that product term. So we
+# re-score the SAME base OOS predictions with meta learners that can see
+# interactions — explicit product features for the linear meta, and native
+# interaction splits for a gradient-boosted meta (gated on/off via interaction_cst
+# so "allow interactions" vs "forbid them" is a controlled contrast).
+#
+# Direction label is preserved: the stage-2 target is sign(forward excess return);
+# we score the bullish score's rank-IC against the realized return, exactly as the
+# aggregator's directional objective. Non-overlapping folds (signal_step==horizon)
+# + purge/embargo + within-date permutation + BH-FDR are unchanged.
+# --------------------------------------------------------------------------- #
+def _condition_vars(rows: list[PanelRow]) -> dict[str, np.ndarray]:
+    """Row-aligned conditioning variables for the interaction meta.
+
+    * ``mom``  — 20-session price momentum (``ret_20``); the effect being modulated.
+    * ``att``  — attention z (search ``abn``); the hypothesised modulator.
+    * ``liq``  — abnormal-volume proxy (``vol_abn``) standing in for liquidity.
+    * ``sgn``  — sign of trailing momentum (regime indicator for reversal).
+    """
+    mom = np.array([r.price_feats.get("ret_20", math.nan) for r in rows], dtype=float)
+    att = np.array([r.datalab_feats.get("abn", math.nan) for r in rows], dtype=float)
+    liq = np.array([r.price_feats.get("vol_abn", math.nan) for r in rows], dtype=float)
+    with np.errstate(invalid="ignore"):
+        sgn = np.sign(mom)
+    return {"mom": mom, "att": att, "liq": liq, "sgn": sgn}
+
+
+def _meta_matrix(
+    base_price: np.ndarray,
+    base_datalab: np.ndarray,
+    cv: dict[str, np.ndarray],
+    *,
+    with_conditions: bool,
+    with_interactions: bool,
+) -> np.ndarray:
+    """Stack base OOS predictions with (optionally) condition vars + explicit products.
+
+    ``with_interactions`` adds the hypothesis-driven product terms so even a LINEAR
+    meta can express "attention flips momentum": ``mom*att``, ``sgn*att``,
+    ``mom*liq``. Trees get those interactions for free, so their configs pass
+    ``with_interactions=False`` and toggle interactions via the model's
+    ``interaction_cst`` instead.
+    """
+    cols = [base_price, base_datalab]
+    if with_conditions:
+        cols += [cv["mom"], cv["att"], cv["liq"], cv["sgn"]]
+    if with_interactions:
+        cols += [cv["mom"] * cv["att"], cv["sgn"] * cv["att"], cv["mom"] * cv["liq"]]
+    return np.column_stack(cols)
+
+
+def _linear_meta():
+    from sklearn.impute import SimpleImputer
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.pipeline import Pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    return Pipeline(
+        [("impute", SimpleImputer(strategy="median")),
+         ("scale", StandardScaler()),
+         ("model", LogisticRegression(max_iter=2000, C=0.5))]
+    )
+
+
+def _gbm_meta(seed: int, *, interactions: bool):
+    """Gradient-boosted DIRECTION meta; ``interactions`` toggles interaction_cst.
+
+    ``interactions=False`` forbids cross-feature splits (``no_interactions``) — a
+    purely additive tree, the honest contrast for "do interactions add anything?".
+    HistGB consumes NaNs natively, so no imputer is needed.
+    """
+    from sklearn.ensemble import HistGradientBoostingClassifier
+
+    return HistGradientBoostingClassifier(
+        max_depth=3,
+        learning_rate=0.05,
+        max_iter=200,
+        l2_regularization=1.0,
+        min_samples_leaf=40,
+        random_state=seed,
+        interaction_cst=None if interactions else "no_interactions",
+    )
+
+
+# (name, model_factory, feature-spec) for the direction meta bake-off.
+def _interaction_configs(seed: int):
+    return [
+        # linear main-effect meta ≡ Milestone 1 control (base preds only).
+        ("ridge_main", _linear_meta,
+         dict(with_conditions=False, with_interactions=False)),
+        # linear meta + explicit interaction products (attention×momentum etc.).
+        ("ridge_ix", _linear_meta,
+         dict(with_conditions=True, with_interactions=True)),
+        # gradient-boosted meta, interactions FORBIDDEN (additive control).
+        ("gbm_main", lambda: _gbm_meta(seed, interactions=False),
+         dict(with_conditions=True, with_interactions=False)),
+        # gradient-boosted meta, interactions ALLOWED (the treatment).
+        ("gbm_ix", lambda: _gbm_meta(seed, interactions=True),
+         dict(with_conditions=True, with_interactions=False)),
+    ]
+
+
+def run_interaction_meta(
+    panel: Panel,
+    *,
+    method: str,
+    n_folds: int,
+    embargo_days: int,
+    seed: int,
+    n_perm: int,
+    periods_per_year: float,
+    universes: list[tuple[str, np.ndarray | None]],
+) -> list[ScoreCard]:
+    """Direction-target interaction bake-off; scores every config on every universe.
+
+    Base stage-1 OOS predictions are computed ONCE (identical across universes and
+    meta configs); each meta config's full-length OOS direction score is then scored
+    on each ``(tag, row_mask)`` universe (mask ``None`` == full panel). Reusing the
+    predictions keeps the small-cap subset a pure re-scoring of the same fused
+    signal (the honest "is the effect concentrated in small caps?" test).
+    """
+    rows = panel.rows
+    Xp, _ = _matrix([r.price_feats for r in rows])
+    Xd, _ = _matrix([r.datalab_feats for r in rows])
+    fwd = np.array([r.fwd_return for r in rows], dtype=float)
+    rev = np.array([r.revenue_yoy for r in rows], dtype=float)
+    dates = np.array([r.as_of.toordinal() for r in rows], dtype=int)
+    tickers = sorted({r.ticker for r in rows})
+    tcode = {t: i for i, t in enumerate(tickers)}
+    sid = np.array([tcode[r.ticker] for r in rows], dtype=int)
+    cv = _condition_vars(rows)
+
+    folds = purged_walk_forward_folds(dates, n_folds=n_folds, embargo_days=embargo_days)
+    datalab_target = fwd if method == "A" else rev
+    base_price, mp = oos_predictions(_base_model(seed), Xp, fwd, folds, task="magnitude")
+    base_datalab, md = oos_predictions(
+        _base_model(seed + 1), Xd, datalab_target, folds, task="magnitude"
+    )
+
+    both = mp & md & np.isfinite(fwd)
+    idx_both = np.where(both)[0]
+    ybin = (fwd > 0).astype(int)
+    meta_folds = purged_walk_forward_folds(
+        dates[both], n_folds=n_folds, embargo_days=embargo_days
+    )
+
+    def _emit(name: str, full_pred: np.ndarray, full_mask: np.ndarray) -> list[ScoreCard]:
+        out = []
+        for tag, row_mask in universes:
+            m = full_mask if row_mask is None else (full_mask & row_mask)
+            if m.sum() < 10:
+                continue
+            out.append(
+                _score(f"{tag}:{name}", full_pred, m, fwd, dates, sid,
+                       periods_per_year=periods_per_year, n_perm=n_perm, seed=seed)
+            )
+        return out
+
+    cards: list[ScoreCard] = []
+    # Equal-weight floor (only meaningful for A: both base preds share the fwd-return
+    # scale; for B they are heterogeneous units so a raw average is nonsense).
+    if method == "A":
+        with np.errstate(invalid="ignore"):
+            eq = np.nanmean(np.column_stack([base_price, base_datalab]), axis=1)
+        cards.extend(_emit("eqwt", eq, both))
+
+    for name, factory, spec in _interaction_configs(seed):
+        Xmeta = _meta_matrix(base_price, base_datalab, cv, **spec)
+        task = "direction"
+        pred_b, mask_b = oos_predictions(factory(), Xmeta[both], ybin[both], meta_folds, task=task)
+        full_pred = np.full(len(rows), np.nan)
+        full_mask = np.zeros(len(rows), dtype=bool)
+        full_pred[idx_both[mask_b]] = pred_b[mask_b]
+        full_mask[idx_both[mask_b]] = True
+        cards.extend(_emit(name, full_pred, full_mask))
+    return cards
+
+
+def _smallcap_mask(
+    panel: Panel, prices_by_ticker: dict[str, PriceSeries], quantile: float
+) -> tuple[np.ndarray, int]:
+    """Row mask for the bottom-``quantile`` liquidity tercile (by median volume).
+
+    Liquidity proxy = each ticker's median daily volume over its whole series;
+    tickers at/below the ``quantile`` cut are "small/illiquid". Attention effects
+    are documented to concentrate there, so we score them as a separate universe.
+    """
+    med: dict[str, float] = {}
+    for t, ps in prices_by_ticker.items():
+        if ps.volumes:
+            med[t] = float(np.median(ps.volumes))
+    if not med:
+        return np.zeros(len(panel.rows), dtype=bool), 0
+    cut = float(np.quantile(list(med.values()), quantile))
+    small = {t for t, v in med.items() if v <= cut}
+    mask = np.array([r.ticker in small for r in panel.rows], dtype=bool)
+    return mask, len(small)
+
+
 def _apply_fdr(cards: list[ScoreCard], q: float = 0.10) -> None:
     survive = benjamini_hochberg([c.perm_p for c in cards], q=q)
     for c, s in zip(cards, survive):
@@ -478,42 +701,73 @@ def _apply_fdr(cards: list[ScoreCard], q: float = 0.10) -> None:
 
 def _render(title: str, cards: list[ScoreCard]) -> str:
     lines = [f"\n=== {title} ===",
-             f"{'config':<18}{'n':>7}{'IC':>8}{'rankIC':>8}{'hit':>7}"
+             f"{'config':<26}{'n':>7}{'IC':>8}{'rankIC':>8}{'hit':>7}"
              f"{'decSpr':>9}{'Sharpe':>8}{'wfIC':>8}{'perm_p':>8}{'FDR':>5}"]
     for c in cards:
         lines.append(
-            f"{c.name:<18}{c.n:>7}{c.ic:>8.3f}{c.rank_ic:>8.3f}{c.hit_rate:>7.3f}"
+            f"{c.name:<26}{c.n:>7}{c.ic:>8.3f}{c.rank_ic:>8.3f}{c.hit_rate:>7.3f}"
             f"{c.decile_spread:>9.3f}{c.sharpe:>8.2f}{c.within_firm_ic:>8.3f}"
             f"{c.perm_p:>8.3f}{'Y' if c.fdr_survive else '-':>5}"
         )
     return "\n".join(lines)
 
 
+def _render_ppic(title: str, cards: list[ScoreCard]) -> str:
+    """Per-period cross-sectional IC diagnostic: mean/std/t + sign-flip share.
+
+    ``negFrac`` ≈ 0.5 with a tiny mean is the fingerprint of a SIGN-UNSTABLE
+    (regime-conditional / reversal) relationship rather than a persistent tilt.
+    """
+    lines = [f"\n=== per-period IC -- {title} ===",
+             f"{'config':<26}{'periods':>8}{'meanIC':>8}{'stdIC':>8}"
+             f"{'t':>7}{'negFrac':>9}{'posFrac':>9}"]
+    for c in cards:
+        pp = c.ppic
+        if pp is None or pp.n_periods == 0:
+            lines.append(f"{c.name:<26}{'n/a':>8}")
+            continue
+        lines.append(
+            f"{c.name:<26}{pp.n_periods:>8}{pp.mean_ic:>8.3f}{pp.std_ic:>8.3f}"
+            f"{pp.t_stat:>7.2f}{pp.frac_negative:>9.2f}{pp.frac_positive:>9.2f}"
+        )
+    return "\n".join(lines)
+
+
 def main(argv: list[str] | None = None) -> int:
+    import sys
     import warnings
 
+    try:  # keep unicode-safe on Windows cp949 consoles
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
     warnings.filterwarnings("ignore", message="X does not have valid feature names")
     warnings.filterwarnings("ignore", message="Mean of empty slice")
-    ap = argparse.ArgumentParser(description="Multi-source fusion bake-off (A vs B)")
+    ap = argparse.ArgumentParser(
+        description="Bridge-2 interaction/conditional-reversal fusion bake-off (direction target)"
+    )
     ap.add_argument("--method", choices=["A", "B", "both"], default="both")
     ap.add_argument("--prices", default="prices_krx250.csv")
     ap.add_argument("--search", default="stockname_daily_krx250.csv")
     ap.add_argument("--revenue", default="dart_krx250.csv")
     ap.add_argument("--start", default="2016-01-01")
     ap.add_argument("--end", default="2023-12-31")
-    ap.add_argument("--horizon", type=int, default=20, help="forward label horizon (sessions)")
-    ap.add_argument("--signal-step", type=int, default=10, help="trading-day gap between signals")
+    ap.add_argument("--horizons", default="20,60",
+                    help="comma-separated forward horizons (sessions); step==horizon (non-overlap)")
     ap.add_argument("--embargo-days", type=int, default=None,
                     help="purge gap in calendar days (default ~horizon in trading days)")
+    ap.add_argument("--smallcap-quantile", type=float, default=0.33,
+                    help="bottom liquidity quantile (median volume) treated as small-cap")
     ap.add_argument("--folds", type=int, default=5)
     ap.add_argument("--perm", type=int, default=500, help="permutation iterations")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--limit-tickers", type=int, default=0, help="0=all (debug subsample)")
+    ap.add_argument("--legacy", action="store_true",
+                    help="also run the Milestone-1 regression A/B path for reference")
     args = ap.parse_args(argv)
 
-    embargo_days = args.embargo_days if args.embargo_days is not None else math.ceil(
-        args.horizon * 7 / 5) + 3
-    periods_per_year = 252.0 / args.signal_step
+    horizons = [int(h) for h in str(args.horizons).split(",") if h.strip()]
+    methods = ["A", "B"] if args.method == "both" else [args.method]
 
     prices_by_ticker = load_prices_volume_csv(args.prices)
     search_by_ticker = aggregate_search_by_ticker(_load_search(args.search))
@@ -523,49 +777,79 @@ def main(argv: list[str] | None = None) -> int:
     if args.limit_tickers:
         tickers = tickers[: args.limit_tickers]
 
-    panel = build_panel(
-        prices_by_ticker=prices_by_ticker,
-        search_by_ticker=search_by_ticker,
-        revenue_by_ticker=revenue_by_ticker,
-        tickers=tickers,
-        start=date.fromisoformat(args.start),
-        end=date.fromisoformat(args.end),
-        horizon=args.horizon,
-        signal_step=args.signal_step,
-    )
-    rev_cov = sum(1 for r in panel.rows if math.isfinite(r.revenue_yoy))
-    print(
-        f"[panel] rows={len(panel.rows)} tickers={len(tickers)} "
-        f"dates={len(set(r.as_of for r in panel.rows))} "
-        f"horizon={args.horizon} step={args.signal_step} embargo_days={embargo_days}\n"
-        f"  revenue_label_coverage={rev_cov}/{len(panel.rows)} "
-        f"({100*rev_cov/max(1,len(panel.rows)):.0f}%)\n"
-        f"  dropped={dict(panel.dropped)}"
-    )
-    if not panel.rows:
-        raise SystemExit("empty panel — check --prices/--search cover the window")
-
-    methods = ["A", "B"] if args.method == "both" else [args.method]
     all_cards: list[ScoreCard] = []
-    tagged: list[tuple[str, list[ScoreCard]]] = []
-    for m in methods:
-        cards = run_method(
-            panel, method=m, n_folds=args.folds, embargo_days=embargo_days,
-            seed=args.seed, n_perm=args.perm, periods_per_year=periods_per_year,
-        )
-        for c in cards:
-            c.name = f"{m}:{c.name}"
-        tagged.append((m, cards))
-        all_cards.extend(cards)
+    tagged: list[tuple[str, list[ScoreCard]]] = []  # (title, cards) for rendering
+    for horizon in horizons:
+        # Non-overlapping forward windows per stock: sample every ``horizon`` sessions.
+        signal_step = horizon
+        embargo_days = args.embargo_days if args.embargo_days is not None else math.ceil(
+            horizon * 7 / 5) + 3
+        periods_per_year = 252.0 / signal_step
 
-    _apply_fdr(all_cards, q=0.10)  # BH across every config in the whole bake-off
-    for m, cards in tagged:
-        print(_render(f"Method {m}", cards))
+        panel = build_panel(
+            prices_by_ticker=prices_by_ticker,
+            search_by_ticker=search_by_ticker,
+            revenue_by_ticker=revenue_by_ticker,
+            tickers=tickers,
+            start=date.fromisoformat(args.start),
+            end=date.fromisoformat(args.end),
+            horizon=horizon,
+            signal_step=signal_step,
+        )
+        if not panel.rows:
+            print(f"[h={horizon}] empty panel — skipped")
+            continue
+        small_mask, n_small = _smallcap_mask(panel, prices_by_ticker, args.smallcap_quantile)
+        universes: list[tuple[str, np.ndarray | None]] = [("all", None), ("small", small_mask)]
+        rev_cov = sum(1 for r in panel.rows if math.isfinite(r.revenue_yoy))
+        print(
+            f"\n[panel h={horizon}] rows={len(panel.rows)} tickers={len(tickers)} "
+            f"dates={len(set(r.as_of for r in panel.rows))} "
+            f"step={signal_step}(non-overlap) embargo_days={embargo_days} "
+            f"smallcap={n_small}tk/{int(small_mask.sum())}rows\n"
+            f"  revenue_label_coverage={rev_cov}/{len(panel.rows)} "
+            f"({100*rev_cov/max(1,len(panel.rows)):.0f}%) dropped={dict(panel.dropped)}"
+        )
+
+        for m in methods:
+            cards = run_interaction_meta(
+                panel, method=m, n_folds=args.folds, embargo_days=embargo_days,
+                seed=args.seed, n_perm=args.perm, periods_per_year=periods_per_year,
+                universes=universes,
+            )
+            for c in cards:
+                c.name = f"{m}:{c.name}"  # e.g. A:all:ridge_ix / B:small:gbm_ix
+            tagged.append((f"h={horizon} Method {m}", cards))
+            all_cards.extend(cards)
+
+        if args.legacy:
+            for m in methods:
+                lc = run_method(
+                    panel, method=m, n_folds=args.folds, embargo_days=embargo_days,
+                    seed=args.seed, n_perm=args.perm, periods_per_year=periods_per_year,
+                )
+                for c in lc:
+                    c.name = f"L{m}:{c.name}"
+                tagged.append((f"h={horizon} LEGACY-regress {m}", lc))
+                all_cards.extend(lc)
+
+    if not all_cards:
+        raise SystemExit("no scorable configs — check --prices/--search cover the window")
+
+    _apply_fdr(all_cards, q=0.10)  # BH across EVERY config in the whole bake-off
+    for title, cards in tagged:
+        print(_render(title, cards))
+    for title, cards in tagged:
+        print(_render_ppic(title, cards))
     print(
-        "\nLegend: IC/rankIC=corr(pred,fwd excess ret); hit=direction accuracy; "
-        "decSpr=top-bottom decile mean ret; Sharpe=long-short (overlap caveat if "
-        "step<horizon); wfIC=within-firm rankIC; perm_p=within-date permutation; "
-        "FDR=survives BH q=0.10 across all configs."
+        "\nLegend: IC/rankIC=corr(bullish score, fwd excess ret); hit=direction "
+        "accuracy; decSpr=top-bottom decile mean ret; Sharpe=long-short; wfIC="
+        "within-firm rankIC; perm_p=within-date permutation; FDR=survives BH q=0.10 "
+        "across ALL configs (every horizon×method×universe).\n"
+        "Meta configs: ridge_main=linear main-effect (Milestone-1 control); "
+        "ridge_ix=linear + explicit mom×att / sgn(mom)×att / mom×liq products; "
+        "gbm_main=boosted meta, interactions FORBIDDEN; gbm_ix=boosted meta, "
+        "interactions ALLOWED; eqwt=equal-weight base preds (A only)."
     )
     return 0
 
