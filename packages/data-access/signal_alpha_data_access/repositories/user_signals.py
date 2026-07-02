@@ -119,7 +119,7 @@ class UserSignalRepository:
         source_agreement_at_time: str | None = None,
     ) -> Any:
         return await self._connection.fetchrow(
-            """
+            f"""
             WITH inserted AS (
                 INSERT INTO signal_journals (
                     user_id, final_signal_id, stock_id, user_view, user_memo,
@@ -135,10 +135,12 @@ class UserSignalRepository:
                 stocks.name,
                 stocks.market,
                 stocks.sector,
-                '[]'::JSONB AS outcomes
+                '[]'::JSONB AS outcomes,
+                current_signal.*
             FROM inserted
             INNER JOIN api.stocks
                 ON stocks.id = inserted.stock_id
+            {_current_signal_lateral("inserted")}
             """,
             user_id,
             final_signal_id,
@@ -167,11 +169,13 @@ class UserSignalRepository:
                     stocks.name,
                     stocks.market,
                     stocks.sector,
-                    outcomes.items AS outcomes
+                    outcomes.items AS outcomes,
+                    current_signal.*
                 FROM signal_journals
                 INNER JOIN api.stocks
                     ON stocks.id = signal_journals.stock_id
                 {_outcomes_lateral("signal_journals")}
+                {_current_signal_lateral("signal_journals")}
                 WHERE signal_journals.user_id = $1
                   AND stocks.ticker = $2
                 ORDER BY signal_journals.created_at DESC
@@ -189,11 +193,13 @@ class UserSignalRepository:
                 stocks.name,
                 stocks.market,
                 stocks.sector,
-                outcomes.items AS outcomes
+                outcomes.items AS outcomes,
+                current_signal.*
             FROM signal_journals
             INNER JOIN api.stocks
                 ON stocks.id = signal_journals.stock_id
             {_outcomes_lateral("signal_journals")}
+            {_current_signal_lateral("signal_journals")}
             WHERE signal_journals.user_id = $1
             ORDER BY signal_journals.created_at DESC
             LIMIT $2
@@ -211,11 +217,13 @@ class UserSignalRepository:
                 stocks.name,
                 stocks.market,
                 stocks.sector,
-                outcomes.items AS outcomes
+                outcomes.items AS outcomes,
+                current_signal.*
             FROM signal_journals
             INNER JOIN api.stocks
                 ON stocks.id = signal_journals.stock_id
             {_outcomes_lateral("signal_journals")}
+            {_current_signal_lateral("signal_journals")}
             WHERE signal_journals.id = $1
               AND signal_journals.user_id = $2
             """,
@@ -231,6 +239,7 @@ class UserSignalRepository:
         user_view: str,
         user_memo: str | None,
         tags: list[str],
+        retrospective_memo: str | None = None,
     ) -> Any:
         # UPDATE ... FROM 의 LATERAL 은 갱신 대상 테이블을 참조할 수 없어 CTE 로 감싼다.
         return await self._connection.fetchrow(
@@ -241,6 +250,7 @@ class UserSignalRepository:
                     user_view = $3,
                     user_memo = $4,
                     tags = $5::JSONB,
+                    retrospective_memo = $6,
                     updated_at = NOW()
                 WHERE signal_journals.id = $1
                   AND signal_journals.user_id = $2
@@ -252,17 +262,20 @@ class UserSignalRepository:
                 stocks.name,
                 stocks.market,
                 stocks.sector,
-                outcomes.items AS outcomes
+                outcomes.items AS outcomes,
+                current_signal.*
             FROM updated
             INNER JOIN api.stocks
                 ON stocks.id = updated.stock_id
             {_outcomes_lateral("updated")}
+            {_current_signal_lateral("updated")}
             """,
             journal_id,
             user_id,
             user_view,
             user_memo,
             _jsonb(tags),
+            retrospective_memo,
         )
 
     async def delete_journal(self, *, user_id: int, journal_id: int) -> None:
@@ -313,6 +326,24 @@ class UserSignalRepository:
 
 def _jsonb(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False)
+
+
+def _current_signal_lateral(ref: str) -> str:
+    """저널 행에 그 종목의 현재 발행 신호(api.signals_current)를 붙이는 LATERAL.
+
+    "작성 시점 스냅샷 → 현재 신호" 비교용. 현재 신호가 없으면(미발행) NULL.
+    """
+    return f"""LEFT JOIN LATERAL (
+                SELECT
+                    s.id AS current_signal_id,
+                    s.final_score AS current_signal_score,
+                    s.signal AS current_signal_value,
+                    s.source_agreement AS current_source_agreement
+                FROM api.signals_current s
+                WHERE s.stock_id = {ref}.stock_id
+                ORDER BY s.signal_date DESC, s.id DESC
+                LIMIT 1
+            ) current_signal ON TRUE"""
 
 
 def _outcomes_lateral(ref: str) -> str:

@@ -105,6 +105,7 @@ class UserSignalRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("stocks.ticker = $2", sql)
         self.assertIn("FROM signal_journal_outcomes", sql)
         self.assertIn("outcomes.items AS outcomes", sql)
+        self.assertIn("FROM api.signals_current", sql)
         self.assertEqual(connection.calls[0][2], (1, "005930", 20))
 
     async def test_get_journal_filters_by_user(self):

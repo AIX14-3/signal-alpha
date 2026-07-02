@@ -21,7 +21,7 @@ import {
 import { won } from "@/lib/format";
 import { pay } from "@/lib/portone";
 import { isSocialDevMode, SOCIAL_PROVIDERS, socialAuthCode, startSocialOAuth } from "@/lib/social";
-import { JournalChartPanel } from "@/components/JournalChart";
+import { JournalChartPanel, JournalTimelinePanel } from "@/components/JournalChart";
 import { useAuthStore } from "@/stores/authStore";
 import { useJournalStore } from "@/stores/journalStore";
 import { useSocialStore } from "@/stores/socialStore";
@@ -321,6 +321,12 @@ function JournalTab() {
   const [editTags, setEditTags] = useState("");
   // 카드 클릭 시 펼치는 주가 차트(작성 시점 대비 등락) 대상 저널.
   const [chartId, setChartId] = useState<number | null>(null);
+  // 목록 ↔ 종목 타임라인(한 차트 위 판단 마커) 보기 전환.
+  const [view, setView] = useState<"list" | "timeline">("list");
+  // 목록 필터/정렬 — 로드된 항목(최대 50건) 기준 클라이언트 사이드.
+  const [filterView, setFilterView] = useState<string | null>(null);
+  const [filterTag, setFilterTag] = useState<string | null>(null);
+  const [sortBy, setSortBy] = useState<"latest" | "change">("latest");
   const subscribed = user?.subscription_active === true;
 
   useEffect(() => {
@@ -379,9 +385,100 @@ function JournalTab() {
     }
   }
 
+  const allTags = [...new Set(items.flatMap((j) => j.tags))];
+  const stockCodes = [...new Set(items.map((j) => j.stock_code))];
+  // 확정 변동(가장 긴 horizon 기준). 미확정은 정렬에서 뒤로.
+  const outcomeChange = (j: Journal) =>
+    j.outcomes.length > 0 ? j.outcomes[j.outcomes.length - 1].change_pct : null;
+  const visible = items
+    .filter((j) => !filterView || j.user_view === filterView)
+    .filter((j) => !filterTag || j.tags.includes(filterTag))
+    .slice()
+    .sort((a, b) => {
+      if (sortBy === "change") {
+        return Math.abs(outcomeChange(b) ?? -1) - Math.abs(outcomeChange(a) ?? -1);
+      }
+      return (b.created_at ?? "").localeCompare(a.created_at ?? "");
+    });
+
   return (
-    <div className="space-y-2" data-panel="journal">
-      {items.map((j) => (
+    <div data-panel="journal">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <div className="flex rounded-full bg-surface-2 p-0.5 text-[12.5px] font-semibold">
+          <button
+            type="button"
+            onClick={() => setView("list")}
+            className={`rounded-full px-3 py-1 ${view === "list" ? "bg-surface text-navy shadow-sm" : "text-muted"}`}
+          >
+            목록
+          </button>
+          <button
+            type="button"
+            data-flow="journal-timeline"
+            onClick={() => setView("timeline")}
+            className={`rounded-full px-3 py-1 ${view === "timeline" ? "bg-surface text-navy shadow-sm" : "text-muted"}`}
+          >
+            종목 타임라인
+          </button>
+        </div>
+
+        {view === "list" && (
+          <>
+            <div className="flex gap-1.5" data-flow="journal-filter-view">
+              {JOURNAL_VIEWS.map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setFilterView(filterView === key ? null : key)}
+                  className={`pill flat text-[12px] ${filterView === key ? "!border-sky !text-sky-deep font-bold" : ""}`}
+                  style={{ padding: "3px 9px" }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {allTags.length > 0 && (
+              <select
+                value={filterTag ?? ""}
+                onChange={(e) => setFilterTag(e.target.value || null)}
+                data-flow="journal-filter-tag"
+                className="card px-2.5 py-1 text-[12px] outline-none"
+              >
+                <option value="">태그 전체</option>
+                {allTags.map((tag) => (
+                  <option key={tag} value={tag}>
+                    #{tag}
+                  </option>
+                ))}
+              </select>
+            )}
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as "latest" | "change")}
+              data-flow="journal-sort"
+              className="card px-2.5 py-1 text-[12px] outline-none"
+            >
+              <option value="latest">최신순</option>
+              <option value="change">확정 변동 큰 순</option>
+            </select>
+            {visible.length !== items.length && (
+              <span className="text-[12px] text-muted">{visible.length}/{items.length}건</span>
+            )}
+          </>
+        )}
+      </div>
+
+      {view === "timeline" ? (
+        <div className="space-y-3">
+          {stockCodes.map((code) => (
+            <div key={code} className="card px-5 py-4">
+              <JournalTimelinePanel stockCode={code} />
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="space-y-2">
+      {visible.map((j) => (
         <div
           key={j.journal_id}
           className="card cursor-pointer px-5 py-4"
@@ -484,9 +581,17 @@ function JournalTab() {
           <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-muted">
             <span>{j.created_at?.slice(0, 10)}</span>
             {j.signal_score_at_time != null && (
-              <span>
-                저장 시점 점수 <b className="text-navy">{Math.round(j.signal_score_at_time)}</b>
+              <span data-flow="journal-signal-compare">
+                그때 <b className="text-navy">{Math.round(j.signal_score_at_time)}</b>
                 {j.signal_value_at_time ? ` · ${j.signal_value_at_time}` : ""}
+                {/* 현재 발행 신호와 비교 — 신호가 갱신됐으면 "→ 지금"으로 표시 */}
+                {j.current_signal?.score != null && (
+                  <>
+                    {" → 지금 "}
+                    <b className="text-navy">{Math.round(j.current_signal.score)}</b>
+                    {j.current_signal.value ? ` · ${j.current_signal.value}` : ""}
+                  </>
+                )}
               </span>
             )}
             {/* 그 후 변동 — 워커가 확정한 7/30거래일 결과. 미확정이면 "확정 전". */}
@@ -515,6 +620,8 @@ function JournalTab() {
           )}
         </div>
       ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -165,6 +165,10 @@ type SocialLink = { provider: 'naver'|'google'|'kakao'; linked: boolean; linked_
 - 마이페이지 저널 탭: `journalStore`(items/load/create/update/remove) 기반 목록 + 카드별 수정(`journal-edit`, user_view 3버튼+memo+tags)·삭제(`journal-delete`)·태그 pill.
 - 추이 표시: 카드에 저장 시점 스냅샷(`signal_score_at_time`·`signal_value_at_time`)과 outcome 확정 결과("7거래일 후 +x% · 30거래일 후 −y%", 미확정 시 "변동 확정 전").
 - 주가 차트: 저널 카드 클릭 → `getJournalChart(id)` 로 SVG 라인차트 펼침(`data-flow="journal-chart"`, `<JournalChartPanel/>`). 작성 시점 기준선(수직 날짜 + 수평 가격 점선)과 "작성 시점 대비 ▲/▼ ±x%" 헤더, 등락 색(상승 red/하락 sky — 부호 텍스트 병기로 색 단독 인코딩 금지), 호버 툴팁·데이터 표 포함. 동기화 전엔 "차트 준비 전".
+- 종목 타임라인: 목록↔타임라인 전환(`data-flow="journal-timeline"`, `<JournalTimelinePanel/>`) — `getJournalTimeline(stockCode)` 로 종목당 한 장의 차트 위에 저널 작성 시점을 번호 마커로 표시 + 아래 번호 목록(날짜·판단·메모·회고).
+- 회고: 차트 패널의 `data-flow="journal-retrospective"` 블록 — outcome 확정 전엔 안내만, 확정 후 `retrospective_memo` 작성/수정(`journalStore.update`).
+- 신호 비교: 카드 메타에 "그때 50 · neutral → 지금 63 · positive"(`data-flow="journal-signal-compare"`, `current_signal` 사용).
+- 목록 필터/정렬: user_view 필터 pill(`journal-filter-view`)·태그 select(`journal-filter-tag`)·정렬 select(`journal-sort`, 최신순/확정 변동 큰 순) — 로드된 항목(최대 50건) 기준 클라이언트 사이드.
 - `user_view` = 계속 관찰/추가 확인 필요/낮은 관련도. 매수·매도 표현 금지.
 
 ---

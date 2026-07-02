@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict Z8nRfwdIJdjVubyQCX7RaOqg91qzA6fmo6eN5cuifrZkQ2di0WgbGXkKCz37JeO
+\restrict jmX9vmubBg2GSTGpqleAuU9GxRJP2DLpYb5aPQSs73XY7xqBc0r07t0VPWB1VZI
 
 -- Dumped from database version 16.14 (Debian 16.14-1.pgdg12+1)
 -- Dumped by pg_dump version 16.14 (Debian 16.14-1.pgdg12+1)
@@ -2537,6 +2537,7 @@ CREATE TABLE public.signal_journals (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     tags jsonb DEFAULT '[]'::jsonb NOT NULL,
+    retrospective_memo text,
     CONSTRAINT signal_journals_user_view_check CHECK (((user_view)::text = ANY (ARRAY[('watch'::character varying)::text, ('research_more'::character varying)::text, ('not_relevant'::character varying)::text])))
 );
 
@@ -6236,5 +6237,5 @@ ALTER TABLE ONLY public.watchlists
 -- PostgreSQL database dump complete
 --
 
-\unrestrict Z8nRfwdIJdjVubyQCX7RaOqg91qzA6fmo6eN5cuifrZkQ2di0WgbGXkKCz37JeO
+\unrestrict jmX9vmubBg2GSTGpqleAuU9GxRJP2DLpYb5aPQSs73XY7xqBc0r07t0VPWB1VZI
 
