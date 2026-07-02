@@ -2,8 +2,9 @@
 
 Cosine Top-K vector search: embeds the query with the injected embedder, then orders
 by the pgvector ``<=>`` cosine-distance operator (matching the HNSW ``vector_cosine_ops``
-index). ``report_chunks`` carries no ``stock_id``, so results are scoped by joining
-``report_raw_details.raw_document_id`` (== ``raw_documents.id``) to ``raw_documents.stock_id``.
+index). ``report_chunks.stock_id`` (denormalized, 1B) scopes results directly via a btree
+filter, so the planner grabs the stock's (few) chunks and sorts them exactly — exact
+recall, independent of HNSW post-filtering.
 
 Returns chunk text plus provenance (broker, publish_date, raw_document_id) — never a
 score/direction. This is a tool the agent consumes; it does not itself judge anything.
@@ -18,8 +19,8 @@ from app.clients.pgvector import to_pgvector
 _EF_SEARCH = 100
 
 # pgvector 버전 감지 캐시(런타임 불변). None=미확인, True/False=iterative_scan 지원 여부.
-# NOTE(1B 후속): 근본적 정확 리콜이 필요하면 report_chunks 에 stock_id 를 비정규화해 종목
-# 필터를 exact 스캔으로 만드는 방안(후속작업). 지금은 버전-적응형 1A 로 리콜을 확보한다.
+# 1B 적용: report_chunks.stock_id 비정규화로 종목 필터가 exact 스캔이 돼 리콜은 이미 정확하다.
+# ef_search/iterative_scan(1A)은 플래너가 혹시 HNSW 를 고르는 경우의 안전망으로 유지한다(벨트+멜빵).
 _ITERATIVE_SCAN: bool | None = None
 
 
@@ -61,11 +62,8 @@ async def retrieve(
 ) -> list[dict[str, Any]]:
     """Return the ``top_k`` most similar report chunks for ``stock_id`` with provenance."""
     qvec = to_pgvector(await embedder.embed(query))
-    # HNSW 는 전역 최근접 후보(ef_search 개)를 먼저 뽑고 stock_id 를 후필터하므로, 코퍼스가 커지면
-    # 대상 종목 청크가 후보에서 밀려 top_k 미만/0 을 돌려줄 수 있다. 방어책(트랜잭션 로컬로만):
-    #   1) ef_search 를 넉넉히 올려 후보 폭 확대,
-    #   2) pgvector≥0.8 이면 iterative_scan 을 켜 필터 통과분이 top_k 찰 때까지 색인을 계속 스캔.
-    # 구버전이면 iterative_scan GUC 가 없으므로 켜지 않는다(버전-적응형).
+    # 1B: rc.stock_id 직접 필터 → 플래너가 종목 청크(소량)만 골라 exact 정렬 = 리콜 정확.
+    # ef_search + iterative_scan(≥0.8)은 안전망으로 유지(플래너가 혹시 HNSW 를 고를 때 대비).
     async with connection.transaction():
         await connection.execute(f"SET LOCAL hnsw.ef_search = {_EF_SEARCH}")
         if await _supports_iterative_scan(connection):
@@ -77,9 +75,8 @@ async def retrieve(
                    rrd.securities_firm     AS broker,
                    rrd.publish_date
             FROM report_chunks rc
-            JOIN raw_documents rd       ON rd.id = rc.report_raw_detail_id
             JOIN report_raw_details rrd ON rrd.raw_document_id = rc.report_raw_detail_id
-            WHERE rd.stock_id = $2
+            WHERE rc.stock_id = $2
             ORDER BY rc.embedding <=> $1::vector
             LIMIT $3
             """,

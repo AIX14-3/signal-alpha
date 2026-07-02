@@ -115,6 +115,7 @@ class ReportEmbedTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(str(inserts[0][1][3]).startswith("["))
         self.assertEqual(inserts[0][1][1], 0)  # chunk_index
         self.assertEqual(inserts[1][1][1], 1)
+        self.assertEqual(inserts[0][1][5], 1)  # 1B: stock_id 바인드($6)
 
     async def test_falls_back_to_preview_when_pdf_missing(self):
         report_tasks._chunk_report_text = lambda text: [text]

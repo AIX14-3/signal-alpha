@@ -113,7 +113,7 @@ Agent·ML의 분석 결과와 최종 시그널.
 
 | 테이블 | 역할 |
 | --- | --- |
-| `report_chunks` | 증권사 리포트 본문을 청크로 나눠 임베딩(`vector(768)`) 저장하는 RAG 검색용 테이블. `report_raw_details`(PK `raw_document_id`) 파생이라 원본 삭제 시 동반 삭제. `(report_raw_detail_id, chunk_index)` 유니크, HNSW 코사인 인덱스 |
+| `report_chunks` | 증권사 리포트 본문을 청크로 나눠 임베딩(`vector(768)`) 저장하는 RAG 검색용 테이블. `report_raw_details`(PK `raw_document_id`) 파생이라 원본 삭제 시 동반 삭제. `(report_raw_detail_id, chunk_index)` 유니크, HNSW 코사인 인덱스. 종목 필터를 exact 스캔으로 만들기 위한 `stock_id`(→`stocks`) 비정규화 + btree 인덱스(RAG 리콜 정확 보장) |
 | `signal_episodes` | 종목·일자·`run_key` 단위 시그널 발화 1건의 에피소드 메모리. 발화 소스/방향/점수 요약(`sources` JSONB)과 임베딩을 보관하고 성패(`outcome` JSONB)는 사후 기록(NULL 시작). `(stock_id, signal_date, run_key)` 유니크, HNSW 코사인 인덱스 |
 
 ## Zone F — User 확장 (010_users_billing_extend.sql)

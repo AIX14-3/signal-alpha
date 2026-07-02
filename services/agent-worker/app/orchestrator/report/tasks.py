@@ -465,8 +465,8 @@ class ReportEmbedTaskHandler:
                 tag = await self._connection.execute(
                     """
                     INSERT INTO report_chunks
-                        (report_raw_detail_id, chunk_index, chunk_text, embedding, token_count)
-                    VALUES ($1, $2, $3, $4::vector, $5)
+                        (report_raw_detail_id, chunk_index, chunk_text, embedding, token_count, stock_id)
+                    VALUES ($1, $2, $3, $4::vector, $5, $6)
                     ON CONFLICT (report_raw_detail_id, chunk_index) DO NOTHING
                     """,
                     raw_document_id,
@@ -474,6 +474,7 @@ class ReportEmbedTaskHandler:
                     chunk,
                     to_pgvector(vector),
                     len(chunk.split()),
+                    int(row["stock_id"]),  # 비정규화 — retriever 종목 필터를 exact 스캔으로
                 )
                 inserted += _rows_affected(tag)
 
