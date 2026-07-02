@@ -70,6 +70,177 @@ def walk_forward_folds(dates: np.ndarray, n_folds: int = 5) -> list[WalkForwardS
     return folds
 
 
+def purged_walk_forward_folds(
+    dates: np.ndarray, n_folds: int = 5, *, embargo_days: int = 0
+) -> list[WalkForwardSplit]:
+    """Expanding-window folds with a PURGE + EMBARGO gap before each test block.
+
+    Same date-boundary split as :func:`walk_forward_folds`, but every training row
+    whose date falls within ``embargo_days`` (ordinal-day units) *before* the first
+    test date is dropped. With a forward label of horizon ``h`` (sessions), set
+    ``embargo_days`` >= the calendar span of ``h`` trading days so a training row's
+    label window can never overlap the test block (no look-ahead / leakage).
+    """
+    if n_folds < 1:
+        raise ValueError("n_folds must be >= 1")
+    order = np.argsort(dates, kind="stable")
+    unique = np.unique(dates)
+    if len(unique) < n_folds + 1:
+        raise ValueError(
+            f"need >= {n_folds + 1} distinct dates for {n_folds} folds, got {len(unique)}"
+        )
+    chunks = np.array_split(unique, n_folds + 1)
+    folds: list[WalkForwardSplit] = []
+    for i in range(1, n_folds + 1):
+        test_dates = chunks[i]
+        test_start = test_dates.min()
+        train_cutoff = test_start - embargo_days  # strictly-before minus the gap
+        train_mask = dates < train_cutoff
+        test_mask = np.isin(dates, test_dates)
+        train_idx = order[np.isin(order, np.where(train_mask)[0])]
+        test_idx = order[np.isin(order, np.where(test_mask)[0])]
+        if len(train_idx) == 0 or len(test_idx) == 0:
+            continue
+        folds.append(WalkForwardSplit(train_idx=train_idx, test_idx=test_idx))
+    return folds
+
+
+def oos_predictions(
+    model,
+    X: np.ndarray,
+    y: np.ndarray,
+    folds: list[WalkForwardSplit],
+    *,
+    task: str = "magnitude",
+) -> tuple[np.ndarray, np.ndarray]:
+    """Out-of-sample base predictions aligned to original row indices.
+
+    For each fold, clone+fit the model on the (purged) train block and predict the
+    test block. Returns ``(pred, mask)`` where ``pred[i]`` is the OOS prediction for
+    row ``i`` (nan where the row was never in a scorable test block) and ``mask`` is
+    the boolean of rows that received a prediction. ``task='direction'`` stores the
+    bullish probability/score; ``task='magnitude'`` stores the regressed value.
+
+    This is the stage-1 primitive for stacking: every returned prediction used only
+    data from strictly-earlier dates (the fold's train block), so feeding these
+    columns to a stage-2 meta learner does not leak the future.
+    """
+    from sklearn.base import clone
+
+    pred = np.full(len(y), np.nan, dtype=float)
+    is_regression = task == "magnitude"
+    for fold in folds:
+        Xtr, ytr = X[fold.train_idx], y[fold.train_idx]
+        Xte = X[fold.test_idx]
+        # Drop train rows whose (source-specific) target is missing — lets a sparse
+        # heterogeneous label (e.g. a forward revenue print) train on the rows it
+        # covers while still predicting every test row.
+        finite = np.isfinite(ytr)
+        Xtr, ytr = Xtr[finite], ytr[finite]
+        degenerate = (
+            len(ytr) < 3 or (np.std(ytr) == 0 if is_regression else len(np.unique(ytr)) < 2)
+        )
+        if degenerate or len(Xte) == 0:
+            continue
+        try:
+            est = clone(model)
+            est.fit(Xtr, ytr)
+            pred[fold.test_idx] = (
+                est.predict(Xte) if is_regression else _bullish_score(est, Xte)
+            )
+        except Exception:
+            continue
+    mask = ~np.isnan(pred)
+    return pred, mask
+
+
+def permutation_pvalue(
+    scores: np.ndarray,
+    returns: np.ndarray,
+    dates: np.ndarray,
+    *,
+    n_perm: int = 1000,
+    seed: int = 0,
+    metric: str = "rank_ic",
+) -> tuple[float, float]:
+    """One-sided permutation p-value for the score↔return association.
+
+    The null shuffles ``returns`` WITHIN each date (destroying the cross-sectional
+    ranking skill while preserving the per-date return distribution), recomputes the
+    pooled metric ``n_perm`` times, and reports P(null >= observed). Small samples
+    make the analytic t untrustworthy; this is the honest alternative.
+
+    Returns ``(observed_metric, p_value)``.
+    """
+    rng = np.random.default_rng(seed)
+    corr = spearmanr if metric == "rank_ic" else pearsonr
+    obs = _safe_corr(corr, scores, returns)
+    if not np.isfinite(obs):
+        return obs, float("nan")
+    # Group row indices by date for within-date shuffling.
+    groups: dict = {}
+    for i, d in enumerate(dates):
+        groups.setdefault(d, []).append(i)
+    idx_groups = [np.array(v) for v in groups.values() if len(v) > 1]
+    ge = 0
+    for _ in range(n_perm):
+        permuted = returns.copy()
+        for g in idx_groups:
+            permuted[g] = returns[rng.permutation(g)]
+        null = _safe_corr(corr, scores, permuted)
+        if np.isfinite(null) and null >= obs:
+            ge += 1
+    p = (ge + 1) / (n_perm + 1)
+    return float(obs), float(p)
+
+
+def benjamini_hochberg(pvalues: list[float], q: float = 0.10) -> list[bool]:
+    """Benjamini-Hochberg FDR control: return per-test survive flags at level ``q``.
+
+    Guards against multiple-testing false positives when several configs/sources are
+    compared. nan p-values never survive.
+    """
+    m = len(pvalues)
+    if m == 0:
+        return []
+    order = sorted(
+        range(m), key=lambda i: (np.inf if not np.isfinite(pvalues[i]) else pvalues[i])
+    )
+    survive = [False] * m
+    k_max = -1
+    for rank, i in enumerate(order, start=1):
+        p = pvalues[i]
+        if np.isfinite(p) and p <= q * rank / m:
+            k_max = rank
+    for rank, i in enumerate(order, start=1):
+        if rank <= k_max:
+            survive[i] = True
+    return survive
+
+
+def within_firm_ic(
+    scores: np.ndarray, returns: np.ndarray, stock_ids: np.ndarray
+) -> float:
+    """Rank-IC after removing each firm's own mean score & return (within-firm).
+
+    If a pooled IC is driven by a STATIC cross-sectional trait (e.g. "R&D-heavy
+    names are always high-vol"), demeaning per firm collapses it. A within-firm IC
+    that stays positive is evidence of genuine TIME-VARYING (tradeable) skill —
+    the 2026-07-01 lesson.
+    """
+    s = scores.astype(float).copy()
+    r = returns.astype(float).copy()
+    for sid in np.unique(stock_ids):
+        m = stock_ids == sid
+        if m.sum() >= 2:
+            s[m] -= s[m].mean()
+            r[m] -= r[m].mean()
+        else:
+            s[m] = np.nan
+    ok = np.isfinite(s) & np.isfinite(r)
+    return _safe_corr(spearmanr, s[ok], r[ok])
+
+
 def _bullish_score(model, X: np.ndarray) -> np.ndarray:
     """A higher-is-more-bullish score per row, however the model exposes it.
 
