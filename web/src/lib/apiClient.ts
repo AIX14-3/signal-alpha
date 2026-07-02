@@ -548,6 +548,9 @@ export type AdminSchedule = {
   last_status: string | null;
   last_detail: unknown;
   next_run_at: string | null;
+  health_status: string | null;
+  health_label: string | null;
+  health_detail: string | null;
   manual_trigger_requested_at: string | null;
   updated_by: string | null;
   updated_at: string | null;

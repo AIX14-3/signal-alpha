@@ -33,6 +33,15 @@ from signal_alpha_data_access.backend import (
 # 수집 스케줄 제어 허용값.
 _SCHEDULE_TARGETS = {"price", "dart", "report", "alternative"}
 _SCHEDULE_PRICE_MODES = {"flows", "snapshot"}
+_SCHEDULE_HEALTH_GRACE_MINUTES = 15
+
+_SCHEDULE_HEALTH_LABELS = {
+    "ok": "정상",
+    "disabled": "비활성",
+    "delayed": "지연",
+    "failed_waiting": "실패 후 대기",
+    "unknown": "확인 필요",
+}
 
 
 admin_router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -501,6 +510,24 @@ async def update_schedule(
         before = await repo.get_by_id(schedule_id)
         if before is None:
             raise admin_error(404, "SCHEDULE_NOT_FOUND", "스케줄을 찾을 수 없습니다.")
+        before_data = parse_schedule_row(before)
+        _validate_active_window(
+            frequency_minutes=(
+                payload.frequency_minutes
+                if payload.frequency_minutes is not None
+                else before_data.get("frequency_minutes")
+            ),
+            active_from=(
+                active_from
+                if payload.active_from_local is not None
+                else before_data.get("active_from_local")
+            ),
+            active_until=(
+                active_until
+                if payload.active_until_local is not None
+                else before_data.get("active_until_local")
+            ),
+        )
         updated = await repo.update_config(
             schedule_id=schedule_id,
             enabled=payload.enabled,
@@ -519,7 +546,7 @@ async def update_schedule(
             action="schedule.update",
             target_type="schedule",
             target_id=schedule_id,
-            before=_audit_json(parse_schedule_row(before)),
+            before=_audit_json(before_data),
             after=_audit_json(parse_schedule_row(updated)),
         )
     return _schedule_row(parse_schedule_row(updated))
@@ -574,10 +601,36 @@ def _parse_schedule_time(value: str) -> time:
 
 def _validate_targets(targets: list[str]) -> list[str]:
     cleaned = [t.strip().lower() for t in targets if t and t.strip()]
+    if not cleaned:
+        raise admin_error(
+            400,
+            "EMPTY_TARGETS",
+            "수집 대상을 최소 1개 선택해야 합니다.",
+        )
     invalid = [t for t in cleaned if t not in _SCHEDULE_TARGETS]
     if invalid:
         raise admin_error(400, "INVALID_TARGETS", f"허용되지 않은 대상: {invalid}")
     return cleaned
+
+
+def _validate_active_window(
+    *,
+    frequency_minutes: Any,
+    active_from: Any,
+    active_until: Any,
+) -> None:
+    try:
+        minutes = int(frequency_minutes or 1440)
+    except (TypeError, ValueError):
+        minutes = 1440
+    if minutes >= 1440 or active_from is None or active_until is None:
+        return
+    if active_from == active_until:
+        raise admin_error(
+            400,
+            "INVALID_ACTIVE_WINDOW",
+            "반복 스케줄의 활성 시작/종료 시각은 같을 수 없습니다.",
+        )
 
 
 def _validate_price_modes(modes: list[str]) -> list[str]:
@@ -599,6 +652,7 @@ def _schedule_row(row: dict[str, Any] | None) -> dict[str, Any]:
             detail = json.loads(detail)
         except (ValueError, TypeError):
             pass
+    health = _schedule_health(row)
     return {
         "id": row.get("id"),
         "name": row.get("name"),
@@ -619,9 +673,57 @@ def _schedule_row(row: dict[str, Any] | None) -> dict[str, Any]:
         "last_status": row.get("last_status"),
         "last_detail": detail,
         "next_run_at": _timestamp(row.get("next_run_at")),
+        "health_status": health["status"],
+        "health_label": health["label"],
+        "health_detail": health["detail"],
         "manual_trigger_requested_at": _timestamp(row.get("manual_trigger_requested_at")),
         "updated_by": row.get("updated_by"),
         "updated_at": _timestamp(row.get("updated_at")),
+    }
+
+
+def _as_utc_dt(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+    if not isinstance(value, datetime):
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+def _schedule_health(
+    row: dict[str, Any],
+    *,
+    now: datetime | None = None,
+    grace_minutes: int = _SCHEDULE_HEALTH_GRACE_MINUTES,
+) -> dict[str, str]:
+    status = "ok"
+    detail = "다음 예정 시각을 대기 중입니다."
+    if not row.get("enabled"):
+        status = "disabled"
+        detail = "스케줄이 비활성 상태입니다."
+    else:
+        now_utc = (now or datetime.now(UTC)).astimezone(UTC)
+        next_run_at = _as_utc_dt(row.get("next_run_at"))
+        if next_run_at is not None and now_utc > next_run_at + timedelta(minutes=grace_minutes):
+            status = "delayed"
+            detail = "다음 예정 시각을 지나 추가 확인이 필요합니다."
+        elif str(row.get("last_status") or "").lower() in {"failed", "partial"}:
+            status = "failed_waiting"
+            detail = "최근 실행이 실패 또는 부분 완료 상태입니다."
+        elif next_run_at is None:
+            status = "unknown"
+            detail = "다음 예정 시각이 없어 스케줄러 상태 확인이 필요합니다."
+    return {
+        "status": status,
+        "label": _SCHEDULE_HEALTH_LABELS.get(status, status),
+        "detail": detail,
     }
 
 
