@@ -14,6 +14,7 @@ resources:
   - scheduler.yaml
   - altdata-cronjob.yaml
   - hiring-cronjob.yaml
+  - journal-outcomes-cronjob.yaml
   - main-server.yaml
   - web.yaml
   - ingress.yaml
