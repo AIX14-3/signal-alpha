@@ -97,7 +97,8 @@ CREATE TABLE report_issuances (
 | `subscription_plans` | 플랜 | §3.3 로 시드 정리 |
 | `admin_accounts` / `admin_sessions` | 관리자 | 하드코딩 계정 로그인/세션. 회원가입 없음 |
 | `watchlists` | 관심종목 | `(user_id, stock_id)` 유니크. **한도 검사 제거(무제한)** |
-| `signal_journals` | 저널 | `final_signal_id` 스냅샷 + `user_view`(watch/research_more/not_relevant) + `tags` |
+| `signal_journals` | 저널 | **구독 전용**. `final_signal_id` + 작성 시점 스냅샷(`signal_score_at_time` 등) + `user_view`(watch/research_more/not_relevant) + `user_memo` + `tags` |
+| `signal_journal_outcomes` | 저널 결과 추적 | 작성 후 7/30 거래일 주가 변동 확정(`horizon`/`base_price`/`outcome_price`/`change_pct`). 워커 러너 기록, `(journal_id, horizon)` 유니크 |
 | `user_signal_reads` | 읽음 | 상세 진입 읽음 기록 |
 | `final_signals` | 리포트 본문 | `is_current`/`run_key`/`signal_date`/`score_breakdown`/`summary`/`positive_evidence`/`caution_evidence` |
 | 원천 raw 테이블 | 소스 상세 | `dart_raw_details`, `report_raw_details`, `hiring_raw_details`, `datalab_raw_details`(+`datalab_category_stocks`), `stocks`/`ohlcv_data`/`price_snapshots`/`fundamentals` |

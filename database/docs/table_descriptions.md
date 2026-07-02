@@ -122,7 +122,8 @@ Agent·ML의 분석 결과와 최종 시그널.
 | --- | --- |
 | `signal_subscriptions` | 사용자 구독 상태. 활성 구독 1건만 허용(부분 유니크) |
 | `watchlists` | 사용자 관심종목. `(user_id, stock_id)` 유니크 |
-| `signal_journals` | 사용자가 시그널에 남긴 복기 메모와 추가 확인 태그 |
+| `signal_journals` | 사용자가 시그널에 남긴 복기 메모(`user_memo`)·판단(`user_view`)·태그 + 작성 시점 신호 스냅샷. 구독 전용 기능 |
+| `signal_journal_outcomes` | 저널 작성 후 실제 주가 변동 확정 결과(거래일 기준 7td/30td). 워커 outcome 러너가 기록, `(journal_id, horizon)` 유니크, 저널 삭제 시 CASCADE |
 | `user_signal_reads` | 사용자별 시그널 읽음 표시. `(user_id, final_signal_id)` 유니크 |
 | `user_sessions` | 사용자 refresh token 세션. refresh token hash, 만료, 폐기 시각 관리 |
 | `social_accounts` | 소셜 로그인 연동(provider·provider_user_id) |

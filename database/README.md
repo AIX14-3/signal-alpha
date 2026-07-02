@@ -66,7 +66,7 @@ docker compose run --rm db-migrate apply --seeds
 | B User 기본 | `users`, `subscription_plans` |
 | E Analysis | `analysis_requests`, `analysis_results`, `quant_scores`, `ta_scores`, `ai_scores`, `agent_results`, `xgb_model_versions`, `ml_scores`, `final_signals`, `score_history`, `backtest_results` |
 | E Agent 임베딩/메모리 | `report_chunks`, `signal_episodes` (pgvector 768, Stage 0 임베딩 인프라) |
-| F User 확장 | `signal_subscriptions`, `watchlists`, `signal_journals`, `user_signal_reads`, `user_sessions`, `social_accounts`, `portone_verifications`, `terms_agreements` |
+| F User 확장 | `signal_subscriptions`, `watchlists`, `signal_journals`, `signal_journal_outcomes`, `user_signal_reads`, `user_sessions`, `social_accounts`, `portone_verifications`, `terms_agreements` |
 | G Admin | `admin_accounts`, `admin_sessions` |
 | 트리거 | (트리거 함수 2종 + updated_at 트리거 일괄 부착) |
 | ~~Legacy~~ | ~~`report_raw`, `report_signal`~~ ← **제거됨** (`20260630_1200…`, §7) |

@@ -40,6 +40,9 @@ BACKEND_TABLES: frozenset[str] = frozenset(
         # 유저 콘텐츠 / 발행 이력
         "watchlists",
         "signal_journals",
+        # 저널 outcome 확정 결과 — 워커 러너가 BACKEND_DATABASE_URL 로 기록(collection_schedules
+        # 와 같은 워커→백엔드 계약). 원본 저널(user_memo)에는 워커 쓰기 권한 없음.
+        "signal_journal_outcomes",
         "user_signal_reads",
         "report_issuances",
         # 수집 스케줄 제어 평면 (어드민/MCP 가 쓰고 워커 스케줄러가 폴링). 백엔드 DB 보유.
