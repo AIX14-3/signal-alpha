@@ -442,7 +442,8 @@ def test_run_cycle_skips_scheduled_fire_when_queue_backlog_exceeds_limit(
 
     assert result == "queue-backlog"
     assert repository is not None
-    assert repository.started_runs == []
+    assert [run["trigger_reason"] for run in repository.started_runs] == ["queue-backlog"]
+    assert [run["status"] for run in repository.finished_runs] == ["skipped"]
     assert client.posts == [
         {
             "path": "/internal/stats/queue",
@@ -451,6 +452,80 @@ def test_run_cycle_skips_scheduled_fire_when_queue_backlog_exceeds_limit(
             "timeout": 30.0,
         }
     ]
+
+
+def test_run_cycle_records_backpressure_skip_history(monkeypatch):
+    repository = None
+
+    class BacklogClient(RecordingClient):
+        async def get(self, url, *, headers, timeout):
+            if url.removeprefix("http://worker") == "/internal/stats/queue":
+                return FakeResponse(
+                    {"totals_by_status": {"pending": 11, "retrying": 0, "failed": 0}},
+                    url=url,
+                )
+            raise AssertionError(f"Unexpected URL: {url}")
+
+    class ScheduledRepository(FakeScheduleRepository):
+        async def get_by_name(self, name):
+            return {
+                **await super().get_by_name(name),
+                "run_at_local": time(0, 0),
+                "last_run_at": None,
+                "manual_trigger_requested_at": None,
+            }
+
+    def repo_factory(connection):
+        nonlocal repository
+        repository = ScheduledRepository(connection)
+        return repository
+
+    async def fire_should_not_run(*args, **kwargs):
+        raise AssertionError("_fire must not run when queue backlog blocks the schedule")
+
+    monkeypatch.setenv("INTERNAL_API_TOKEN", "secret")
+    monkeypatch.setenv("SCHEDULER_BACKPRESSURE_MAX_WAITING", "10")
+    monkeypatch.setattr(backend, "CollectionScheduleRepository", repo_factory)
+    monkeypatch.setattr(run_scheduler_instance, "_fire", fire_should_not_run)
+
+    result = asyncio.run(
+        run_cycle(
+            FakePool(FakeConnection(lock_acquired=True)),
+            BacklogClient(),
+            base_url="http://worker",
+            schedule_name="daily-collection",
+        )
+    )
+
+    assert result == "queue-backlog"
+    assert repository is not None
+    assert repository.started_runs == [
+        {
+            "schedule_id": 1,
+            "schedule_name": "daily-collection",
+            "trigger_reason": "queue-backlog",
+            "targets": ["dart"],
+        }
+    ]
+    assert repository.finished_runs == [
+        {
+            "run_id": 55,
+            "status": "skipped",
+            "detail": {
+                "decision": {
+                    "agent": "scheduler",
+                    "policy": "scheduler-agent-v1",
+                    "action": "skip",
+                    "reason": "queue-backlog",
+                    "schedule_id": 1,
+                    "schedule_name": "daily-collection",
+                    "targets": ["dart"],
+                },
+                "targets": {},
+            },
+        }
+    ]
+    assert repository.recorded_runs == []
 
 
 def test_run_cycle_records_execution_history_around_fired_schedule(monkeypatch):
