@@ -372,6 +372,64 @@ function formatScheduleRunTargetResult(run: AdminScheduleRun): string {
   return run.targets.join(', ') || '-';
 }
 
+const SCHEDULE_HEALTH_TONE: Record<string, string> = {
+  ok: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+  disabled: 'border-line bg-surface-2 text-muted',
+  delayed: 'border-red/30 bg-red/10 text-red',
+  failed_waiting: 'border-amber-200 bg-amber-50 text-amber-700',
+  unknown: 'border-sky/30 bg-sky/10 text-sky-deep',
+};
+
+function formatScheduleHealth(schedule: AdminSchedule): {
+  label: string;
+  detail: string;
+  className: string;
+} {
+  const status = schedule.health_status ?? (schedule.enabled ? 'unknown' : 'disabled');
+  return {
+    label: schedule.health_label ?? status,
+    detail: schedule.health_detail ?? '스케줄러 상태 확인이 필요합니다.',
+    className: SCHEDULE_HEALTH_TONE[status] ?? SCHEDULE_HEALTH_TONE.unknown,
+  };
+}
+
+function scheduleRunDecisionReason(run: AdminScheduleRun): string | null {
+  const detail = asRecord(run.detail);
+  const decision = asRecord(detail?.decision);
+  if (typeof decision?.reason === 'string') return decision.reason;
+  return run.trigger_reason;
+}
+
+function getScheduleRunWarning(runs: AdminScheduleRun[]): string | null {
+  let consecutive = 0;
+  for (const run of runs) {
+    const status = (run.status ?? '').toLowerCase();
+    const reason = scheduleRunDecisionReason(run);
+    const policySkip = status === 'skipped' && (
+      reason === 'queue-backlog' || reason === 'recent-failures'
+    );
+    const failedRun = status === 'failed' || status === 'partial';
+    if (!policySkip && !failedRun) break;
+    consecutive += 1;
+  }
+  if (consecutive < 2) return null;
+  return `반복 보류/실패 ${consecutive}회가 이어졌습니다. 큐 상태와 최근 실행 결과를 추가 확인하세요.`;
+}
+
+function validateScheduleDraft(draft: ScheduleDraft): string | null {
+  if (draft.targets.length === 0) {
+    return '수집 대상을 최소 1개 선택하세요.';
+  }
+  const frequencyMinutes = Number(draft.frequencyMinutes);
+  if (!Number.isInteger(frequencyMinutes) || frequencyMinutes < 1 || frequencyMinutes > 1440) {
+    return '반복 주기는 1~1440분 사이의 정수로 입력하세요.';
+  }
+  if (frequencyMinutes < 1440 && draft.activeFrom === draft.activeUntil) {
+    return '반복 스케줄의 활성 시작/종료 시각은 같을 수 없습니다.';
+  }
+  return null;
+}
+
 function ScheduleCard({ onError }: { onError: (msg: string | null) => void }) {
   const [schedules, setSchedules] = useState<AdminSchedule[]>([]);
   const [drafts, setDrafts] = useState<Record<number, ScheduleDraft>>({});
@@ -428,6 +486,28 @@ function ScheduleCard({ onError }: { onError: (msg: string | null) => void }) {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function saveTargets(schedule: AdminSchedule, draft: ScheduleDraft) {
+    const validation = validateScheduleDraft(draft);
+    if (validation) {
+      onError(validation);
+      return;
+    }
+    await save(schedule, { targets: draft.targets });
+  }
+
+  async function saveCadence(schedule: AdminSchedule, draft: ScheduleDraft) {
+    const validation = validateScheduleDraft(draft);
+    if (validation) {
+      onError(validation);
+      return;
+    }
+    await save(schedule, {
+      frequency_minutes: Number(draft.frequencyMinutes),
+      active_from_local: draft.activeFrom,
+      active_until_local: draft.activeUntil,
+    });
   }
 
   async function trigger(schedule: AdminSchedule) {
@@ -494,11 +574,19 @@ function ScheduleCard({ onError }: { onError: (msg: string | null) => void }) {
           };
           const frequencyMinutes = Number(draft.frequencyMinutes);
           const runs = runsBySchedule[schedule.id] ?? [];
+          const health = formatScheduleHealth(schedule);
+          const runWarning = getScheduleRunWarning(runs);
+          const draftValidation = validateScheduleDraft(draft);
           return (
             <div key={schedule.id} className="rounded-xl border border-line p-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <h3 className="text-[15px] font-bold">{schedule.name ?? `schedule-${schedule.id}`}</h3>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="text-[15px] font-bold">{schedule.name ?? `schedule-${schedule.id}`}</h3>
+                    <span className={`rounded-full border px-2.5 py-1 text-[12px] font-semibold ${health.className}`}>
+                      {health.label}
+                    </span>
+                  </div>
                   <p className="mt-0.5 text-[12.5px] text-muted">
                     {schedule.timezone ?? 'Asia/Seoul'} {schedule.run_at_local ?? '-'} {' - '}
                     {schedule.frequency_minutes ?? 1440}{'\ubd84 \uc8fc\uae30'} {' - '}
@@ -553,7 +641,7 @@ function ScheduleCard({ onError }: { onError: (msg: string | null) => void }) {
                     ))}
                     <button
                       type="button"
-                      onClick={() => void save(schedule, { targets: draft.targets })}
+                      onClick={() => void saveTargets(schedule, draft)}
                       disabled={busy}
                       className="text-[13px] font-semibold text-sky-deep disabled:opacity-50"
                     >
@@ -584,13 +672,12 @@ function ScheduleCard({ onError }: { onError: (msg: string | null) => void }) {
                       className="card px-3 py-2 text-[14px] outline-none focus:border-sky"
                     />
                   </div>
+                  {draftValidation && (
+                    <p className="mt-2 text-[12.5px] font-semibold text-red">{draftValidation}</p>
+                  )}
                   <button
                     type="button"
-                    onClick={() => void save(schedule, {
-                      frequency_minutes: frequencyMinutes,
-                      active_from_local: draft.activeFrom,
-                      active_until_local: draft.activeUntil,
-                    })}
+                    onClick={() => void saveCadence(schedule, draft)}
                     disabled={busy || !Number.isInteger(frequencyMinutes) || frequencyMinutes < 1 || frequencyMinutes > 1440}
                     className="mt-2 text-[13px] font-semibold text-sky-deep disabled:opacity-50"
                   >
@@ -601,6 +688,10 @@ function ScheduleCard({ onError }: { onError: (msg: string | null) => void }) {
                 <div className="rounded-xl bg-surface-2 p-4">
                   <div className="text-[12.5px] font-semibold text-muted">{'\uc2e4\ud589 \uc0c1\ud0dc'}</div>
                   <dl className="mt-2 space-y-1.5 text-[13px]">
+                    <div className="flex justify-between gap-4">
+                      <dt className="text-muted">{'\uc0c1\ud0dc \uc9c4\ub2e8'}</dt>
+                      <dd className="text-right font-medium">{health.detail}</dd>
+                    </div>
                     <div className="flex justify-between gap-4">
                       <dt className="text-muted">{'\ub9c8\uc9c0\ub9c9 \uc2e4\ud589'}</dt>
                       <dd className="font-medium">{fmtDateTime(schedule.last_run_at)}</dd>
@@ -627,6 +718,11 @@ function ScheduleCard({ onError }: { onError: (msg: string | null) => void }) {
 
               <div className="mt-4">
                 <div className="text-[12.5px] font-semibold text-muted">{'\ucd5c\uadfc \uc2e4\ud589 \uc774\ub825'}</div>
+                {runWarning && (
+                  <p className="mt-1.5 rounded-md border border-red/30 bg-red/10 px-3 py-2 text-[12.5px] font-semibold text-red">
+                    {runWarning}
+                  </p>
+                )}
                 <div className="mt-2 overflow-x-auto">
                   <table className="w-full text-left text-[12.5px]">
                     <thead className="text-muted">
