@@ -27,6 +27,8 @@ test("auth form exposes stable login and signup flow anchors", () => {
     "data-provider={s.key}",
     "getReturnTo()",
     'to.startsWith("/")',
+    // 이미 로그인된(sa_refresh 복원) 사용자는 로그인/가입 폼 대신 목적지로 리다이렉트.
+    'if (status === "authenticated") router.replace(getReturnTo())',
   ].forEach((expected) => assertIncludes(source, expected, "auth form"));
 });
 

@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAuthStore } from "@/stores/authStore";
 import { isSocialDevMode, SOCIAL_PROVIDERS, socialAuthCode, startSocialOAuth } from "@/lib/social";
 
 export function AuthForm({ mode }: { mode: "login" | "signup" }) {
   const router = useRouter();
+  const status = useAuthStore((s) => s.status);
   const loginWithIdentity = useAuthStore((s) => s.loginWithIdentity);
   const signupWithIdentity = useAuthStore((s) => s.signupWithIdentity);
   const socialLoginWith = useAuthStore((s) => s.socialLoginWith);
@@ -27,6 +28,12 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
     // 오픈 리다이렉트 방지: 내부 경로만 허용
     return to && to.startsWith("/") ? to : "/mypage";
   }
+
+  // sa_refresh 쿠키로 세션이 이미 복원된(로그인된) 사용자는 로그인/가입 폼을 보여줄
+  // 필요가 없다 — 부팅 hydrate 확정 즉시 목적지로 돌려보낸다.
+  useEffect(() => {
+    if (status === "authenticated") router.replace(getReturnTo());
+  }, [status, router]);
 
   async function onIdentity() {
     setError(null);
@@ -70,6 +77,15 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
     } finally {
       setBusy(false);
     }
+  }
+
+  // 로그인 상태(또는 hydrate 진행 중)에는 폼을 그리지 않는다 — 이동 중 플래시 방지.
+  if (status === "authenticated") {
+    return (
+      <p className="py-16 text-center text-muted" data-page={isSignup ? "signup" : "login"}>
+        이미 로그인되어 있습니다. 이동 중…
+      </p>
+    );
   }
 
   return (
