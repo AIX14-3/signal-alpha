@@ -74,5 +74,18 @@ test("mypage exposes stable tab panels and subscription action anchors", () => {
     'data-flow="subscription-refund"',
     'data-flow="profile-save"',
     'data-flow="profile-withdraw"',
+    'data-flow="journal-subscribe"',
+    'data-flow="journal-edit"',
+    'data-flow="journal-delete"',
   ].forEach((expected) => assertIncludes(source, expected, "mypage"));
+});
+
+test("report page exposes journal save entry point for unlocked reports", () => {
+  const source = read("src/app/report/[ticker]/page.tsx");
+
+  [
+    'data-flow="journal-save"',
+    "useJournalStore",
+    "final_signal_id: finalSignalId",
+  ].forEach((expected) => assertIncludes(source, expected, "report page"));
 });
