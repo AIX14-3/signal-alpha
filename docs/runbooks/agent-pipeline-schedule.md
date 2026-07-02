@@ -68,6 +68,8 @@ Each fired run stores scheduler-agent decision metadata in the JSON detail:
 
 Before scheduled runs fire, the scheduler agent reads `/internal/stats/queue` and applies a conservative backpressure policy. If pending plus retrying work exceeds `SCHEDULER_BACKPRESSURE_MAX_WAITING`, the scheduled fire is skipped with `queue-backlog`. If failed work exceeds `SCHEDULER_BACKPRESSURE_MAX_FAILED`, the scheduled fire is skipped with `recent-failures`. Manual triggers bypass backpressure so operators can still force a controlled run.
 
+Policy skips that replace an otherwise due scheduled run are also written to `collection_schedule_runs` with `status=skipped`. This records why the scheduler agent intentionally held back work without changing `collection_schedules.last_run_at` or advancing the source cadence.
+
 Keep exactly one scheduler agent active for the schedule table. The advisory lock prevents duplicate firing during overlap, but one active scheduler remains the simplest operating model.
 
 ## 3. Collection Cadence
