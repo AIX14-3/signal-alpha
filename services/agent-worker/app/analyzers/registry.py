@@ -26,8 +26,12 @@ from app.evidence_loaders import (
 )
 from app.evidence_loaders.base import EvidenceLoader
 
-# debate_method is a schema-level enum (agent_results CHECK D-1..D-5); pin each
-# source to a distinct code in one place. A new source picks an unused code.
+# debate_method is a schema-level enum (agent_results CHECK D-1..D-5). Codes are
+# distinct within THIS registry, not globally: D-1 is also what the DART and
+# REPORT lanes write (each lane upserts its own analysis_results row / run_key
+# and agent_results is keyed by (result_id, debate_method), so sharing a code
+# across lanes never collides). Keep the codes below unchanged; a new source
+# here picks a code unused within this registry.
 DEBATE_METHODS = {
     "HIRING": "D-1",
     "PATENT": "D-2",

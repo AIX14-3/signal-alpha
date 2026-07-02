@@ -13,6 +13,7 @@ LLM call, not a graph.
 
 from __future__ import annotations
 
+import logging
 from os import getenv
 from typing import Any
 
@@ -21,6 +22,8 @@ from app.agents.patent.llm_classifier import PatentSignificanceClassifier
 from app.analyzers.config import PatentRuleConfig
 from app.analyzers.patent import PatentAnalyzer
 from app.core.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "PatentSignificanceAgent",
@@ -73,5 +76,8 @@ def _try_build_gemini() -> Any | None:
         from app.clients.gemini_client import GeminiJsonClient
 
         return GeminiJsonClient(api_key=get_settings().gemini_api_key)
-    except Exception:  # noqa: BLE001 — missing key/transport: degrade, don't stall
+    except Exception as exc:  # noqa: BLE001 — missing key/transport: degrade, don't stall
+        # 조용히 삼키면 significance 에이전트가 왜 규칙 경로로 떨어졌는지 알 수 없다
+        # (hiring 팩토리와 동일하게 경고만 남기고 규칙 경로로 폴백).
+        logger.warning("Patent significance LLM 클라이언트 미구성 (%s) — 규칙 경로로 폴백", exc)
         return None

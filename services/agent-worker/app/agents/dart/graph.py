@@ -47,7 +47,7 @@ class DartAnalysisGraphAgent:
                 source="DART",
                 stock_code=input_data.stock_code,
                 direction="unknown",
-                score=0,
+                score=0.0,
                 summary="DART analysis input did not pass graph validation.",
                 risk_flags=validation_errors,
                 method_detail={"validation_errors": validation_errors},

@@ -842,14 +842,19 @@ def _from_output(output: SourceAgentOutput) -> SourceResult:
 
     The adapter is a transparent field mapping: it carries ``score``, ``direction``,
     ``summary``, ``risk_flags``, ``llm_model``, and ``data_status`` straight through,
-    and flattens ``evidence_items`` / ``report_meta`` into ``method_detail`` as plain
-    dicts. Here we rebuild those dataclasses from ``method_detail`` so the resulting
-    ``SourceResult`` is field-for-field identical to what ``analyzer.analyze``
-    returned — keeping Alternative end-to-end scores invariant.
+    and flattens ``evidence_items`` / ``report_meta`` / the attention sub-dict into
+    ``method_detail`` as plain dicts. Here we rebuild those from ``method_detail``
+    so every analyzer-owned field of the resulting ``SourceResult`` is identical to
+    what ``analyzer.analyze`` returned — keeping Alternative end-to-end scores
+    invariant. Additively, the agent's own provenance (``analysis_source`` /
+    ``prompt_ver`` / ``llm_error`` / ``needs_review``) is carried onto the
+    ``SourceResult`` so persistence can record it (those fields are None on a
+    direct analyzer result and never affect scoring).
     """
     detail = output.method_detail
     raw_items = detail.get("evidence_items") or []
     raw_meta = detail.get("report_meta")
+    attention = detail.get("attention") or {}
     try:
         evidence_items = [_instantiate_known(EvidenceItem, item) for item in raw_items]
         report_meta = _instantiate_known(ReportMeta, raw_meta) if raw_meta is not None else None
@@ -879,6 +884,21 @@ def _from_output(output: SourceAgentOutput) -> SourceResult:
         cause=detail.get("cause"),
         cause_rationale=detail.get("cause_rationale"),
         cause_source=detail.get("cause_source"),
+        # Neutral attention-spike layer ``_to_output`` stashed as a sub-dict —
+        # restore all five so the per-source "주의 근거" routing and persistence
+        # see them (empty dict for non-DataLab sources keeps everything None).
+        attention_tier=attention.get("attention_tier"),
+        attention_z=attention.get("attention_z"),
+        attention_note=attention.get("attention_note"),
+        expected_fwd_vol_mult=attention.get("expected_fwd_vol_mult"),
+        expected_fwd_volume_mult=attention.get("expected_fwd_volume_mult"),
+        # Agent provenance: without these a failed-LLM PATENT run persisted
+        # indistinguishable from a successful one, and per-agent prompt versions
+        # never reached agent_results.prompt_ver.
+        analysis_source=output.analysis_source,
+        prompt_ver=output.prompt_ver,
+        llm_error=output.llm_error,
+        needs_review=output.needs_review,
     )
 
 

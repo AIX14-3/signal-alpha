@@ -114,15 +114,6 @@ class HiringAnalysisAgent:
                 # agent's own skill/duty extraction, not the orchestrator's ask.)
                 requery_focus=focus_hint_from_context(input_data.context),
             )
-            rationale = verdict.rationale or focus.summary_text()
-            return self._focus_output(
-                rule,
-                focus=focus,
-                rationale=rationale,
-                focus_label=verdict.focus,
-                focus_source="llm",
-                llm_model=self._classifier.model,
-            )
         except Exception as exc:  # noqa: BLE001 — degrade to deterministic focus
             logger.warning(
                 "Hiring focus LLM 분류 실패 (stock=%s): %s — 결정론 포커스 요약으로 폴백",
@@ -138,6 +129,26 @@ class HiringAnalysisAgent:
                 llm_model=None,
                 llm_error=str(exc),
             )
+        if not verdict.rationale:
+            # LLM 이 근거 문장을 못 냈다(형식 오류 포함) — 결정론 포커스 요약으로
+            # 폴백하므로 provenance 도 rules_fallback 으로 정직하게 라벨한다
+            # (규칙 요약을 "llm" 산출물로 위장 금지).
+            return self._focus_output(
+                rule,
+                focus=focus,
+                rationale=focus.summary_text(),
+                focus_label=None,
+                focus_source="rules_fallback",
+                llm_model=None,
+            )
+        return self._focus_output(
+            rule,
+            focus=focus,
+            rationale=verdict.rationale,
+            focus_label=verdict.focus,
+            focus_source="llm",
+            llm_model=self._classifier.model,
+        )
 
     # -- output builders ---------------------------------------------------- #
     def build_rules_output(self, rule: SourceResult) -> SourceAgentOutput:
@@ -216,12 +227,14 @@ class HiringAnalysisAgent:
         if not rows:
             return HiringFocus()
         as_of = _as_of(input_data)
-        metadata = input_data.evidence[0].metadata if input_data.evidence else {}
+        # rows 를 전 evidence 스캔으로 찾는 _extract_rows 와 같은 방식으로, 메타데이터도
+        # 해당 키를 실제로 가진 첫 항목에서 읽는다 — evidence[0] 고정이면 rows 가 두 번째
+        # 항목에 실릴 때 sector_demand/as_of 가 유실된다(단일 항목 동작은 동일).
         indicators = compute_indicators(
             rows,
             as_of=as_of,
             lookback_days=self._config.lookback_days,
-            sector_demand=metadata.get("sector_demand"),
+            sector_demand=_metadata_value(input_data.evidence, "sector_demand"),
         )
         function_counter: Counter[str] = Counter()
         for row in rows:
@@ -258,11 +271,20 @@ def _extract_rows(evidence: list) -> list[dict]:
     return []
 
 
+def _metadata_value(evidence: list, key: str):
+    """해당 키를 실제로 가진 첫 evidence 항목의 메타데이터 값(없으면 None) —
+    ``_extract_rows`` 의 전 항목 스캔과 같은 규약."""
+    for item in evidence:
+        metadata = item.metadata or {}
+        if key in metadata:
+            return metadata[key]
+    return None
+
+
 def _as_of(input_data: SourceAgentInput) -> date:
     if input_data.analysis_date is not None:
         return input_data.analysis_date
-    metadata = input_data.evidence[0].metadata if input_data.evidence else {}
-    raw = metadata.get("as_of")
+    raw = _metadata_value(input_data.evidence, "as_of")
     if isinstance(raw, date):
         return raw
     if raw:

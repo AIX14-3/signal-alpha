@@ -79,3 +79,14 @@ class SourceResult:
     attention_note: str | None = None
     expected_fwd_vol_mult: float | None = None
     expected_fwd_volume_mult: float | None = None
+    # Agent-lane provenance (round-tripped from ``SourceAgentOutput`` by the
+    # orchestrator's ``_from_output``): how the result was produced ("rules" |
+    # "llm" | "rules_fallback" | ...), the agent's own prompt version, the LLM
+    # failure detail, and the agent's review flag. All None when the result was
+    # built directly by an analyzer (pre-agent constructors stay valid) — the
+    # persistence layer then falls back to its runtime defaults. Mirrors what the
+    # DART/REPORT lanes already persist so a failed-LLM run is distinguishable.
+    analysis_source: str | None = None
+    prompt_ver: str | None = None
+    llm_error: str | None = None
+    needs_review: bool | None = None

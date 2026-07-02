@@ -45,6 +45,20 @@ def _to_output(result: SourceResult, prompt_ver: str) -> SourceAgentOutput:
         method_detail["evidence_items"] = [asdict(item) for item in result.evidence_items]
     if result.report_meta is not None:
         method_detail["report_meta"] = asdict(result.report_meta)
+    # Neutral attention-spike layer (DATALAB): stash the five structured fields as
+    # one sub-dict so the orchestrator round-trip (``_from_output``) restores them
+    # — otherwise ``attention_note`` never reaches the aggregator's "주의 근거"
+    # routing nor persistence. Written only when any field is set, so every
+    # non-DataLab source keeps its method_detail shape unchanged.
+    attention = {
+        "attention_tier": result.attention_tier,
+        "attention_z": result.attention_z,
+        "attention_note": result.attention_note,
+        "expected_fwd_vol_mult": result.expected_fwd_vol_mult,
+        "expected_fwd_volume_mult": result.expected_fwd_volume_mult,
+    }
+    if any(value is not None for value in attention.values()):
+        method_detail["attention"] = attention
     return SourceAgentOutput(
         source=result.source,
         stock_code=result.stock_code,

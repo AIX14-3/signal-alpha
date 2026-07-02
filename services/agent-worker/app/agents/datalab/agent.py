@@ -81,10 +81,22 @@ class DataLabAnalysisAgent:
         self, input_data: SourceAgentInput, rule: SourceResult
     ) -> SourceAgentOutput:
         as_of = input_data.analysis_date or date.today()
-        price_rows = await self._load_price(input_data.stock_id, as_of)
-        lead_lag = compute_lead_lag(
-            _search_rows(input_data), price_rows, as_of=as_of, lookback_days=self._lookback_days
-        )
+        # 결정론 사전 계산도 가드 안에서: 잘못된 검색 행(예: 숫자가 아닌 search_index)이
+        # 여기서 터지면 이미 산출된 규칙 결과 전체가 caller 의 광역 except 로
+        # data_status="failed" 로 바뀌므로, 원인 분류 실패는 규칙 전용 출력(cause 없음)으로
+        # 강등한다 — 소스를 실패시키지 않는다.
+        try:
+            price_rows = await self._load_price(input_data.stock_id, as_of)
+            lead_lag = compute_lead_lag(
+                _search_rows(input_data), price_rows, as_of=as_of, lookback_days=self._lookback_days
+            )
+        except Exception as exc:  # noqa: BLE001 — degrade to the rule-only output
+            logger.warning(
+                "DataLab cause lead/lag 산출 실패 (stock=%s): %s — 규칙 결과만 발행",
+                rule.stock_code,
+                exc,
+            )
+            return self.build_rules_output(rule)
         # No usable price series → lead/lag undecidable; emit the rule result.
         if lead_lag.price_points < MIN_PRICE_POINTS or self._classifier is None:
             return self.build_rules_output(rule)
@@ -99,14 +111,6 @@ class DataLabAnalysisAgent:
                 # Orchestrator re-query hint (Wave-3): narrows the cause re-read to
                 # the flagged axis. None on a plain analyze → prompt byte-identical.
                 requery_focus=focus_hint_from_context(input_data.context),
-            )
-            return self._cause_output(
-                rule,
-                cause=verdict.cause or lead_lag.preliminary_cause,
-                rationale=verdict.rationale,
-                cause_source="llm",
-                llm_model=self._classifier.model,
-                lead_lag=lead_lag,
             )
         except Exception as exc:  # noqa: BLE001 — degrade to deterministic prelabel
             logger.warning(
@@ -123,6 +127,27 @@ class DataLabAnalysisAgent:
                 lead_lag=lead_lag,
                 llm_error=str(exc),
             )
+        if verdict.cause is None:
+            # LLM 이 스스로 판정을 유보(ambiguous)했거나 enum 밖 응답 — 저장되는 값의
+            # 출처는 규칙 예비 판정이므로 provenance 도 rules_fallback 으로 정직하게
+            # 라벨한다(LLM 이 고르지 않은 cause 에 "llm" 라벨 금지).
+            reason = "판정 유보(ambiguous)" if verdict.ambiguous else "응답 해석 불가"
+            return self._cause_output(
+                rule,
+                cause=lead_lag.preliminary_cause,
+                rationale=f"LLM {reason} — 규칙 예비 판정 사용: {verdict.rationale}",
+                cause_source="rules_fallback",
+                llm_model=None,
+                lead_lag=lead_lag,
+            )
+        return self._cause_output(
+            rule,
+            cause=verdict.cause,
+            rationale=verdict.rationale,
+            cause_source="llm",
+            llm_model=self._classifier.model,
+            lead_lag=lead_lag,
+        )
 
     # -- output builders ---------------------------------------------------- #
     def build_rules_output(self, rule: SourceResult) -> SourceAgentOutput:
