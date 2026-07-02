@@ -9,7 +9,6 @@ import {
   confirmPayment,
   deleteMe,
   getMySubscription,
-  listJournals,
   paymentHistory,
   refundPayment,
   resumePayment,
@@ -23,6 +22,7 @@ import { won } from "@/lib/format";
 import { pay } from "@/lib/portone";
 import { isSocialDevMode, SOCIAL_PROVIDERS, socialAuthCode, startSocialOAuth } from "@/lib/social";
 import { useAuthStore } from "@/stores/authStore";
+import { useJournalStore } from "@/stores/journalStore";
 import { useSocialStore } from "@/stores/socialStore";
 import { useWatchlistStore } from "@/stores/watchlistStore";
 import { useToastStore } from "@/stores/toastStore";
@@ -302,19 +302,80 @@ function SubscriptionTab() {
   );
 }
 
+const JOURNAL_VIEWS: [string, string][] = [
+  ["watch", "계속 관찰"],
+  ["research_more", "추가 확인 필요"],
+  ["not_relevant", "낮은 관련도"],
+];
+const JOURNAL_VIEW_LABEL: Record<string, string> = Object.fromEntries(JOURNAL_VIEWS);
+const HORIZON_LABEL: Record<string, string> = { "7td": "7거래일", "30td": "30거래일" };
+
 function JournalTab() {
-  const [items, setItems] = useState<Journal[]>([]);
-  const [loading, setLoading] = useState(true);
+  const user = useAuthStore((s) => s.user);
+  const { items, loading, error, load, update, remove } = useJournalStore();
+  const showToast = useToastStore((s) => s.show);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editView, setEditView] = useState("watch");
+  const [editMemo, setEditMemo] = useState("");
+  const [editTags, setEditTags] = useState("");
+  const subscribed = user?.subscription_active === true;
+
   useEffect(() => {
-    listJournals({ limit: 50 })
-      .then((d) => setItems(d.items))
-      .finally(() => setLoading(false));
-  }, []);
+    if (subscribed) void load();
+  }, [subscribed, load]);
+
+  // 저널은 구독 전용 — 비구독자는 구독 유도.
+  if (!subscribed)
+    return (
+      <div className="card px-6 py-8 text-center" data-panel="journal" data-flow="journal-subscribe">
+        <p className="font-bold">저널은 구독 회원 전용 기능입니다.</p>
+        <p className="mt-2 text-[13.5px] text-muted">
+          발행한 리포트에 나의 판단을 기록하고, 이후 실제 주가 변동(7·30거래일)을 함께 복기할 수 있습니다.
+        </p>
+        <Link
+          href="/pricing"
+          className="brand-grad mt-4 inline-block rounded-full px-6 py-2.5 text-[14px] font-bold text-white"
+        >
+          구독 안내 보기
+        </Link>
+      </div>
+    );
 
   if (loading) return <p className="text-muted" data-panel="journal">불러오는 중…</p>;
-  if (items.length === 0) return <p className="text-muted" data-panel="journal">저장한 저널이 없습니다. 리포트에서 저장해 투자 추이를 기록하세요.</p>;
+  if (error) return <p className="text-red" data-panel="journal">{error}</p>;
+  if (items.length === 0)
+    return <p className="text-muted" data-panel="journal">저장한 저널이 없습니다. 리포트에서 저장해 투자 추이를 기록하세요.</p>;
 
-  const VIEW: Record<string, string> = { watch: "계속 관찰", research_more: "추가 확인 필요", not_relevant: "낮은 관련도" };
+  function startEdit(j: Journal) {
+    setEditingId(j.journal_id);
+    setEditView(j.user_view);
+    setEditMemo(j.memo ?? "");
+    setEditTags(j.tags.join(", "));
+  }
+
+  async function saveEdit(id: number) {
+    try {
+      await update(id, {
+        user_view: editView,
+        memo: editMemo,
+        tags: editTags.split(",").map((t) => t.trim()).filter(Boolean),
+      });
+      setEditingId(null);
+      showToast("저널을 수정했습니다.", "success");
+    } catch (e) {
+      showToast((e as Error).message, "error");
+    }
+  }
+
+  async function removeJournal(id: number) {
+    try {
+      await remove(id);
+      showToast("저널을 삭제했습니다.", "success");
+    } catch (e) {
+      showToast((e as Error).message, "error");
+    }
+  }
+
   return (
     <div className="space-y-2" data-panel="journal">
       {items.map((j) => (
@@ -323,10 +384,108 @@ function JournalTab() {
             <Link href={`/report/${j.stock_code}`} className="font-bold hover:text-sky-deep">
               {j.stock_name ?? j.stock_code} <span className="text-[12px] font-normal text-muted">{j.stock_code}</span>
             </Link>
-            <span className="pill flat" style={{ padding: "3px 9px", fontSize: 12 }}>{VIEW[j.user_view] ?? j.user_view}</span>
+            <div className="flex items-center gap-2">
+              <span className="pill flat" style={{ padding: "3px 9px", fontSize: 12 }}>
+                {JOURNAL_VIEW_LABEL[j.user_view] ?? j.user_view}
+              </span>
+              <button
+                type="button"
+                data-flow="journal-edit"
+                onClick={() => (editingId === j.journal_id ? setEditingId(null) : startEdit(j))}
+                className="text-[13px] font-semibold text-muted hover:text-sky-deep"
+              >
+                수정
+              </button>
+              <button
+                type="button"
+                data-flow="journal-delete"
+                onClick={() => void removeJournal(j.journal_id)}
+                className="text-[13px] font-semibold text-muted hover:text-red"
+              >
+                삭제
+              </button>
+            </div>
           </div>
-          {j.memo && <p className="mt-2 text-[13.5px] text-navy-soft">{j.memo}</p>}
-          <div className="mt-1 text-[12px] text-muted">{j.created_at?.slice(0, 10)}</div>
+
+          {editingId === j.journal_id ? (
+            <div className="mt-3 space-y-2 border-t border-line pt-3">
+              <div className="flex flex-wrap gap-2">
+                {JOURNAL_VIEWS.map(([key, label]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setEditView(key)}
+                    className={`pill flat text-[12.5px] ${editView === key ? "!border-sky !text-sky-deep font-bold" : ""}`}
+                    style={{ padding: "4px 10px" }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <textarea
+                value={editMemo}
+                onChange={(e) => setEditMemo(e.target.value)}
+                rows={2}
+                className="card w-full px-4 py-2.5 text-[13.5px] outline-none focus:border-sky"
+                placeholder="메모"
+              />
+              <input
+                value={editTags}
+                onChange={(e) => setEditTags(e.target.value)}
+                className="card w-full px-4 py-2.5 text-[13px] outline-none focus:border-sky"
+                placeholder="태그 (쉼표로 구분, 최대 10개)"
+              />
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => void saveEdit(j.journal_id)}
+                  className="brand-grad rounded-full px-4 py-1.5 text-[13px] font-bold text-white"
+                >
+                  저장
+                </button>
+                <button type="button" onClick={() => setEditingId(null)} className="text-[13px] text-muted">
+                  취소
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              {j.memo && <p className="mt-2 text-[13.5px] text-navy-soft">{j.memo}</p>}
+              {j.tags.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {j.tags.map((tag) => (
+                    <span key={tag} className="pill flat text-[11.5px]" style={{ padding: "2px 8px" }}>
+                      #{tag}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+
+          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-muted">
+            <span>{j.created_at?.slice(0, 10)}</span>
+            {j.signal_score_at_time != null && (
+              <span>
+                저장 시점 점수 <b className="text-navy">{Math.round(j.signal_score_at_time)}</b>
+                {j.signal_value_at_time ? ` · ${j.signal_value_at_time}` : ""}
+              </span>
+            )}
+            {/* 그 후 변동 — 워커가 확정한 7/30거래일 결과. 미확정이면 "확정 전". */}
+            {j.outcomes.length > 0 ? (
+              j.outcomes.map((o) => (
+                <span key={o.horizon}>
+                  {HORIZON_LABEL[o.horizon] ?? o.horizon} 후{" "}
+                  <b className={o.change_pct >= 0 ? "text-red" : "text-sky-deep"}>
+                    {o.change_pct >= 0 ? "+" : ""}
+                    {o.change_pct.toFixed(2)}%
+                  </b>
+                </span>
+              ))
+            ) : (
+              <span>변동 확정 전</span>
+            )}
+          </div>
         </div>
       ))}
     </div>

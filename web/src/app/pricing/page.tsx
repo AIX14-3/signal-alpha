@@ -50,7 +50,6 @@ export default function PricingPage() {
     }
   }
 
-  const free = plans.find((p) => p.plan_type === "free");
   const paid = plans.find((p) => p.plan_type !== "free");
   const monthlyPrice = paid?.price_monthly && paid.price_monthly > 0 ? paid.price_monthly : 9900;
   const yearlyPrice = paid?.price_yearly && paid.price_yearly > 0 ? paid.price_yearly : 99000;
@@ -69,7 +68,7 @@ export default function PricingPage() {
           <ul className="mt-5 flex-1 space-y-2 text-[14px] text-navy-soft">
             <li>· DART·네이버 소스만 공개 (그 외 잠김 · 구독 시 전체 열람)</li>
             <li>· 관심종목 무제한</li>
-            <li>· 저널 {free?.journal_max_entries ?? 50}건</li>
+            <li>· 저널 — 구독 전용 기능</li>
           </ul>
           <button type="button" onClick={() => router.push(user ? "/" : "/signup")} data-flow="free-plan-cta" className="mt-6 rounded-full border border-line py-3 text-[15px] font-bold text-navy-soft hover:border-navy hover:text-navy">
             {user ? "종목 검색하기" : "무료로 시작"}

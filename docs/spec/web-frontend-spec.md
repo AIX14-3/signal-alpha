@@ -159,7 +159,12 @@ type SocialLink = { provider: 'naver'|'google'|'kakao'; linked: boolean; linked_
 
 ## 10. 저널 UI
 
-발행한 리포트 저장(`createJournal({final_signal_id, user_view, memo, tags})`) → 목록·투자 추이(스냅샷 점수/시점 표시). `user_view` = 계속 관찰/추가 확인 필요/낮은 관련도. 매수·매도 표현 금지.
+**전체 구독 전용** — 모든 저널 API 가 402 `SUBSCRIPTION_REQUIRED` 를 던지므로, 비구독자는 마이페이지 저널 탭에서 구독 유도 패널(`data-flow="journal-subscribe"` → `/pricing`)을 본다.
+
+- 저장 진입점: 리포트 페이지(`/report/[ticker]`) 하단, 구독자 언락 시 `data-flow="journal-save"` — `journalStore.create({stock_code, final_signal_id, user_view, memo, tags})`.
+- 마이페이지 저널 탭: `journalStore`(items/load/create/update/remove) 기반 목록 + 카드별 수정(`journal-edit`, user_view 3버튼+memo+tags)·삭제(`journal-delete`)·태그 pill.
+- 추이 표시: 카드에 저장 시점 스냅샷(`signal_score_at_time`·`signal_value_at_time`)과 outcome 확정 결과("7거래일 후 +x% · 30거래일 후 −y%", 미확정 시 "변동 확정 전").
+- `user_view` = 계속 관찰/추가 확인 필요/낮은 관련도. 매수·매도 표현 금지.
 
 ---
 
