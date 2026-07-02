@@ -299,7 +299,10 @@ class AggregateSignalTaskHandler:
             priority=str(task_context.get("priority") or "batch"),
             task_context={
                 "target_sources": disagreement.target_sources,
-                "focus": disagreement.reasons,
+                # Structured focus (what/which axis is uncertain, per source) drives
+                # the re-read; degrade to the coarse reasons list when detect produced
+                # no structured focus (older path / empty) so re-query still fires.
+                "focus": disagreement.focus or disagreement.reasons,
                 "requery_round": requery_round + 1,
                 "signal_date": signal_date.isoformat(),
                 "as_of": signal_date.isoformat(),

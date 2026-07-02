@@ -675,6 +675,12 @@ class AlternativeAnalyzeTaskHandler:
         task_context = _task_context(task.get("task_context"))
         as_of = _to_date(task_context.get("as_of")) if task_context.get("as_of") else date.today()
         stock_code = await self._resolve_stock_code(stock_id, task_context)
+        # Orchestrator re-query hint (Wave-3): when this analyze was triggered by a
+        # REQUERY_SOURCE round, ``requery_focus`` says *what/which axis* to re-check.
+        # Threaded into the source agent's input ``context`` so a context-aware agent
+        # can narrow its re-read; the rule-only path ignores context → byte-identical
+        # to a normal analyze. Empty ({}) when this is a plain (non-re-query) analyze.
+        analysis_context = _requery_context(task_context)
 
         repository = self._repository_factory(self._connection)
         persistence = AlternativeSignalPersistence(
@@ -686,7 +692,9 @@ class AlternativeAnalyzeTaskHandler:
         sources: list[dict[str, Any]] = []
         available_sources: list[str] = []
         for registration in self._registrations:
-            result = await self._run_source(registration, repository, stock_id, stock_code, as_of)
+            result = await self._run_source(
+                registration, repository, stock_id, stock_code, as_of, context=analysis_context
+            )
             # Each source maps to its OWN single-source signal and final_signals
             # row (its own run_key) — a peer of DART, not a blended component.
             # Build + persist is wrapped per source: a signal-build or DB/persist
@@ -749,6 +757,8 @@ class AlternativeAnalyzeTaskHandler:
         stock_id: int,
         stock_code: str,
         as_of: date,
+        *,
+        context: dict[str, Any] | None = None,
     ) -> SourceResult:
         try:
             loader = registration.build_loader(repository)
@@ -771,6 +781,9 @@ class AlternativeAnalyzeTaskHandler:
                     stock_id=stock_id,
                     analysis_date=as_of,
                     evidence=evidence,
+                    # Additive: carries the re-query focus (if any) to agents that
+                    # read it. Defaults to {} → identical to the pre-focus input.
+                    context=dict(context) if context else {},
                 )
             )
             return _from_output(output)
@@ -916,6 +929,21 @@ def _task_context(value: Any) -> dict[str, Any]:
     if isinstance(value, str):
         return json.loads(value)
     return dict(value)
+
+
+def _requery_context(task_context: Mapping[str, Any]) -> dict[str, Any]:
+    """Extract the orchestrator re-query hint into the source agent input context.
+
+    Only the re-query keys (``requery_focus`` / ``requery_round``) are surfaced, and
+    only when present — a plain analyze yields ``{}`` (== the default input context),
+    so the non-re-query path is byte-identical. Additive by construction.
+    """
+    context: dict[str, Any] = {}
+    if task_context.get("requery_focus") is not None:
+        context["requery_focus"] = task_context["requery_focus"]
+    if task_context.get("requery_round") is not None:
+        context["requery_round"] = task_context["requery_round"]
+    return context
 
 
 def _source_raw_ids(value: Any) -> list[int]:
