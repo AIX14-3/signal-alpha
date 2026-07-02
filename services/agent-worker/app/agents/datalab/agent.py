@@ -28,6 +28,7 @@ from typing import Any
 from app.agents.base import SourceAgentInput, SourceAgentOutput
 from app.agents.datalab.lead_lag import MIN_PRICE_POINTS, LeadLag, compute_lead_lag
 from app.agents.datalab.llm_classifier import DataLabCauseClassifier, PROMPT_VERSION
+from app.agents.requery_focus import focus_hint_from_context
 from app.agents.rule_source_agent import _to_output
 from app.analyzers.datalab import DataLabAnalyzer
 from app.analyzers.datalab.attention import ATTENTION_FLAG
@@ -95,6 +96,9 @@ class DataLabAnalysisAgent:
                 rule_score=rule.score,
                 lead_lag=lead_lag,
                 summary=rule.summary,
+                # Orchestrator re-query hint (Wave-3): narrows the cause re-read to
+                # the flagged axis. None on a plain analyze → prompt byte-identical.
+                requery_focus=focus_hint_from_context(input_data.context),
             )
             return self._cause_output(
                 rule,

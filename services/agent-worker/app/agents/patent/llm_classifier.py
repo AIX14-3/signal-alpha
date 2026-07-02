@@ -18,6 +18,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from app.agents.requery_focus import requery_focus_prompt_block
+
 # The window-level materiality tag (distinct from the per-patent ``significance``
 # scalar the offline enricher caches). A trace tag only — never a buy/sell call.
 Materiality = Literal["strategic", "sustained", "routine", "ambiguous"]
@@ -55,9 +57,14 @@ class PatentSignificanceClassifier:
         summary: str,
         filings: list[dict[str, Any]],
         prelabel: Materiality,
+        requery_focus: str | None = None,
     ) -> MaterialityVerdict:
         """Return the LLM's materiality verdict. Raises on transport/JSON failure so
-        the caller's fallback path engages (deterministic prelabel)."""
+        the caller's fallback path engages (deterministic prelabel).
+
+        ``requery_focus`` (optional): the orchestrator's re-query hint — when set,
+        a focused re-read instruction is appended to the prompt; ``None`` leaves
+        the prompt byte-identical to a normal analyze."""
         payload = await self._client.generate_json(
             _build_prompt(
                 stock_code=stock_code,
@@ -66,6 +73,7 @@ class PatentSignificanceClassifier:
                 summary=summary,
                 filings=filings,
                 prelabel=prelabel,
+                requery_focus=requery_focus,
             )
         )
         return _parse_verdict(payload, fallback=prelabel)
@@ -79,6 +87,7 @@ def _build_prompt(
     summary: str,
     filings: list[dict[str, Any]],
     prelabel: Materiality,
+    requery_focus: str | None = None,
 ) -> str:
     return (
         "너는 한 기업의 최근 특허 출원 '묶음'이 그 회사 사업에 얼마나 전략적으로 중요한지\n"
@@ -96,6 +105,7 @@ def _build_prompt(
         f"최근 주요 출원(최대 {_MAX_FILINGS_IN_PROMPT}건):\n"
         f"{_format_filings(filings)}\n\n"
         "예비 판정을 확인하거나, 실제 출원 내역이 다른 유형을 강하게 시사하면 정정하라.\n"
+        f"{requery_focus_prompt_block(requery_focus)}"
         "다음 JSON만 출력하라(다른 텍스트 금지):\n"
         '{"materiality": "strategic|sustained|routine|ambiguous", '
         '"rationale": "한국어 한 문장 근거(매수/매도 표현 금지)", '
