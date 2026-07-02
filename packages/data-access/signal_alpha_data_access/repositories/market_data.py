@@ -110,6 +110,36 @@ class MarketDataRepository:
             trade_date,
         )
 
+    async def list_sessions_from(
+        self,
+        *,
+        stock_id: int,
+        from_date: Any,
+        limit: int,
+    ) -> list[Any]:
+        """``limit`` trading sessions on/after ``from_date``, oldest first (read-only).
+
+        Row *index* equals the trading-day offset from the base session (index 0 =
+        first session on/after ``from_date``), so a caller can align a horizon of
+        ``h`` **trading days** with index ``h`` — exact trading-day windows, not a
+        calendar-day approximation. Used by the episode outcome recorder so its
+        ``fwd_return`` matures over the same trading-day window as the production
+        ``fwd_return_20d`` return target.
+        """
+        return await self._connection.fetch(
+            """
+            SELECT trade_date, adjusted_close, close
+            FROM ohlcv_data
+            WHERE stock_id = $1
+              AND trade_date >= $2
+            ORDER BY trade_date ASC
+            LIMIT $3
+            """,
+            stock_id,
+            from_date,
+            int(limit),
+        )
+
     async def upsert_fundamental(
         self,
         *,

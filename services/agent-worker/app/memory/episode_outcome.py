@@ -8,18 +8,25 @@ whether the published direction *hit*, and merges that into ``outcome`` so
 ``EpisodeRecall`` can later prefer "past situations that actually came true".
 
 Design (per coordinator):
-  - **Multi-horizon, progressive.** We record 5/20/60-trading-day-ish windows
-    (configurable). Each horizon is filled only once its window has matured
-    (``signal_date + h`` in the past), and merged in via ``merge_outcome`` (jsonb
-    ``||``) so short horizons land first and 60d fills in weeks later — no
-    re-backfill. The canonical/primary horizon is 20d, aligned with the
-    production meta-learner return target (``fwd_return_20d``).
+  - **Multi-horizon, progressive.** We record 5/20/60 **trading-day** windows
+    (configurable). We pull the base session and the following trading sessions in
+    one query (``list_sessions_from``); the base is index 0 and horizon ``h`` is
+    index ``h``, so ``fwd_return`` matures over exactly ``h`` *trading* sessions —
+    aligned with the production meta-learner return target (``fwd_return_20d``),
+    not a calendar-day approximation. Each horizon is filled only once that many
+    trading sessions exist, and merged in via ``merge_outcome`` (jsonb ``||``) so
+    short horizons land first and 60d fills in weeks later — no re-backfill. The
+    canonical/primary horizon is 20d.
   - **Numbers are immutable.** ``outcome`` is a post-hoc, recall-only reference.
     It never feeds the meta-learner direction/score (invariant from #728).
   - **Degrade / idempotent.** Missing price → skip that horizon (retried next
-    cycle). Already-recorded horizon → skipped. Once the longest window has
-    matured (or every horizon is recorded), the episode is flagged
-    ``complete`` so it stops being re-scanned.
+    cycle). Already-recorded horizon → skipped.
+  - **Finalize only when actually done.** ``complete`` is set once the base *and*
+    every horizon's forward price are recorded (all present). If prices are merely
+    delayed we do **not** finalize — the episode is retried next cycle so a
+    late-arriving price is never lost. Only after a generous calendar grace has
+    elapsed with prices still missing (delisted / permanently absent) is the
+    episode abandoned (``complete`` + ``abandoned``) to stop endless re-scans.
 """
 
 from __future__ import annotations
@@ -49,6 +56,11 @@ class EpisodeOutcomeRecorder:
         # de-dup + sort so maturity/scan bounds use the true min/max horizon.
         self._horizons = sorted({int(h) for h in horizons if int(h) > 0})
         self._primary_key = f"h{int(primary_days)}"
+        # Calendar grace before an episode with missing prices is abandoned. The
+        # longest horizon is in *trading* days (~1.4 calendar days each); double it
+        # and pad 90 days so genuinely-delayed prices are always filled first, and
+        # only truly delisted / permanently-absent episodes are ever abandoned.
+        self._abandon_after_days = (self._horizons[-1] * 2 + 90) if self._horizons else 0
 
     async def record_due(self, *, limit: int = 500) -> dict[str, Any]:
         """Sweep matured, not-yet-complete episodes and fill their realized outcomes."""
@@ -90,24 +102,25 @@ class EpisodeOutcomeRecorder:
         existing_horizons = {k for k in existing if _is_horizon_key(k)}
         today = date.today()
 
-        max_matured = signal_date + timedelta(days=self._horizons[-1]) <= today
+        # Pull the base session and the following trading sessions in one shot.
+        # Index 0 = base (first session on/after signal_date); index h = the h-th
+        # trading session after base → an exact trading-day horizon window.
+        max_horizon = self._horizons[-1]
+        sessions = await self._market_data.list_sessions_from(
+            stock_id=stock_id, from_date=signal_date, limit=max_horizon + 1
+        )
 
         new_entries: dict[str, Any] = {}
-        base = await self._market_data.get_price_on_or_after(
-            stock_id=stock_id, trade_date=signal_date
-        )
+        base = sessions[0] if sessions else None
         base_close = _price(base)
         if base is not None and base_close and base_close > 0:
             for horizon in self._horizons:
                 key = f"h{horizon}"
                 if key in existing_horizons:
                     continue
-                target_date = signal_date + timedelta(days=horizon)
-                if target_date > today:
-                    continue  # window not matured yet
-                fwd = await self._market_data.get_price_on_or_after(
-                    stock_id=stock_id, trade_date=target_date
-                )
+                if horizon >= len(sessions):
+                    continue  # not enough trading sessions yet → window not matured
+                fwd = sessions[horizon]
                 fwd_close = _price(fwd)
                 if fwd is None or not fwd_close:
                     continue  # price not available yet → retry next cycle
@@ -120,12 +133,16 @@ class EpisodeOutcomeRecorder:
                     "realized_direction": realized,
                     "base_close": float(base_close),
                     "fwd_close": float(fwd_close),
-                    "base_date": _iso(base.get("trade_date")),
-                    "fwd_date": _iso(fwd.get("trade_date")),
+                    "base_date": _iso(_field(base, "trade_date")),
+                    "fwd_date": _iso(_field(fwd, "trade_date")),
                 }
 
         all_present = {f"h{h}" for h in self._horizons} <= (existing_horizons | set(new_entries))
-        finalize = all_present or max_matured
+        # Only abandon (finalize despite missing prices) once a generous calendar
+        # grace has elapsed — until then a delayed price must not lock the episode.
+        grace_expired = signal_date + timedelta(days=self._abandon_after_days) <= today
+        abandoned = grace_expired and not all_present
+        finalize = all_present or abandoned
         if not new_entries and not finalize:
             return None  # nothing matured/available yet — leave NULL, retry later
 
@@ -133,8 +150,11 @@ class EpisodeOutcomeRecorder:
         patch["primary"] = self._primary_key
         patch["computed_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
         if finalize:
-            # Longest window closed (or every horizon recorded): stop re-scanning.
+            # All horizons recorded (normal) or grace elapsed with prices still
+            # missing (abandoned): either way stop re-scanning this episode.
             patch["complete"] = True
+            if abandoned:
+                patch["abandoned"] = True
         return patch
 
 
@@ -153,6 +173,17 @@ def _realized_direction(fwd_return: float) -> str:
 
 def _norm_direction(value: Any) -> str:
     return str(value or "neutral").strip().lower()
+
+
+def _field(row: Any, column: str) -> Any:
+    """Read one column from a dict-like or asyncpg Record row (None if absent)."""
+    if row is None:
+        return None
+    getter = row.get if hasattr(row, "get") else (lambda k: row[k])
+    try:
+        return getter(column)
+    except (KeyError, IndexError):
+        return None
 
 
 def _price(row: Any) -> float | None:
