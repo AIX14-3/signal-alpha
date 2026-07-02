@@ -7,6 +7,8 @@
 -- 기존 DB(과거 free=3/pro/premium 시드됨)는 ON CONFLICT DO NOTHING 으로 보존되고,
 --   021 마이그레이션이 free 무제한화·pro/premium 비활성·monthly_9900 upsert 로 전환한다.
 -- max_watchlist 2147483647 = INT 최대값("무제한" 표기). 백엔드는 관심종목 한도를 검사하지 않는다.
+-- journal_max_entries: 저널은 구독 전용(free=0 미제공, 20260702_1402 와 동일 정본).
+--   백엔드는 건수 한도를 검사하지 않는다 — 구독 게이트(402)가 접근 자체를 막는다.
 INSERT INTO subscription_plans (
     plan_type,
     plan_display_name,
@@ -25,7 +27,7 @@ INSERT INTO subscription_plans (
         'Free',
         2147483647,
         24,
-        50,
+        0,
         FALSE,
         FALSE,
         FALSE,

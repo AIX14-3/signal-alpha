@@ -399,7 +399,23 @@ erDiagram
         BIGINT final_signal_id FK "nullable"
         BIGINT stock_id FK
         VARCHAR user_view "watch/research_more/not_relevant"
+        TEXT user_memo
+        NUMERIC signal_score_at_time "작성 시점 스냅샷"
+        VARCHAR signal_value_at_time
+        VARCHAR source_agreement_at_time
         JSONB tags
+    }
+
+    signal_journal_outcomes {
+        BIGINT id PK
+        BIGINT journal_id FK "UK(journal_id,horizon), signal_journals CASCADE"
+        VARCHAR horizon "7td|30td (거래일)"
+        DATE base_trade_date
+        NUMERIC base_price
+        DATE outcome_trade_date
+        NUMERIC outcome_price
+        NUMERIC change_pct
+        TIMESTAMPTZ checked_at
     }
 
     user_signal_reads {
@@ -467,6 +483,7 @@ erDiagram
     signal_subscriptions ||--o{ payments : "subscription_id"
     users ||--o{ watchlists : "user_id"
     users ||--o{ signal_journals : "user_id"
+    signal_journals ||--o{ signal_journal_outcomes : "journal_id"
     users ||--o{ user_signal_reads : "user_id"
     users ||--o{ report_issuances : "user_id"
     users ||--o{ user_sessions : "user_id"
@@ -477,7 +494,7 @@ erDiagram
 
 `stocks ||--o{ watchlists / report_issuances`, `final_signals ||--o{ signal_journals / user_signal_reads / report_issuances` (Zone E 참조 — 단 PUBLISHED/BACKEND 간 cross-DB라 물리 FK 아님).
 
-`payments`(결제/환불 이력), `report_issuances`(회원별 리포트 발행 이력), `collection_schedules`(소스별 수집 주기·활성 시간대·수동 트리거 제어, `20260629_0900` + `20260701_1600`)가 백엔드 DB에 추가됐다. 사용자-소유 테이블의 `user_id` FK는 **하드 삭제** 지원을 위해 `ON DELETE CASCADE`다(`20260626_0244`).
+`payments`(결제/환불 이력), `report_issuances`(회원별 리포트 발행 이력), `collection_schedules`(소스별 수집 주기·활성 시간대·수동 트리거 제어, `20260629_0900` + `20260701_1600`), `signal_journal_outcomes`(저널 작성 후 7/30 거래일 주가 변동 확정 — 워커 outcome 러너가 BACKEND_DATABASE_URL 로 기록, `20260702_1400`)가 백엔드 DB에 추가됐다. 사용자-소유 테이블의 `user_id` FK는 **하드 삭제** 지원을 위해 `ON DELETE CASCADE`다(`20260626_0244`).
 
 ## Zone E — Analysis [PUBLISHED + COLLECTION 혼재]
 
