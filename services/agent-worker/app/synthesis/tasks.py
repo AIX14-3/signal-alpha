@@ -33,6 +33,7 @@ class SynthesizeTaskHandler:
         *,
         settings: Any = None,
         synthesizer: Synthesizer | None = None,
+        audit_agent: Any = None,
     ) -> None:
         from signal_alpha_data_access.repositories import (
             AnalysisRepository,
@@ -45,6 +46,8 @@ class SynthesizeTaskHandler:
         self._queue = ProcessingQueueRepository(connection)
         self._settings = settings
         self._synthesizer = synthesizer if synthesizer is not None else _build_synthesizer(settings)
+        # 테스트용 DI(선택). None 이면 프로덕션 경로에서 _build_audit_agent 로 빌드. 기존 synthesizer DI와 동형.
+        self._audit_agent = audit_agent
 
     async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
         stock_id = int(task["stock_id"])
@@ -196,49 +199,20 @@ class SynthesizeTaskHandler:
 
         flag-only · non-blocking: 미구성/키없음/실패/degrade 는 모두 None 반환(로그만) → 호출측 발행은 계속.
         점수/방향/서술 불변(감사는 verdict 만 반환, 파이프에 안 씀). needs_review 미접근.
-        게이트: env ``PUBLICATION_AUDIT_ENABLED`` truthy + GEMINI 키 + ``source == "llm"``.
+        게이트: ``source == "llm"`` + (env ``PUBLICATION_AUDIT_ENABLED`` truthy 또는 테스트용 ``audit_agent`` 주입).
         """
         if source != "llm":
             return None
-        if str(os.getenv("PUBLICATION_AUDIT_ENABLED") or "").strip().lower() not in {"1", "true", "yes", "on"}:
+        enabled = str(os.getenv("PUBLICATION_AUDIT_ENABLED") or "").strip().lower() in {"1", "true", "yes", "on"}
+        if self._audit_agent is None and not enabled:
             return None
         try:
-            from app.audit.agent import PublicationAuditAgent
-            from app.clients.gemini_client import GeminiError, GeminiJsonClient
-
-            api_key = getattr(self._settings, "gemini_api_key", None) or os.getenv("GEMINI_API_KEY")
-            if not api_key:
-                logger.info("pub-audit: GEMINI 키 없음 — 감사 skip")
+            agent = self._audit_agent or self._build_audit_agent(report)
+            if agent is None:  # GEMINI 키 없음/미구성 → skip(발행 계속)
                 return None
-            try:
-                client = GeminiJsonClient(
-                    api_key=api_key,
-                    model=os.getenv("AUDIT_LLM_MODEL") or "gemini-2.5-flash",
-                    temperature=0.0,  # 판정 일관성(§8)
-                )
-            except GeminiError as exc:
-                logger.info("pub-audit: LLM 미구성 (%s) — 감사 skip", exc)
-                return None
-
             audited_text = "\n".join(
                 [narrative.narrative, *narrative.key_points, *narrative.caution_points]
             ).strip()
-            # 교정 A2: 초기 evidence = score_breakdown(얇게). insufficient 시 provider 가 '핸들러가 이미
-            # 로드한 추가 컨텍스트'를 서빙(새 DB 접근 0). score_breakdown 재서빙(장식 홉) 아님.
-            extras = {
-                "source_predictions": report.source_predictions,
-                "source_freshness": report.source_freshness,
-                "price_prediction": report.price_prediction,
-                "report_valuation": report.report_valuation,
-                "final_score": report.final_score,
-                "confidence": report.confidence,
-                "warning_level": report.warning_level,
-            }
-
-            async def _provider(_claim: Any, _need: Any) -> dict[str, Any]:
-                return extras
-
-            agent = PublicationAuditAgent(client=client, evidence_provider=_provider)
             verdict = await agent.audit(
                 narrative=audited_text, evidence={"score_breakdown": score_breakdown}
             )
@@ -265,6 +239,44 @@ class SynthesizeTaskHandler:
         except Exception as exc:  # noqa: BLE001 — 감사 실패는 격리, 발행 절대 안 막음
             logger.warning("pub-audit 실패 격리 (stock=%s): %s", report.stock_id, exc)
             return None
+
+    def _build_audit_agent(self, report: RiskReport) -> Any | None:
+        """프로덕션 감사 agent 빌드 — GEMINI 키 없거나 미구성이면 None(→ 감사 skip).
+
+        evidence_provider = 핸들러가 이미 로드한 추가 컨텍스트를 read-only 서빙(교정 A2, 새 DB 접근 0):
+        insufficient 시 score_breakdown 재서빙이 아니라 source_predictions/freshness 등으로 보강.
+        """
+        from app.audit.agent import PublicationAuditAgent
+        from app.clients.gemini_client import GeminiError, GeminiJsonClient
+
+        api_key = getattr(self._settings, "gemini_api_key", None) or os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            logger.info("pub-audit: GEMINI 키 없음 — 감사 skip")
+            return None
+        try:
+            client = GeminiJsonClient(
+                api_key=api_key,
+                model=os.getenv("AUDIT_LLM_MODEL") or "gemini-2.5-flash",
+                temperature=0.0,  # 판정 일관성(§8)
+            )
+        except GeminiError as exc:
+            logger.info("pub-audit: LLM 미구성 (%s) — 감사 skip", exc)
+            return None
+
+        extras = {
+            "source_predictions": report.source_predictions,
+            "source_freshness": report.source_freshness,
+            "price_prediction": report.price_prediction,
+            "report_valuation": report.report_valuation,
+            "final_score": report.final_score,
+            "confidence": report.confidence,
+            "warning_level": report.warning_level,
+        }
+
+        async def _provider(_claim: Any, _need: Any) -> dict[str, Any]:
+            return extras
+
+        return PublicationAuditAgent(client=client, evidence_provider=_provider)
 
     async def _narrate_sources(
         self,
