@@ -42,10 +42,13 @@ def extract_dart_financial_metrics(text: str | None) -> list[dict[str, Any]]:
         if match is None:
             continue
         number_text, unit_text = match.groups()
+        metric_value = _to_krw_million(number_text, unit_text)
+        if not _fits_signal_metric_precision(metric_value):
+            continue
         metrics.append(
             {
                 "metric_name": metric_name,
-                "metric_value": _to_krw_million(number_text, unit_text),
+                "metric_value": metric_value,
                 "metric_unit": "KRW_million",
             }
         )
@@ -59,3 +62,7 @@ def _to_krw_million(number_text: str, unit_text: str | None) -> int | float:
     if value == value.to_integral_value():
         return int(value)
     return float(value)
+
+
+def _fits_signal_metric_precision(value: int | float) -> bool:
+    return abs(Decimal(str(value))) < Decimal("100000000000")

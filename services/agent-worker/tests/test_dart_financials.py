@@ -25,6 +25,24 @@ class DartFinancialMetricExtractionTest(unittest.TestCase):
     def test_ignores_text_without_financial_metrics(self):
         self.assertEqual(extract_dart_financial_metrics("대표이사 변경 공시입니다."), [])
 
+    def test_ignores_financial_metrics_that_exceed_signal_metric_precision(self):
+        metrics = extract_dart_financial_metrics(
+            "EV/Revenue 표 이후 revenue 405,000,000,000 million krw, "
+            "operating profit 2 million krw, net income 1 million krw"
+        )
+
+        self.assertEqual(
+            metrics,
+            [
+                {
+                    "metric_name": "dart_operating_profit",
+                    "metric_value": 2,
+                    "metric_unit": "KRW_million",
+                },
+                {"metric_name": "dart_net_income", "metric_value": 1, "metric_unit": "KRW_million"},
+            ],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
