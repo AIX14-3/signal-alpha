@@ -183,6 +183,12 @@ class ReportRagPgvectorDBTest(unittest.IsolatedAsyncioTestCase):
                 "SELECT count(*) FROM report_chunks WHERE report_raw_detail_id=$1", rid_a
             )
             self.assertEqual(count, 3)
+            # 1B: 적재된 모든 청크에 stock_id 가 종목 A 로 채워졌는지(비정규화 검증).
+            scoped = await conn.fetchval(
+                "SELECT count(*) FROM report_chunks WHERE report_raw_detail_id=$1 AND stock_id=$2",
+                rid_a, self.stock_a,
+            )
+            self.assertEqual(scoped, 3)
 
             # 다른 종목에도 1청크 적재(스코프 테스트용).
             await self._embed(conn, raw_document_id=rid_b, chunks=["종목B 문단"], vectors=[_v(1.0, 0.0)])

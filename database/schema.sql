@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict ZjZTh4RvTrbBfNi4596ZnibJSMVLCvdZJJ0leR0jzLAZeDxNG9zA98K8KFYGfCc
+\restrict gWg0zBu2o1a7wlATcUCCdKvpQoVUsIFWzPwzdQEpQIbjR1hSsoelKAhGY1AAwO0
 
 -- Dumped from database version 16.14 (Debian 16.14-1.pgdg12+1)
 -- Dumped by pg_dump version 16.14 (Debian 16.14-1.pgdg12+1)
@@ -2174,7 +2174,8 @@ CREATE TABLE public.report_chunks (
     chunk_text text NOT NULL,
     embedding public.vector(768) NOT NULL,
     token_count integer,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    stock_id bigint NOT NULL
 );
 
 
@@ -5081,6 +5082,13 @@ CREATE INDEX idx_report_chunks_embedding ON public.report_chunks USING hnsw (emb
 
 
 --
+-- Name: idx_report_chunks_stock; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_report_chunks_stock ON public.report_chunks USING btree (stock_id);
+
+
+--
 -- Name: idx_report_detail_firm; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -5904,6 +5912,14 @@ ALTER TABLE ONLY public.recommendations
 
 ALTER TABLE ONLY public.report_chunks
     ADD CONSTRAINT report_chunks_report_raw_detail_id_fkey FOREIGN KEY (report_raw_detail_id) REFERENCES public.report_raw_details(raw_document_id) ON DELETE CASCADE;
+
+
+--
+-- Name: report_chunks report_chunks_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.report_chunks
+    ADD CONSTRAINT report_chunks_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
 
 
 --
