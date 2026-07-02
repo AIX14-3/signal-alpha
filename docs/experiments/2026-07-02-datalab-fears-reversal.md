@@ -37,7 +37,16 @@
 
 **결론**: FEARS = **유효한 시장 리스크오프 지표**(공포 급등→반등 예상, 제품의 시장수준 sentiment 오버레이로 사용가치). 트레이더블 알파로는 borderline(발행지연·소magnitude). 첫 방향성 생존이라 의미 있으나 종목 알파 아님.
 
+## 트레이더빌리티 재검 (OHLC 분해, KS11 open+close 2020~2026, n=1593)
+FEARS_t는 t+1에야 공개 → 익일 *시가* 진입만 가능. k=1 반전(+17.7bp)을 overnight gap vs t+1 intraday로 분해(`scratch_fears_tradeable.py`):
+| 분해 | slope(bps/1SD) | t |
+|---|---|---|
+| k1 총반전(close_t→close_{t+1}) | +17.71 | 4.49 |
+| **overnight gap**(close_t→open_{t+1}) | **+11.25** | 4.61 |
+| **t+1 intraday**(open→close, 진입가능) | **+6.28** | 2.14 (perm 0.036) |
+- **반전의 64%(+11.25/17.71)가 overnight gap** = FEARS_t가 시가 즈음/후 도착이면 **못 잡음**. 지연후 진입 가능한 intraday leg은 **+6.28bp/1SD(t2.14, perm0.036)로 통계 유의하나** 왕복 5bp 비용후 **net +1.28bp/1SD로 경제적 marginal**(비용 5→7bp면 음수). intraday +6.28도 "FEARS_t가 t+1 09:00 전 도착" 가정 의존.
+- **정량 결론: FEARS = 유효한 리스크오프 지표, 트레이더블 알파로는 marginal**(지연후 실현 gross +6bp·net ~+1bp/1SD). 지표/오버레이로 쓰되 단독 트레이딩 근거로는 약함.
+
 ## 다음
-- 트레이더빌리티 재검: 익일 *시가* 진입(overnight gap 제외) 수익만으로 재계산 — 지연후 실현 가능분 정량화.
-- ③ 부호 키워드 쌍(호재/악재·매수/매도) 수집·검정(수집기·키 준비됨).
-- 산출물: `scripts/collect_datalab_terms.py`(범용 term 수집·검증됨), `scripts/scratch_fears_reversal.py`, `fears_terms.txt`. 데이터/CSV 미커밋. **머지 보류**([[research-tooling-no-merge-until-signal]]).
+- ③ 부호 키워드 쌍 = 기각(별도 리포트). 뉴스감성(연속)×검색 융합 착수(무료 KR-FinBert).
+- 산출물: `scripts/collect_datalab_terms.py`(범용 term 수집·검증됨), `scripts/scratch_fears_reversal.py`, `scripts/scratch_fears_tradeable.py`, `fears_terms.txt`. 데이터/CSV(ks11_ohlc 포함) 미커밋. **머지 보류**([[research-tooling-no-merge-until-signal]]).
