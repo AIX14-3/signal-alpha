@@ -276,6 +276,20 @@ class UserSignalRepository:
             user_id,
         )
 
+    async def list_journal_chart_prices(self, *, stock_id: int, from_date: Any) -> list[Any]:
+        # 워커 러너가 동기화한 저널 차트용 종가 시리즈(signal_journal_chart_prices).
+        return await self._connection.fetch(
+            """
+            SELECT trade_date, close_price
+            FROM signal_journal_chart_prices
+            WHERE stock_id = $1
+              AND trade_date >= $2
+            ORDER BY trade_date ASC
+            """,
+            stock_id,
+            from_date,
+        )
+
     async def list_latest_journals_by_stock_ids(self, *, user_id: int, stock_ids: list[int]) -> list[Any]:
         if not stock_ids:
             return []

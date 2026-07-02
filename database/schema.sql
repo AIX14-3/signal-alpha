@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict tqDBRgxncY7QYY4u3OnWpAghdVZWJ3wDptsFc5tQEmfgafsxKq7L6QS6ANMUiQS
+\restrict Z8nRfwdIJdjVubyQCX7RaOqg91qzA6fmo6eN5cuifrZkQ2di0WgbGXkKCz37JeO
 
 -- Dumped from database version 16.14 (Debian 16.14-1.pgdg12+1)
 -- Dumped by pg_dump version 16.14 (Debian 16.14-1.pgdg12+1)
@@ -2476,6 +2476,18 @@ ALTER SEQUENCE public.signal_events_id_seq OWNED BY public.signal_events.id;
 
 
 --
+-- Name: signal_journal_chart_prices; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.signal_journal_chart_prices (
+    stock_id bigint NOT NULL,
+    trade_date date NOT NULL,
+    close_price numeric(12,2) NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: signal_journal_outcomes; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -4078,6 +4090,14 @@ ALTER TABLE ONLY public.signal_events
 
 ALTER TABLE ONLY public.signal_events
     ADD CONSTRAINT signal_events_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: signal_journal_chart_prices signal_journal_chart_prices_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.signal_journal_chart_prices
+    ADD CONSTRAINT signal_journal_chart_prices_pkey PRIMARY KEY (stock_id, trade_date);
 
 
 --
@@ -6077,6 +6097,14 @@ ALTER TABLE ONLY public.signal_events
 
 
 --
+-- Name: signal_journal_chart_prices signal_journal_chart_prices_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.signal_journal_chart_prices
+    ADD CONSTRAINT signal_journal_chart_prices_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
+
+
+--
 -- Name: signal_journal_outcomes signal_journal_outcomes_journal_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6208,5 +6236,5 @@ ALTER TABLE ONLY public.watchlists
 -- PostgreSQL database dump complete
 --
 
-\unrestrict tqDBRgxncY7QYY4u3OnWpAghdVZWJ3wDptsFc5tQEmfgafsxKq7L6QS6ANMUiQS
+\unrestrict Z8nRfwdIJdjVubyQCX7RaOqg91qzA6fmo6eN5cuifrZkQ2di0WgbGXkKCz37JeO
 

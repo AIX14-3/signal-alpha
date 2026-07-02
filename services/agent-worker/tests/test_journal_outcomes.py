@@ -9,6 +9,7 @@ from app.publish.journal_outcomes import (
     HORIZONS,
     record_journal_outcomes,
     resolve_outcome,
+    sync_journal_chart_prices,
 )
 
 
@@ -178,3 +179,64 @@ def test_record_skips_journal_without_price_history():
     stats = asyncio.run(record_journal_outcomes(backend, source))
 
     assert stats.skipped >= 1 and stats.stored == 0
+
+
+class _FakeChartBackend:
+    """저널 보유 종목 목록 + 차트 upsert 기록 대역."""
+
+    def __init__(self, stocks):
+        self._stocks = stocks  # [{stock_id, first_created}]
+        self.upserts = []  # (stock_id, trade_date, close)
+
+    async def fetch(self, sql):
+        assert "GROUP BY stock_id" in sql
+        return self._stocks
+
+    async def execute(self, sql, *args):
+        assert "INSERT INTO signal_journal_chart_prices" in sql
+        assert "ON CONFLICT (stock_id, trade_date) DO UPDATE" in sql
+        if args[0] == 666:
+            raise RuntimeError("boom")
+        self.upserts.append(args)
+        return "INSERT 0 1"
+
+
+def test_chart_sync_window_starts_30_days_before_first_journal():
+    backend = _FakeChartBackend(
+        [{"stock_id": 10, "first_created": datetime.fromisoformat("2026-06-22T10:00:00+09:00")}]
+    )
+    source = _FakeSource({10: _FULL_SERIES})
+
+    stats = asyncio.run(sync_journal_chart_prices(backend, source))
+
+    # 6/22 - 30일 = 5/23 이후 전 구간(시계열 전체 12행) upsert.
+    assert stats.stocks == 1 and stats.rows == len(_FULL_SERIES) and stats.failed == 0
+    assert backend.upserts[0][:2] == (10, date(2026, 6, 22))
+    # 소스 조회 시작일이 작성일 30일 전인지 — _FakeSource 가 start_date 필터를 적용하므로
+    # 5/23 이전 데이터가 있었다면 걸러졌을 것. 여기선 전체 행 수로 간접 확인.
+
+
+def test_chart_sync_isolates_per_stock_failure():
+    backend = _FakeChartBackend(
+        [
+            {"stock_id": 666, "first_created": datetime.fromisoformat("2026-06-22T10:00:00+09:00")},
+            {"stock_id": 10, "first_created": datetime.fromisoformat("2026-06-22T10:00:00+09:00")},
+        ]
+    )
+    source = _FakeSource({666: _FULL_SERIES, 10: _FULL_SERIES})
+
+    stats = asyncio.run(sync_journal_chart_prices(backend, source))
+
+    assert stats.failed == 1 and stats.stocks == 1
+    assert any("stock=666" in e for e in stats.errors)
+    assert all(u[0] == 10 for u in backend.upserts)
+
+
+def test_chart_sync_noop_without_journals():
+    backend = _FakeChartBackend([])
+    source = _FakeSource({})
+
+    stats = asyncio.run(sync_journal_chart_prices(backend, source))
+
+    assert (stats.stocks, stats.rows, stats.failed) == (0, 0, 0)
+    assert source.fetch_calls == 0

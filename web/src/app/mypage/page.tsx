@@ -21,6 +21,7 @@ import {
 import { won } from "@/lib/format";
 import { pay } from "@/lib/portone";
 import { isSocialDevMode, SOCIAL_PROVIDERS, socialAuthCode, startSocialOAuth } from "@/lib/social";
+import { JournalChartPanel } from "@/components/JournalChart";
 import { useAuthStore } from "@/stores/authStore";
 import { useJournalStore } from "@/stores/journalStore";
 import { useSocialStore } from "@/stores/socialStore";
@@ -318,6 +319,8 @@ function JournalTab() {
   const [editView, setEditView] = useState("watch");
   const [editMemo, setEditMemo] = useState("");
   const [editTags, setEditTags] = useState("");
+  // 카드 클릭 시 펼치는 주가 차트(작성 시점 대비 등락) 대상 저널.
+  const [chartId, setChartId] = useState<number | null>(null);
   const subscribed = user?.subscription_active === true;
 
   useEffect(() => {
@@ -379,9 +382,17 @@ function JournalTab() {
   return (
     <div className="space-y-2" data-panel="journal">
       {items.map((j) => (
-        <div key={j.journal_id} className="card px-5 py-4">
+        <div
+          key={j.journal_id}
+          className="card cursor-pointer px-5 py-4"
+          onClick={() => setChartId(chartId === j.journal_id ? null : j.journal_id)}
+        >
           <div className="flex items-center justify-between">
-            <Link href={`/report/${j.stock_code}`} className="font-bold hover:text-sky-deep">
+            <Link
+              href={`/report/${j.stock_code}`}
+              onClick={(e) => e.stopPropagation()}
+              className="font-bold hover:text-sky-deep"
+            >
               {j.stock_name ?? j.stock_code} <span className="text-[12px] font-normal text-muted">{j.stock_code}</span>
             </Link>
             <div className="flex items-center gap-2">
@@ -391,7 +402,11 @@ function JournalTab() {
               <button
                 type="button"
                 data-flow="journal-edit"
-                onClick={() => (editingId === j.journal_id ? setEditingId(null) : startEdit(j))}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (editingId === j.journal_id) setEditingId(null);
+                  else startEdit(j);
+                }}
                 className="text-[13px] font-semibold text-muted hover:text-sky-deep"
               >
                 수정
@@ -399,7 +414,10 @@ function JournalTab() {
               <button
                 type="button"
                 data-flow="journal-delete"
-                onClick={() => void removeJournal(j.journal_id)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void removeJournal(j.journal_id);
+                }}
                 className="text-[13px] font-semibold text-muted hover:text-red"
               >
                 삭제
@@ -408,7 +426,7 @@ function JournalTab() {
           </div>
 
           {editingId === j.journal_id ? (
-            <div className="mt-3 space-y-2 border-t border-line pt-3">
+            <div className="mt-3 space-y-2 border-t border-line pt-3" onClick={(e) => e.stopPropagation()}>
               <div className="flex flex-wrap gap-2">
                 {JOURNAL_VIEWS.map(([key, label]) => (
                   <button
@@ -485,7 +503,16 @@ function JournalTab() {
             ) : (
               <span>변동 확정 전</span>
             )}
+            <span className="ml-auto text-[11.5px]">
+              {chartId === j.journal_id ? "차트 닫기 ▲" : "클릭하면 주가 차트 ▼"}
+            </span>
           </div>
+
+          {chartId === j.journal_id && (
+            <div onClick={(e) => e.stopPropagation()}>
+              <JournalChartPanel journal={j} />
+            </div>
+          )}
         </div>
       ))}
     </div>

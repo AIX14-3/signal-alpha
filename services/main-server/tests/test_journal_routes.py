@@ -1,7 +1,7 @@
 import json
 import unittest
 import warnings
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 warnings.filterwarnings(
@@ -72,6 +72,8 @@ class FakeConnection:
         self.other_stock_signal = {**self.signal, "id": 201, "stock_id": 99}
         self.journals = []
         self.next_journal_id = 20
+        # stock_id → [{trade_date, close_price}] (러너가 동기화한 차트 시리즈 대역).
+        self.chart_prices = {}
 
     async def fetchrow(self, sql, *args):
         if "FROM users" in sql and "WHERE id = $1" in sql:
@@ -148,6 +150,12 @@ class FakeConnection:
         raise AssertionError(f"Unexpected fetchrow SQL: {sql}")
 
     async def fetch(self, sql, *args):
+        if "FROM signal_journal_chart_prices" in sql:
+            return [
+                row
+                for row in self.chart_prices.get(args[0], [])
+                if row["trade_date"] >= args[1]
+            ]
         if "FROM signal_journals" in sql:
             rows = [journal for journal in self.journals if journal["user_id"] == args[0]]
             if "stocks.ticker = $2" in sql:
@@ -235,6 +243,7 @@ class JournalRoutesTest(unittest.TestCase):
                 {"stock_code": "005930", "final_signal_id": 200, "user_view": "watch"},
             ),
             ("get", "/api/journals/20", None),
+            ("get", "/api/journals/20/chart", None),
             ("patch", "/api/journals/20", {"user_view": "watch"}),
             ("delete", "/api/journals/20", None),
         ]
@@ -313,6 +322,42 @@ class JournalRoutesTest(unittest.TestCase):
         self.assertEqual(outcomes[0]["horizon"], "7td")
         self.assertEqual(outcomes[0]["change_pct"], 5.0)
 
+    def test_journal_chart_returns_series_and_change_since_created(self):
+        self.create_journal()
+        # 작성일(KST) = 6/22. 작성일 이후 최신 종가까지 시리즈 제공.
+        self.connection.chart_prices[10] = [
+            {"trade_date": date(2026, 6, 19), "close_price": Decimal("69000.00")},
+            {"trade_date": date(2026, 6, 22), "close_price": Decimal("70000.00")},
+            {"trade_date": date(2026, 6, 23), "close_price": Decimal("71000.00")},
+            {"trade_date": date(2026, 6, 24), "close_price": Decimal("73500.00")},
+        ]
+
+        response = self.client.get("/api/journals/20/chart", headers=self.auth_headers())
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["journal"]["journal_id"], 20)
+        chart = body["chart"]
+        self.assertEqual(len(chart["series"]), 4)
+        # 기준점 = 작성일 이하 가장 최근 거래일(6/22) 종가.
+        self.assertEqual(chart["base_trade_date"], "2026-06-22")
+        self.assertEqual(chart["base_price"], 70000.0)
+        self.assertEqual(chart["latest_trade_date"], "2026-06-24")
+        self.assertEqual(chart["latest_price"], 73500.0)
+        self.assertEqual(chart["change_pct_since_created"], 5.0)
+        self.assertIn("데이터 방향성", body["notice"])
+
+    def test_journal_chart_before_sync_returns_empty_series(self):
+        self.create_journal()
+
+        response = self.client.get("/api/journals/20/chart", headers=self.auth_headers())
+
+        self.assertEqual(response.status_code, 200)
+        chart = response.json()["chart"]
+        self.assertEqual(chart["series"], [])
+        self.assertIsNone(chart["base_price"])
+        self.assertIsNone(chart["change_pct_since_created"])
+
     def test_journal_rejects_forbidden_user_view(self):
         response = self.create_journal(user_view="buy", memo="금지 값")
 
@@ -340,6 +385,7 @@ class JournalRoutesTest(unittest.TestCase):
     def test_missing_journal_returns_not_found(self):
         cases = [
             ("get", "/api/journals/999", None),
+            ("get", "/api/journals/999/chart", None),
             ("patch", "/api/journals/999", {"user_view": "watch"}),
             ("delete", "/api/journals/999", None),
         ]

@@ -418,6 +418,13 @@ erDiagram
         TIMESTAMPTZ checked_at
     }
 
+    signal_journal_chart_prices {
+        BIGINT stock_id PK "PK(stock_id,trade_date), stocks FK"
+        DATE trade_date PK
+        NUMERIC close_price
+        TIMESTAMPTZ updated_at
+    }
+
     user_signal_reads {
         BIGINT id PK
         BIGINT user_id FK "UK(user_id,final_signal_id), users CASCADE"
