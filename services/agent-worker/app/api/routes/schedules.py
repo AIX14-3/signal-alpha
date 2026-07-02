@@ -4,8 +4,9 @@ from collections import defaultdict
 from datetime import date
 from datetime import datetime, time
 from typing import Any, Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
 from app.core.database import get_database_pool
@@ -88,7 +89,10 @@ async def _queue_stats(pool: Any) -> dict[str, Any]:
     from signal_alpha_data_access.repositories import ObservabilityRepository
 
     async with pool.acquire() as connection:
-        rows = await ObservabilityRepository(connection).queue_stats()
+        observability = ObservabilityRepository(connection)
+        rows = await observability.queue_stats()
+        # 스케줄러 backpressure 와 동일 기준(failed 총계는 평생 누적 → 최근 윈도우 카운트).
+        failed_recent = await observability.recent_failed_count(window_minutes=360)
 
     items = [dict(row) for row in rows]
     totals_by_status: dict[str, int] = defaultdict(int)
@@ -98,6 +102,8 @@ async def _queue_stats(pool: Any) -> dict[str, Any]:
         "total": sum(totals_by_status.values()),
         "totals_by_status": dict(totals_by_status),
         "items": items,
+        "failed_recent": failed_recent,
+        "failed_window_minutes": 360,
     }
 
 
@@ -108,10 +114,26 @@ async def schedule_dry_run(
 ) -> dict[str, Any]:
     from run_scheduler_instance import _scheduler_dry_run
 
+    schedule = _normalize_schedule_payload(request.schedule)
+    # 알 수 없는 timezone 은 ZoneInfo 가 dry-run 내부에서 터져 500 이 되므로 여기서 422 로 거른다.
+    timezone_name = str(schedule.get("timezone") or "Asia/Seoul")
+    try:
+        tz = ZoneInfo(timezone_name)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"unknown timezone: {timezone_name}",
+        ) from exc
+    now = request.now
+    if now is not None and now.tzinfo is None:
+        # naive now 는 스케줄 타임존 기준으로 해석 — 그대로 두면 aware last_run_at 등과의
+        # 비교(TypeError)로 500 이 나거나 시스템 로컬 타임존으로 잘못 평가된다.
+        now = now.replace(tzinfo=tz)
+
     queue_stats = request.queue_stats if request.queue_stats is not None else await _queue_stats(pool)
     return _scheduler_dry_run(
-        _normalize_schedule_payload(request.schedule),
-        now=request.now,
+        schedule,
+        now=now,
         queue_stats=queue_stats,
     )
 

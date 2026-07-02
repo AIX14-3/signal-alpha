@@ -1,3 +1,5 @@
+import hmac
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
@@ -45,7 +47,10 @@ def create_app() -> FastAPI:
                     },
                     status_code=503,
                 )
-            if request.headers.get("X-Internal-Token") != token:
+            provided = request.headers.get("X-Internal-Token") or ""
+            # 상수 시간 비교 — 단순 != 는 타이밍 부채널로 토큰 접두 일치를 노출할 수 있다.
+            # 빈 토큰(미설정)은 위의 503 fail-closed 가 먼저 처리한다.
+            if not hmac.compare_digest(provided.encode("utf-8"), token.encode("utf-8")):
                 return JSONResponse(
                     {"detail": {"code": "INTERNAL_AUTH_REQUIRED", "message": "invalid internal token"}},
                     status_code=401,
