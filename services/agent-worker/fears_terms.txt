@@ -1,0 +1,33 @@
+# FEARS 후보 거시 우려어 (Da-Engelberg-Gao 2015 한국판). 일별 수집 후
+# 시장수익(KS11)에 음의 t가 큰 term만 선별해 지수 구성 → 단기 반전 검정.
+# 사용: collect_datalab_terms.py --group MACRO --time-unit date --terms-file fears_terms.txt --out fears_terms.csv
+경기침체
+불황
+경제위기
+금융위기
+실업
+실업률
+파산
+부도
+폐업
+인플레이션
+물가상승
+금리인상
+환율급등
+공매도
+반대매매
+서킷브레이커
+증시폭락
+코스피폭락
+주가폭락
+하락장
+손절
+깡통계좌
+신용융자
+마진콜
+금값
+안전자산
+달러강세
+대출금리
+가계부채
+연체
