@@ -59,7 +59,7 @@ test("mypage keeps account guard and tab data sources wired", () => {
     '"profile"',
     "getMySubscription()",
     "paymentHistory()",
-    "listJournals({ limit: 50 })",
+    "useJournalStore",
     "useWatchlistStore",
     "useSocialStore",
   ].forEach((expected) => assertIncludes(source, expected, "mypage"));

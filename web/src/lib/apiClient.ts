@@ -236,6 +236,18 @@ export type Subscription = {
   expiring_soon?: boolean;
 };
 
+// 저널 작성 후 실제 주가 변동 확정 결과 — 거래일 horizon(7td/30td)별. 워커 러너가
+// 매일 채우며, 만기 전엔 배열이 비거나 일부만 온다(프론트는 "확정 전" 표시).
+export type JournalOutcome = {
+  horizon: "7td" | "30td";
+  base_trade_date: string;
+  base_price: number;
+  outcome_trade_date: string;
+  outcome_price: number;
+  change_pct: number;
+  checked_at: string;
+};
+
 export type Journal = {
   journal_id: number;
   stock_code: string;
@@ -244,6 +256,11 @@ export type Journal = {
   user_view: string;
   memo: string | null;
   tags: string[];
+  // 작성 시점 신호 스냅샷 — 리포트가 갱신돼도 "그때 판단"의 근거를 보존.
+  signal_score_at_time: number | null;
+  signal_value_at_time: string | null;
+  source_agreement_at_time: string | null;
+  outcomes: JournalOutcome[];
   created_at: string | null;
   updated_at: string | null;
 };
@@ -371,6 +388,17 @@ export async function createJournal(body: {
   tags?: string[];
 }): Promise<Journal> {
   return apiFetch("/api/journals", { method: "POST", body: JSON.stringify(body) });
+}
+
+export async function getJournal(id: number): Promise<Journal> {
+  return apiFetch(`/api/journals/${id}`);
+}
+
+export async function updateJournal(
+  id: number,
+  body: { user_view?: string; memo?: string; tags?: string[] },
+): Promise<Journal> {
+  return apiFetch(`/api/journals/${id}`, { method: "PATCH", body: JSON.stringify(body) });
 }
 
 export async function deleteJournal(id: number): Promise<{ status: string }> {

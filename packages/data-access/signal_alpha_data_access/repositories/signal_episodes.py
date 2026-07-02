@@ -98,7 +98,7 @@ class SignalEpisodeRepository:
         기존 키(이미 채운 horizon)는 보존하고 patch 의 새 키만 더한다 — 짧은 horizon 을 먼저
         채우고 60일은 나중에 만기되면 덧붙이는 progressive 기록을 재백필 없이 지원한다. 리코더가
         만기·미채움 horizon 만 patch 로 넘기므로 재실행/부분채움 모두 멱등하다(사후 기록·recall
-        참고용일 뿐 headline 숫자엔 영향 없음 — 불변식). ``update_journal_outcome`` 관례를 따른다.
+        참고용일 뿐 headline 숫자엔 영향 없음 — 불변식).
         """
         return await self._connection.fetchrow(
             """

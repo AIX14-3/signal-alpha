@@ -1,0 +1,44 @@
+# 저널 outcome 확정 — 매일 06:00 KST CronJob(run_journal_outcomes.py).
+# run_yesterday_flows(어제 일봉 적재) 이후에 돌아야 최신 종가가 반영된다.
+# 수집 DB(ohlcv_data) 읽기 + 백엔드 DB(signal_journal_outcomes) 쓰기 — 테이블 한정
+# grant 계약(20260702_1400). BACKEND_DATABASE_URL 미설정이면 러너가 no-op 종료.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: journal-outcomes
+  namespace: signal-alpha
+  labels:
+    app.kubernetes.io/part-of: signal-alpha
+    app.kubernetes.io/name: journal-outcomes
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  schedule: "0 6 * * *"
+  timeZone: "Asia/Seoul"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/part-of: signal-alpha
+            app.kubernetes.io/name: journal-outcomes
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: journal-outcomes
+              image: signal-alpha-agent-worker
+              command: ["python", "run_journal_outcomes.py"]
+              envFrom:
+                - configMapRef: { name: signal-alpha-config }
+                - secretRef: { name: signal-alpha-secrets }
+              env:
+                - name: SERVICE_NAME
+                  value: journal-outcomes
+                - name: DATABASE_URL          # 수집 DB (ohlcv_data 읽기)
+                  valueFrom: { secretKeyRef: { name: signal-alpha-secrets, key: WORKER_DATABASE_URL } }
+                - name: BACKEND_DATABASE_URL  # 백엔드 DB (signal_journal_outcomes 쓰기)
+                  valueFrom: { secretKeyRef: { name: signal-alpha-secrets, key: BACKEND_DATABASE_URL } }

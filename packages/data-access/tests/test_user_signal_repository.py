@@ -69,15 +69,6 @@ class UserSignalRepositoryTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("ON CONFLICT (user_id, final_signal_id)", connection.calls[0][1])
 
-    async def test_create_journal_returns_inserted_id(self):
-        connection = FakeConnection()
-        repository = UserSignalRepository(connection)
-
-        journal_id = await repository.create_journal(user_id=1, stock_id=10, user_view="watch")
-
-        self.assertEqual(journal_id, 10)
-        self.assertIn("INSERT INTO signal_journals", connection.calls[0][1])
-
     async def test_create_journal_entry_returns_inserted_row_with_tags(self):
         connection = FakeConnection()
         repository = UserSignalRepository(connection)
@@ -99,6 +90,7 @@ class UserSignalRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("INSERT INTO signal_journals", sql)
         self.assertIn("tags", sql)
         self.assertIn("RETURNING", sql)
+        self.assertIn("'[]'::JSONB AS outcomes", sql)
         self.assertEqual(connection.calls[0][2][3], "research_more")
 
     async def test_list_journals_filters_user_and_optional_stock_code(self):
@@ -111,6 +103,8 @@ class UserSignalRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("FROM signal_journals", sql)
         self.assertIn("INNER JOIN api.stocks", sql)
         self.assertIn("stocks.ticker = $2", sql)
+        self.assertIn("FROM signal_journal_outcomes", sql)
+        self.assertIn("outcomes.items AS outcomes", sql)
         self.assertEqual(connection.calls[0][2], (1, "005930", 20))
 
     async def test_get_journal_filters_by_user(self):
@@ -122,6 +116,7 @@ class UserSignalRepositoryTest(unittest.IsolatedAsyncioTestCase):
         sql = connection.calls[0][1]
         self.assertIn("signal_journals.id = $1", sql)
         self.assertIn("signal_journals.user_id = $2", sql)
+        self.assertIn("FROM signal_journal_outcomes", sql)
         self.assertEqual(connection.calls[0][2], (20, 1))
 
     async def test_update_journal_updates_user_view_memo_and_tags(self):
@@ -140,6 +135,7 @@ class UserSignalRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("UPDATE signal_journals", sql)
         self.assertIn("tags = $5::JSONB", sql)
         self.assertIn("updated_at = NOW()", sql)
+        self.assertIn("FROM signal_journal_outcomes", sql)
         self.assertEqual(connection.calls[0][2][0:2], (20, 1))
 
     async def test_delete_journal_deletes_only_user_row(self):
