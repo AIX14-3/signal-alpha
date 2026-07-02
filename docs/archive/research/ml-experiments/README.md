@@ -2,7 +2,8 @@
 
 2026-06-23 ~ 07-02 사이 진행한 대체데이터 단독/융합 ML 실험 22건의 보고서를 소스별로 보존한다.
 원본은 Notion **experiment DB**에 있으며, 이 폴더는 그 내용을 마크다운으로 **그대로 미러링**한 것이다
-(링크가 아니라 본문 포함). 실험 코드 자체는 무거워 main에 머지하지 않았고, 재현용으로 아래 origin
+(링크가 아니라 본문 포함). 미러링·갱신은 `services/agent-worker/scripts/fetch_from_notion.py`
+(`push_to_notion.py`의 역방향)로 재현한다 — 예: `fetch_from_notion.py dump --out <dir> --db-id <ID>`. 실험 코드 자체는 무거워 main에 머지하지 않았고, 재현용으로 아래 origin
 리서치 브랜치에 백업돼 있다. **방향 신호 연구는 종료가 아니라 진행 중**이며, 아래 표는 "지금까지의
 관찰"이지 최종 결론이 아니다.
 
