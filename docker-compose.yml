@@ -139,6 +139,11 @@ services:
       # 워커 인스턴스: 큐 드레인을 기본 기동하고, 가격 수집은 별도 collector 인스턴스가 담당.
       QUEUE_DRAIN_DAEMON_ENABLED: ${QUEUE_DRAIN_DAEMON_ENABLED:-true}
       QUEUE_DRAIN_INTERVAL_SEC: ${QUEUE_DRAIN_INTERVAL_SEC:-5}
+      # 에피소드 아웃컴 리코더 — config.py 기본값과 동일(드리프트 가드 test_worker_runtime_config).
+      EPISODE_OUTCOME_ENABLED: ${EPISODE_OUTCOME_ENABLED:-true}
+      EPISODE_OUTCOME_PRIMARY_DAYS: ${EPISODE_OUTCOME_PRIMARY_DAYS:-20}
+      EPISODE_OUTCOME_BATCH_LIMIT: ${EPISODE_OUTCOME_BATCH_LIMIT:-500}
+      EPISODE_OUTCOME_INTERVAL_SEC: ${EPISODE_OUTCOME_INTERVAL_SEC:-86400}
       # 단일 통합 개발 기동에서만 true 로 켠다(run_collector_instance.py 가 기본 가격 수집 유닛).
       PRICE_COLLECTOR_ENABLED: ${PRICE_COLLECTOR_ENABLED:-false}
       KIWOOM_APP_KEY: ${KIWOOM_APP_KEY:-}
