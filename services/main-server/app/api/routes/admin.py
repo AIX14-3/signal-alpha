@@ -82,6 +82,15 @@ class UpdateScheduleRequest(BaseModel):
     targets: list[str] | None = None
     dart_limit: int | None = None
     price_modes: list[str] | None = None
+    report_limit: int | None = None
+    report_days_back: int | None = None
+    report_max_pages: int | None = None
+    alternative_collect_enabled: bool | None = None
+    alternative_analyze_enabled: bool | None = None
+    alternative_collect_timeout_seconds: int | None = None
+    alternative_analyze_timeout_seconds: int | None = None
+    backpressure_max_waiting: int | None = None
+    backpressure_max_failed: int | None = None
     frequency_minutes: int | None = None
     active_from_local: str | None = None
     active_until_local: str | None = None
@@ -600,6 +609,23 @@ async def update_schedule(
     )
     if payload.dart_limit is not None and not (1 <= payload.dart_limit <= 1000):
         raise admin_error(400, "INVALID_DART_LIMIT", "dart_limit 은 1~1000 이어야 합니다.")
+    _validate_range(payload.report_limit, "report_limit", 1, 1000)
+    _validate_range(payload.report_days_back, "report_days_back", 1, 400)
+    _validate_range(payload.report_max_pages, "report_max_pages", 1, 200)
+    _validate_range(
+        payload.alternative_collect_timeout_seconds,
+        "alternative_collect_timeout_seconds",
+        60,
+        86400,
+    )
+    _validate_range(
+        payload.alternative_analyze_timeout_seconds,
+        "alternative_analyze_timeout_seconds",
+        60,
+        86400,
+    )
+    _validate_range(payload.backpressure_max_waiting, "backpressure_max_waiting", 0, 1_000_000)
+    _validate_range(payload.backpressure_max_failed, "backpressure_max_failed", 0, 1_000_000)
     if payload.frequency_minutes is not None and not (1 <= payload.frequency_minutes <= 1440):
         raise admin_error(
             400,
@@ -637,6 +663,15 @@ async def update_schedule(
             targets=targets,
             dart_limit=payload.dart_limit,
             price_modes=price_modes,
+            report_limit=payload.report_limit,
+            report_days_back=payload.report_days_back,
+            report_max_pages=payload.report_max_pages,
+            alternative_collect_enabled=payload.alternative_collect_enabled,
+            alternative_analyze_enabled=payload.alternative_analyze_enabled,
+            alternative_collect_timeout_seconds=payload.alternative_collect_timeout_seconds,
+            alternative_analyze_timeout_seconds=payload.alternative_analyze_timeout_seconds,
+            backpressure_max_waiting=payload.backpressure_max_waiting,
+            backpressure_max_failed=payload.backpressure_max_failed,
             frequency_minutes=payload.frequency_minutes,
             active_from_local=active_from,
             active_until_local=active_until,
@@ -666,6 +701,25 @@ async def list_schedule_runs(
             limit=limit,
         )
     return {"items": [_schedule_run_row(dict(row)) for row in rows]}
+
+
+@admin_router.post("/schedules/{schedule_id}/dry-run")
+async def dry_run_schedule(
+    schedule_id: int,
+    _admin: dict[str, Any] = Depends(get_current_admin),
+    pool: Any = Depends(get_database_pool),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    async with pool.acquire() as connection:
+        row = await CollectionScheduleRepository(connection).get_by_id(schedule_id)
+    if row is None:
+        raise admin_error(404, "SCHEDULE_NOT_FOUND", "스케줄을 찾을 수 없습니다.")
+    return await _worker_request(
+        "POST",
+        "/internal/schedules/dry-run",
+        settings=settings,
+        json_body={"schedule": _schedule_row(parse_schedule_row(row))},
+    )
 
 
 @admin_router.post("/schedules/{schedule_id}/trigger")
@@ -752,6 +806,17 @@ def _validate_targets(targets: list[str]) -> list[str]:
     return cleaned
 
 
+def _validate_range(value: int | None, field: str, minimum: int, maximum: int) -> None:
+    if value is None:
+        return
+    if not (minimum <= value <= maximum):
+        raise admin_error(
+            400,
+            f"INVALID_{field.upper()}",
+            f"{field} 는 {minimum}~{maximum} 이어야 합니다.",
+        )
+
+
 def _validate_active_window(
     *,
     frequency_minutes: Any,
@@ -801,6 +866,19 @@ def _schedule_row(row: dict[str, Any] | None) -> dict[str, Any]:
         "targets": row.get("targets") or [],
         "dart_limit": row.get("dart_limit"),
         "price_modes": row.get("price_modes") or [],
+        "report_limit": row.get("report_limit"),
+        "report_days_back": row.get("report_days_back"),
+        "report_max_pages": row.get("report_max_pages"),
+        "alternative_collect_enabled": row.get("alternative_collect_enabled"),
+        "alternative_analyze_enabled": row.get("alternative_analyze_enabled"),
+        "alternative_collect_timeout_seconds": row.get(
+            "alternative_collect_timeout_seconds"
+        ),
+        "alternative_analyze_timeout_seconds": row.get(
+            "alternative_analyze_timeout_seconds"
+        ),
+        "backpressure_max_waiting": row.get("backpressure_max_waiting"),
+        "backpressure_max_failed": row.get("backpressure_max_failed"),
         "frequency_minutes": row.get("frequency_minutes"),
         "active_from_local": (
             active_from.strftime("%H:%M") if hasattr(active_from, "strftime") else active_from

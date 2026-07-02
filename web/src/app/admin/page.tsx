@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   adminCancelSubscription,
   adminDeleteUser,
+  adminDryRunSchedule,
   adminGetStats,
   adminGetQueueOverview,
   adminListScheduleRuns,
@@ -25,6 +26,7 @@ import {
   type AdminQueueOverview,
   type AdminQueueTask,
   type AdminSchedule,
+  type AdminScheduleDryRun,
   type AdminScheduleRun,
   type AdminStats,
   type AdminUser,
@@ -554,6 +556,15 @@ type ScheduleDraft = {
   frequencyMinutes: string;
   activeFrom: string;
   activeUntil: string;
+  reportLimit: string;
+  reportDaysBack: string;
+  reportMaxPages: string;
+  alternativeCollectEnabled: boolean;
+  alternativeAnalyzeEnabled: boolean;
+  alternativeCollectTimeoutSeconds: string;
+  alternativeAnalyzeTimeoutSeconds: string;
+  backpressureMaxWaiting: string;
+  backpressureMaxFailed: string;
 };
 
 const DEFAULT_SCHEDULE_DRAFT: ScheduleDraft = {
@@ -562,6 +573,15 @@ const DEFAULT_SCHEDULE_DRAFT: ScheduleDraft = {
   frequencyMinutes: '1440',
   activeFrom: '04:30',
   activeUntil: '04:30',
+  reportLimit: '100',
+  reportDaysBack: '7',
+  reportMaxPages: '20',
+  alternativeCollectEnabled: true,
+  alternativeAnalyzeEnabled: true,
+  alternativeCollectTimeoutSeconds: '3600',
+  alternativeAnalyzeTimeoutSeconds: '3600',
+  backpressureMaxWaiting: '',
+  backpressureMaxFailed: '',
 };
 
 function draftFromSchedule(schedule: AdminSchedule): ScheduleDraft {
@@ -572,6 +592,15 @@ function draftFromSchedule(schedule: AdminSchedule): ScheduleDraft {
     frequencyMinutes: String(schedule.frequency_minutes ?? 1440),
     activeFrom,
     activeUntil: schedule.active_until_local ?? activeFrom,
+    reportLimit: String(schedule.report_limit ?? 100),
+    reportDaysBack: String(schedule.report_days_back ?? 7),
+    reportMaxPages: String(schedule.report_max_pages ?? 20),
+    alternativeCollectEnabled: schedule.alternative_collect_enabled ?? true,
+    alternativeAnalyzeEnabled: schedule.alternative_analyze_enabled ?? true,
+    alternativeCollectTimeoutSeconds: String(schedule.alternative_collect_timeout_seconds ?? 3600),
+    alternativeAnalyzeTimeoutSeconds: String(schedule.alternative_analyze_timeout_seconds ?? 3600),
+    backpressureMaxWaiting: schedule.backpressure_max_waiting == null ? '' : String(schedule.backpressure_max_waiting),
+    backpressureMaxFailed: schedule.backpressure_max_failed == null ? '' : String(schedule.backpressure_max_failed),
   };
 }
 
@@ -688,6 +717,26 @@ function getScheduleRunWarning(runs: AdminScheduleRun[]): string | null {
   return `반복 보류/실패 ${consecutive}회가 이어졌습니다. 큐 상태와 최근 실행 결과를 추가 확인하세요.`;
 }
 
+function parseOptionalNumber(value: string): number | undefined {
+  const trimmed = value.trim();
+  return trimmed === '' ? undefined : Number(trimmed);
+}
+
+function validateNumberRange(
+  value: string,
+  label: string,
+  min: number,
+  max: number,
+  optional = false,
+): string | null {
+  if (optional && value.trim() === '') return null;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < min || parsed > max) {
+    return `${label} 값은 ${min}~${max} 사이의 정수로 입력하세요.`;
+  }
+  return null;
+}
+
 function validateScheduleDraft(draft: ScheduleDraft): string | null {
   if (draft.targets.length === 0) {
     return '수집 대상을 최소 1개 선택하세요.';
@@ -699,13 +748,22 @@ function validateScheduleDraft(draft: ScheduleDraft): string | null {
   if (frequencyMinutes < 1440 && draft.activeFrom === draft.activeUntil) {
     return '반복 스케줄의 활성 시작/종료 시각은 같을 수 없습니다.';
   }
-  return null;
+  return (
+    validateNumberRange(draft.reportLimit, 'report_limit', 1, 1000) ??
+    validateNumberRange(draft.reportDaysBack, 'report_days_back', 1, 400) ??
+    validateNumberRange(draft.reportMaxPages, 'report_max_pages', 1, 200) ??
+    validateNumberRange(draft.alternativeCollectTimeoutSeconds, 'alternative_collect_timeout_seconds', 60, 86400) ??
+    validateNumberRange(draft.alternativeAnalyzeTimeoutSeconds, 'alternative_analyze_timeout_seconds', 60, 86400) ??
+    validateNumberRange(draft.backpressureMaxWaiting, 'backpressure_max_waiting', 0, 1000000, true) ??
+    validateNumberRange(draft.backpressureMaxFailed, 'backpressure_max_failed', 0, 1000000, true)
+  );
 }
 
 function ScheduleCard({ onError }: { onError: (msg: string | null) => void }) {
   const [schedules, setSchedules] = useState<AdminSchedule[]>([]);
   const [drafts, setDrafts] = useState<Record<number, ScheduleDraft>>({});
   const [runsBySchedule, setRunsBySchedule] = useState<Record<number, AdminScheduleRun[]>>({});
+  const [dryRuns, setDryRuns] = useState<Record<number, AdminScheduleDryRun>>({});
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -782,6 +840,38 @@ function ScheduleCard({ onError }: { onError: (msg: string | null) => void }) {
     });
   }
 
+  async function savePolicy(schedule: AdminSchedule, draft: ScheduleDraft) {
+    const validation = validateScheduleDraft(draft);
+    if (validation) {
+      onError(validation);
+      return;
+    }
+    await save(schedule, {
+      report_limit: Number(draft.reportLimit),
+      report_days_back: Number(draft.reportDaysBack),
+      report_max_pages: Number(draft.reportMaxPages),
+      alternative_collect_enabled: draft.alternativeCollectEnabled,
+      alternative_analyze_enabled: draft.alternativeAnalyzeEnabled,
+      alternative_collect_timeout_seconds: Number(draft.alternativeCollectTimeoutSeconds),
+      alternative_analyze_timeout_seconds: Number(draft.alternativeAnalyzeTimeoutSeconds),
+      backpressure_max_waiting: parseOptionalNumber(draft.backpressureMaxWaiting),
+      backpressure_max_failed: parseOptionalNumber(draft.backpressureMaxFailed),
+    });
+  }
+
+  async function dryRunSchedule(schedule: AdminSchedule) {
+    setBusy(true);
+    onError(null);
+    try {
+      const result = await adminDryRunSchedule(schedule.id);
+      setDryRuns((prev) => ({ ...prev, [schedule.id]: result }));
+    } catch (err) {
+      onError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function trigger(schedule: AdminSchedule) {
     if (!window.confirm(`${schedule.name ?? schedule.id} \uc2a4\ucf00\uc904\uc744 \ub2e4\uc74c \ud3f4\ub9c1\uc5d0\uc11c \uc2e4\ud589\ud558\ub3c4\ub85d \uc694\uccad\ud560\uae4c\uc694?`)) return;
     setBusy(true);
@@ -805,7 +895,7 @@ function ScheduleCard({ onError }: { onError: (msg: string | null) => void }) {
     });
   }
 
-  function setDraftField(schedule: AdminSchedule, key: keyof ScheduleDraft, value: string) {
+  function setDraftField(schedule: AdminSchedule, key: keyof ScheduleDraft, value: string | boolean) {
     setDrafts((prev) => ({
       ...prev,
       [schedule.id]: {
@@ -843,12 +933,22 @@ function ScheduleCard({ onError }: { onError: (msg: string | null) => void }) {
             frequencyMinutes: String(schedule.frequency_minutes ?? 1440),
             activeFrom: schedule.active_from_local ?? schedule.run_at_local ?? '04:30',
             activeUntil: schedule.active_until_local ?? schedule.active_from_local ?? schedule.run_at_local ?? '04:30',
+            reportLimit: String(schedule.report_limit ?? 100),
+            reportDaysBack: String(schedule.report_days_back ?? 7),
+            reportMaxPages: String(schedule.report_max_pages ?? 20),
+            alternativeCollectEnabled: schedule.alternative_collect_enabled ?? true,
+            alternativeAnalyzeEnabled: schedule.alternative_analyze_enabled ?? true,
+            alternativeCollectTimeoutSeconds: String(schedule.alternative_collect_timeout_seconds ?? 3600),
+            alternativeAnalyzeTimeoutSeconds: String(schedule.alternative_analyze_timeout_seconds ?? 3600),
+            backpressureMaxWaiting: schedule.backpressure_max_waiting == null ? '' : String(schedule.backpressure_max_waiting),
+            backpressureMaxFailed: schedule.backpressure_max_failed == null ? '' : String(schedule.backpressure_max_failed),
           };
           const frequencyMinutes = Number(draft.frequencyMinutes);
           const runs = runsBySchedule[schedule.id] ?? [];
           const health = formatScheduleHealth(schedule);
           const runWarning = getScheduleRunWarning(runs);
           const draftValidation = validateScheduleDraft(draft);
+          const dryRun = dryRuns[schedule.id];
           return (
             <div key={schedule.id} className="rounded-xl border border-line p-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
@@ -955,6 +1055,97 @@ function ScheduleCard({ onError }: { onError: (msg: string | null) => void }) {
                   >
                     {'\uc8fc\uae30 \uc800\uc7a5'}
                   </button>
+
+                  <label className="mt-5 block text-[12.5px] font-semibold text-muted">{'\uc2e4\ud589 \uc815\ucc45'}</label>
+                  <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                    <input
+                      type="number"
+                      min={1}
+                      max={1000}
+                      value={draft.reportLimit}
+                      onChange={(e) => setDraftField(schedule, 'reportLimit', e.target.value)}
+                      placeholder="report_limit"
+                      className="card px-3 py-2 text-[14px] outline-none focus:border-sky"
+                    />
+                    <input
+                      type="number"
+                      min={1}
+                      max={400}
+                      value={draft.reportDaysBack}
+                      onChange={(e) => setDraftField(schedule, 'reportDaysBack', e.target.value)}
+                      placeholder="report_days_back"
+                      className="card px-3 py-2 text-[14px] outline-none focus:border-sky"
+                    />
+                    <input
+                      type="number"
+                      min={1}
+                      max={200}
+                      value={draft.reportMaxPages}
+                      onChange={(e) => setDraftField(schedule, 'reportMaxPages', e.target.value)}
+                      placeholder="report_max_pages"
+                      className="card px-3 py-2 text-[14px] outline-none focus:border-sky"
+                    />
+                    <input
+                      type="number"
+                      min={60}
+                      max={86400}
+                      value={draft.alternativeCollectTimeoutSeconds}
+                      onChange={(e) => setDraftField(schedule, 'alternativeCollectTimeoutSeconds', e.target.value)}
+                      placeholder="alternative_collect_timeout_seconds"
+                      className="card px-3 py-2 text-[14px] outline-none focus:border-sky"
+                    />
+                    <input
+                      type="number"
+                      min={60}
+                      max={86400}
+                      value={draft.alternativeAnalyzeTimeoutSeconds}
+                      onChange={(e) => setDraftField(schedule, 'alternativeAnalyzeTimeoutSeconds', e.target.value)}
+                      placeholder="alternative_analyze_timeout_seconds"
+                      className="card px-3 py-2 text-[14px] outline-none focus:border-sky"
+                    />
+                    <input
+                      type="number"
+                      min={0}
+                      value={draft.backpressureMaxWaiting}
+                      onChange={(e) => setDraftField(schedule, 'backpressureMaxWaiting', e.target.value)}
+                      placeholder="backpressure_max_waiting"
+                      className="card px-3 py-2 text-[14px] outline-none focus:border-sky"
+                    />
+                    <input
+                      type="number"
+                      min={0}
+                      value={draft.backpressureMaxFailed}
+                      onChange={(e) => setDraftField(schedule, 'backpressureMaxFailed', e.target.value)}
+                      placeholder="backpressure_max_failed"
+                      className="card px-3 py-2 text-[14px] outline-none focus:border-sky"
+                    />
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center gap-3">
+                    <label className="flex items-center gap-1.5 text-[13.5px]">
+                      <input
+                        type="checkbox"
+                        checked={draft.alternativeCollectEnabled}
+                        onChange={(e) => setDraftField(schedule, 'alternativeCollectEnabled', e.target.checked)}
+                      />
+                      alternative_collect_enabled
+                    </label>
+                    <label className="flex items-center gap-1.5 text-[13.5px]">
+                      <input
+                        type="checkbox"
+                        checked={draft.alternativeAnalyzeEnabled}
+                        onChange={(e) => setDraftField(schedule, 'alternativeAnalyzeEnabled', e.target.checked)}
+                      />
+                      alternative_analyze_enabled
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => void savePolicy(schedule, draft)}
+                      disabled={busy}
+                      className="text-[13px] font-semibold text-sky-deep disabled:opacity-50"
+                    >
+                      {'\uc815\ucc45 \uc800\uc7a5'}
+                    </button>
+                  </div>
                 </div>
 
                 <div className="rounded-xl bg-surface-2 p-4">
@@ -985,6 +1176,34 @@ function ScheduleCard({ onError }: { onError: (msg: string | null) => void }) {
                   >
                     {'\uc9c0\uae08 \uc2e4\ud589'}
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => void dryRunSchedule(schedule)}
+                    disabled={busy}
+                    className="mt-2 w-full rounded-full border border-line py-2.5 text-[14px] font-bold text-navy-soft disabled:opacity-60"
+                  >
+                    {'\ubbf8\ub9ac \ud310\ub2e8'}
+                  </button>
+                  {dryRun && (
+                    <dl className="mt-3 space-y-1.5 rounded-md bg-white/70 p-3 text-[12.5px]">
+                      <div className="flex justify-between gap-4">
+                        <dt className="text-muted">{'\ud310\ub2e8'}</dt>
+                        <dd className="font-semibold">{dryRun.decision.action ?? '-'} / {dryRun.decision.reason ?? '-'}</dd>
+                      </div>
+                      <div className="flex justify-between gap-4">
+                        <dt className="text-muted">{'\uc2e4\ud589 \uc5ec\ubd80'}</dt>
+                        <dd className="font-semibold">{dryRun.would_fire ? 'fire' : 'skip'}</dd>
+                      </div>
+                      <div className="flex justify-between gap-4">
+                        <dt className="text-muted">{'\ub2e4\uc74c \uc608\uc815'}</dt>
+                        <dd className="font-semibold">{fmtDateTime(dryRun.next_run_at)}</dd>
+                      </div>
+                      <div className="flex justify-between gap-4">
+                        <dt className="text-muted">backpressure</dt>
+                        <dd className="font-semibold">{dryRun.backpressure.reason ?? 'ok'}</dd>
+                      </div>
+                    </dl>
+                  )}
                 </div>
               </div>
 

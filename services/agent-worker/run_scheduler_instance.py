@@ -38,6 +38,8 @@ DEFAULT_REPORT_MAX_PAGES = 20
 DEFAULT_PRIORITY = "batch"
 DEFAULT_ALTERNATIVE_COLLECT_TIMEOUT_SECONDS = 3600.0
 DEFAULT_ALTERNATIVE_ANALYZE_TIMEOUT_SECONDS = 3600.0
+DEFAULT_ALTERNATIVE_COLLECT_ENABLED = True
+DEFAULT_ALTERNATIVE_ANALYZE_ENABLED = True
 DEFAULT_BACKPRESSURE_MAX_WAITING = 1000
 DEFAULT_BACKPRESSURE_MAX_FAILED = 100
 DEFAULT_QUEUE_STATS_TIMEOUT_SECONDS = 30.0
@@ -83,6 +85,72 @@ async def _release_scheduler_lock(connection: Any) -> None:
 
 def _tail(text: str, *, limit: int = 2000) -> str:
     return text[-limit:]
+
+
+def _coerce_int(value: Any, default: int, *, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return min(max(parsed, minimum), maximum)
+
+
+def _coerce_bool(value: Any, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() not in {"0", "false", "no", "off"}
+    return bool(value)
+
+
+def _report_policy(schedule: dict[str, Any]) -> dict[str, int | str]:
+    return {
+        "limit": _coerce_int(schedule.get("report_limit"), DEFAULT_REPORT_LIMIT, minimum=1, maximum=1000),
+        "days_back": _coerce_int(
+            schedule.get("report_days_back"),
+            DEFAULT_REPORT_DAYS_BACK,
+            minimum=1,
+            maximum=400,
+        ),
+        "max_pages": _coerce_int(
+            schedule.get("report_max_pages"),
+            DEFAULT_REPORT_MAX_PAGES,
+            minimum=1,
+            maximum=200,
+        ),
+        "priority": DEFAULT_PRIORITY,
+    }
+
+
+def _alternative_policy(schedule: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "collect_enabled": _coerce_bool(
+            schedule.get("alternative_collect_enabled"),
+            DEFAULT_ALTERNATIVE_COLLECT_ENABLED,
+        ),
+        "analyze_enabled": _coerce_bool(
+            schedule.get("alternative_analyze_enabled"),
+            DEFAULT_ALTERNATIVE_ANALYZE_ENABLED,
+        ),
+        "collect_timeout": float(
+            _coerce_int(
+                schedule.get("alternative_collect_timeout_seconds"),
+                int(DEFAULT_ALTERNATIVE_COLLECT_TIMEOUT_SECONDS),
+                minimum=60,
+                maximum=86400,
+            )
+        ),
+        "analyze_timeout": float(
+            _coerce_int(
+                schedule.get("alternative_analyze_timeout_seconds"),
+                int(DEFAULT_ALTERNATIVE_ANALYZE_TIMEOUT_SECONDS),
+                minimum=60,
+                maximum=86400,
+            )
+        ),
+    }
 
 
 async def _run_command(argv: list[str], *, timeout: float) -> dict[str, Any]:
@@ -262,12 +330,7 @@ async def _fire(
         try:
             report = await _post(
                 "/internal/schedules/report/collect",
-                {
-                    "limit": DEFAULT_REPORT_LIMIT,
-                    "days_back": DEFAULT_REPORT_DAYS_BACK,
-                    "max_pages": DEFAULT_REPORT_MAX_PAGES,
-                    "priority": DEFAULT_PRIORITY,
-                },
+                _report_policy(schedule),
             )
             summary["report"] = (
                 report.get("scheduled_count") if isinstance(report, dict) else report
@@ -278,23 +341,30 @@ async def _fire(
 
     if "alternative" in targets:
         alternative_summary: dict[str, Any] = {}
-        try:
-            alternative_summary["collect"] = await command_runner(
-                [sys.executable, "run_collectors.py"],
-                timeout=DEFAULT_ALTERNATIVE_COLLECT_TIMEOUT_SECONDS,
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("alternative collect command failed: %s", exc)
-            alternative_summary["collect"] = f"error: {exc}"
+        policy = _alternative_policy(schedule)
+        if policy["collect_enabled"]:
+            try:
+                alternative_summary["collect"] = await command_runner(
+                    [sys.executable, "run_collectors.py"],
+                    timeout=policy["collect_timeout"],
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("alternative collect command failed: %s", exc)
+                alternative_summary["collect"] = f"error: {exc}"
+        else:
+            alternative_summary["collect"] = "skipped: disabled"
 
-        try:
-            alternative_summary["analyze"] = await command_runner(
-                [sys.executable, "run_analyzers.py"],
-                timeout=DEFAULT_ALTERNATIVE_ANALYZE_TIMEOUT_SECONDS,
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("alternative analyze command failed: %s", exc)
-            alternative_summary["analyze"] = f"error: {exc}"
+        if policy["analyze_enabled"]:
+            try:
+                alternative_summary["analyze"] = await command_runner(
+                    [sys.executable, "run_analyzers.py"],
+                    timeout=policy["analyze_timeout"],
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("alternative analyze command failed: %s", exc)
+                alternative_summary["analyze"] = f"error: {exc}"
+        else:
+            alternative_summary["analyze"] = "skipped: disabled"
 
         summary["alternative"] = alternative_summary
 
@@ -332,6 +402,46 @@ def _backpressure_limits() -> tuple[int, int]:
         _int_env("SCHEDULER_BACKPRESSURE_MAX_WAITING", DEFAULT_BACKPRESSURE_MAX_WAITING),
         _int_env("SCHEDULER_BACKPRESSURE_MAX_FAILED", DEFAULT_BACKPRESSURE_MAX_FAILED),
     )
+
+
+def _schedule_backpressure_limits(schedule: dict[str, Any]) -> tuple[int, int]:
+    default_waiting, default_failed = _backpressure_limits()
+    return (
+        _coerce_int(
+            schedule.get("backpressure_max_waiting"),
+            default_waiting,
+            minimum=0,
+            maximum=1_000_000,
+        ),
+        _coerce_int(
+            schedule.get("backpressure_max_failed"),
+            default_failed,
+            minimum=0,
+            maximum=1_000_000,
+        ),
+    )
+
+
+def _backpressure_state(
+    queue_stats: dict[str, Any],
+    *,
+    max_waiting: int,
+    max_failed: int,
+) -> dict[str, Any]:
+    totals = queue_stats.get("totals_by_status") or {}
+    waiting = int(totals.get("pending") or 0) + int(totals.get("retrying") or 0)
+    failed = int(totals.get("failed") or 0)
+    return {
+        "reason": _backpressure_reason(
+            queue_stats,
+            max_waiting=max_waiting,
+            max_failed=max_failed,
+        ),
+        "max_waiting": max_waiting,
+        "max_failed": max_failed,
+        "waiting": waiting,
+        "failed": failed,
+    }
 
 
 def _backpressure_reason(
@@ -390,6 +500,51 @@ def _evaluate_schedule(
         action="fire" if should_fire else "skip",
         reason=reason,
     )
+
+
+def _scheduler_dry_run(
+    schedule: dict[str, Any],
+    *,
+    now: datetime | None = None,
+    queue_stats: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    tz = ZoneInfo(schedule.get("timezone") or "Asia/Seoul")
+    evaluated_at = now.astimezone(tz) if now is not None else datetime.now(tz)
+    should_fire, decision = _evaluate_schedule(schedule, evaluated_at)
+    max_waiting, max_failed = _schedule_backpressure_limits(schedule)
+    backpressure = {
+        "reason": None,
+        "max_waiting": max_waiting,
+        "max_failed": max_failed,
+        "waiting": None,
+        "failed": None,
+    }
+    if queue_stats is not None:
+        backpressure = _backpressure_state(
+            queue_stats,
+            max_waiting=max_waiting,
+            max_failed=max_failed,
+        )
+        if decision["reason"] == "manual":
+            backpressure["reason"] = None
+    if should_fire and decision["reason"] != "manual" and backpressure["reason"] is not None:
+        should_fire = False
+        decision = _scheduler_decision(
+            schedule,
+            action="skip",
+            reason=str(backpressure["reason"]),
+        )
+    return {
+        "would_fire": should_fire,
+        "evaluated_at": evaluated_at.isoformat(),
+        "decision": decision,
+        "next_run_at": _next_run_at(evaluated_at, schedule).isoformat(),
+        "backpressure": backpressure,
+        "policy": {
+            "report": _report_policy(schedule),
+            "alternative": _alternative_policy(schedule),
+        },
+    }
 
 
 def _run_detail(
@@ -516,11 +671,11 @@ async def run_cycle(
                 return skipped_reasons[0]
             return "not-due"
 
-        max_waiting, max_failed = _backpressure_limits()
         queue_stats: dict[str, Any] | None = None
         backpressure_due: list[tuple[dict[str, Any], dict[str, Any], datetime]] = []
         for schedule, decision, now in due:
             if decision["reason"] != "manual":
+                max_waiting, max_failed = _schedule_backpressure_limits(schedule)
                 if queue_stats is None:
                     try:
                         queue_stats = await _fetch_queue_stats(client, base_url=base_url)

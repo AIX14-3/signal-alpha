@@ -7,7 +7,7 @@ import signal_alpha_data_access.backend as backend
 
 import run_scheduler_instance
 from run_scheduler_instance import _fire, _next_run_at, _overall_status, _should_fire, run_cycle
-from run_scheduler_instance import _backpressure_reason, _evaluate_schedule
+from run_scheduler_instance import _backpressure_reason, _evaluate_schedule, _scheduler_dry_run
 
 
 class FakeResponse:
@@ -267,6 +267,39 @@ def test_fire_calls_report_collect_with_default_batch_payload(monkeypatch):
     ]
 
 
+def test_fire_uses_schedule_report_payload_over_defaults(monkeypatch):
+    monkeypatch.setenv("INTERNAL_API_TOKEN", "secret")
+    client = RecordingClient()
+
+    summary = asyncio.run(
+        _fire(
+            client,
+            base_url="http://worker",
+            schedule={
+                "targets": ["report"],
+                "report_limit": 12,
+                "report_days_back": 3,
+                "report_max_pages": 4,
+            },
+        )
+    )
+
+    assert summary == {"report": 3}
+    assert client.posts == [
+        {
+            "path": "/internal/schedules/report/collect",
+            "json": {
+                "limit": 12,
+                "days_back": 3,
+                "max_pages": 4,
+                "priority": "batch",
+            },
+            "headers": {"X-Internal-Token": "secret"},
+            "timeout": 120.0,
+        }
+    ]
+
+
 def test_fire_records_each_target_and_continues_after_report_failure(monkeypatch):
     monkeypatch.setenv("INTERNAL_API_TOKEN", "secret")
     client = RecordingClient(failures={"/internal/schedules/report/collect"})
@@ -323,6 +356,37 @@ def test_fire_runs_alternative_collect_and_analyze_commands(monkeypatch):
     ]
 
 
+def test_fire_respects_alternative_policy_flags_and_timeouts(monkeypatch):
+    monkeypatch.setenv("INTERNAL_API_TOKEN", "secret")
+    calls = []
+
+    async def command_runner(argv, *, timeout):
+        calls.append((argv, timeout))
+        return {"returncode": 0, "stdout_tail": "ok", "stderr_tail": ""}
+
+    summary = asyncio.run(
+        _fire(
+            RecordingClient(),
+            base_url="http://worker",
+            schedule={
+                "targets": ["alternative"],
+                "alternative_collect_enabled": False,
+                "alternative_analyze_enabled": True,
+                "alternative_analyze_timeout_seconds": 120,
+            },
+            command_runner=command_runner,
+        )
+    )
+
+    assert summary == {
+        "alternative": {
+            "collect": "skipped: disabled",
+            "analyze": {"returncode": 0, "stdout_tail": "ok", "stderr_tail": ""},
+        }
+    }
+    assert calls == [([run_scheduler_instance.sys.executable, "run_analyzers.py"], 120)]
+
+
 def test_fire_marks_alternative_partial_when_collect_fails_but_analyze_runs(monkeypatch):
     monkeypatch.setenv("INTERNAL_API_TOKEN", "secret")
     calls = []
@@ -350,6 +414,55 @@ def test_fire_marks_alternative_partial_when_collect_fails_but_analyze_runs(monk
     }
     assert [argv[-1] for argv in calls] == ["run_collectors.py", "run_analyzers.py"]
     assert _overall_status(summary) == "partial"
+
+
+def test_scheduler_dry_run_reports_schedule_policy_skip_without_firing():
+    tz = ZoneInfo("Asia/Seoul")
+    schedule = _interval_schedule(last_run_at=datetime(2026, 7, 1, 8, 30, tzinfo=tz))
+    schedule["backpressure_max_waiting"] = 5
+    schedule["backpressure_max_failed"] = 10
+
+    result = _scheduler_dry_run(
+        schedule,
+        now=datetime(2026, 7, 1, 9, 31, tzinfo=tz),
+        queue_stats={"totals_by_status": {"pending": 6, "retrying": 0, "failed": 0}},
+    )
+
+    assert result["would_fire"] is False
+    assert result["decision"] == {
+        "agent": "scheduler",
+        "policy": "scheduler-agent-v1",
+        "action": "skip",
+        "reason": "queue-backlog",
+        "schedule_id": 1,
+        "schedule_name": "dart-collection",
+        "targets": ["dart"],
+    }
+    assert result["backpressure"] == {
+        "reason": "queue-backlog",
+        "max_waiting": 5,
+        "max_failed": 10,
+        "waiting": 6,
+        "failed": 0,
+    }
+    assert result["next_run_at"] == "2026-07-01T10:31:00+09:00"
+
+
+def test_scheduler_dry_run_manual_trigger_bypasses_backpressure():
+    tz = ZoneInfo("Asia/Seoul")
+    schedule = _interval_schedule(last_run_at=datetime(2026, 7, 1, 8, 30, tzinfo=tz))
+    schedule["manual_trigger_requested_at"] = datetime(2026, 7, 1, 9, 0, tzinfo=tz)
+    schedule["backpressure_max_waiting"] = 5
+
+    result = _scheduler_dry_run(
+        schedule,
+        now=datetime(2026, 7, 1, 9, 31, tzinfo=tz),
+        queue_stats={"totals_by_status": {"pending": 100, "retrying": 0, "failed": 0}},
+    )
+
+    assert result["would_fire"] is True
+    assert result["decision"]["reason"] == "manual"
+    assert result["backpressure"]["reason"] is None
 
 
 def test_run_cycle_returns_lock_held_without_firing_when_scheduler_lock_is_taken(
