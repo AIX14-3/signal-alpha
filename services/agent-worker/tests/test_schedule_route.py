@@ -100,6 +100,56 @@ class ScheduleRouteTest(unittest.TestCase):
         self.assertEqual(body["decision"]["reason"], "queue-backlog")
         self.assertEqual(body["backpressure"]["waiting"], 6)
 
+    def _dry_run_payload(self, **overrides):
+        schedule = {
+            "id": 1,
+            "name": "dart-collection",
+            "enabled": True,
+            "run_at_local": "08:30",
+            "timezone": "Asia/Seoul",
+            "targets": ["dart"],
+            "dart_limit": 100,
+            "price_modes": ["snapshot"],
+            "frequency_minutes": 60,
+            "active_from_local": "08:30",
+            "active_until_local": "20:30",
+            "last_run_at": "2026-07-01T08:30:00+09:00",
+            "manual_trigger_requested_at": None,
+        }
+        schedule.update(overrides.pop("schedule", {}))
+        return {"schedule": schedule, **overrides}
+
+    def test_schedule_dry_run_interprets_naive_now_in_schedule_timezone(self):
+        # naive now(오프셋 없는 ISO)는 스케줄 타임존으로 해석 — 그대로 두면 aware
+        # last_run_at 과의 비교에서 500 이 났다.
+        app.dependency_overrides[get_database_pool] = lambda: FakePool()
+        client = TestClient(app, headers={"X-Internal-Token": "test-internal-token"})
+
+        response = client.post(
+            "/internal/schedules/dry-run",
+            json=self._dry_run_payload(now="2026-07-01T09:31:00"),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertTrue(body["evaluated_at"].endswith("+09:00"))
+        self.assertEqual(body["evaluated_at"], "2026-07-01T09:31:00+09:00")
+
+    def test_schedule_dry_run_rejects_unknown_timezone_with_422(self):
+        app.dependency_overrides[get_database_pool] = lambda: FakePool()
+        client = TestClient(app, headers={"X-Internal-Token": "test-internal-token"})
+
+        response = client.post(
+            "/internal/schedules/dry-run",
+            json=self._dry_run_payload(
+                schedule={"timezone": "Mars/Olympus_Mons"},
+                now="2026-07-01T09:31:00+09:00",
+            ),
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("unknown timezone", response.json()["detail"])
+
 
 if __name__ == "__main__":
     unittest.main()

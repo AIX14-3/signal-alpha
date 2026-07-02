@@ -55,6 +55,9 @@ RECENT_ROWS = [
 ]
 
 
+FETCHVAL_CALLS: list[tuple[str, tuple]] = []
+
+
 class FakeConnection:
     def __init__(self):
         self.calls = []
@@ -68,6 +71,11 @@ class FakeConnection:
         if "ORDER BY started_at DESC" in sql:
             return RECENT_ROWS
         return []
+
+    async def fetchval(self, sql, *args):
+        # recent_failed_count (failed backpressure 윈도우 카운트)
+        FETCHVAL_CALLS.append((sql, args))
+        return 1
 
 
 class FakeAcquire:
@@ -99,6 +107,19 @@ class ObservabilityRouteTest(unittest.TestCase):
         self.assertEqual(body["totals_by_status"]["pending"], 3)
         self.assertEqual(body["totals_by_status"]["failed"], 2)
         self.assertEqual(len(body["items"]), 3)
+        # failed 총계(평생 누적)와 별도로 최근 윈도우 실패 수를 노출(스케줄러 backpressure 용).
+        self.assertEqual(body["failed_recent"], 1)
+        self.assertEqual(body["failed_window_minutes"], 360)
+
+    def test_queue_stats_accepts_failed_window_minutes_param(self):
+        FETCHVAL_CALLS.clear()
+        resp = self.client.get("/internal/stats/queue?failed_window_minutes=120")
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["failed_window_minutes"], 120)
+        sql, args = FETCHVAL_CALLS[0]
+        self.assertIn("status = 'failed'", sql)
+        self.assertEqual(args, (120,))
 
     def test_collector_stats_computes_rates_and_utc_boundary(self):
         resp = self.client.get("/internal/stats/collectors?since=2026-06-16&collector_type=HIRING")

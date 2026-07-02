@@ -31,6 +31,24 @@ class ObservabilityRepository:
             """
         )
 
+    async def recent_failed_count(self, *, window_minutes: int) -> int:
+        """최근 윈도우 안에서 failed 로 남아 있는 processing_queue 행 수.
+
+        failed 는 종착 상태(자동 정리 없음)라 총계는 평생 누적 — 스케줄러 backpressure 가
+        총계를 쓰면 한 번 임계를 넘은 뒤 모든 수집이 영구 홀드된다. updated_at 은 touch
+        트리거로 상태 전이 시 갱신되므로 "최근 실패" 판정 기준으로 쓴다.
+        """
+        value = await self._connection.fetchval(
+            """
+            SELECT COUNT(*)
+            FROM processing_queue
+            WHERE status = 'failed'
+              AND updated_at >= NOW() - make_interval(mins => $1)
+            """,
+            window_minutes,
+        )
+        return int(value or 0)
+
     async def collector_run_stats(
         self,
         *,

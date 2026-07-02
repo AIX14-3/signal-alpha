@@ -12,16 +12,29 @@ router = APIRouter(prefix="/internal/stats", tags=["stats"])
 
 
 @router.get("/queue")
-async def queue_stats(pool: Any = Depends(get_database_pool)) -> dict[str, Any]:
+async def queue_stats(
+    failed_window_minutes: int = 360,
+    pool: Any = Depends(get_database_pool),
+) -> dict[str, Any]:
     """processing_queue 적체 현황 — task_type×status 매트릭스 + status별 합계.
-    종착 실패 격리(dead_letter) 카운트도 함께 노출(Phase 2 DLQ)."""
+    종착 실패 격리(dead_letter) 카운트도 함께 노출(Phase 2 DLQ).
+
+    ``failed_window_minutes``: totals_by_status.failed 는 평생 누적치라 스케줄러
+    backpressure 판정에 쓰면 영구 홀드가 되므로, 최근 윈도우의 실패 수(failed_recent)를
+    함께 노출한다(기본 6시간).
+    """
     from signal_alpha_data_access.repositories import (
         DeadLetterRepository,
         ObservabilityRepository,
     )
 
+    failed_window_minutes = max(1, min(failed_window_minutes, 20160))  # 최대 2주
     async with pool.acquire() as connection:
-        rows = await ObservabilityRepository(connection).queue_stats()
+        observability = ObservabilityRepository(connection)
+        rows = await observability.queue_stats()
+        failed_recent = await observability.recent_failed_count(
+            window_minutes=failed_window_minutes
+        )
         dead_letter_rows = await DeadLetterRepository(connection).dead_letter_stats()
 
     items = [dict(row) for row in rows]
@@ -34,6 +47,8 @@ async def queue_stats(pool: Any = Depends(get_database_pool)) -> dict[str, Any]:
         "total": sum(totals_by_status.values()),
         "totals_by_status": dict(totals_by_status),
         "items": items,
+        "failed_recent": failed_recent,
+        "failed_window_minutes": failed_window_minutes,
         "dead_letter": {
             "total": sum(int(d["total"]) for d in dead_letter_items),
             "unreplayed": sum(int(d["unreplayed"]) for d in dead_letter_items),

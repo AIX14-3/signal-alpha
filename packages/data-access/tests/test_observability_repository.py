@@ -13,6 +13,10 @@ class FakeConnection:
         self.calls.append(("fetch", sql, args))
         return self.rows
 
+    async def fetchval(self, sql, *args):
+        self.calls.append(("fetchval", sql, args))
+        return 7
+
 
 class ObservabilityRepositoryTest(unittest.IsolatedAsyncioTestCase):
     async def test_queue_stats_groups_by_task_type_and_status(self):
@@ -25,6 +29,21 @@ class ObservabilityRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("FROM processing_queue", sql)
         self.assertIn("GROUP BY task_type, status", sql)
         self.assertIn("FILTER", sql)  # oldest_waiting_at filtered to pending/retrying
+
+    async def test_recent_failed_count_windows_failed_by_updated_at(self):
+        # failed 는 종착 상태라 총계는 평생 누적 — backpressure 용 카운트는 updated_at
+        # 기준 최근 윈도우로 제한돼야 한다.
+        connection = FakeConnection()
+        repository = ObservabilityRepository(connection)
+
+        count = await repository.recent_failed_count(window_minutes=360)
+
+        self.assertEqual(count, 7)
+        kind, sql, args = connection.calls[0]
+        self.assertEqual(kind, "fetchval")
+        self.assertIn("status = 'failed'", sql)
+        self.assertIn("updated_at >= NOW() - make_interval(mins => $1)", sql)
+        self.assertEqual(args, (360,))
 
     async def test_collector_run_stats_binds_since_and_type(self):
         connection = FakeConnection()

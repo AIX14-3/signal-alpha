@@ -13,6 +13,7 @@ import argparse
 import asyncio
 import logging
 import os
+import re
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -21,14 +22,17 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
+# 워커 프로세스가 dry-run 라우트(app/api/routes/schedules.py)에서 이 모듈을 import 하므로
+# import 시점 부작용을 두지 않는다 — bootstrap()/logging.basicConfig() 는 main() 에서만 실행.
+# mvp_runtime import 를 위한 자기 디렉터리 경로 추가만 수행한다(모듈은 1회만 import 되고,
+# 스크립트 실행 시엔 어차피 스크립트 디렉터리가 sys.path[0] 이라 사실상 no-op).
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # services/agent-worker
 
 from mvp_runtime import bootstrap, load_env
 
-bootstrap()
-
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("scheduler_instance")
+
+_SERVICE_DIR = Path(__file__).resolve().parent  # services/agent-worker
 
 DEFAULT_BASE_URL = "http://localhost:8011"
 DEFAULT_SCHEDULE_NAME = ""
@@ -42,9 +46,14 @@ DEFAULT_ALTERNATIVE_COLLECT_ENABLED = True
 DEFAULT_ALTERNATIVE_ANALYZE_ENABLED = True
 DEFAULT_BACKPRESSURE_MAX_WAITING = 1000
 DEFAULT_BACKPRESSURE_MAX_FAILED = 100
+# failed backpressure 윈도우(분) — processing_queue.failed 는 종착 상태라 총계는 평생
+# 누적이므로, 최근 윈도우의 실패만 backpressure 근거로 삼는다(영구 홀드 방지).
+DEFAULT_BACKPRESSURE_FAILED_WINDOW_MINUTES = 360
 DEFAULT_QUEUE_STATS_TIMEOUT_SECONDS = 30.0
-_SCHEDULER_ADVISORY_LOCK_KEY = 0x53434844
-_SERVICE_DIR = Path(__file__).resolve().parent
+# 스케줄별 advisory lock 네임스페이스(classid). objid=hashtext(schedule_name) 와 2-인자형으로
+# 조합해 같은 스케줄만 인스턴스 간 직렬화한다 — 과거의 단일 전역 키는 alternative
+# 서브프로세스(최대 수 시간)가 도는 동안 무관한 스케줄까지 전부 블록했다.
+_SCHEDULER_ADVISORY_LOCK_CLASS = 0x53434844
 
 
 class CommandRunner(Protocol):
@@ -71,20 +80,42 @@ def _internal_headers() -> dict[str, str]:
     return {"X-Internal-Token": token}
 
 
-async def _try_scheduler_lock(connection: Any) -> bool:
+async def _try_schedule_lock(connection: Any, schedule_name: str) -> bool:
+    """스케줄별 advisory lock 시도 — hashtext(name) 는 SQL 쪽 안정 해시라 인스턴스가 달라도
+    같은 이름이면 같은 키가 된다(파이썬 hash() 는 프로세스별 시드라 부적합)."""
     return bool(
         await connection.fetchval(
-            "SELECT pg_try_advisory_lock($1)", _SCHEDULER_ADVISORY_LOCK_KEY
+            "SELECT pg_try_advisory_lock($1, hashtext($2))",
+            _SCHEDULER_ADVISORY_LOCK_CLASS,
+            schedule_name,
         )
     )
 
 
-async def _release_scheduler_lock(connection: Any) -> None:
-    await connection.fetchval("SELECT pg_advisory_unlock($1)", _SCHEDULER_ADVISORY_LOCK_KEY)
+async def _release_schedule_lock(connection: Any, schedule_name: str) -> None:
+    await connection.fetchval(
+        "SELECT pg_advisory_unlock($1, hashtext($2))",
+        _SCHEDULER_ADVISORY_LOCK_CLASS,
+        schedule_name,
+    )
 
 
 def _tail(text: str, *, limit: int = 2000) -> str:
     return text[-limit:]
+
+
+# 결정 히스토리(collection_schedule_runs.detail / collection_schedules.last_detail)로 영구
+# 저장되는 텍스트에서 시크릿을 마스킹한다 — 서브프로세스 stdout/stderr 테일과 예외 문자열에
+# DART crtfc_key 등이 URL 쿼리 파라미터로 그대로 실려 남는 것을 막는다.
+_REDACT_PATTERN = re.compile(
+    r"(?i)(\b(?:crtfc_key|appkey|secretkey|secret|token|api_key|apikey|key|authorization)=)"
+    r"[^&\s\"']+"
+)
+
+
+def _redact(text: str) -> str:
+    """민감 키(key=value 쿼리 파라미터 스타일)의 값을 ***로 마스킹."""
+    return _REDACT_PATTERN.sub(r"\1***", text)
 
 
 def _coerce_int(value: Any, default: int, *, minimum: int, maximum: int) -> int:
@@ -171,13 +202,14 @@ async def _run_command(argv: list[str], *, timeout: float) -> dict[str, Any]:
 
     stdout = stdout_bytes.decode("utf-8", errors="replace")
     stderr = stderr_bytes.decode("utf-8", errors="replace")
+    # 테일은 히스토리(jsonb)에 그대로 저장되므로 시크릿(API 키 등)을 마스킹한 뒤 담는다.
     result = {
         "returncode": proc.returncode,
-        "stdout_tail": _tail(stdout),
-        "stderr_tail": _tail(stderr),
+        "stdout_tail": _redact(_tail(stdout)),
+        "stderr_tail": _redact(_tail(stderr)),
     }
     if proc.returncode != 0:
-        output = _tail(stderr or stdout)
+        output = _redact(_tail(stderr or stdout))
         raise RuntimeError(f"command failed ({proc.returncode}): {' '.join(argv)}\n{output}")
     return result
 
@@ -239,7 +271,10 @@ def _next_window_start(schedule: dict[str, Any], now: datetime) -> datetime:
     start, end = _active_window(schedule, now)
     if now < start:
         return start
-    if end is not None and now <= end:
+    if end is None or now <= end:
+        # 현재 윈도우 안(열린 윈도우 active_until_local=NULL 포함)에서는 오늘의 start 가
+        # 현재 윈도우 시작이다. 열린 윈도우를 내일 start 로 넘기면 _should_fire 의
+        # last_local < window_start 가 항상 참이 되어 인터벌 스케줄이 매 폴마다 재발화한다.
         return start
     return _scheduled_today(
         now + timedelta(days=1),
@@ -324,7 +359,7 @@ async def _fire(
             summary["dart"] = dart.get("scheduled_count") if isinstance(dart, dict) else dart
         except Exception as exc:  # noqa: BLE001 - one target must not block the rest
             logger.warning("dart/collect failed: %s", exc)
-            summary["dart"] = f"error: {exc}"
+            summary["dart"] = f"error: {_redact(str(exc))}"
 
     if "report" in targets:
         try:
@@ -337,7 +372,7 @@ async def _fire(
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("report/collect failed: %s", exc)
-            summary["report"] = f"error: {exc}"
+            summary["report"] = f"error: {_redact(str(exc))}"
 
     if "alternative" in targets:
         alternative_summary: dict[str, Any] = {}
@@ -350,7 +385,7 @@ async def _fire(
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("alternative collect command failed: %s", exc)
-                alternative_summary["collect"] = f"error: {exc}"
+                alternative_summary["collect"] = f"error: {_redact(str(exc))}"
         else:
             alternative_summary["collect"] = "skipped: disabled"
 
@@ -362,7 +397,7 @@ async def _fire(
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("alternative analyze command failed: %s", exc)
-                alternative_summary["analyze"] = f"error: {exc}"
+                alternative_summary["analyze"] = f"error: {_redact(str(exc))}"
         else:
             alternative_summary["analyze"] = "skipped: disabled"
 
@@ -376,18 +411,35 @@ async def _fire(
                 price_summary[mode] = "ok" if isinstance(res, dict) else res
             except Exception as exc:  # noqa: BLE001
                 logger.warning("price/collect(%s) failed: %s", mode, exc)
-                price_summary[mode] = f"error: {exc}"
+                price_summary[mode] = f"error: {_redact(str(exc))}"
         summary["price"] = price_summary
 
     return summary
 
 
+def _summary_entry_failed(value: Any) -> bool:
+    """타깃 결과 하나가 실패인지 — 구조화된 필드만 본다.
+
+    과거의 repr(summary) 부분 문자열 매칭은 수집기 로그(stdout_tail)에 "error:" 가 섞이기만
+    해도 성공 런을 partial 로 뒤집었다. 커맨드 결과는 returncode 로만 판단하고(테일 내용은
+    검사하지 않음), 문자열은 우리가 직접 만드는 실패 마커("error: ...") 프리픽스만 본다.
+    """
+    if isinstance(value, str):
+        return value.startswith("error:")
+    if isinstance(value, dict):
+        if "returncode" in value:
+            return value.get("returncode") not in (0, None)
+        return any(_summary_entry_failed(child) for child in value.values())
+    return False
+
+
 def _overall_status(summary: dict[str, Any]) -> str:
     """Summarize target results as noop, partial, or ok."""
-    flat = repr(summary)
     if not summary:
         return "noop"
-    return "partial" if "error" in summary or "error:" in flat else "ok"
+    if "error" in summary:
+        return "partial"
+    return "partial" if any(_summary_entry_failed(value) for value in summary.values()) else "ok"
 
 
 def _int_env(name: str, default: int) -> int:
@@ -398,10 +450,21 @@ def _int_env(name: str, default: int) -> int:
 
 
 def _backpressure_limits() -> tuple[int, int]:
+    # 의도된 threshold 의미(변경하지 않음): 비교는 배타적(>) — waiting == max 는 아직
+    # 발화한다. 값 0 은 해당 축의 backpressure 를 비활성화한다.
     return (
         _int_env("SCHEDULER_BACKPRESSURE_MAX_WAITING", DEFAULT_BACKPRESSURE_MAX_WAITING),
         _int_env("SCHEDULER_BACKPRESSURE_MAX_FAILED", DEFAULT_BACKPRESSURE_MAX_FAILED),
     )
+
+
+def _failed_window_minutes() -> int:
+    """failed backpressure 윈도우(분) — /internal/stats/queue 에 쿼리 파라미터로 전달."""
+    minutes = _int_env(
+        "SCHEDULER_BACKPRESSURE_FAILED_WINDOW_MINUTES",
+        DEFAULT_BACKPRESSURE_FAILED_WINDOW_MINUTES,
+    )
+    return max(1, minutes)
 
 
 def _schedule_backpressure_limits(schedule: dict[str, Any]) -> tuple[int, int]:
@@ -422,25 +485,80 @@ def _schedule_backpressure_limits(schedule: dict[str, Any]) -> tuple[int, int]:
     )
 
 
+# 스케줄 target → processing_queue.task_type 부분 문자열(대소문자 무시) 매핑.
+# enqueue 지점 명명(app/orchestrator/queue/task_types.py): DART/REPORT/price 계열은 소문자
+# (collect_dart/normalize_dart/…, collect_report/…/embed_report, analyze_price),
+# alternative 는 대문자 소스명(NORMALIZE_/ENRICH_/ANALYZE_ × HIRING/PATENT/DATALAB).
+# 소스명 부분 일치라 같은 소스의 새 스테이지가 추가돼도 대체로 자동으로 따라온다.
+_TARGET_TASK_TYPE_SUBSTRINGS: dict[str, tuple[str, ...]] = {
+    "dart": ("dart",),
+    "report": ("report",),
+    "price": ("price",),
+    "alternative": ("hiring", "patent", "datalab"),
+}
+
+
+def _waiting_count(queue_stats: dict[str, Any], targets: list[str] | None) -> int:
+    """pending+retrying 적체 — 가능하면 스케줄 targets 와 관련된 task_type 만 센다.
+
+    글로벌 총계로 재면 한 소스의 백로그(예: DART)가 무관한 소스(price 등)의 스케줄까지
+    굶긴다. items(task_type×status 매트릭스)가 없거나(구버전 워커 응답) 매핑을 모르는
+    target 이 섞여 있으면 보수적으로 기존 글로벌 총계로 폴백한다.
+    """
+    totals = queue_stats.get("totals_by_status") or {}
+    global_waiting = int(totals.get("pending") or 0) + int(totals.get("retrying") or 0)
+    if not targets:
+        return global_waiting
+    substrings: list[str] = []
+    for target in targets:
+        mapped = _TARGET_TASK_TYPE_SUBSTRINGS.get(str(target).lower())
+        if mapped is None:
+            return global_waiting
+        substrings.extend(mapped)
+    items = queue_stats.get("items")
+    if not isinstance(items, list):
+        return global_waiting
+    waiting = 0
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("status")) not in {"pending", "retrying"}:
+            continue
+        task_type = str(item.get("task_type") or "").lower()
+        if any(marker in task_type for marker in substrings):
+            waiting += int(item.get("count") or 0)
+    return waiting
+
+
+def _failed_count(queue_stats: dict[str, Any]) -> int:
+    """backpressure 용 실패 수 — failed 는 종착 상태(자동 정리 없음)라 totals 누적치는 한 번
+    임계를 넘으면 모든 수집을 영구 홀드시킨다. 워커가 윈도우 카운트(failed_recent)를 주면
+    그걸 쓰고, 구버전 워커 응답(롤링 배포 호환)엔 키가 없으므로 기존 총계로 폴백한다.
+    """
+    if "failed_recent" in queue_stats:
+        return int(queue_stats.get("failed_recent") or 0)
+    totals = queue_stats.get("totals_by_status") or {}
+    return int(totals.get("failed") or 0)
+
+
 def _backpressure_state(
     queue_stats: dict[str, Any],
     *,
     max_waiting: int,
     max_failed: int,
+    targets: list[str] | None = None,
 ) -> dict[str, Any]:
-    totals = queue_stats.get("totals_by_status") or {}
-    waiting = int(totals.get("pending") or 0) + int(totals.get("retrying") or 0)
-    failed = int(totals.get("failed") or 0)
     return {
         "reason": _backpressure_reason(
             queue_stats,
             max_waiting=max_waiting,
             max_failed=max_failed,
+            targets=targets,
         ),
         "max_waiting": max_waiting,
         "max_failed": max_failed,
-        "waiting": waiting,
-        "failed": failed,
+        "waiting": _waiting_count(queue_stats, targets),
+        "failed": _failed_count(queue_stats),
     }
 
 
@@ -449,13 +567,12 @@ def _backpressure_reason(
     *,
     max_waiting: int,
     max_failed: int,
+    targets: list[str] | None = None,
 ) -> str | None:
-    totals = queue_stats.get("totals_by_status") or {}
-    waiting = int(totals.get("pending") or 0) + int(totals.get("retrying") or 0)
-    failed = int(totals.get("failed") or 0)
-    if max_waiting > 0 and waiting > max_waiting:
+    # threshold 의미(변경하지 않음): 배타 비교(>) — 경계값은 발화, 0 은 비활성화.
+    if max_waiting > 0 and _waiting_count(queue_stats, targets) > max_waiting:
         return "queue-backlog"
-    if max_failed > 0 and failed > max_failed:
+    if max_failed > 0 and _failed_count(queue_stats) > max_failed:
         return "recent-failures"
     return None
 
@@ -465,6 +582,7 @@ async def _fetch_queue_stats(client: httpx.AsyncClient, *, base_url: str) -> dic
     resp = await client.get(
         f"{base}/internal/stats/queue",
         headers=_internal_headers(),
+        params={"failed_window_minutes": _failed_window_minutes()},
         timeout=DEFAULT_QUEUE_STATS_TIMEOUT_SECONDS,
     )
     resp.raise_for_status()
@@ -524,6 +642,7 @@ def _scheduler_dry_run(
             queue_stats,
             max_waiting=max_waiting,
             max_failed=max_failed,
+            targets=list(schedule.get("targets") or []),
         )
         if decision["reason"] == "manual":
             backpressure["reason"] = None
@@ -558,6 +677,13 @@ def _run_detail(
     }
 
 
+# 스킵 히스토리 스팸 억제: backpressure/raced 스킵을 매 폴(기본 30s)마다 히스토리에 남기면
+# 하루 ~2880행이 쌓인다. 같은 사유의 연속 스킵은 첫 번째만 기록하고, 사유가 바뀌거나 실제
+# 발화가 있으면 리셋한다. 프로세스 로컬(인메모리)이라 재시작 시 1회 다시 기록됨(허용).
+# last_run_at 은 스킵에서 전진하지 않는다(발화 판정 불변).
+_last_skip_reason_by_schedule: dict[int, str] = {}
+
+
 async def _run_one_schedule(
     repo: Any,
     client: httpx.AsyncClient,
@@ -584,17 +710,37 @@ async def _run_one_schedule(
         summary = await _fire(client, base_url=base_url, schedule=schedule)
     except Exception as exc:  # noqa: BLE001 - close the run history row deterministically
         logger.exception("schedule firing failed")
-        summary = {"error": str(exc)}
+        summary = {"error": _redact(str(exc))}
     status = _overall_status(summary)
     detail = _run_detail(decision=decision, target_summary=summary)
+    # 실제 발화가 있었으니 스킵 억제 상태 리셋(다음 스킵은 다시 1회 기록된다).
+    _last_skip_reason_by_schedule.pop(int(schedule["id"]), None)
     try:
-        await repo.record_run(
-            schedule_id=int(schedule["id"]),
-            last_run_at=now,
-            last_status=status,
-            last_detail=detail,
-            next_run_at=_next_run_at(now, schedule),
-        )
+        try:
+            await repo.record_run(
+                schedule_id=int(schedule["id"]),
+                last_run_at=now,
+                last_status=status,
+                last_detail=detail,
+                next_run_at=_next_run_at(now, schedule),
+            )
+        except Exception:  # noqa: BLE001 - 일시 장애일 수 있어 한 번만 재시도
+            logger.warning("record_run failed; retrying once", exc_info=True)
+            await repo.record_run(
+                schedule_id=int(schedule["id"]),
+                last_run_at=now,
+                last_status=status,
+                last_detail=detail,
+                next_run_at=_next_run_at(now, schedule),
+            )
+        return status
+    except Exception as exc:  # noqa: BLE001 - record_run 재시도까지 실패
+        # last_run_at 이 전진하지 못했으니 다음 사이클에 같은 스케줄이 재발화(중복 수집)한다.
+        # 히스토리를 "ok" 로 남기면 그 흔적을 추적할 수 없으므로 status=error 로 예외를
+        # 함께 남긴다.
+        logger.exception("record_run failed after retry")
+        status = "error"
+        detail = {**detail, "record_run_error": _redact(str(exc))}
         return status
     finally:
         await repo.finish_run(
@@ -615,11 +761,17 @@ async def _record_skip_schedule(
     *,
     schedule: dict[str, Any],
     decision: dict[str, Any],
-) -> None:
+) -> bool:
+    """스킵 히스토리 기록 — 직전과 같은 사유의 연속 스킵은 억제. 기록했으면 True."""
+    schedule_id = int(schedule["id"])
+    reason = str(decision["reason"])
+    if _last_skip_reason_by_schedule.get(schedule_id) == reason:
+        return False
+    _last_skip_reason_by_schedule[schedule_id] = reason
     run_row = await repo.start_run(
-        schedule_id=int(schedule["id"]),
+        schedule_id=schedule_id,
         schedule_name=str(schedule.get("name") or schedule["id"]),
-        trigger_reason=str(decision["reason"]),
+        trigger_reason=reason,
         targets=list(schedule.get("targets") or []),
     )
     await repo.finish_run(
@@ -627,6 +779,7 @@ async def _record_skip_schedule(
         status="skipped",
         detail=_run_detail(decision=decision, target_summary={}),
     )
+    return True
 
 
 async def run_cycle(
@@ -642,7 +795,17 @@ async def run_cycle(
     async with pool.acquire() as connection:
         repo = CollectionScheduleRepository(connection)
         if schedule_name:
-            rows = [await repo.get_by_name(schedule_name) or await repo.get_primary()]
+            row = await repo.get_by_name(schedule_name)
+            if row is None:
+                # 명시 설정된 이름이 DB에 없으면 primary 폴백 금지 — SCHEDULE_NAME 오타가
+                # 조용히 엉뚱한(primary) 스케줄을 돌리는 사고를 막는다. 이름 미설정(빈값)
+                # 기본 운용은 list_all 로 전체 행을 돈다.
+                logger.error(
+                    "collection_schedules row not found for configured name=%s; skipping cycle",
+                    schedule_name,
+                )
+                return "schedule-not-found"
+            rows = [row]
         else:
             rows = await repo.list_all()
 
@@ -686,6 +849,7 @@ async def run_cycle(
                     queue_stats,
                     max_waiting=max_waiting,
                     max_failed=max_failed,
+                    targets=list(schedule.get("targets") or []),
                 )
                 if reason is not None:
                     skipped_reasons.append(reason)
@@ -713,31 +877,65 @@ async def run_cycle(
                 return skipped_reasons[0]
             return "not-due"
 
-        if not await _try_scheduler_lock(connection):
-            logger.warning("scheduler advisory lock is held elsewhere")
-            return "lock-held"
-
-        try:
-            statuses: list[str] = []
-            for schedule, decision, now in due:
+        statuses: list[str] = []
+        fired_reasons: list[str] = []
+        for schedule, decision, now in due:
+            lock_name = str(schedule.get("name") or schedule["id"])
+            # 스케줄별 advisory lock — 같은 스케줄만 인스턴스 간 직렬화하고, 다른 스케줄의
+            # 발화(특히 장시간 alternative 서브프로세스)는 서로 막지 않는다.
+            if not await _try_schedule_lock(connection, lock_name):
+                logger.warning("schedule advisory lock is held elsewhere: name=%s", lock_name)
+                skipped_reasons.append("lock-held")
+                continue
+            try:
+                # TOCTOU 재확인: due 평가는 락 밖에서 했으므로, 락을 딴 시점엔 다른
+                # 인스턴스가 이미 발화해 last_run_at 이 전진했을 수 있다. 행을 다시 읽어
+                # 재평가하고, 더는 due 가 아니면 "raced" 로 스킵한다(price HTTP 수집·
+                # alternative 서브프로세스는 자체 dedupe 가 없어 이중 발화 = 중복 수집).
+                fresh = parse_schedule_row(await repo.get_by_id(int(schedule["id"])))
+                if fresh is None:
+                    skipped_reasons.append("raced")
+                    continue
+                recheck_tz = ZoneInfo(fresh.get("timezone") or "Asia/Seoul")
+                recheck_now = datetime.now(recheck_tz)
+                still_due, fresh_decision = _evaluate_schedule(fresh, recheck_now)
+                if not still_due:
+                    skipped_reasons.append("raced")
+                    raced_decision = _scheduler_decision(fresh, action="skip", reason="raced")
+                    await _record_skip_schedule(repo, schedule=fresh, decision=raced_decision)
+                    logger.info(
+                        "schedule skipped: raced by another instance: name=%s", lock_name
+                    )
+                    continue
                 status = await _run_one_schedule(
                     repo,
                     client,
                     base_url=base_url,
-                    schedule=schedule,
-                    decision=decision,
-                    now=now,
+                    schedule=fresh,
+                    decision=fresh_decision,
+                    now=recheck_now,
                 )
                 statuses.append(status)
-            if schedule_name:
-                return f"fired:{due[0][1]['reason']}:{statuses[0]}"
-            overall = "partial" if any(status != "ok" for status in statuses) else "ok"
-            return f"fired:{len(statuses)}:{overall}"
-        finally:
-            await _release_scheduler_lock(connection)
+                fired_reasons.append(str(fresh_decision["reason"]))
+            finally:
+                await _release_schedule_lock(connection, lock_name)
+
+        if not statuses:
+            if skipped_reasons:
+                return skipped_reasons[0]
+            return "not-due"
+        if schedule_name:
+            return f"fired:{fired_reasons[0]}:{statuses[0]}"
+        overall = "partial" if any(status != "ok" for status in statuses) else "ok"
+        return f"fired:{len(statuses)}:{overall}"
 
 
 async def main() -> None:
+    # import 시점 부작용 금지 — 워커 dry-run 라우트가 이 모듈을 import 하므로
+    # bootstrap()/logging 설정은 스크립트 엔트리포인트(main)에서만 실행한다.
+    bootstrap()
+    logging.basicConfig(level=logging.INFO)
+
     parser = argparse.ArgumentParser(
         description="Signal Alpha scheduler: poll collection_schedules and trigger collection."
     )

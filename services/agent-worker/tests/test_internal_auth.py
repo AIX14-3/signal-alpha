@@ -44,6 +44,15 @@ def test_internal_routes_reject_missing_or_invalid_token(monkeypatch):
     }
 
 
+def test_internal_routes_reject_same_length_token_mismatch(monkeypatch):
+    # hmac.compare_digest 상수 시간 비교 경로 — 길이가 같아도 값이 다르면 401.
+    client = _build_client(monkeypatch, token="secret")
+
+    response = client.get("/internal/not-registered", headers={"X-Internal-Token": "secreX"})
+
+    assert response.status_code == 401
+
+
 def test_internal_routes_accept_configured_token(monkeypatch):
     client = _build_client(monkeypatch, token="secret")
 
