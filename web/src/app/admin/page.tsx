@@ -5,17 +5,25 @@ import {
   adminCancelSubscription,
   adminDeleteUser,
   adminGetStats,
+  adminGetQueueOverview,
   adminListScheduleRuns,
   adminListSchedules,
   adminListUsers,
   adminLogin,
   adminLogout,
   adminMe,
+  adminReconcileDeadLetters,
+  adminReplayDeadLetters,
   adminRefund,
+  adminRetryQueueTask,
   adminSetSubscription,
+  adminSweepStaleQueue,
   adminTriggerSchedule,
   adminUpdateSchedule,
   adminUpdateUser,
+  type AdminDeadLetter,
+  type AdminQueueOverview,
+  type AdminQueueTask,
   type AdminSchedule,
   type AdminScheduleRun,
   type AdminStats,
@@ -181,6 +189,7 @@ function AdminDashboard({ onLogout }: { onLogout: () => Promise<void> }) {
         </div>
       )}
 
+      <QueueOpsCard onError={setError} />
       <ScheduleCard onError={setError} />
 
       <div className="mt-10 flex flex-wrap items-center justify-between gap-2">
@@ -268,6 +277,269 @@ function StatCard({ label, value }: { label: string; value: string }) {
   );
 }
 
+const QUEUE_EVENT_LABEL: Record<string, string> = {
+  queue_backlog: '큐 적체',
+  queue_failed: '큐 실패',
+  dead_letter_pending: 'Dead Letter 대기',
+  schedule_health: '스케줄 상태 확인',
+  failed_task_list: '실패 작업 목록',
+};
+
+function queueCount(overview: AdminQueueOverview | null, status: string): number {
+  return overview?.queue.totals_by_status?.[status] ?? 0;
+}
+
+function QueueOpsCard({ onError }: { onError: (msg: string | null) => void }) {
+  const [overview, setOverview] = useState<AdminQueueOverview | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const data = await adminGetQueueOverview();
+      setOverview(data);
+    } catch (err) {
+      onError((err as Error).message);
+    }
+  }, [onError]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function runAction(action: () => Promise<unknown>) {
+    setBusy(true);
+    onError(null);
+    try {
+      await action();
+      await load();
+    } catch (err) {
+      onError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!overview) return null;
+
+  const failedTasks = overview.failed_tasks.items ?? [];
+  const deadLetters = overview.dead_letters.items ?? [];
+
+  return (
+    <section className="card mt-8 p-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-[18px] font-bold">{'\ud050 / Dead Letter \uc870\uce58'}</h2>
+          <p className="mt-0.5 text-[12.5px] text-muted">
+            {'\uc2a4\ucf00\uc904\ub7ec \uc9c0\uc5f0\uacfc \ud050 \uc801\uccb4\ub97c \ud55c \uacf3\uc5d0\uc11c \ud655\uc778\ud558\uace0 \uc6b4\uc601 \uc870\uce58\ub97c \uc2e4\ud589\ud569\ub2c8\ub2e4.'}
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => void load()}
+            disabled={busy}
+            className="rounded-full border border-line px-4 py-2 text-[13px] font-semibold text-navy-soft disabled:opacity-50"
+          >
+            {'\uc0c8\ub85c\uace0\uce68'}
+          </button>
+          <button
+            type="button"
+            onClick={() => void runAction(() => adminSweepStaleQueue({ running_timeout_minutes: 30, retrying_timeout_minutes: 120 }))}
+            disabled={busy}
+            className="rounded-full border border-line px-4 py-2 text-[13px] font-semibold text-navy-soft disabled:opacity-50"
+          >
+            {'stale \uc815\ub9ac'}
+          </button>
+          <button
+            type="button"
+            onClick={() => void runAction(() => adminReconcileDeadLetters(100))}
+            disabled={busy}
+            className="rounded-full border border-line px-4 py-2 text-[13px] font-semibold text-navy-soft disabled:opacity-50"
+          >
+            {'Dead Letter \ubcf4\uc815'}
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <OpsMetric label="pending" value={queueCount(overview, 'pending')} />
+        <OpsMetric label="retrying" value={queueCount(overview, 'retrying')} />
+        <OpsMetric label="failed" value={queueCount(overview, 'failed')} tone="text-red" />
+        <OpsMetric label="dead letter" value={overview.queue.dead_letter?.unreplayed ?? overview.dead_letters.count} tone="text-red" />
+        <OpsMetric label="schedule" value={overview.schedule_summary.attention_count} />
+      </div>
+
+      <div className="mt-5 grid gap-5 lg:grid-cols-2">
+        <div>
+          <h3 className="text-[13px] font-bold">{'\uc6b4\uc601 \uc774\ubca4\ud2b8'}</h3>
+          <div className="mt-2 space-y-2">
+            {overview.events.length === 0 ? (
+              <p className="rounded-md bg-surface-2 px-3 py-2 text-[12.5px] text-muted">
+                {'\ud604\uc7ac \ucd94\uac00 \ud655\uc778\uc774 \ud544\uc694\ud55c \uc6b4\uc601 \uc774\ubca4\ud2b8\uac00 \uc5c6\uc2b5\ub2c8\ub2e4.'}
+              </p>
+            ) : (
+              overview.events.map((event) => (
+                <div key={`${event.type}-${event.count ?? 0}`} className="rounded-md border border-line px-3 py-2">
+                  <div className="text-[12.5px] font-semibold">
+                    {QUEUE_EVENT_LABEL[event.type] ?? event.type}
+                  </div>
+                  <div className="mt-0.5 text-[12.5px] text-muted">{event.message}</div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        <div>
+          <h3 className="text-[13px] font-bold">{'\ud1b5\ud569 \uc694\uc57d'}</h3>
+          <dl className="mt-2 space-y-1.5 rounded-md bg-surface-2 p-3 text-[12.5px]">
+            <div className="flex justify-between gap-4">
+              <dt className="text-muted">{'\ud050 \uc804\uccb4'}</dt>
+              <dd className="font-semibold">{overview.queue.total}</dd>
+            </div>
+            <div className="flex justify-between gap-4">
+              <dt className="text-muted">{'\uc2a4\ucf00\uc904 \ucd94\uac00 \ud655\uc778'}</dt>
+              <dd className="font-semibold">{overview.schedule_summary.attention_count}</dd>
+            </div>
+            <div className="flex justify-between gap-4">
+              <dt className="text-muted">{'Dead Letter \ubbf8\uc7ac\ucc98\ub9ac'}</dt>
+              <dd className="font-semibold">{overview.queue.dead_letter?.unreplayed ?? overview.dead_letters.count}</dd>
+            </div>
+          </dl>
+        </div>
+      </div>
+
+      <div className="mt-5 grid gap-5 lg:grid-cols-2">
+        <QueueTaskList
+          items={failedTasks}
+          busy={busy}
+          onRetry={(task) => runAction(() => adminRetryQueueTask(task.id))}
+        />
+        <DeadLetterList
+          items={deadLetters}
+          busy={busy}
+          onReplay={(item) => runAction(() => adminReplayDeadLetters([item.id]))}
+        />
+      </div>
+    </section>
+  );
+}
+
+function OpsMetric({ label, value, tone = 'text-navy' }: { label: string; value: number; tone?: string }) {
+  return (
+    <div className="rounded-md border border-line px-3 py-2">
+      <div className="text-[12px] font-semibold text-muted">{label}</div>
+      <div className={`mt-1 text-[20px] font-extrabold ${tone}`}>{value}</div>
+    </div>
+  );
+}
+
+function QueueTaskList({
+  items,
+  busy,
+  onRetry,
+}: {
+  items: AdminQueueTask[];
+  busy: boolean;
+  onRetry: (task: AdminQueueTask) => Promise<void>;
+}) {
+  return (
+    <div>
+      <h3 className="text-[13px] font-bold">{'\uc2e4\ud328 \ud050 \uc791\uc5c5'}</h3>
+      <div className="mt-2 overflow-x-auto">
+        <table className="w-full text-left text-[12.5px]">
+          <thead className="text-muted">
+            <tr>
+              <th className="py-1.5 pr-3 font-semibold">ID</th>
+              <th className="py-1.5 pr-3 font-semibold">type</th>
+              <th className="py-1.5 pr-3 font-semibold">status</th>
+              <th className="py-1.5 pr-3 font-semibold">{'\uc870\uce58'}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.length === 0 ? (
+              <tr>
+                <td className="py-2 text-muted" colSpan={4}>{'\uc2e4\ud328 \ud050 \uc791\uc5c5\uc774 \uc5c6\uc2b5\ub2c8\ub2e4.'}</td>
+              </tr>
+            ) : (
+              items.map((task) => (
+                <tr key={task.id} className="border-t border-line">
+                  <td className="py-1.5 pr-3 font-semibold">{task.id}</td>
+                  <td className="py-1.5 pr-3">{task.task_type}</td>
+                  <td className="py-1.5 pr-3">{task.status}</td>
+                  <td className="py-1.5 pr-3">
+                    <button
+                      type="button"
+                      onClick={() => void onRetry(task)}
+                      disabled={busy}
+                      className="text-[12.5px] font-semibold text-sky-deep disabled:opacity-50"
+                    >
+                      {'\uc7ac\uc2dc\ub3c4'}
+                    </button>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function DeadLetterList({
+  items,
+  busy,
+  onReplay,
+}: {
+  items: AdminDeadLetter[];
+  busy: boolean;
+  onReplay: (item: AdminDeadLetter) => Promise<void>;
+}) {
+  return (
+    <div>
+      <h3 className="text-[13px] font-bold">{'Dead Letter'}</h3>
+      <div className="mt-2 overflow-x-auto">
+        <table className="w-full text-left text-[12.5px]">
+          <thead className="text-muted">
+            <tr>
+              <th className="py-1.5 pr-3 font-semibold">ID</th>
+              <th className="py-1.5 pr-3 font-semibold">type</th>
+              <th className="py-1.5 pr-3 font-semibold">replayed</th>
+              <th className="py-1.5 pr-3 font-semibold">{'\uc870\uce58'}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.length === 0 ? (
+              <tr>
+                <td className="py-2 text-muted" colSpan={4}>{'Dead Letter\uac00 \uc5c6\uc2b5\ub2c8\ub2e4.'}</td>
+              </tr>
+            ) : (
+              items.map((item) => (
+                <tr key={item.id} className="border-t border-line">
+                  <td className="py-1.5 pr-3 font-semibold">{item.id}</td>
+                  <td className="py-1.5 pr-3">{item.task_type}</td>
+                  <td className="py-1.5 pr-3">{item.replayed_at ? fmtDateTime(item.replayed_at) : '-'}</td>
+                  <td className="py-1.5 pr-3">
+                    <button
+                      type="button"
+                      onClick={() => void onReplay(item)}
+                      disabled={busy || Boolean(item.replayed_at)}
+                      className="text-[12.5px] font-semibold text-sky-deep disabled:opacity-50"
+                    >
+                      {'\uc7ac\ucc98\ub9ac'}
+                    </button>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 const ALL_TARGETS = ["price", "dart", "report", "alternative"] as const;
 const TARGET_LABEL: Record<string, string> = {
   price: '\uac00\uaca9',
@@ -307,6 +579,127 @@ function fmtDateTime(value: string | null): string {
   if (!value) return '-';
   const d = new Date(value);
   return Number.isNaN(d.getTime()) ? value : d.toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' });
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function stringifyRunValue(value: unknown): string {
+  if (value === null || value === undefined) return '-';
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+  if (Array.isArray(value)) return `${value.length} items`;
+  const record = asRecord(value);
+  if (!record) return '-';
+  const entries = Object.entries(record);
+  if (entries.length === 0) return 'empty';
+  return entries
+    .slice(0, 3)
+    .map(([key, item]) => `${key}=${stringifyRunValue(item)}`)
+    .join(', ');
+}
+
+const SCHEDULE_DECISION_ACTION_LABEL: Record<string, string> = {
+  fire: '실행',
+  skip: '보류',
+};
+
+const SCHEDULE_DECISION_REASON_LABEL: Record<string, string> = {
+  manual: '수동 실행',
+  scheduled: '정기 실행',
+  'queue-backlog': '큐 적체',
+  'recent-failures': '실패 누적',
+  'outside-window': '운영 시간 외',
+  'not-due': '대기',
+  disabled: '비활성',
+};
+
+function formatScheduleRunDecision(run: AdminScheduleRun): string {
+  const detail = asRecord(run.detail);
+  const decision = asRecord(detail?.decision);
+  const action = typeof decision?.action === 'string' ? decision.action : null;
+  const reason = typeof decision?.reason === 'string' ? decision.reason : null;
+  const reasonValue = reason ?? run.trigger_reason;
+  const reasonLabel = reasonValue
+    ? (SCHEDULE_DECISION_REASON_LABEL[reasonValue] ?? reasonValue)
+    : '-';
+  if (action) return `${SCHEDULE_DECISION_ACTION_LABEL[action] ?? action}: ${reasonLabel}`;
+  return reasonLabel;
+}
+
+function formatScheduleRunTargetResult(run: AdminScheduleRun): string {
+  const detail = asRecord(run.detail);
+  const targetSummary = asRecord(detail?.targets);
+  if (targetSummary) {
+    const entries = Object.entries(targetSummary);
+    if (entries.length === 0) return 'empty';
+    return entries
+      .map(([target, value]) => `${target}: ${stringifyRunValue(value)}`)
+      .join(' | ');
+  }
+  return run.targets.join(', ') || '-';
+}
+
+const SCHEDULE_HEALTH_TONE: Record<string, string> = {
+  ok: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+  disabled: 'border-line bg-surface-2 text-muted',
+  delayed: 'border-red/30 bg-red/10 text-red',
+  failed_waiting: 'border-amber-200 bg-amber-50 text-amber-700',
+  unknown: 'border-sky/30 bg-sky/10 text-sky-deep',
+};
+
+function formatScheduleHealth(schedule: AdminSchedule): {
+  label: string;
+  detail: string;
+  className: string;
+} {
+  const status = schedule.health_status ?? (schedule.enabled ? 'unknown' : 'disabled');
+  return {
+    label: schedule.health_label ?? status,
+    detail: schedule.health_detail ?? '스케줄러 상태 확인이 필요합니다.',
+    className: SCHEDULE_HEALTH_TONE[status] ?? SCHEDULE_HEALTH_TONE.unknown,
+  };
+}
+
+function scheduleRunDecisionReason(run: AdminScheduleRun): string | null {
+  const detail = asRecord(run.detail);
+  const decision = asRecord(detail?.decision);
+  if (typeof decision?.reason === 'string') return decision.reason;
+  return run.trigger_reason;
+}
+
+function getScheduleRunWarning(runs: AdminScheduleRun[]): string | null {
+  let consecutive = 0;
+  for (const run of runs) {
+    const status = (run.status ?? '').toLowerCase();
+    const reason = scheduleRunDecisionReason(run);
+    const policySkip = status === 'skipped' && (
+      reason === 'queue-backlog' || reason === 'recent-failures'
+    );
+    const failedRun = status === 'failed' || status === 'partial';
+    if (!policySkip && !failedRun) break;
+    consecutive += 1;
+  }
+  if (consecutive < 2) return null;
+  return `반복 보류/실패 ${consecutive}회가 이어졌습니다. 큐 상태와 최근 실행 결과를 추가 확인하세요.`;
+}
+
+function validateScheduleDraft(draft: ScheduleDraft): string | null {
+  if (draft.targets.length === 0) {
+    return '수집 대상을 최소 1개 선택하세요.';
+  }
+  const frequencyMinutes = Number(draft.frequencyMinutes);
+  if (!Number.isInteger(frequencyMinutes) || frequencyMinutes < 1 || frequencyMinutes > 1440) {
+    return '반복 주기는 1~1440분 사이의 정수로 입력하세요.';
+  }
+  if (frequencyMinutes < 1440 && draft.activeFrom === draft.activeUntil) {
+    return '반복 스케줄의 활성 시작/종료 시각은 같을 수 없습니다.';
+  }
+  return null;
 }
 
 function ScheduleCard({ onError }: { onError: (msg: string | null) => void }) {
@@ -365,6 +758,28 @@ function ScheduleCard({ onError }: { onError: (msg: string | null) => void }) {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function saveTargets(schedule: AdminSchedule, draft: ScheduleDraft) {
+    const validation = validateScheduleDraft(draft);
+    if (validation) {
+      onError(validation);
+      return;
+    }
+    await save(schedule, { targets: draft.targets });
+  }
+
+  async function saveCadence(schedule: AdminSchedule, draft: ScheduleDraft) {
+    const validation = validateScheduleDraft(draft);
+    if (validation) {
+      onError(validation);
+      return;
+    }
+    await save(schedule, {
+      frequency_minutes: Number(draft.frequencyMinutes),
+      active_from_local: draft.activeFrom,
+      active_until_local: draft.activeUntil,
+    });
   }
 
   async function trigger(schedule: AdminSchedule) {
@@ -431,11 +846,19 @@ function ScheduleCard({ onError }: { onError: (msg: string | null) => void }) {
           };
           const frequencyMinutes = Number(draft.frequencyMinutes);
           const runs = runsBySchedule[schedule.id] ?? [];
+          const health = formatScheduleHealth(schedule);
+          const runWarning = getScheduleRunWarning(runs);
+          const draftValidation = validateScheduleDraft(draft);
           return (
             <div key={schedule.id} className="rounded-xl border border-line p-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <h3 className="text-[15px] font-bold">{schedule.name ?? `schedule-${schedule.id}`}</h3>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="text-[15px] font-bold">{schedule.name ?? `schedule-${schedule.id}`}</h3>
+                    <span className={`rounded-full border px-2.5 py-1 text-[12px] font-semibold ${health.className}`}>
+                      {health.label}
+                    </span>
+                  </div>
                   <p className="mt-0.5 text-[12.5px] text-muted">
                     {schedule.timezone ?? 'Asia/Seoul'} {schedule.run_at_local ?? '-'} {' - '}
                     {schedule.frequency_minutes ?? 1440}{'\ubd84 \uc8fc\uae30'} {' - '}
@@ -490,7 +913,7 @@ function ScheduleCard({ onError }: { onError: (msg: string | null) => void }) {
                     ))}
                     <button
                       type="button"
-                      onClick={() => void save(schedule, { targets: draft.targets })}
+                      onClick={() => void saveTargets(schedule, draft)}
                       disabled={busy}
                       className="text-[13px] font-semibold text-sky-deep disabled:opacity-50"
                     >
@@ -521,13 +944,12 @@ function ScheduleCard({ onError }: { onError: (msg: string | null) => void }) {
                       className="card px-3 py-2 text-[14px] outline-none focus:border-sky"
                     />
                   </div>
+                  {draftValidation && (
+                    <p className="mt-2 text-[12.5px] font-semibold text-red">{draftValidation}</p>
+                  )}
                   <button
                     type="button"
-                    onClick={() => void save(schedule, {
-                      frequency_minutes: frequencyMinutes,
-                      active_from_local: draft.activeFrom,
-                      active_until_local: draft.activeUntil,
-                    })}
+                    onClick={() => void saveCadence(schedule, draft)}
                     disabled={busy || !Number.isInteger(frequencyMinutes) || frequencyMinutes < 1 || frequencyMinutes > 1440}
                     className="mt-2 text-[13px] font-semibold text-sky-deep disabled:opacity-50"
                   >
@@ -538,6 +960,10 @@ function ScheduleCard({ onError }: { onError: (msg: string | null) => void }) {
                 <div className="rounded-xl bg-surface-2 p-4">
                   <div className="text-[12.5px] font-semibold text-muted">{'\uc2e4\ud589 \uc0c1\ud0dc'}</div>
                   <dl className="mt-2 space-y-1.5 text-[13px]">
+                    <div className="flex justify-between gap-4">
+                      <dt className="text-muted">{'\uc0c1\ud0dc \uc9c4\ub2e8'}</dt>
+                      <dd className="text-right font-medium">{health.detail}</dd>
+                    </div>
                     <div className="flex justify-between gap-4">
                       <dt className="text-muted">{'\ub9c8\uc9c0\ub9c9 \uc2e4\ud589'}</dt>
                       <dd className="font-medium">{fmtDateTime(schedule.last_run_at)}</dd>
@@ -564,6 +990,11 @@ function ScheduleCard({ onError }: { onError: (msg: string | null) => void }) {
 
               <div className="mt-4">
                 <div className="text-[12.5px] font-semibold text-muted">{'\ucd5c\uadfc \uc2e4\ud589 \uc774\ub825'}</div>
+                {runWarning && (
+                  <p className="mt-1.5 rounded-md border border-red/30 bg-red/10 px-3 py-2 text-[12.5px] font-semibold text-red">
+                    {runWarning}
+                  </p>
+                )}
                 <div className="mt-2 overflow-x-auto">
                   <table className="w-full text-left text-[12.5px]">
                     <thead className="text-muted">
@@ -572,12 +1003,14 @@ function ScheduleCard({ onError }: { onError: (msg: string | null) => void }) {
                         <th className="py-1.5 pr-3 font-semibold">{'\ud2b8\ub9ac\uac70'}</th>
                         <th className="py-1.5 pr-3 font-semibold">{'\ub300\uc0c1'}</th>
                         <th className="py-1.5 pr-3 font-semibold">{'\uc0c1\ud0dc'}</th>
+                        <th className="py-1.5 pr-3 font-semibold">{'\ud310\ub2e8'}</th>
+                        <th className="py-1.5 pr-3 font-semibold">{'\uacb0\uacfc \uc694\uc57d'}</th>
                       </tr>
                     </thead>
                     <tbody>
                       {runs.length === 0 ? (
                         <tr>
-                          <td className="py-2 text-muted" colSpan={4}>
+                          <td className="py-2 text-muted" colSpan={6}>
                             {'\uc2e4\ud589 \uc774\ub825\uc774 \uc5c6\uc2b5\ub2c8\ub2e4.'}
                           </td>
                         </tr>
@@ -588,6 +1021,8 @@ function ScheduleCard({ onError }: { onError: (msg: string | null) => void }) {
                             <td className="py-1.5 pr-3">{run.trigger_reason ?? '-'}</td>
                             <td className="py-1.5 pr-3">{run.targets.join(', ') || '-'}</td>
                             <td className="py-1.5 pr-3 font-medium">{run.status ?? '-'}</td>
+                            <td className="py-1.5 pr-3">{formatScheduleRunDecision(run)}</td>
+                            <td className="max-w-[260px] py-1.5 pr-3 text-muted">{formatScheduleRunTargetResult(run)}</td>
                           </tr>
                         ))
                       )}

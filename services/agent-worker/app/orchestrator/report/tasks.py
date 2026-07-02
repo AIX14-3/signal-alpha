@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import functools
 import hashlib
 import json
@@ -9,6 +10,9 @@ from collections.abc import Mapping
 from datetime import date, datetime, timedelta
 from typing import Any, Callable, TypeVar
 
+from app.agents.base import SourceAgentInput
+from app.clients.embedding_client import EmbeddingError, GeminiEmbeddingClient
+from app.clients.pgvector import to_pgvector
 from app.collectors.report.crawler import collect_stock
 from app.collectors.report.parsers.run_parser import process_from_s3
 from app.collectors.report.pdf_downloader import download_and_upload, make_report_storage_key
@@ -16,6 +20,7 @@ from app.collectors.report.storage import ReportStorageClient, get_report_storag
 from app.orchestrator.queue.context import enqueue_aggregate
 from app.orchestrator.queue.task_types import (
     ANALYZE_REPORT,
+    EMBED_REPORT,
     NORMALIZE_REPORT,
     PROCESS_REPORT,
 )
@@ -300,11 +305,29 @@ class ReportProcessTaskHandler:
             dedupe=True,
         )
 
+        # RAG 임베딩(Tier A) — REPORT_USE_LLM=true 일 때만 사이드 태스크로 인큐. 결정론 점수 경로
+        # (normalize→analyze)와 분리돼 임베딩 실패가 점수 산출을 막지 않는다. 기본 OFF → 동작 무변화.
+        # NORMALIZE 가 아니라 여기(PROCESS)서 인큐한다 — 정규화는 임베딩을 기다리지 않는다.
+        embed_task_id = None
+        if getattr(self._settings, "report_use_llm", False):
+            embed_task_id = await queue.enqueue(
+                stock_id=int(row["stock_id"]),
+                task_type=EMBED_REPORT,
+                priority="batch",
+                source_raw_ids=[raw_document_id],
+                task_context={
+                    "raw_document_id": raw_document_id,
+                    "stock_code": str(row["stock_code"]),
+                },
+                dedupe=True,
+            )
+
         return {
             "status": "success",
             "raw_document_id": raw_document_id,
             "s3_key": s3_key,
             "normalize_task_id": normalize_task_id,
+            "embed_task_id": embed_task_id,
         }
 
     def _get_storage(self) -> ReportStorageClient:
@@ -324,6 +347,167 @@ class ReportProcessTaskHandler:
             raw_document_id,
             error,
         )
+
+
+_MAX_CHUNKS_PER_DOC = 80
+
+
+def _rows_affected(tag: Any) -> int:
+    """asyncpg execute() 태그(예: 'INSERT 0 1' / 'INSERT 0 0')에서 실제 반영 행수를 파싱.
+
+    ON CONFLICT DO NOTHING 으로 스킵되면 마지막 숫자가 0 이라 실제 적재분만 센다. 태그 형식이
+    예상과 다르면(모의 커넥션 등) 보수적으로 1 로 간주한다.
+    """
+    try:
+        return int(str(tag).split()[-1])
+    except (ValueError, IndexError, TypeError):
+        return 1
+
+
+def _chunk_report_text(text: str) -> list[str]:
+    """Lazy wrapper so ``report.tasks`` import stays free of langchain (chunker dep).
+
+    ``chunk_text`` pulls in ``langchain_text_splitters``; importing it at module top would
+    load langchain into every consumer of this widely-imported module (handlers → whole
+    worker) just for the optional embed side-task. Import on first use instead. Tests
+    patch this wrapper.
+    """
+    from app.collectors.report.parsers.chunker import chunk_text
+
+    return chunk_text(text)
+
+
+def _extract_pdf_text(pdf_bytes: bytes) -> str:
+    """Lazy wrapper so ``report.tasks`` import stays free of PyMuPDF (fitz dep)."""
+    from app.collectors.report.parsers.pdf_extractor import extract_text
+
+    return extract_text(pdf_bytes)
+
+
+class ReportEmbedTaskHandler:
+    """Chunk a parsed report's full text, embed it, and load ``report_chunks`` (#709 RAG).
+
+    Side path off the deterministic score pipeline: enqueued from ``PROCESS_REPORT`` only
+    when ``REPORT_USE_LLM=true``, and it enqueues nothing downstream. Any failure (PDF
+    gone, embedding API down) returns a status instead of raising, so the score path —
+    which runs independently via NORMALIZE→ANALYZE — is never blocked.
+
+    Text source (option 2): re-extracts the FULL PDF text from report storage. The
+    persisted ``report_raw_details.extracted_text`` is only a 2000-char preview (too thin
+    for RAG); the full text is re-extracted from the stored PDF, falling back to the
+    preview only when the PDF is unavailable.
+    """
+
+    def __init__(
+        self,
+        *,
+        connection: Any,
+        settings: Any,
+        storage: ReportStorageClient | None = None,
+        embedder: Any | None = None,
+    ) -> None:
+        self._connection = connection
+        self._settings = settings
+        self._storage = storage
+        self._embedder = embedder
+
+    async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
+        task_context = _task_context(task.get("task_context"))
+        raw_document_id = int(task_context["raw_document_id"])
+
+        row = await self._connection.fetchrow(
+            """
+            SELECT rrd.raw_document_id,
+                   rrd.s3_key,
+                   rrd.extracted_text,
+                   rrd.parsing_status,
+                   rd.stock_id
+            FROM report_raw_details rrd
+            JOIN raw_documents rd ON rd.id = rrd.raw_document_id
+            WHERE rrd.raw_document_id = $1
+            """,
+            raw_document_id,
+        )
+        if row is None:
+            return {"status": "not_found", "raw_document_id": raw_document_id}
+        if row["parsing_status"] != "success":
+            return {"status": "not_parsed", "raw_document_id": raw_document_id}
+
+        # 멱등: 이미 청크가 있으면 재실행은 no-op(재임베딩하려면 청크를 먼저 삭제).
+        existing = await self._connection.fetchval(
+            "SELECT 1 FROM report_chunks WHERE report_raw_detail_id = $1 LIMIT 1",
+            raw_document_id,
+        )
+        if existing:
+            return {"status": "already_embedded", "raw_document_id": raw_document_id}
+
+        text = await self._resolve_text(row)
+        chunks = _chunk_report_text(text)[:_MAX_CHUNKS_PER_DOC] if text.strip() else []
+        if not chunks:
+            return {"status": "no_text", "raw_document_id": raw_document_id}
+
+        try:
+            # 임베더 구성도 try 안에서 — GEMINI_API_KEY 미설정 시 EmbeddingError 를 여기서 삼킨다.
+            embedder = self._embedder or GeminiEmbeddingClient()
+            vectors = await embedder.embed_batch(chunks)
+        except EmbeddingError as exc:
+            # 일시 오류 내성: 청크 없이 남겨두고 재인큐 가능. 점수 경로로 예외 전파 금지.
+            logger.warning(
+                "report_embed_failed raw_document_id=%s error=%s", raw_document_id, exc
+            )
+            return {"status": "embed_error", "raw_document_id": raw_document_id, "error": str(exc)}
+
+        # 부분 적재 방지: 전 청크를 한 트랜잭션으로 커밋 → 중간 크래시 시 0 으로 롤백돼 멱등
+        # pre-check(청크 존재 여부)가 항상 정확하게 유지된다(부분 적재 후 재실행 시 나머지 유실 방지).
+        inserted = 0
+        async with self._connection.transaction():
+            for index, (chunk, vector) in enumerate(zip(chunks, vectors, strict=True)):
+                tag = await self._connection.execute(
+                    """
+                    INSERT INTO report_chunks
+                        (report_raw_detail_id, chunk_index, chunk_text, embedding, token_count, stock_id)
+                    VALUES ($1, $2, $3, $4::vector, $5, $6)
+                    ON CONFLICT (report_raw_detail_id, chunk_index) DO NOTHING
+                    """,
+                    raw_document_id,
+                    index,
+                    chunk,
+                    to_pgvector(vector),
+                    len(chunk.split()),
+                    int(row["stock_id"]),  # 비정규화 — retriever 종목 필터를 exact 스캔으로
+                )
+                inserted += _rows_affected(tag)
+
+        # chunks=실제 적재 행수(ON CONFLICT 로 스킵된 건 제외), attempted=시도 청크 수.
+        return {
+            "status": "success",
+            "raw_document_id": raw_document_id,
+            "chunks": inserted,
+            "attempted": len(chunks),
+        }
+
+    async def _resolve_text(self, row: Mapping[str, Any]) -> str:
+        """전체 PDF 본문(옵션2 재추출); PDF 없거나 실패 시 2000자 프리뷰로 폴백."""
+        s3_key = row.get("s3_key")
+        if s3_key:
+            try:
+                storage = self._get_storage()
+                pdf_bytes = await _run_blocking(storage.download_pdf, s3_key)
+                text = await _run_blocking(_extract_pdf_text, pdf_bytes)
+                if text and text.strip():
+                    return text
+            except Exception as exc:  # noqa: BLE001 — 프리뷰로 격하, 태스크는 절대 실패시키지 않음
+                logger.warning(
+                    "report_embed_pdf_reextract_failed raw_document_id=%s error=%s",
+                    row.get("raw_document_id"),
+                    exc,
+                )
+        return str(row.get("extracted_text") or "")
+
+    def _get_storage(self) -> ReportStorageClient:
+        if self._storage is None:
+            self._storage = get_report_storage_client(self._settings)
+        return self._storage
 
 
 class ReportNormalizeTaskHandler:
@@ -420,8 +604,16 @@ class ReportAnalyzeTaskHandler:
 
     PROMPT_VER = "report-valuation-v1"
 
-    def __init__(self, *, connection: Any) -> None:
+    def __init__(
+        self,
+        *,
+        connection: Any,
+        settings: Any | None = None,
+        agent: Any | None = None,
+    ) -> None:
         self._connection = connection
+        self._settings = settings
+        self._agent = agent
         self._analysis_repository = AnalysisRepository(connection)
         self._queue_repository = ProcessingQueueRepository(connection)
 
@@ -481,6 +673,18 @@ class ReportAnalyzeTaskHandler:
                 "valuation": _report_valuation_payload(events),
             },
         }
+        # LLM 재해석(Tier A, RAG) — REPORT_USE_LLM=true 일 때만. 결정론 방향/점수는 이미 확정됐고,
+        # 에이전트 산출물은 오직 신규 method_detail["report_rag"] 사이드카에만 담는다. 기존 피처 키·
+        # method_score/method_signal 은 무변경(ML 가드레일 — Wave 3 메타러너가 그대로 읽는다).
+        # 어떤 실패도 결정론 write 를 막지 않는다(사이드카에 error 상태로만 기록).
+        if getattr(self._settings, "report_use_llm", False):
+            method_detail["report_rag"] = await self._reinterpret(
+                stock_id=stock_id,
+                stock_code=method_detail["stock_code"],
+                direction=direction,
+                source_score=source_score,
+                report_quant=method_detail["report_quant"],
+            )
         agent_result = await self._analysis_repository.upsert_agent_result(
             result_id=int(analysis_result["id"]),
             stock_id=stock_id,
@@ -558,6 +762,56 @@ class ReportAnalyzeTaskHandler:
             """,
             signal_event_ids,
         ))
+
+    async def _reinterpret(
+        self,
+        *,
+        stock_id: int,
+        stock_code: Any,
+        direction: str,
+        source_score: float,
+        report_quant: dict[str, Any],
+    ) -> dict[str, Any]:
+        """RAG 에이전트로 재해석/근거만 산출 → report_rag 사이드카(dict) 반환.
+
+        결정론 점수/방향은 context 로 넘겨 에이전트가 그대로 echo 하게 하고(자체 산출 금지),
+        여기서는 summary/risk_flags/evidence/needs_review 만 사이드카에 담는다. 에이전트 구성·
+        실행 중 어떤 예외도 삼켜 error 상태로 기록 — 결정론 write 경로는 절대 깨지 않는다.
+        """
+        from app.agents.report.agent import ReportAnalysisAgent
+
+        try:
+            agent = self._agent or ReportAnalysisAgent(connection=self._connection)
+            out = await agent.analyze(
+                SourceAgentInput(
+                    source="REPORT",
+                    stock_code=str(stock_code or ""),
+                    stock_id=stock_id,
+                    context={
+                        # deep copy — 에이전트가 실수로 in-place 변경해도 지속되는 피처 키(report_quant)를
+                        # 훼손하지 못하게 격리(ML 가드레일 방어). 에이전트는 읽기 전용으로만 쓴다.
+                        "report_quant": copy.deepcopy(report_quant),
+                        "direction": direction,
+                        "source_score": source_score,
+                    },
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 — 결정론 write 를 절대 깨지 않는다.
+            logger.warning("report_rag_reinterpret_failed stock_id=%s error=%s", stock_id, exc)
+            return {"status": "error", "error": str(exc)}
+
+        rag = out.method_detail.get("report_rag", {}) if isinstance(out.method_detail, dict) else {}
+        return {
+            "summary": out.summary,
+            "risk_flags": list(out.risk_flags),
+            "evidence": rag.get("evidence", []),
+            "needs_review": bool(out.needs_review),
+            "analysis_source": out.analysis_source,
+            "llm_model": out.llm_model,
+            "prompt_ver": out.prompt_ver,
+            "llm_error": out.llm_error,
+            "status": rag.get("status", "ok"),
+        }
 
 
 def _report_event_hash(raw_document_id: int) -> str:

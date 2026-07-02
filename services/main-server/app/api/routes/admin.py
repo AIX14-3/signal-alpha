@@ -6,6 +6,7 @@ import secrets
 from datetime import UTC, datetime, time, timedelta
 from typing import Any
 
+import httpx
 from asyncpg import UniqueViolationError
 from fastapi import APIRouter, Depends, Query, Request, Response
 from pydantic import BaseModel
@@ -33,6 +34,15 @@ from signal_alpha_data_access.backend import (
 # 수집 스케줄 제어 허용값.
 _SCHEDULE_TARGETS = {"price", "dart", "report", "alternative"}
 _SCHEDULE_PRICE_MODES = {"flows", "snapshot"}
+_SCHEDULE_HEALTH_GRACE_MINUTES = 15
+
+_SCHEDULE_HEALTH_LABELS = {
+    "ok": "정상",
+    "disabled": "비활성",
+    "delayed": "지연",
+    "failed_waiting": "실패 후 대기",
+    "unknown": "확인 필요",
+}
 
 
 admin_router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -75,6 +85,19 @@ class UpdateScheduleRequest(BaseModel):
     frequency_minutes: int | None = None
     active_from_local: str | None = None
     active_until_local: str | None = None
+
+
+class QueueSweepRequest(BaseModel):
+    running_timeout_minutes: int = 30
+    retrying_timeout_minutes: int = 120
+
+
+class DeadLetterReplayRequest(BaseModel):
+    dead_letter_ids: list[int]
+
+
+class DeadLetterReconcileRequest(BaseModel):
+    limit: int = 100
 
 
 # member_code = 영문 대문자 4 + 숫자 4 (혼동 문자 I/O/0/1 제외). auth._new_member_code 와 동일 규칙.
@@ -456,6 +479,93 @@ async def get_stats(
 # (main-server → worker 직접 호출 없음). 상태(last/next run)는 스케줄러가 기록한다.
 
 
+@admin_router.get("/queue/overview")
+async def admin_queue_overview(
+    _admin: dict[str, Any] = Depends(get_current_admin),
+    pool: Any = Depends(get_database_pool),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    queue = await _worker_request("GET", "/internal/stats/queue", settings=settings)
+    failed_tasks = await _worker_request(
+        "GET",
+        "/internal/queue/tasks",
+        settings=settings,
+        params={"status": "failed", "limit": 20},
+    )
+    dead_letters = await _worker_request(
+        "GET",
+        "/internal/queue/dead-letter",
+        settings=settings,
+        params={"replayed": False, "limit": 20},
+    )
+    async with pool.acquire() as connection:
+        schedule_rows = await CollectionScheduleRepository(connection).list_all()
+    schedules = [_schedule_row(parse_schedule_row(row)) for row in schedule_rows]
+    schedule_summary = _schedule_health_summary(schedules)
+    return {
+        "queue": queue,
+        "failed_tasks": failed_tasks,
+        "dead_letters": dead_letters,
+        "schedule_summary": schedule_summary,
+        "events": _queue_ops_events(queue, failed_tasks, dead_letters, schedule_summary),
+    }
+
+
+@admin_router.post("/queue/sweep-stale")
+async def admin_sweep_stale_queue(
+    payload: QueueSweepRequest,
+    _admin: dict[str, Any] = Depends(get_current_admin),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    return await _worker_request(
+        "POST",
+        "/internal/queue/sweep-stale",
+        settings=settings,
+        json_body=payload.model_dump(),
+    )
+
+
+@admin_router.post("/queue/tasks/{task_id}/retry")
+async def admin_retry_queue_task(
+    task_id: int,
+    _admin: dict[str, Any] = Depends(get_current_admin),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    return await _worker_request(
+        "POST",
+        f"/internal/queue/tasks/{task_id}/retry",
+        settings=settings,
+    )
+
+
+@admin_router.post("/queue/dead-letter/replay")
+async def admin_replay_dead_letters(
+    payload: DeadLetterReplayRequest,
+    _admin: dict[str, Any] = Depends(get_current_admin),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    return await _worker_request(
+        "POST",
+        "/internal/queue/dead-letter/replay",
+        settings=settings,
+        json_body=payload.model_dump(),
+    )
+
+
+@admin_router.post("/queue/dead-letter/reconcile")
+async def admin_reconcile_dead_letters(
+    payload: DeadLetterReconcileRequest,
+    _admin: dict[str, Any] = Depends(get_current_admin),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    return await _worker_request(
+        "POST",
+        "/internal/queue/dead-letter/reconcile",
+        settings=settings,
+        json_body=payload.model_dump(),
+    )
+
+
 @admin_router.get("/schedules")
 async def list_schedules(
     _admin: dict[str, Any] = Depends(get_current_admin),
@@ -501,6 +611,24 @@ async def update_schedule(
         before = await repo.get_by_id(schedule_id)
         if before is None:
             raise admin_error(404, "SCHEDULE_NOT_FOUND", "스케줄을 찾을 수 없습니다.")
+        before_data = parse_schedule_row(before)
+        _validate_active_window(
+            frequency_minutes=(
+                payload.frequency_minutes
+                if payload.frequency_minutes is not None
+                else before_data.get("frequency_minutes")
+            ),
+            active_from=(
+                active_from
+                if payload.active_from_local is not None
+                else before_data.get("active_from_local")
+            ),
+            active_until=(
+                active_until
+                if payload.active_until_local is not None
+                else before_data.get("active_until_local")
+            ),
+        )
         updated = await repo.update_config(
             schedule_id=schedule_id,
             enabled=payload.enabled,
@@ -519,7 +647,7 @@ async def update_schedule(
             action="schedule.update",
             target_type="schedule",
             target_id=schedule_id,
-            before=_audit_json(parse_schedule_row(before)),
+            before=_audit_json(before_data),
             after=_audit_json(parse_schedule_row(updated)),
         )
     return _schedule_row(parse_schedule_row(updated))
@@ -564,6 +692,44 @@ async def trigger_schedule(
     return _schedule_row(parse_schedule_row(updated))
 
 
+async def _worker_request(
+    method: str,
+    path: str,
+    *,
+    settings: Settings,
+    json_body: dict[str, Any] | None = None,
+    params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    base_url = str(settings.agent_worker_internal_base_url).rstrip("/")
+    headers: dict[str, str] = {}
+    if settings.internal_api_token:
+        headers["X-Internal-Token"] = settings.internal_api_token
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.request(
+                method,
+                f"{base_url}{path}",
+                headers=headers,
+                json=json_body,
+                params=params,
+            )
+    except httpx.RequestError as exc:
+        raise admin_error(
+            502,
+            "WORKER_UNAVAILABLE",
+            f"agent-worker 운영 API에 연결할 수 없습니다: {exc}",
+        ) from None
+    if response.status_code >= 400:
+        raise admin_error(
+            502,
+            "WORKER_REQUEST_FAILED",
+            f"agent-worker 운영 API 요청이 실패했습니다: {response.status_code}",
+        )
+    if not response.content:
+        return {}
+    return response.json()
+
+
 def _parse_schedule_time(value: str) -> time:
     try:
         hour, minute = value.strip().split(":")
@@ -574,10 +740,36 @@ def _parse_schedule_time(value: str) -> time:
 
 def _validate_targets(targets: list[str]) -> list[str]:
     cleaned = [t.strip().lower() for t in targets if t and t.strip()]
+    if not cleaned:
+        raise admin_error(
+            400,
+            "EMPTY_TARGETS",
+            "수집 대상을 최소 1개 선택해야 합니다.",
+        )
     invalid = [t for t in cleaned if t not in _SCHEDULE_TARGETS]
     if invalid:
         raise admin_error(400, "INVALID_TARGETS", f"허용되지 않은 대상: {invalid}")
     return cleaned
+
+
+def _validate_active_window(
+    *,
+    frequency_minutes: Any,
+    active_from: Any,
+    active_until: Any,
+) -> None:
+    try:
+        minutes = int(frequency_minutes or 1440)
+    except (TypeError, ValueError):
+        minutes = 1440
+    if minutes >= 1440 or active_from is None or active_until is None:
+        return
+    if active_from == active_until:
+        raise admin_error(
+            400,
+            "INVALID_ACTIVE_WINDOW",
+            "반복 스케줄의 활성 시작/종료 시각은 같을 수 없습니다.",
+        )
 
 
 def _validate_price_modes(modes: list[str]) -> list[str]:
@@ -599,6 +791,7 @@ def _schedule_row(row: dict[str, Any] | None) -> dict[str, Any]:
             detail = json.loads(detail)
         except (ValueError, TypeError):
             pass
+    health = _schedule_health(row)
     return {
         "id": row.get("id"),
         "name": row.get("name"),
@@ -619,10 +812,132 @@ def _schedule_row(row: dict[str, Any] | None) -> dict[str, Any]:
         "last_status": row.get("last_status"),
         "last_detail": detail,
         "next_run_at": _timestamp(row.get("next_run_at")),
+        "health_status": health["status"],
+        "health_label": health["label"],
+        "health_detail": health["detail"],
         "manual_trigger_requested_at": _timestamp(row.get("manual_trigger_requested_at")),
         "updated_by": row.get("updated_by"),
         "updated_at": _timestamp(row.get("updated_at")),
     }
+
+
+def _as_utc_dt(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+    if not isinstance(value, datetime):
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+def _schedule_health(
+    row: dict[str, Any],
+    *,
+    now: datetime | None = None,
+    grace_minutes: int = _SCHEDULE_HEALTH_GRACE_MINUTES,
+) -> dict[str, str]:
+    status = "ok"
+    detail = "다음 예정 시각을 대기 중입니다."
+    if not row.get("enabled"):
+        status = "disabled"
+        detail = "스케줄이 비활성 상태입니다."
+    else:
+        now_utc = (now or datetime.now(UTC)).astimezone(UTC)
+        next_run_at = _as_utc_dt(row.get("next_run_at"))
+        if next_run_at is not None and now_utc > next_run_at + timedelta(minutes=grace_minutes):
+            status = "delayed"
+            detail = "다음 예정 시각을 지나 추가 확인이 필요합니다."
+        elif str(row.get("last_status") or "").lower() in {"failed", "partial"}:
+            status = "failed_waiting"
+            detail = "최근 실행이 실패 또는 부분 완료 상태입니다."
+        elif next_run_at is None:
+            status = "unknown"
+            detail = "다음 예정 시각이 없어 스케줄러 상태 확인이 필요합니다."
+    return {
+        "status": status,
+        "label": _SCHEDULE_HEALTH_LABELS.get(status, status),
+        "detail": detail,
+    }
+
+
+def _schedule_health_summary(schedules: list[dict[str, Any]]) -> dict[str, Any]:
+    by_health_status: dict[str, int] = {}
+    for schedule in schedules:
+        status = str(schedule.get("health_status") or "unknown")
+        by_health_status[status] = by_health_status.get(status, 0) + 1
+    attention_count = sum(
+        count
+        for status, count in by_health_status.items()
+        if status not in {"ok", "disabled"}
+    )
+    return {
+        "total": len(schedules),
+        "attention_count": attention_count,
+        "by_health_status": by_health_status,
+    }
+
+
+def _queue_ops_events(
+    queue: dict[str, Any],
+    failed_tasks: dict[str, Any],
+    dead_letters: dict[str, Any],
+    schedule_summary: dict[str, Any],
+) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    totals = queue.get("totals_by_status") if isinstance(queue, dict) else {}
+    totals = totals if isinstance(totals, dict) else {}
+    waiting = int(totals.get("pending") or 0) + int(totals.get("retrying") or 0)
+    failed = int(totals.get("failed") or 0)
+    if waiting:
+        events.append({
+            "type": "queue_backlog",
+            "severity": "warning",
+            "message": f"대기 또는 재시도 중인 큐 작업이 {waiting}건 있습니다.",
+            "count": waiting,
+        })
+    if failed:
+        events.append({
+            "type": "queue_failed",
+            "severity": "warning",
+            "message": f"실패 상태 큐 작업이 {failed}건 있습니다.",
+            "count": failed,
+        })
+    unreplayed = 0
+    dead_letter_summary = queue.get("dead_letter") if isinstance(queue, dict) else None
+    if isinstance(dead_letter_summary, dict):
+        unreplayed = int(dead_letter_summary.get("unreplayed") or 0)
+    if not unreplayed:
+        unreplayed = int(dead_letters.get("count") or 0)
+    if unreplayed:
+        events.append({
+            "type": "dead_letter_pending",
+            "severity": "critical",
+            "message": f"재처리되지 않은 Dead Letter가 {unreplayed}건 있습니다.",
+            "count": unreplayed,
+        })
+    attention_count = int(schedule_summary.get("attention_count") or 0)
+    if attention_count:
+        events.append({
+            "type": "schedule_health",
+            "severity": "warning",
+            "message": f"추가 확인이 필요한 스케줄이 {attention_count}건 있습니다.",
+            "count": attention_count,
+        })
+    failed_task_count = int(failed_tasks.get("count") or 0)
+    if failed_task_count and failed_task_count != failed:
+        events.append({
+            "type": "failed_task_list",
+            "severity": "info",
+            "message": f"최근 실패 작업 목록에 {failed_task_count}건이 표시됩니다.",
+            "count": failed_task_count,
+        })
+    return events
 
 
 def _json_value(value: Any, fallback: Any) -> Any:

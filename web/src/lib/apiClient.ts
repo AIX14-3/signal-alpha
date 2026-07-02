@@ -548,6 +548,9 @@ export type AdminSchedule = {
   last_status: string | null;
   last_detail: unknown;
   next_run_at: string | null;
+  health_status: string | null;
+  health_label: string | null;
+  health_detail: string | null;
   manual_trigger_requested_at: string | null;
   updated_by: string | null;
   updated_at: string | null;
@@ -566,8 +569,101 @@ export type AdminScheduleRun = {
   created_at: string | null;
 };
 
+export type AdminQueueOverview = {
+  queue: {
+    total: number;
+    totals_by_status: Record<string, number>;
+    items: { task_type: string; status: string; count: number }[];
+    dead_letter?: {
+      total: number;
+      unreplayed: number;
+      items: unknown[];
+    };
+  };
+  failed_tasks: {
+    count: number;
+    items: AdminQueueTask[];
+  };
+  dead_letters: {
+    count: number;
+    items: AdminDeadLetter[];
+  };
+  schedule_summary: {
+    total: number;
+    attention_count: number;
+    by_health_status: Record<string, number>;
+  };
+  events: AdminQueueEvent[];
+};
+
+export type AdminQueueTask = {
+  id: number;
+  task_type: string;
+  status: string;
+  stock_code?: string | null;
+  retry_count?: number | null;
+  max_retry_count?: number | null;
+  last_error?: string | null;
+  updated_at?: string | null;
+  created_at?: string | null;
+};
+
+export type AdminDeadLetter = {
+  id: number;
+  task_type: string;
+  stock_code?: string | null;
+  replayed_at?: string | null;
+  error_message?: string | null;
+  created_at?: string | null;
+};
+
+export type AdminQueueEvent = {
+  type: string;
+  severity: string;
+  message: string;
+  count?: number | null;
+};
+
 export async function adminListSchedules(): Promise<{ items: AdminSchedule[] }> {
   return apiFetch("/api/admin/schedules", { auth: "admin" });
+}
+
+export async function adminGetQueueOverview(): Promise<AdminQueueOverview> {
+  return apiFetch("/api/admin/queue/overview", { auth: "admin" });
+}
+
+export async function adminSweepStaleQueue(body: {
+  running_timeout_minutes?: number;
+  retrying_timeout_minutes?: number;
+} = {}): Promise<Record<string, number>> {
+  return apiFetch("/api/admin/queue/sweep-stale", {
+    method: "POST",
+    auth: "admin",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function adminRetryQueueTask(taskId: number): Promise<AdminQueueTask> {
+  return apiFetch(`/api/admin/queue/tasks/${taskId}/retry`, { method: "POST", auth: "admin" });
+}
+
+export async function adminReplayDeadLetters(deadLetterIds: number[]): Promise<{
+  replayed_count: number;
+  results: unknown[];
+}> {
+  return apiFetch("/api/admin/queue/dead-letter/replay", {
+    method: "POST",
+    auth: "admin",
+    body: JSON.stringify({ dead_letter_ids: deadLetterIds }),
+  });
+}
+
+export async function adminReconcileDeadLetters(limit = 100): Promise<Record<string, number>> {
+  return apiFetch("/api/admin/queue/dead-letter/reconcile", {
+    method: "POST",
+    auth: "admin",
+    body: JSON.stringify({ limit }),
+  });
 }
 
 export async function adminListScheduleRuns(

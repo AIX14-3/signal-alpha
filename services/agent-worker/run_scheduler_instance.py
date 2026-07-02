@@ -455,6 +455,25 @@ async def _run_one_schedule(
         )
 
 
+async def _record_skip_schedule(
+    repo: Any,
+    *,
+    schedule: dict[str, Any],
+    decision: dict[str, Any],
+) -> None:
+    run_row = await repo.start_run(
+        schedule_id=int(schedule["id"]),
+        schedule_name=str(schedule.get("name") or schedule["id"]),
+        trigger_reason=str(decision["reason"]),
+        targets=list(schedule.get("targets") or []),
+    )
+    await repo.finish_run(
+        run_id=int(run_row["id"]),
+        status="skipped",
+        detail=_run_detail(decision=decision, target_summary={}),
+    )
+
+
 async def run_cycle(
     pool: Any,
     client: httpx.AsyncClient,
@@ -515,6 +534,16 @@ async def run_cycle(
                 )
                 if reason is not None:
                     skipped_reasons.append(reason)
+                    skip_decision = _scheduler_decision(
+                        schedule,
+                        action="skip",
+                        reason=reason,
+                    )
+                    await _record_skip_schedule(
+                        repo,
+                        schedule=schedule,
+                        decision=skip_decision,
+                    )
                     logger.info(
                         "schedule skipped by backpressure: name=%s reason=%s",
                         schedule.get("name"),

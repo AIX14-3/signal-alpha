@@ -70,6 +70,7 @@ def test_worker_runbooks_match_current_queue_and_auth_contracts():
     assert "SCHEDULER_BACKPRESSURE_MAX_WAITING" in schedule
     assert "queue-backlog" in schedule
     assert "recent-failures" in schedule
+    assert "status=skipped" in schedule
     assert "`GET /api/admin/schedules/{schedule_id}/runs`" in schedule
     assert "frequency_minutes" in schedule
     assert "active_from_local" in schedule
