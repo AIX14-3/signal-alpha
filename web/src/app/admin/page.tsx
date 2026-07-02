@@ -309,6 +309,69 @@ function fmtDateTime(value: string | null): string {
   return Number.isNaN(d.getTime()) ? value : d.toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' });
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function stringifyRunValue(value: unknown): string {
+  if (value === null || value === undefined) return '-';
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+  if (Array.isArray(value)) return `${value.length} items`;
+  const record = asRecord(value);
+  if (!record) return '-';
+  const entries = Object.entries(record);
+  if (entries.length === 0) return 'empty';
+  return entries
+    .slice(0, 3)
+    .map(([key, item]) => `${key}=${stringifyRunValue(item)}`)
+    .join(', ');
+}
+
+const SCHEDULE_DECISION_ACTION_LABEL: Record<string, string> = {
+  fire: '실행',
+  skip: '보류',
+};
+
+const SCHEDULE_DECISION_REASON_LABEL: Record<string, string> = {
+  manual: '수동 실행',
+  scheduled: '정기 실행',
+  'queue-backlog': '큐 적체',
+  'recent-failures': '실패 누적',
+  'outside-window': '운영 시간 외',
+  'not-due': '대기',
+  disabled: '비활성',
+};
+
+function formatScheduleRunDecision(run: AdminScheduleRun): string {
+  const detail = asRecord(run.detail);
+  const decision = asRecord(detail?.decision);
+  const action = typeof decision?.action === 'string' ? decision.action : null;
+  const reason = typeof decision?.reason === 'string' ? decision.reason : null;
+  const reasonValue = reason ?? run.trigger_reason;
+  const reasonLabel = reasonValue
+    ? (SCHEDULE_DECISION_REASON_LABEL[reasonValue] ?? reasonValue)
+    : '-';
+  if (action) return `${SCHEDULE_DECISION_ACTION_LABEL[action] ?? action}: ${reasonLabel}`;
+  return reasonLabel;
+}
+
+function formatScheduleRunTargetResult(run: AdminScheduleRun): string {
+  const detail = asRecord(run.detail);
+  const targetSummary = asRecord(detail?.targets);
+  if (targetSummary) {
+    const entries = Object.entries(targetSummary);
+    if (entries.length === 0) return 'empty';
+    return entries
+      .map(([target, value]) => `${target}: ${stringifyRunValue(value)}`)
+      .join(' | ');
+  }
+  return run.targets.join(', ') || '-';
+}
+
 function ScheduleCard({ onError }: { onError: (msg: string | null) => void }) {
   const [schedules, setSchedules] = useState<AdminSchedule[]>([]);
   const [drafts, setDrafts] = useState<Record<number, ScheduleDraft>>({});
@@ -572,12 +635,14 @@ function ScheduleCard({ onError }: { onError: (msg: string | null) => void }) {
                         <th className="py-1.5 pr-3 font-semibold">{'\ud2b8\ub9ac\uac70'}</th>
                         <th className="py-1.5 pr-3 font-semibold">{'\ub300\uc0c1'}</th>
                         <th className="py-1.5 pr-3 font-semibold">{'\uc0c1\ud0dc'}</th>
+                        <th className="py-1.5 pr-3 font-semibold">{'\ud310\ub2e8'}</th>
+                        <th className="py-1.5 pr-3 font-semibold">{'\uacb0\uacfc \uc694\uc57d'}</th>
                       </tr>
                     </thead>
                     <tbody>
                       {runs.length === 0 ? (
                         <tr>
-                          <td className="py-2 text-muted" colSpan={4}>
+                          <td className="py-2 text-muted" colSpan={6}>
                             {'\uc2e4\ud589 \uc774\ub825\uc774 \uc5c6\uc2b5\ub2c8\ub2e4.'}
                           </td>
                         </tr>
@@ -588,6 +653,8 @@ function ScheduleCard({ onError }: { onError: (msg: string | null) => void }) {
                             <td className="py-1.5 pr-3">{run.trigger_reason ?? '-'}</td>
                             <td className="py-1.5 pr-3">{run.targets.join(', ') || '-'}</td>
                             <td className="py-1.5 pr-3 font-medium">{run.status ?? '-'}</td>
+                            <td className="py-1.5 pr-3">{formatScheduleRunDecision(run)}</td>
+                            <td className="max-w-[260px] py-1.5 pr-3 text-muted">{formatScheduleRunTargetResult(run)}</td>
                           </tr>
                         ))
                       )}
