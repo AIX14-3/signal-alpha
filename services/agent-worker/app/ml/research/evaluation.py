@@ -67,6 +67,49 @@ def walk_forward_folds(dates: np.ndarray, n_folds: int = 5) -> list[WalkForwardS
     return folds
 
 
+def embargo_folds(
+    dates: np.ndarray,
+    n_folds: int = 5,
+    *,
+    embargo: int = 0,
+) -> list[WalkForwardSplit]:
+    """Walk-forward folds with an EMBARGO gap between train and test.
+
+    Same expanding-window logic as :func:`walk_forward_folds`, but after choosing
+    each fold's test dates we DROP from the train side every row whose date lies
+    within ``embargo`` ordinal days *before* the test block's first date. Why this
+    matters for the patent track: a feature at a train ``as_of`` is built from a
+    lookback window, and its label reaches ``horizon`` (``h``) sessions forward — so
+    a train row dated within ``h`` of the test start has a label/feature footprint
+    that overlaps the test period. Setting ``embargo >= h`` (in the SAME unit as
+    ``dates`` — ordinal days) forbids that overlap, closing the near-boundary leak
+    that plain walk-forward leaves open.
+
+    ``embargo=0`` reproduces :func:`walk_forward_folds` exactly. Dates are ordinal
+    ints (as produced by the datasets); with ~1.4 calendar days per trading session
+    a caller wanting ``h`` sessions of gap should pass roughly ``2 * h`` here, or
+    simply ``h`` for a conservative session-count lower bound.
+    """
+    if embargo < 0:
+        raise ValueError("embargo must be >= 0")
+    base = walk_forward_folds(dates, n_folds=n_folds)
+    if embargo == 0:
+        return base
+    out: list[WalkForwardSplit] = []
+    for fold in base:
+        test_dates = dates[fold.test_idx]
+        test_start = int(test_dates.min())
+        cutoff = test_start - embargo  # train rows must be strictly before this
+        keep = dates[fold.train_idx] < cutoff
+        out.append(
+            WalkForwardSplit(
+                train_idx=fold.train_idx[keep],
+                test_idx=fold.test_idx,
+            )
+        )
+    return out
+
+
 def _bullish_score(model, X: np.ndarray) -> np.ndarray:
     """A higher-is-more-bullish score per row, however the model exposes it.
 
