@@ -18,6 +18,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from app.agents.requery_focus import requery_focus_prompt_block
+
 PROMPT_VERSION = "hiring-focus-v1"
 
 
@@ -45,15 +47,21 @@ class HiringSkillClassifier:
         top_functions: list[str],
         top_skills: list[str],
         momentum_pct: float | None,
+        requery_focus: str | None = None,
     ) -> FocusVerdict:
         """Return the LLM's focus verdict. Raises on transport/JSON failure so the
-        caller's fallback path engages (deterministic focus summary)."""
+        caller's fallback path engages (deterministic focus summary).
+
+        ``requery_focus`` (optional): the orchestrator's re-query hint — when set,
+        a focused re-read instruction is appended to the prompt; ``None`` leaves
+        the prompt byte-identical to a normal analyze."""
         payload = await self._client.generate_json(
             _build_prompt(
                 stock_code=stock_code,
                 top_functions=top_functions,
                 top_skills=top_skills,
                 momentum_pct=momentum_pct,
+                requery_focus=requery_focus,
             )
         )
         return _parse_verdict(payload)
@@ -65,6 +73,7 @@ def _build_prompt(
     top_functions: list[str],
     top_skills: list[str],
     momentum_pct: float | None,
+    requery_focus: str | None = None,
 ) -> str:
     def _pct(value: float | None) -> str:
         return "데이터 없음" if value is None else f"{value * 100:+.1f}%"
@@ -79,6 +88,7 @@ def _build_prompt(
         f"주요 채용 직무(빈도순): {functions}\n"
         f"주요 요구 기술(빈도순): {skills}\n"
         f"채용 공고 모멘텀(최근 vs 이전): {_pct(momentum_pct)}\n\n"
+        f"{requery_focus_prompt_block(requery_focus)}"
         "다음 JSON만 출력하라(다른 텍스트 금지):\n"
         '{"focus": "핵심 채용 테마 3~6자(예: 데이터/AI 인재)", '
         '"rationale": "한국어 한 문장 근거(매수/매도·수익·목표가 표현 금지)"}'

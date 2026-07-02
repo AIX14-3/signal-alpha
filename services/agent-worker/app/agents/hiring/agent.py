@@ -24,6 +24,7 @@ from typing import Any
 
 from app.agents.base import SourceAgentInput, SourceAgentOutput
 from app.agents.hiring.llm_classifier import PROMPT_VERSION, HiringSkillClassifier
+from app.agents.requery_focus import focus_hint_from_context
 from app.analyzers.config import HiringRuleConfig
 from app.analyzers.hiring import HiringAnalyzer
 from app.analyzers.hiring.indicators import compute_indicators
@@ -107,6 +108,11 @@ class HiringAnalysisAgent:
                 top_functions=focus.top_functions,
                 top_skills=focus.top_skills,
                 momentum_pct=focus.momentum_pct,
+                # Orchestrator re-query hint (Wave-3): narrows the focus rationale
+                # re-read to the flagged axis. None on a plain analyze → prompt
+                # byte-identical. (Distinct from HiringFocus above, which is the
+                # agent's own skill/duty extraction, not the orchestrator's ask.)
+                requery_focus=focus_hint_from_context(input_data.context),
             )
             rationale = verdict.rationale or focus.summary_text()
             return self._focus_output(

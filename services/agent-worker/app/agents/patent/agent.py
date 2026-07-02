@@ -27,6 +27,7 @@ from app.agents.patent.llm_classifier import (
     Materiality,
     PatentSignificanceClassifier,
 )
+from app.agents.requery_focus import focus_hint_from_context
 from app.analyzers.patent import PatentAnalyzer
 from app.schemas.source_result import SourceResult
 
@@ -87,6 +88,10 @@ class PatentSignificanceAgent:
                 summary=rule.summary,
                 filings=_top_filings(input_data),
                 prelabel=prelabel,
+                # Orchestrator re-query hint (Wave-3): narrows the materiality
+                # re-read to the flagged axis. None on a plain analyze → prompt
+                # byte-identical.
+                requery_focus=focus_hint_from_context(input_data.context),
             )
             return self._materiality_output(
                 rule,
