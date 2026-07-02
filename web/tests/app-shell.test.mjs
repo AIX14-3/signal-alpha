@@ -56,4 +56,15 @@ test("admin UI exposes split schedule rows and schedule run history", async () =
   assert.match(page, /active_from_local/);
   assert.match(page, /active_until_local/);
   assert.match(page, /"price", "dart", "report", "alternative"/);
+  assert.match(apiClient, /export async function adminGetQueueOverview/);
+  assert.match(apiClient, /export async function adminSweepStaleQueue/);
+  assert.match(apiClient, /export async function adminRetryQueueTask/);
+  assert.match(apiClient, /export async function adminReplayDeadLetters/);
+  assert.match(page, /QueueOpsCard/);
+  assert.match(page, /adminGetQueueOverview/);
+  assert.match(page, /adminSweepStaleQueue/);
+  assert.match(page, /adminRetryQueueTask/);
+  assert.match(page, /adminReplayDeadLetters/);
+  assert.match(page, /\\uc6b4\\uc601 \\uc774\\ubca4\\ud2b8/);
+  assert.match(page, /dead_letter_pending/);
 });
