@@ -75,6 +75,7 @@ Authorization: Bearer {access_token}
 | `MEMBERSHIP_REQUIRED` | 401 | 비회원이 잠긴 소스 접근 |
 | `JOURNAL_NOT_FOUND` | 404 | 저널 없음 |
 | `SUBSCRIPTION_REQUIRED` | 402 | 구독 전용 기능(저널 전체, 리포트 비공개 소스 상세) 비구독 접근 |
+| `RETROSPECTIVE_NOT_READY` | 400 | outcome 미확정 저널에 회고 작성 시도 |
 | `PLAN_NOT_FOUND` | 404 | 구독 상품 없음 |
 | `PAYMENT_VERIFICATION_FAILED` | 400 | 포트원 결제 검증 실패(금액/상태 불일치) |
 | `ALREADY_SUBSCRIBED` | 409 | 이미 활성 구독 존재 |
@@ -331,7 +332,8 @@ Response: §8.1 회원 언락 응답 + `"access": { "unlocked": true, "issued_vi
 ```
 - `user_view` 화이트리스트(watch/research_more/not_relevant). buy/sell/hold → `400 INVALID_USER_VIEW`.
 ### `GET|PATCH|DELETE /api/journals/{journal_id}` (인증·구독, 본인만)
-PATCH 수정: `user_view`, `memo`, `tags`. DELETE: hard delete(MVP).
+PATCH 수정: `user_view`, `memo`, `tags`, `retrospective_memo`. DELETE: hard delete(MVP).
+- `retrospective_memo`(회고 — 결과 확인 후 복기)는 outcome 이 1건 이상 확정된 저널에만 저장 가능 → 아니면 `400 RETROSPECTIVE_NOT_READY`.
 
 응답(단건)에는 작성 시점 스냅샷과 outcome 확정 결과가 포함된다:
 ```json
@@ -366,6 +368,28 @@ PATCH 수정: `user_view`, `memo`, `tags`. DELETE: hard delete(MVP).
 }
 ```
 - 기준점(base) = 작성일(KST) 이하 가장 최근 거래일 종가(outcome 러너와 동일 규칙).
+
+### `GET /api/journals/timeline/{stock_code}` (인증·구독, 본인만)
+
+종목별 저널 타임라인 — 한 장의 가격 차트 위에 저널 작성 시점 마커. 시리즈 구간 = 가장 오래된 저널 작성일 30일 전 ~ 최신. 저널이 없으면 `404 JOURNAL_NOT_FOUND`.
+
+```json
+{
+  "stock": { "stock_code": "005930", "stock_name": "삼성전자" },
+  "series": [ { "trade_date": "2026-06-10", "close": 302500 } ],
+  "journals": [
+    { "journal_id": 1, "created_at": "...", "user_view": "research_more",
+      "memo": "...", "retrospective_memo": null,
+      "trade_date": "2026-06-10", "price": 302500 }
+  ],
+  "latest_trade_date": "2026-07-02", "latest_price": 297750, "notice": "..."
+}
+```
+
+저널 응답에는 현재 발행 신호 비교 블록도 포함된다(신호 미발행이면 null):
+```json
+{ "current_signal": { "final_signal_id": 322, "score": 63.0, "value": "positive", "source_agreement": "HIGH" } }
+```
 
 ---
 

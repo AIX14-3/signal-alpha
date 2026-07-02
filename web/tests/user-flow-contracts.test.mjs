@@ -77,7 +77,13 @@ test("mypage exposes stable tab panels and subscription action anchors", () => {
     'data-flow="journal-subscribe"',
     'data-flow="journal-edit"',
     'data-flow="journal-delete"',
+    'data-flow="journal-timeline"',
+    'data-flow="journal-filter-view"',
+    'data-flow="journal-filter-tag"',
+    'data-flow="journal-sort"',
+    'data-flow="journal-signal-compare"',
     "JournalChartPanel",
+    "JournalTimelinePanel",
   ].forEach((expected) => assertIncludes(source, expected, "mypage"));
 });
 
@@ -86,7 +92,9 @@ test("journal chart panel is wired to the chart API with base reference", () => 
 
   [
     "getJournalChart",
+    "getJournalTimeline",
     'data-flow="journal-chart"',
+    'data-flow="journal-retrospective"',
     "change_pct_since_created",
     "base_trade_date",
   ].forEach((expected) => assertIncludes(source, expected, "journal chart"));

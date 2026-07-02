@@ -255,11 +255,20 @@ export type Journal = {
   final_signal_id: number | null;
   user_view: string;
   memo: string | null;
+  // 회고(결과 확인 후 복기) — outcome 확정 전엔 서버가 저장을 거부(RETROSPECTIVE_NOT_READY).
+  retrospective_memo: string | null;
   tags: string[];
   // 작성 시점 신호 스냅샷 — 리포트가 갱신돼도 "그때 판단"의 근거를 보존.
   signal_score_at_time: number | null;
   signal_value_at_time: string | null;
   source_agreement_at_time: string | null;
+  // 현재 발행 신호 — "그때 판단 → 지금 신호" 비교용(미발행이면 null).
+  current_signal: {
+    final_signal_id: number | null;
+    score: number | null;
+    value: string | null;
+    source_agreement: string | null;
+  } | null;
   outcomes: JournalOutcome[];
   created_at: string | null;
   updated_at: string | null;
@@ -415,9 +424,33 @@ export async function getJournalChart(
 
 export async function updateJournal(
   id: number,
-  body: { user_view?: string; memo?: string; tags?: string[] },
+  body: { user_view?: string; memo?: string; tags?: string[]; retrospective_memo?: string },
 ): Promise<Journal> {
   return apiFetch(`/api/journals/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+}
+
+// 종목별 저널 타임라인 — 한 장의 가격 차트 위에 저널 작성 시점 마커.
+export type JournalTimelineMarker = {
+  journal_id: number;
+  created_at: string | null;
+  user_view: string;
+  memo: string | null;
+  retrospective_memo: string | null;
+  trade_date: string | null;
+  price: number | null;
+};
+
+export type JournalTimeline = {
+  stock: { stock_code: string; stock_name: string | null };
+  series: JournalChartPoint[];
+  journals: JournalTimelineMarker[];
+  latest_trade_date: string | null;
+  latest_price: number | null;
+  notice: string;
+};
+
+export async function getJournalTimeline(stockCode: string): Promise<JournalTimeline> {
+  return apiFetch(`/api/journals/timeline/${encodeURIComponent(stockCode)}`);
 }
 
 export async function deleteJournal(id: number): Promise<{ status: string }> {

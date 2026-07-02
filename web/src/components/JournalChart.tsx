@@ -1,9 +1,22 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { getJournalChart, type Journal, type JournalChart } from "@/lib/apiClient";
+import {
+  getJournalChart,
+  getJournalTimeline,
+  type Journal,
+  type JournalChart,
+  type JournalTimeline,
+} from "@/lib/apiClient";
+import { useJournalStore } from "@/stores/journalStore";
+import { useToastStore } from "@/stores/toastStore";
 
 const HORIZON_LABEL: Record<string, string> = { "7td": "7거래일", "30td": "30거래일" };
+const VIEW_LABEL: Record<string, string> = {
+  watch: "계속 관찰",
+  research_more: "추가 확인 필요",
+  not_relevant: "낮은 관련도",
+};
 
 function formatWon(value: number | null | undefined): string {
   if (value == null) return "—";
@@ -73,6 +86,8 @@ export function JournalChartPanel({ journal }: { journal: Journal }) {
         본 차트는 매수·매도 추천이 아니라 판단 복기를 위한 기록입니다.
       </p>
 
+      <RetrospectiveBlock journal={journal} />
+
       <details className="mt-2 text-[12px] text-muted">
         <summary className="cursor-pointer select-none">데이터 표 보기</summary>
         <div className="mt-1 max-h-40 overflow-y-auto">
@@ -94,6 +109,81 @@ export function JournalChartPanel({ journal }: { journal: Journal }) {
           </table>
         </div>
       </details>
+    </div>
+  );
+}
+
+/** 회고(결과 확인 후 복기) — outcome 이 확정된 저널에만 작성 가능(서버도 게이트). */
+function RetrospectiveBlock({ journal }: { journal: Journal }) {
+  const update = useJournalStore((s) => s.update);
+  const showToast = useToastStore((s) => s.show);
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(journal.retrospective_memo ?? "");
+  const [busy, setBusy] = useState(false);
+  const ready = journal.outcomes.length > 0;
+
+  async function save() {
+    setBusy(true);
+    try {
+      await update(journal.journal_id, { retrospective_memo: text });
+      setEditing(false);
+      showToast("회고를 저장했습니다.", "success");
+    } catch (e) {
+      showToast((e as Error).message, "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mt-3 rounded-[12px] bg-surface-2 p-3" data-flow="journal-retrospective">
+      <div className="flex items-center justify-between">
+        <span className="text-[13px] font-bold">회고 <span className="font-normal text-muted">— 결과 확인 후 복기</span></span>
+        {ready && !editing && (
+          <button
+            type="button"
+            onClick={() => {
+              setText(journal.retrospective_memo ?? "");
+              setEditing(true);
+            }}
+            className="text-[12.5px] font-semibold text-sky-deep"
+          >
+            {journal.retrospective_memo ? "수정" : "회고 남기기"}
+          </button>
+        )}
+      </div>
+      {!ready ? (
+        <p className="mt-1 text-[12.5px] text-muted">변동(7·30거래일)이 확정되면 회고를 남길 수 있습니다.</p>
+      ) : editing ? (
+        <div className="mt-2 space-y-2">
+          <textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            rows={2}
+            className="card w-full px-4 py-2.5 text-[13px] outline-none focus:border-sky"
+            placeholder="예상과 달랐던 점, 다음에 참고할 점을 남겨보세요."
+          />
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => void save()}
+              disabled={busy}
+              className="brand-grad rounded-full px-4 py-1.5 text-[12.5px] font-bold text-white disabled:opacity-60"
+            >
+              {busy ? "저장 중…" : "저장"}
+            </button>
+            <button type="button" onClick={() => setEditing(false)} className="text-[12.5px] text-muted">
+              취소
+            </button>
+          </div>
+        </div>
+      ) : journal.retrospective_memo ? (
+        <p className="mt-1 whitespace-pre-wrap text-[13px] text-navy-soft">{journal.retrospective_memo}</p>
+      ) : (
+        <p className="mt-1 text-[12.5px] text-muted">
+          변동이 확정됐습니다. 예상과 달랐던 점을 회고로 남겨보세요.
+        </p>
+      )}
     </div>
   );
 }
@@ -242,6 +332,141 @@ function PriceLineChart({ chart }: { chart: JournalChart }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/** 종목별 저널 타임라인 — 한 장의 가격 차트 위에 저널 작성 시점을 번호 마커로 표시. */
+export function JournalTimelinePanel({ stockCode }: { stockCode: string }) {
+  const [timeline, setTimeline] = useState<JournalTimeline | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    getJournalTimeline(stockCode)
+      .then(setTimeline)
+      .catch((e) => setError((e as Error).message));
+  }, [stockCode]);
+
+  if (error) return <p className="text-[13px] text-red">{error}</p>;
+  if (!timeline) return <p className="text-[13px] text-muted">타임라인을 불러오는 중…</p>;
+  if (timeline.series.length < 2)
+    return (
+      <p className="text-[13px] text-muted">
+        {timeline.stock.stock_name ?? stockCode}: 차트 데이터 준비 전입니다(다음 시세 동기화 후 표시).
+      </p>
+    );
+
+  return (
+    <div>
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <span className="font-bold">
+          {timeline.stock.stock_name ?? timeline.stock.stock_code}{" "}
+          <span className="text-[12px] font-normal text-muted">{timeline.stock.stock_code}</span>
+        </span>
+        <span className="text-[12.5px] text-muted">
+          저널 {timeline.journals.length}건 · 최근 종가 {formatWon(timeline.latest_price)}
+        </span>
+      </div>
+
+      <TimelineChart timeline={timeline} />
+
+      <ol className="mt-2 space-y-1 text-[12.5px]">
+        {timeline.journals.map((marker, index) => (
+          <li key={marker.journal_id} className="flex flex-wrap items-baseline gap-x-2">
+            <span className="font-bold text-sky-deep">{index + 1}.</span>
+            <span className="text-muted">{formatDate(marker.trade_date ?? marker.created_at)}</span>
+            <span className="pill flat" style={{ padding: "1px 7px", fontSize: 11 }}>
+              {VIEW_LABEL[marker.user_view] ?? marker.user_view}
+            </span>
+            {marker.price != null && <span className="text-muted">{formatWon(marker.price)}</span>}
+            {marker.memo && <span className="text-navy-soft">{marker.memo}</span>}
+            {marker.retrospective_memo && (
+              <span className="text-muted">↩ 회고: {marker.retrospective_memo}</span>
+            )}
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+function TimelineChart({ timeline }: { timeline: JournalTimeline }) {
+  const points = timeline.series.filter((p) => p.close != null);
+  const geom = useMemo(() => {
+    const closes = points.map((p) => p.close as number);
+    const lo = Math.min(...closes);
+    const hi = Math.max(...closes);
+    const span = hi - lo || hi || 1;
+    const yMin = lo - span * 0.08;
+    const yMax = hi + span * 0.12; // 마커 번호 라벨 자리
+    const x = (i: number) =>
+      PAD.left + (points.length <= 1 ? 0 : (i * (W - PAD.left - PAD.right)) / (points.length - 1));
+    const y = (v: number) => PAD.top + ((yMax - v) / (yMax - yMin)) * (H - PAD.top - PAD.bottom);
+    const indexByDate = new Map(points.map((p, i) => [p.trade_date, i]));
+    return { x, y, yMin, yMax, indexByDate };
+  }, [points]);
+
+  if (points.length < 2) return null;
+  const { x, y, yMin, yMax, indexByDate } = geom;
+  const linePath = points.map((p, i) => `${x(i).toFixed(1)},${y(p.close as number).toFixed(1)}`).join(" ");
+  const last = points[points.length - 1];
+
+  return (
+    <div className="mt-2 text-navy">
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="저널 작성 시점이 표시된 종가 추이 차트">
+        {[yMax, yMin].map((v, i) => {
+          const gy = i === 0 ? PAD.top : H - PAD.bottom;
+          return (
+            <g key={i}>
+              <line x1={PAD.left} x2={W - PAD.right} y1={gy} y2={gy} stroke="#e2e8f0" strokeWidth={1} />
+              <text x={PAD.left - 6} y={gy + 4} textAnchor="end" fontSize={11} fill="#64748b">
+                {Math.round(v).toLocaleString("ko-KR")}
+              </text>
+            </g>
+          );
+        })}
+
+        <polyline points={linePath} fill="none" stroke="currentColor" strokeWidth={2} strokeLinejoin="round" opacity={0.75} />
+
+        {/* 저널 작성 시점 마커(번호) — 상세 내용은 아래 목록과 네이티브 툴팁으로 제공 */}
+        {timeline.journals.map((marker, index) => {
+          const pointIndex = marker.trade_date != null ? indexByDate.get(marker.trade_date) : undefined;
+          if (pointIndex == null || marker.price == null) return null;
+          return (
+            <g key={marker.journal_id}>
+              <title>
+                {`${formatDate(marker.trade_date)} · ${VIEW_LABEL[marker.user_view] ?? marker.user_view}${marker.memo ? ` — ${marker.memo}` : ""}`}
+              </title>
+              <line
+                x1={x(pointIndex)}
+                x2={x(pointIndex)}
+                y1={y(marker.price)}
+                y2={H - PAD.bottom}
+                stroke="#94a3b8"
+                strokeWidth={1}
+                strokeDasharray="3 3"
+              />
+              <circle cx={x(pointIndex)} cy={y(marker.price)} r={5} fill="#0284c7" stroke="#fff" strokeWidth={2} />
+              <text
+                x={x(pointIndex)}
+                y={y(marker.price) - 10}
+                textAnchor="middle"
+                fontSize={11.5}
+                fontWeight={700}
+                fill="#0284c7"
+              >
+                {index + 1}
+              </text>
+            </g>
+          );
+        })}
+
+        <circle cx={x(points.length - 1)} cy={y(last.close as number)} r={4} fill="currentColor" stroke="#fff" strokeWidth={2} />
+        <text x={PAD.left} y={H - 8} fontSize={11} fill="#64748b">{formatDate(points[0].trade_date)}</text>
+        <text x={W - PAD.right} y={H - 8} textAnchor="end" fontSize={11} fill="#64748b">
+          {formatDate(last.trade_date)}
+        </text>
+      </svg>
     </div>
   );
 }

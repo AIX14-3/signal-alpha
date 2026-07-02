@@ -110,6 +110,7 @@ class FakeConnection:
                 "signal_score_at_time": args[6],
                 "signal_value_at_time": args[7],
                 "source_agreement_at_time": args[8],
+                "retrospective_memo": None,
                 "outcomes": "[]",
                 "created_at": datetime(2026, 6, 22, tzinfo=UTC),
                 "updated_at": datetime(2026, 6, 22, tzinfo=UTC),
@@ -145,6 +146,7 @@ class FakeConnection:
             journal["user_view"] = args[2]
             journal["user_memo"] = args[3]
             journal["tags"] = args[4]
+            journal["retrospective_memo"] = args[5]
             journal["updated_at"] = datetime(2026, 6, 23, tzinfo=UTC)
             return journal
         raise AssertionError(f"Unexpected fetchrow SQL: {sql}")
@@ -244,6 +246,7 @@ class JournalRoutesTest(unittest.TestCase):
             ),
             ("get", "/api/journals/20", None),
             ("get", "/api/journals/20/chart", None),
+            ("get", "/api/journals/timeline/005930", None),
             ("patch", "/api/journals/20", {"user_view": "watch"}),
             ("delete", "/api/journals/20", None),
         ]
@@ -357,6 +360,87 @@ class JournalRoutesTest(unittest.TestCase):
         self.assertEqual(chart["series"], [])
         self.assertIsNone(chart["base_price"])
         self.assertIsNone(chart["change_pct_since_created"])
+
+    def test_retrospective_requires_confirmed_outcome(self):
+        self.create_journal()
+
+        blocked = self.client.patch(
+            "/api/journals/20",
+            json={"retrospective_memo": "예상보다 흐름이 빨랐다."},
+            headers=self.auth_headers(),
+        )
+        self.assertEqual(blocked.status_code, 400)
+        self.assertEqual(blocked.json()["detail"]["code"], "RETROSPECTIVE_NOT_READY")
+
+        # outcome 확정 후에는 회고 저장 가능.
+        self.connection.journals[0]["outcomes"] = json.dumps(
+            [{"horizon": "7td", "change_pct": 5.0}]
+        )
+        saved = self.client.patch(
+            "/api/journals/20",
+            json={"retrospective_memo": "예상보다 흐름이 빨랐다."},
+            headers=self.auth_headers(),
+        )
+        self.assertEqual(saved.status_code, 200)
+        self.assertEqual(saved.json()["retrospective_memo"], "예상보다 흐름이 빨랐다.")
+        # 회고만 보냈을 때 기존 판단/메모는 유지된다.
+        self.assertEqual(saved.json()["user_view"], "research_more")
+
+    def test_journal_timeline_returns_series_with_markers(self):
+        self.create_journal()
+        self.connection.chart_prices[10] = [
+            {"trade_date": date(2026, 6, 19), "close_price": Decimal("69000.00")},
+            {"trade_date": date(2026, 6, 22), "close_price": Decimal("70000.00")},
+            {"trade_date": date(2026, 6, 24), "close_price": Decimal("73500.00")},
+        ]
+
+        response = self.client.get("/api/journals/timeline/005930", headers=self.auth_headers())
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["stock"]["stock_code"], "005930")
+        self.assertEqual(len(body["series"]), 3)
+        self.assertEqual(len(body["journals"]), 1)
+        marker = body["journals"][0]
+        self.assertEqual(marker["journal_id"], 20)
+        # 작성일(6/22) 이하 최근 거래일 종가가 마커 기준점.
+        self.assertEqual(marker["trade_date"], "2026-06-22")
+        self.assertEqual(marker["price"], 70000.0)
+        self.assertEqual(body["latest_price"], 73500.0)
+
+    def test_journal_timeline_without_journals_returns_not_found(self):
+        response = self.client.get("/api/journals/timeline/005930", headers=self.auth_headers())
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["detail"]["code"], "JOURNAL_NOT_FOUND")
+
+    def test_journal_exposes_current_signal_comparison(self):
+        self.create_journal()
+        # 저장 후 신호가 갱신된 상황 — repo 가 api.signals_current 조인으로 채워주는 컬럼.
+        self.connection.journals[0].update(
+            {
+                "current_signal_id": 322,
+                "current_signal_score": Decimal("63.00"),
+                "current_signal_value": "positive",
+                "current_source_agreement": "HIGH",
+            }
+        )
+
+        response = self.client.get("/api/journals/20", headers=self.auth_headers())
+
+        self.assertEqual(response.status_code, 200)
+        current = response.json()["current_signal"]
+        self.assertEqual(current["final_signal_id"], 322)
+        self.assertEqual(current["score"], 63.0)
+        self.assertEqual(current["value"], "positive")
+
+    def test_journal_without_published_signal_has_null_current_signal(self):
+        self.create_journal()
+
+        response = self.client.get("/api/journals/20", headers=self.auth_headers())
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.json()["current_signal"])
 
     def test_journal_rejects_forbidden_user_view(self):
         response = self.create_journal(user_view="buy", memo="금지 값")
