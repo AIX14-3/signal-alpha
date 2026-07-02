@@ -390,8 +390,27 @@ export async function createJournal(body: {
   return apiFetch("/api/journals", { method: "POST", body: JSON.stringify(body) });
 }
 
+export type JournalChartPoint = { trade_date: string; close: number | null };
+
+// 저널 상세 차트 — 작성일 30일 전 ~ 최신 종가 시리즈와 작성 시점 대비 등락.
+// 시리즈는 워커 러너가 매일 동기화하며, 동기화 전엔 series 가 빈다.
+export type JournalChart = {
+  series: JournalChartPoint[];
+  base_trade_date: string | null;
+  base_price: number | null;
+  latest_trade_date: string | null;
+  latest_price: number | null;
+  change_pct_since_created: number | null;
+};
+
 export async function getJournal(id: number): Promise<Journal> {
   return apiFetch(`/api/journals/${id}`);
+}
+
+export async function getJournalChart(
+  id: number,
+): Promise<{ journal: Journal; chart: JournalChart; notice: string }> {
+  return apiFetch(`/api/journals/${id}/chart`);
 }
 
 export async function updateJournal(

@@ -159,3 +159,15 @@ class UserSignalRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("DISTINCT ON (stock_id)", sql)
         self.assertIn("stock_id = ANY", sql)
         self.assertEqual(connection.calls[0][2], (1, [10, 11]))
+
+    async def test_list_journal_chart_prices_filters_stock_and_from_date(self):
+        connection = FakeConnection()
+        repository = UserSignalRepository(connection)
+
+        await repository.list_journal_chart_prices(stock_id=10, from_date="2026-05-23")
+
+        sql = connection.calls[0][1]
+        self.assertIn("FROM signal_journal_chart_prices", sql)
+        self.assertIn("trade_date >= $2", sql)
+        self.assertIn("ORDER BY trade_date ASC", sql)
+        self.assertEqual(connection.calls[0][2], (10, "2026-05-23"))

@@ -349,6 +349,24 @@ PATCH 수정: `user_view`, `memo`, `tags`. DELETE: hard delete(MVP).
 ```
 - `outcomes` 는 거래일 기준 horizon(`7td`/`30td`)별 확정 결과. 워커 러너(`run_journal_outcomes`)가 매일 채우며, 아직 만기 전이면 빈 배열/일부만 온다(프론트는 "확정 전" 표시).
 
+### `GET /api/journals/{journal_id}/chart` (인증·구독, 본인만)
+
+저널 상세 차트 — 작성일 30일 전 ~ 최신 종가 시리즈와 작성 시점 대비 등락. 시리즈는 워커 러너가 `signal_journal_chart_prices` 로 동기화한 사본(동기화 전엔 `series` 빈 배열 → 프론트 "차트 준비 전").
+
+```json
+{
+  "journal": { "...": "단건 응답과 동일" },
+  "chart": {
+    "series": [ { "trade_date": "2026-06-10", "close": 302500 } ],
+    "base_trade_date": "2026-06-10", "base_price": 302500,
+    "latest_trade_date": "2026-07-02", "latest_price": 297750,
+    "change_pct_since_created": -1.57
+  },
+  "notice": "..."
+}
+```
+- 기준점(base) = 작성일(KST) 이하 가장 최근 거래일 종가(outcome 러너와 동일 규칙).
+
 ---
 
 ## 10. 구독·결제(Subscription/Payment) API

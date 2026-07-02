@@ -77,7 +77,19 @@ test("mypage exposes stable tab panels and subscription action anchors", () => {
     'data-flow="journal-subscribe"',
     'data-flow="journal-edit"',
     'data-flow="journal-delete"',
+    "JournalChartPanel",
   ].forEach((expected) => assertIncludes(source, expected, "mypage"));
+});
+
+test("journal chart panel is wired to the chart API with base reference", () => {
+  const source = read("src/components/JournalChart.tsx");
+
+  [
+    "getJournalChart",
+    'data-flow="journal-chart"',
+    "change_pct_since_created",
+    "base_trade_date",
+  ].forEach((expected) => assertIncludes(source, expected, "journal chart"));
 });
 
 test("report page exposes journal save entry point for unlocked reports", () => {

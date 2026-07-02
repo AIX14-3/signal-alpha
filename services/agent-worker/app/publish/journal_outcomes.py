@@ -177,3 +177,58 @@ def _to_kst_date(value: Any) -> date:
             return value.astimezone(_KST).date()
         return value.date()
     return value
+
+
+# ---------------------------------------------------------------------------
+# 저널 차트용 종가 시리즈 동기화 (signal_journal_chart_prices)
+# ---------------------------------------------------------------------------
+
+# 차트 컨텍스트 — 작성일보다 이만큼 이전 구간부터 시리즈를 동기화한다.
+_CHART_LOOKBACK_DAYS = 30
+
+_JOURNAL_STOCKS_SQL = """
+SELECT stock_id, MIN(created_at) AS first_created
+FROM signal_journals
+GROUP BY stock_id
+"""
+
+_CHART_UPSERT_SQL = """
+INSERT INTO signal_journal_chart_prices (stock_id, trade_date, close_price)
+VALUES ($1, $2, $3)
+ON CONFLICT (stock_id, trade_date) DO UPDATE SET
+    close_price = EXCLUDED.close_price,
+    updated_at = NOW()
+"""
+
+
+@dataclass
+class ChartSyncStats:
+    stocks: int = 0
+    rows: int = 0
+    failed: int = 0
+    errors: list[str] = field(default_factory=list)
+
+
+async def sync_journal_chart_prices(backend_conn: Any, source_conn: Any) -> ChartSyncStats:
+    """저널이 있는 종목의 종가 시리즈를 백엔드로 멱등 upsert 한다.
+
+    구간 = 그 종목의 가장 오래된 저널 작성일(KST) - 30일 ~ 최신. 종목×거래일 1행이라
+    같은 종목의 저널이 늘어도 시리즈는 한 벌만 유지된다.
+    """
+    stats = ChartSyncStats()
+    for row in await backend_conn.fetch(_JOURNAL_STOCKS_SQL):
+        stock_id = int(row["stock_id"])
+        start = _to_kst_date(row["first_created"]) - timedelta(days=_CHART_LOOKBACK_DAYS)
+        try:
+            bars = await source_conn.fetch(_SERIES_SQL, stock_id, start)
+            for bar in bars:
+                await backend_conn.execute(
+                    _CHART_UPSERT_SQL, stock_id, bar["trade_date"], bar["close"]
+                )
+            stats.stocks += 1
+            stats.rows += len(bars)
+        except Exception as exc:  # noqa: BLE001 - 종목 1개 실패가 전체를 막지 않음
+            stats.failed += 1
+            stats.errors.append(f"stock={stock_id}: {exc}")
+            logger.warning("chart price sync failed for stock=%s: %s", stock_id, exc)
+    return stats
