@@ -236,3 +236,76 @@ curl -s -o /dev/null -w "BE /health = %{http_code}\n" $BE_URL/health   # 200 (DB
 - 데모 후: `gcloud run services delete sa-frontend sa-backend`, `gcloud compute instances delete sa-worker`,
   **`gcloud sql instances delete sa-pg sa-be`**(인스턴스 2대), 커넥터/버킷 삭제로 과금 중단.
   크레딧 잔액은 콘솔 Billing 에서 확인.
+
+---
+
+## 부록 A. 저널 outcome 러너 클라우드 이관 (핸드오프, 2026-07-03 기준)
+
+### 현황
+- 러너(`services/agent-worker/run_journal_outcomes.py`)는 **로컬 Windows 작업 스케줄러가 대행 중**:
+  - 작업명 `SignalAlpha-JournalOutcomes`, 매일 **06:10 KST** (어제 일봉 적재 후 시점)
+  - 래퍼 `C:\Users\biop9\signal-alpha-task-logs\run_journal_outcomes.cmd`, 로그 동일 폴더
+  - 배터리 허용 + StartWhenAvailable(꺼져 있으면 다음 부팅 때 보완 실행) 설정됨
+- GKE 용 매니페스트는 **이미 머지돼 있음**: `deploy/k8s/journal-outcomes-cronjob.yaml`(06:00 KST) + kustomization 등록.
+- 클라우드 측 미비: GKE 클러스터 없음, gcloud 미설치였음(2026-07-03 winget 설치 시작), GCP 프로젝트/결제 미지정,
+  `deploy/k8s/kustomization.yaml` 이미지 경로가 `PROJECT_ID` 플레이스홀더.
+
+### 러너 요구 조건 (어느 경로든 동일)
+- 연결 2개: `DATABASE_URL`(수집 DB — ohlcv 읽기) + `BACKEND_DATABASE_URL`(백엔드 DB — outcomes/차트 쓰기).
+  `BACKEND_DATABASE_URL` 없으면 **no-op 종료**(가드), 멱등 upsert 라 중복/재실행 안전.
+- 실행 시각: 매일 06:00~06:10 KST(어제 일봉이 수집 DB에 적재된 후).
+- 이미지: `agent-worker` 공용 이미지, command 만 `python run_journal_outcomes.py`.
+
+### 경로 A — GKE CronJob (deploy/k8s 매니페스트 사용)
+> 하루 1회 배치만 옮길 거면 Autopilot + 이 CronJob 만 배포한다. **전체 kustomize apply 금지**
+> (postgres StatefulSet 등 전체 스택이 같이 배포됨) — 아래처럼 필요한 리소스만 타깃 apply.
+
+```bash
+# 0) 사전: gcloud 설치 + 로그인 + 프로젝트/결제
+gcloud auth login && gcloud config set project <PROJECT_ID>
+gcloud services enable container.googleapis.com artifactregistry.googleapis.com
+
+# 1) Autopilot 클러스터(관리비는 무료 티어 크레딧 상쇄, 파드는 사용분만)
+gcloud container clusters create-auto signal-alpha --region asia-northeast3
+gcloud container clusters get-credentials signal-alpha --region asia-northeast3
+
+# 2) Artifact Registry + agent-worker 이미지 (linux/amd64 로 빌드)
+gcloud artifacts repositories create signal-alpha --repository-format=docker --location=asia-northeast3
+REG=asia-northeast3-docker.pkg.dev/<PROJECT_ID>/signal-alpha
+docker build --platform linux/amd64 -f services/agent-worker/Dockerfile -t $REG/agent-worker:v1 .
+gcloud auth configure-docker asia-northeast3-docker.pkg.dev && docker push $REG/agent-worker:v1
+
+# 3) 네임스페이스/설정/시크릿 (DSN 은 .env 의 Neon 값)
+kubectl apply -f deploy/k8s/namespace.yaml -f deploy/k8s/configmap.yaml
+kubectl -n signal-alpha create secret generic signal-alpha-secrets \
+  --from-literal=WORKER_DATABASE_URL='<수집 Neon DSN>' \
+  --from-literal=BACKEND_DATABASE_URL='<백엔드 Neon DSN>'
+
+# 4) CronJob 만 배포 (이미지 경로는 kustomization 대신 직접 치환)
+#    journal-outcomes-cronjob.yaml 의 image: signal-alpha-agent-worker → $REG/agent-worker:v1 로 바꿔 apply
+kubectl apply -f deploy/k8s/journal-outcomes-cronjob.yaml
+
+# 5) 즉시 1회 실행 테스트 + 로그 확인
+kubectl -n signal-alpha create job --from=cronjob/journal-outcomes journal-outcomes-test
+kubectl -n signal-alpha logs job/journal-outcomes-test -f   # [JOURNAL-OUTCOMES] / [JOURNAL-CHART] 라인 확인
+```
+
+### 경로 B — Cloud Run Jobs + Cloud Scheduler (이 런북의 Cloud Run 구성과 정합)
+클러스터 없이 가장 저렴. 위 §5 이미지/§4 시크릿 재사용:
+```bash
+gcloud run jobs create journal-outcomes --region asia-northeast3 \
+  --image $REG/agent-worker:v1 --command python --args run_journal_outcomes.py \
+  --set-secrets DATABASE_URL=sa-worker-dsn:latest,BACKEND_DATABASE_URL=sa-backend-dsn:latest \
+  --max-retries 1 --task-timeout 10m
+gcloud scheduler jobs create http journal-outcomes-daily --location asia-northeast3 \
+  --schedule "10 6 * * *" --time-zone "Asia/Seoul" \
+  --uri "https://asia-northeast3-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/<PROJECT_ID>/jobs/journal-outcomes:run" \
+  --oauth-service-account-email <SCHEDULER_SA>@<PROJECT_ID>.iam.gserviceaccount.com
+```
+
+### 이관 완료 후 로컬 대행 해제 (biop9 노트북)
+```powershell
+schtasks /Change /TN "SignalAlpha-JournalOutcomes" /DISABLE   # 또는 /Delete /F
+```
+클라우드에서 첫 정상 실행(`[JOURNAL-OUTCOMES]` 로그 + `signal_journal_outcomes`/`signal_journal_chart_prices` 갱신)을
+확인한 뒤에 끈다. 러너가 멱등이라 이관 기간에 양쪽이 겹쳐 돌아도 안전하다.
