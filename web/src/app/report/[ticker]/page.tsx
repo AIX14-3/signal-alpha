@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { type PredictionRate, type ReportSource } from "@/lib/apiClient";
 import { WatchlistButton } from "@/components/WatchlistButton";
 import {
@@ -14,7 +14,9 @@ import {
   sourceStatusLine,
 } from "@/lib/format";
 import { useAuthStore } from "@/stores/authStore";
+import { useJournalStore } from "@/stores/journalStore";
 import { useReportStore } from "@/stores/reportStore";
+import { useToastStore } from "@/stores/toastStore";
 
 export default function ReportPage() {
   const params = useParams<{ ticker: string }>();
@@ -169,8 +171,106 @@ export default function ReportPage() {
         })}
       </div>
 
+      {/* 저널 저장 — 구독자가 열람한 리포트(final_signal_id)에 판단을 기록. */}
+      {unlocked && report.report_version?.final_signal_id != null && (
+        <JournalSaveCard
+          stockCode={report.stock.stock_code}
+          finalSignalId={report.report_version.final_signal_id}
+        />
+      )}
+
       <p className="mt-6 rounded-[12px] bg-surface-2 p-4 text-[12.5px] text-muted">{report.notice}</p>
     </div>
+  );
+}
+
+const JOURNAL_VIEWS: [string, string][] = [
+  ["watch", "계속 관찰"],
+  ["research_more", "추가 확인 필요"],
+  ["not_relevant", "낮은 관련도"],
+];
+
+function JournalSaveCard({ stockCode, finalSignalId }: { stockCode: string; finalSignalId: number }) {
+  const createJournal = useJournalStore((s) => s.create);
+  const showToast = useToastStore((s) => s.show);
+  const [userView, setUserView] = useState("watch");
+  const [memo, setMemo] = useState("");
+  const [tags, setTags] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  async function save() {
+    setBusy(true);
+    try {
+      await createJournal({
+        stock_code: stockCode,
+        final_signal_id: finalSignalId,
+        user_view: userView,
+        memo: memo.trim() || undefined,
+        tags: tags.split(",").map((t) => t.trim()).filter(Boolean),
+      });
+      setSaved(true);
+      showToast("저널에 저장했습니다.", "success");
+    } catch (e) {
+      showToast((e as Error).message, "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (saved)
+    return (
+      <div className="card mt-6 flex items-center justify-between p-5" data-flow="journal-save">
+        <p className="text-[14px] font-semibold">이 리포트를 저널에 저장했습니다.</p>
+        <Link href="/mypage" className="text-[13.5px] font-semibold text-sky-deep">
+          마이페이지 저널 보기 →
+        </Link>
+      </div>
+    );
+
+  return (
+    <section className="card mt-6 p-5" data-flow="journal-save">
+      <h2 className="text-[16px] font-bold">이 리포트를 저널에 저장</h2>
+      <p className="mt-1 text-[12.5px] text-muted">
+        지금 판단을 기록해 두면, 이후 실제 주가 변동(7·30거래일)과 함께 복기할 수 있습니다. 매수·매도 판단이 아닌 관찰 기록입니다.
+      </p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {JOURNAL_VIEWS.map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => setUserView(key)}
+            className={`pill flat text-[12.5px] ${userView === key ? "!border-sky !text-sky-deep font-bold" : ""}`}
+            style={{ padding: "4px 10px" }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <textarea
+        value={memo}
+        onChange={(e) => setMemo(e.target.value)}
+        rows={2}
+        className="card mt-3 w-full px-4 py-2.5 text-[13.5px] outline-none focus:border-sky"
+        placeholder="메모 (선택)"
+      />
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <input
+          value={tags}
+          onChange={(e) => setTags(e.target.value)}
+          className="card min-w-[220px] flex-1 px-4 py-2.5 text-[13px] outline-none focus:border-sky"
+          placeholder="태그 (쉼표로 구분, 최대 10개)"
+        />
+        <button
+          type="button"
+          onClick={() => void save()}
+          disabled={busy}
+          className="brand-grad rounded-full px-5 py-2 text-[13.5px] font-bold text-white disabled:opacity-60"
+        >
+          {busy ? "저장 중…" : "저널에 저장"}
+        </button>
+      </div>
+    </section>
   );
 }
 
