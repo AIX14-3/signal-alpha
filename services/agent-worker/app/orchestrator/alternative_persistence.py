@@ -74,7 +74,9 @@ class AlternativeSignalPersistence:
                 method_signal=_signal_value(source_result.direction),
                 method_detail=_method_detail(source_result),
                 llm_model=source_result.llm_model,
-                prompt_ver=self._config.version,
+                # 에이전트가 자기 prompt_ver 를 가져오면 그것을 쓴다(hiring-focus-v1,
+                # datalab-cause-v1 등) — 에이전트를 안 거친 결과만 런타임 버전으로 폴백.
+                prompt_ver=source_result.prompt_ver or self._config.version,
             )
             agent_result_ids.append(agent_result["id"])
 
@@ -149,4 +151,13 @@ def _method_detail(source_result: SourceResult) -> dict[str, Any]:
         detail["cause"] = source_result.cause
         detail["cause_rationale"] = source_result.cause_rationale
         detail["cause_source"] = source_result.cause_source
+    # Agent provenance — DART/REPORT lanes already persist these in method_detail
+    # (dart/tasks.py), so mirror them here. Written only when the round-trip
+    # carried them, keeping legacy (analyzer-direct) detail shapes unchanged.
+    if source_result.analysis_source is not None:
+        detail["analysis_source"] = source_result.analysis_source
+    if source_result.needs_review is not None:
+        detail["needs_review"] = source_result.needs_review
+    if source_result.llm_error:
+        detail["llm_error"] = source_result.llm_error
     return detail

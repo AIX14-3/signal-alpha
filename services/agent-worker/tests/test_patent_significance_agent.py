@@ -166,15 +166,39 @@ class PatentAgentFallbackTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(out.method_detail["materiality_source"], "rules_fallback")
         self.assertIsNotNone(out.llm_error)
 
-    async def test_out_of_enum_verdict_uses_prelabel(self):
+    async def test_out_of_enum_verdict_uses_prelabel_with_rules_provenance(self):
         classifier = FakeClassifier(
             verdict=MaterialityVerdict(materiality=None, rationale="형식 오류", confidence=0.0)
         )
         agent = PatentSignificanceAgent(classifier=classifier)
         out = await agent.analyze(_input(_notable_rows()))
-        # materiality=None from the parser → agent substitutes the deterministic prelabel.
-        self.assertEqual(out.analysis_source, "llm")
+        # materiality=None from the parser → agent substitutes the deterministic
+        # prelabel, so the provenance must say rules_fallback, NOT "llm" — the LLM
+        # never picked the persisted value.
+        self.assertEqual(out.analysis_source, "rules_fallback")
         self.assertEqual(out.method_detail["patent_materiality"], "strategic")
+        self.assertEqual(out.method_detail["materiality_source"], "rules_fallback")
+        self.assertIsNone(out.llm_model)
+        self.assertIsNone(out.llm_error)  # 실패 아님 — LLM 이 값을 못 골랐을 뿐
+
+    async def test_ambiguous_is_a_valid_llm_verdict(self):
+        # "ambiguous" 는 Materiality enum 의 유효 값 — LLM 이 실제로 고른 판정이므로
+        # 그대로 "llm" provenance 로 통과한다(폴백 아님).
+        classifier = FakeClassifier(
+            verdict=MaterialityVerdict(materiality="ambiguous", rationale="판정 곤란", confidence=0.4)
+        )
+        agent = PatentSignificanceAgent(classifier=classifier)
+        out = await agent.analyze(_input(_notable_rows()))
+        self.assertEqual(out.analysis_source, "llm")
+        self.assertEqual(out.method_detail["patent_materiality"], "ambiguous")
+        self.assertEqual(out.method_detail["materiality_source"], "llm")
+
+    async def test_malformed_payload_parses_to_none_not_prelabel(self):
+        # 파서는 형식 오류에서 예비 판정을 주입하지 않는다(오라벨 방지) — 폴백은 에이전트 몫.
+        from app.agents.patent.llm_classifier import _parse_verdict
+
+        verdict = _parse_verdict("not-a-dict")
+        self.assertIsNone(verdict.materiality)
 
 
 class PatentAgentInvarianceTest(unittest.IsolatedAsyncioTestCase):

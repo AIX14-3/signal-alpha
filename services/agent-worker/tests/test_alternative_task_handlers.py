@@ -1,5 +1,6 @@
 import sys
 import unittest
+from dataclasses import replace
 from datetime import date, datetime
 from pathlib import Path
 
@@ -8,7 +9,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "packages" / "data-
 from app.analyzers.datalab.normalize_rules import classify_datalab_observation
 from app.analyzers.hiring.normalize_rules import classify_hiring_posting
 from app.analyzers.patent.normalize_rules import classify_patent_filing
-from app.agents.base import SourceAgentOutput
+from app.agents.base import SourceAgentInput, SourceAgentOutput
+from app.agents.rule_source_agent import RuleSourceAgent
+from app.aggregator.per_source import build_source_signal
 from app.analyzers.registry import SourceRegistration
 from app.orchestrator.alternative.tasks import (
     AlternativeAnalyzeTaskHandler,
@@ -571,8 +574,8 @@ class AlternativeAnalyzeHandlerTest(unittest.IsolatedAsyncioTestCase):
 
 class _RichAnalyzer:
     """Analyzer returning a fully-populated SourceResult (evidence_items,
-    report_meta, risk_flags, llm_model) — exercises every field the
-    RuleSourceAgent round-trip must preserve."""
+    report_meta, risk_flags, llm_model, attention layer) — exercises every field
+    the RuleSourceAgent round-trip must preserve."""
 
     source = "DATALAB"
 
@@ -602,6 +605,13 @@ class _RichAnalyzer:
                 opinions=[{"firm": "X", "stance": "sell"}],
             ),
             llm_model="gemini-2.5",
+            # Neutral attention-spike layer — the five structured fields must
+            # survive the agent round-trip (HIGH: caution routing depends on it).
+            attention_tier="급증",
+            attention_z=3.912,
+            attention_note="검색 어텐션 급증(z=3.9, 평시 대비 3.2배)",
+            expected_fwd_vol_mult=1.42,
+            expected_fwd_volume_mult=2.05,
         )
 
 
@@ -692,8 +702,14 @@ class RunSourceWiringTest(unittest.IsolatedAsyncioTestCase):
         )
 
         # Dataclass equality compares every field, incl. nested evidence_items /
-        # report_meta — so this proves the wiring is fully lossless.
-        self.assertEqual(wired, direct)
+        # report_meta / the attention layer — so this proves the wiring is fully
+        # lossless for every analyzer-owned field. The round-trip additionally
+        # attaches agent provenance (analysis_source/prompt_ver/needs_review) that
+        # a direct analyzer call leaves None — normalize those before comparing.
+        self.assertEqual(
+            replace(wired, analysis_source=None, prompt_ver=None, llm_error=None, needs_review=None),
+            direct,
+        )
         self.assertEqual(wired.score, -0.37)
         self.assertEqual(wired.direction, "negative")
         self.assertEqual(wired.risk_flags, ["demand_drop", "watch"])
@@ -701,6 +717,16 @@ class RunSourceWiringTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(wired.llm_model, "gemini-2.5")
         self.assertEqual(wired.evidence_items, direct.evidence_items)
         self.assertEqual(wired.report_meta, direct.report_meta)
+        # Attention layer restored field-for-field (was dropped before the fix).
+        self.assertEqual(wired.attention_tier, "급증")
+        self.assertEqual(wired.attention_z, 3.912)
+        self.assertEqual(wired.attention_note, direct.attention_note)
+        self.assertEqual(wired.expected_fwd_vol_mult, 1.42)
+        self.assertEqual(wired.expected_fwd_volume_mult, 2.05)
+        # Agent provenance carried for persistence (MED: prompt_ver/analysis_source).
+        self.assertEqual(wired.analysis_source, "rules")
+        self.assertEqual(wired.prompt_ver, "datalab-rules-v1")
+        self.assertTrue(wired.needs_review)  # partial → review
 
     async def test_wired_run_source_empty_evidence_and_no_report_meta(self):
         # The minimal (pure-rule) case: no evidence_items, report_meta=None.
@@ -731,7 +757,10 @@ class RunSourceWiringTest(unittest.IsolatedAsyncioTestCase):
             registration, handler._repository_factory(conn), 1, "005930", date(2026, 6, 16)
         )
 
-        self.assertEqual(wired, direct)
+        self.assertEqual(
+            replace(wired, analysis_source=None, prompt_ver=None, llm_error=None, needs_review=None),
+            direct,
+        )
         self.assertEqual(wired.evidence_items, [])
         self.assertIsNone(wired.report_meta)
 
@@ -814,6 +843,78 @@ class FromOutputRestoreTest(unittest.TestCase):
             with self.assertRaises(TypeError):
                 _from_output(output)
         self.assertTrue(any("복원 실패" in m for m in logs.output))
+
+
+class AttentionRoundTripTest(unittest.IsolatedAsyncioTestCase):
+    """HIGH 회귀 가드: DATALAB 어텐션 5필드가 프로덕션 큐 경로(RuleSourceAgent →
+    _from_output)를 살아서 통과하고, per_source 의 "주의 근거" 라우팅까지 닿는다 —
+    이전에는 왕복에서 유실돼 caution 라우팅이 데드코드였다."""
+
+    def _attention_result(self):
+        return SourceResult(
+            source="DATALAB",
+            stock_code="005930",
+            direction="unknown",
+            score=0.0,
+            summary="검색 트렌드 피처 산출",
+            risk_flags=["attention_spike"],
+            data_status="no_signal",
+            attention_tier="급증",
+            attention_z=3.912,
+            attention_note="검색 어텐션 급증(z=3.9, 평시 대비 3.2배)",
+            expected_fwd_vol_mult=1.42,
+            expected_fwd_volume_mult=2.05,
+        )
+
+    async def test_attention_fields_survive_agent_round_trip(self):
+        original = self._attention_result()
+
+        class _Stub:
+            source = "DATALAB"
+
+            async def analyze(self, stock_code, evidence):
+                return original
+
+        output = await RuleSourceAgent(_Stub()).analyze(
+            SourceAgentInput(source="DATALAB", stock_code="005930")
+        )
+        restored = _from_output(output)
+
+        for name in (
+            "attention_tier",
+            "attention_z",
+            "attention_note",
+            "expected_fwd_vol_mult",
+            "expected_fwd_volume_mult",
+        ):
+            self.assertEqual(getattr(restored, name), getattr(original, name), name)
+
+        # per_source 라우팅: 복원된 attention_note 가 caution_evidence 에 실린다.
+        signal = build_source_signal(restored)
+        self.assertTrue(
+            any("검색 어텐션 급증" in item for item in signal.caution_evidence),
+            signal.caution_evidence,
+        )
+
+    async def test_non_attention_source_detail_shape_unchanged(self):
+        # attention 필드가 전부 None 이면 method_detail 에 "attention" 키가 없다
+        # (비-DataLab 소스의 detail 형태 불변 가드).
+        bare = SourceResult(
+            source="HIRING", stock_code="005930", direction="positive", score=0.2, summary="x"
+        )
+
+        class _Stub:
+            source = "HIRING"
+
+            async def analyze(self, stock_code, evidence):
+                return bare
+
+        output = await RuleSourceAgent(_Stub()).analyze(
+            SourceAgentInput(source="HIRING", stock_code="005930")
+        )
+        self.assertNotIn("attention", output.method_detail)
+        restored = _from_output(output)
+        self.assertIsNone(restored.attention_note)
 
 
 class HandlerRegistrationTest(unittest.IsolatedAsyncioTestCase):

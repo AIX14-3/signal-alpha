@@ -159,6 +159,21 @@ class HiringAgentFocusTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("채용 포커스", output.summary)
         self.assertIn("요구 기술", output.summary)
 
+    async def test_empty_llm_rationale_degrades_with_rules_provenance(self):
+        # LLM 이 근거 문장을 못 내면 결정론 포커스 요약이 저장된다 — 그 값의 출처는
+        # 규칙이므로 provenance 도 rules_fallback 이어야 한다("llm" 오라벨 금지).
+        fake = FakeClassifier(verdict=FocusVerdict(focus=None, rationale=""))
+        agent = HiringAnalysisAgent(config=CONFIG, classifier=cast(HiringSkillClassifier, fake))
+        output = await agent.analyze(_input(_focus_rows()))
+
+        self.assertEqual(len(fake.calls), 1)  # LLM 은 호출됐지만 값을 못 냈다
+        self.assertEqual(output.analysis_source, "rules_fallback")
+        self.assertEqual(output.method_detail["hiring_focus"]["source"], "rules_fallback")
+        self.assertIsNone(output.llm_model)
+        self.assertIsNone(output.llm_error)  # 실패 아님 — 근거 미제공일 뿐
+        # 결정론 포커스 요약은 그대로 실린다.
+        self.assertIn("요구 기술", output.summary)
+
     async def test_focus_output_round_trips_score_invariant(self):
         # The orchestrator restores a SourceResult from the agent output; score and
         # direction must survive the round-trip unchanged (Alternative invariance).
@@ -171,6 +186,52 @@ class HiringAgentFocusTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(restored.source, "HIRING")
         # The focus evidence item survives into the restored SourceResult.
         self.assertTrue(any(e.title == "채용 전략 포커스" for e in restored.evidence_items))
+
+
+class HiringFocusMetadataScanTest(unittest.TestCase):
+    """_build_focus/_as_of 는 rows 를 찾은 것과 같은 전 항목 스캔으로 메타데이터를
+    읽는다 — evidence[0] 고정이면 rows 가 두 번째 항목에 실릴 때 as_of/sector_demand
+    가 유실됐다."""
+
+    def _two_item_input(self):
+        # midpoint(=AS_OF-45d) 이전 prior 행 1건 + recent 행 3건 → momentum 이
+        # AS_OF 기준으로 결정론 계산된다: ((4+6+8)/3 - 2)/2 = 2.0.
+        rows = [_row("2026-03-01", job_count=2, title="백엔드 개발자", skills=["Go"])] + _focus_rows()
+        return SourceAgentInput(
+            source="HIRING",
+            stock_code="005930",
+            stock_id=1,
+            analysis_date=None,  # 메타데이터 as_of 폴백 경로를 태운다
+            evidence=[
+                RawEvidence(
+                    source="HIRING", stock_code="005930", title="빈 항목", content="",
+                    metadata={},  # rows/as_of/sector_demand 없음
+                ),
+                RawEvidence(
+                    source="HIRING", stock_code="005930", title="채용 공고", content="",
+                    metadata={
+                        "rows": rows,
+                        "as_of": AS_OF.isoformat(),
+                        "lookback_days": 90,
+                        "sector_demand": {"momentum_pct": 0.1, "coverage_weight": 0.5},
+                    },
+                ),
+            ],
+        )
+
+    def test_metadata_read_from_item_carrying_rows(self):
+        from app.agents.hiring.agent import _as_of
+
+        input_data = self._two_item_input()
+        # as_of 는 두 번째 항목의 메타데이터에서 나와야 한다(오늘 날짜 폴백 아님).
+        self.assertEqual(_as_of(input_data), AS_OF)
+
+        agent = HiringAnalysisAgent(config=CONFIG)
+        focus = agent._build_focus(input_data)
+        self.assertTrue(focus.top_skills)  # rows 는 이미 전 항목 스캔으로 찾았다
+        # AS_OF 기준 midpoint 분할이 적용된 결정론 값 — evidence[0] 고정(date.today()
+        # 폴백)이었다면 실행 시점에 따라 다른 값/None 이 된다.
+        self.assertEqual(focus.momentum_pct, 2.0)
 
 
 class HiringRegistryWiringTest(unittest.TestCase):

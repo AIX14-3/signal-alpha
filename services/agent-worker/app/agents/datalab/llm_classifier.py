@@ -6,7 +6,9 @@ the search-vs-price timing features, is the spike a *catalyst*, *fomo*, or
 (or correct) it and explain *why* in one sentence, NOT to invent a buy/sell call
 (docs §9/§10). Output is a strict JSON contract validated here; on a malformed or
 out-of-enum response the verdict degrades to ``cause=None`` so the agent can fall
-back to the deterministic prelabel.
+back to the deterministic prelabel (with rules provenance, never labeled "llm").
+A deliberate "ambiguous" answer — the prompt offers it — is parsed explicitly
+(``ambiguous=True``) rather than silently coerced into a format error.
 
 Boundary: this is the agent/enrichment layer — it may call an LLM. The rule
 analyzers never import it (analyzers stay deterministic).
@@ -22,6 +24,10 @@ from app.agents.requery_focus import requery_focus_prompt_block
 from app.schemas.source_result import Cause
 
 _CAUSE_VALUES: set[str] = {"catalyst", "fomo", "price_led"}
+# The prompt's explicit "판정 유보" answer — a legitimate LLM verdict, but NOT a
+# persistable Cause value: the agent substitutes the deterministic prelabel and
+# labels the provenance rules_fallback (the LLM did not pick the stored cause).
+_AMBIGUOUS = "ambiguous"
 PROMPT_VERSION = "datalab-cause-v1"
 
 
@@ -30,6 +36,9 @@ class CauseVerdict:
     cause: Cause | None
     rationale: str
     confidence: float
+    # True only when the LLM deliberately answered "ambiguous" (판정 유보) —
+    # distinguishes it from a malformed/out-of-enum response (both cause=None).
+    ambiguous: bool = False
 
 
 class DataLabCauseClassifier:
@@ -69,7 +78,7 @@ class DataLabCauseClassifier:
                 requery_focus=requery_focus,
             )
         )
-        return _parse_verdict(payload, fallback=lead_lag.preliminary_cause)
+        return _parse_verdict(payload)
 
 
 def _build_prompt(
@@ -108,19 +117,28 @@ def _build_prompt(
     )
 
 
-def _parse_verdict(payload: Any, *, fallback: Cause | None) -> CauseVerdict:
+def _parse_verdict(payload: Any) -> CauseVerdict:
+    # 형식 오류/enum 밖 응답은 cause=None 로만 강등한다 — 예비 판정을 여기서 주입하면
+    # 에이전트가 규칙 산출값을 "llm" 출처로 오라벨하게 되므로 폴백은 에이전트가 맡는다.
     if not isinstance(payload, dict):
-        return CauseVerdict(cause=fallback, rationale="(LLM 응답 형식 오류 — 규칙 예비 판정 사용)", confidence=0.0)
+        return CauseVerdict(cause=None, rationale="(LLM 응답 형식 오류)", confidence=0.0)
     raw_cause = str(payload.get("cause") or "").strip().lower()
     cause: Cause | None = raw_cause if raw_cause in _CAUSE_VALUES else None  # type: ignore[assignment]
     rationale = str(payload.get("rationale") or "").strip() or "(근거 미제공)"
     confidence = _clamp_float(payload.get("confidence"))
-    return CauseVerdict(cause=cause, rationale=rationale, confidence=confidence)
+    return CauseVerdict(
+        cause=cause,
+        rationale=rationale,
+        confidence=confidence,
+        ambiguous=raw_cause == _AMBIGUOUS,
+    )
 
 
 def _clamp_float(value: Any) -> float:
     try:
         number = float(value)
     except (TypeError, ValueError):
+        return 0.0
+    if number != number:  # NaN — 비교가 항상 False 라 min/max 클램프를 그대로 통과한다
         return 0.0
     return max(0.0, min(1.0, number))

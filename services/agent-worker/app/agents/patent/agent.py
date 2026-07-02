@@ -93,13 +93,6 @@ class PatentSignificanceAgent:
                 # byte-identical.
                 requery_focus=focus_hint_from_context(input_data.context),
             )
-            return self._materiality_output(
-                rule,
-                materiality=verdict.materiality or prelabel,
-                rationale=verdict.rationale,
-                materiality_source="llm",
-                llm_model=self._classifier.model,
-            )
         except Exception as exc:  # noqa: BLE001 — degrade to deterministic prelabel
             logger.warning(
                 "Patent significance LLM 분류 실패 (stock=%s): %s — 규칙 예비 판정으로 폴백",
@@ -114,6 +107,24 @@ class PatentSignificanceAgent:
                 llm_model=None,
                 llm_error=str(exc),
             )
+        if verdict.materiality is None:
+            # 형식 오류/enum 밖 응답 — 저장되는 값의 출처는 규칙 예비 판정이므로
+            # provenance 도 rules_fallback 으로 정직하게 라벨한다("ambiguous" 는
+            # 유효한 LLM 판정이라 아래 성공 경로로 그대로 통과한다).
+            return self._materiality_output(
+                rule,
+                materiality=prelabel,
+                rationale=f"LLM 응답 해석 불가 — 규칙 예비 판정 사용: {verdict.rationale}",
+                materiality_source="rules_fallback",
+                llm_model=None,
+            )
+        return self._materiality_output(
+            rule,
+            materiality=verdict.materiality,
+            rationale=verdict.rationale,
+            materiality_source="llm",
+            llm_model=self._classifier.model,
+        )
 
     # -- output builders (score/direction always the rule values) ----------- #
     def build_rules_output(self, rule: SourceResult) -> SourceAgentOutput:

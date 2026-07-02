@@ -46,6 +46,74 @@ def _signal():
     )
 
 
+class AgentProvenancePersistenceTest(unittest.IsolatedAsyncioTestCase):
+    """에이전트 provenance(prompt_ver/analysis_source/llm_error/needs_review)가
+    agent_results 까지 도달한다 — 이전에는 config.version 으로 덮여 LLM 실패 런이
+    성공 런과 구분 불가였다(DART/REPORT 레인과 동일 패턴)."""
+
+    def _signal_with(self, patent: SourceResult) -> AlternativeSignal:
+        return AlternativeSignal(
+            stock_code="005930",
+            direction=patent.direction,
+            score=patent.score,
+            confidence=0.7,
+            source_agreement="MEDIUM",
+            score_breakdown={"PATENT": patent.score},
+            available_sources=["PATENT"],
+            missing_sources=[],
+            risk_flags=[],
+            summary="patent only",
+            per_source={"PATENT": patent},
+        )
+
+    async def test_agent_provenance_reaches_agent_results(self):
+        conn = FakeConnection()
+        persistence = AlternativeSignalPersistence(conn, runtime_config=RUNTIME)
+        patent = SourceResult(
+            "PATENT",
+            "005930",
+            "positive",
+            0.6,
+            "patent summary",
+            analysis_source="rules_fallback",
+            prompt_ver="patent-significance-v1",
+            llm_error="LLM down",
+            needs_review=True,
+        )
+        await persistence.save(
+            stock_id=1,
+            signal=self._signal_with(patent),
+            analysis_date=date(2026, 7, 1),
+            publish_final_signal=False,
+        )
+        args = conn.find("INSERT INTO agent_results")[0]
+        # 에이전트의 prompt_ver 가 config.version("test")을 대신한다 ($11 → index 10).
+        self.assertEqual(args[10], "patent-significance-v1")
+        detail = json.loads(args[6])  # method_detail ($7 → index 6)
+        self.assertEqual(detail["analysis_source"], "rules_fallback")
+        self.assertEqual(detail["llm_error"], "LLM down")
+        self.assertTrue(detail["needs_review"])
+
+    async def test_legacy_result_falls_back_to_runtime_version(self):
+        # 에이전트를 안 거친(provenance 없는) SourceResult 는 기존 동작 유지 —
+        # config.version 이 실리고 detail 에 provenance 키가 생기지 않는다.
+        conn = FakeConnection()
+        persistence = AlternativeSignalPersistence(conn, runtime_config=RUNTIME)
+        patent = SourceResult("PATENT", "005930", "positive", 0.6, "patent summary")
+        await persistence.save(
+            stock_id=1,
+            signal=self._signal_with(patent),
+            analysis_date=date(2026, 7, 1),
+            publish_final_signal=False,
+        )
+        args = conn.find("INSERT INTO agent_results")[0]
+        self.assertEqual(args[10], "test")
+        detail = json.loads(args[6])
+        self.assertNotIn("analysis_source", detail)
+        self.assertNotIn("llm_error", detail)
+        self.assertNotIn("needs_review", detail)
+
+
 class AlternativeSignalPersistenceTest(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.conn = FakeConnection()

@@ -13,10 +13,11 @@ from app.agents.base import SourceAgentInput
 from app.agents.datalab.agent import DataLabAnalysisAgent
 from app.agents.datalab.graph import DataLabAnalysisGraphAgent
 from app.agents.datalab.lead_lag import compute_lead_lag
-from app.agents.datalab.llm_classifier import CauseVerdict
+from app.agents.datalab.llm_classifier import CauseVerdict, _parse_verdict
 from app.orchestrator.alternative.tasks import _from_output
 from app.orchestrator.alternative_persistence import _method_detail
 from app.schemas.evidence import RawEvidence
+from app.schemas.source_result import SourceResult
 
 AS_OF = date(2026, 6, 1)
 LOOKBACK = 30
@@ -215,13 +216,95 @@ class DataLabGraphAgentTest(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_invalid_input_is_failed(self):
+        # 진짜 계약 위반(빈 stock_code)만 failed 로 승격한다.
+        agent = DataLabAnalysisGraphAgent(classifier=FakeClassifier())
+        out = await agent.analyze(
+            SourceAgentInput(source="DATALAB", stock_code="  ", evidence=[])
+        )
+        self.assertEqual(out.data_status, "failed")
+        self.assertEqual(out.analysis_source, "graph_validation")
+        self.assertIn("stock_code_required", out.risk_flags)
+
+    async def test_empty_evidence_is_no_signal_not_failed(self):
+        # 빈 evidence 는 위반이 아니라 정상적인 no_signal — langgraph-free 경로 및
+        # DART 그래프와 같은 규약(DATALAB_LLM_ENABLED 가 data_status 를 못 바꾼다).
         agent = DataLabAnalysisGraphAgent(classifier=FakeClassifier())
         out = await agent.analyze(
             SourceAgentInput(source="DATALAB", stock_code="005930", evidence=[])
         )
-        self.assertEqual(out.data_status, "failed")
-        self.assertEqual(out.analysis_source, "graph_validation")
-        self.assertIn("evidence_required", out.risk_flags)
+        self.assertEqual(out.data_status, "no_signal")
+        self.assertEqual(out.direction, "unknown")
+        self.assertEqual(out.analysis_source, "rules")
+        self.assertNotIn("evidence_required", out.risk_flags)
+        # langgraph-free 경로와 동일한 결과인지 교차 검증.
+        plain = await DataLabAnalysisAgent(classifier=None).analyze(
+            SourceAgentInput(source="DATALAB", stock_code="005930", evidence=[])
+        )
+        self.assertEqual(out.data_status, plain.data_status)
+        self.assertEqual(out.direction, plain.direction)
+
+    async def test_ambiguous_verdict_falls_back_with_rules_provenance(self):
+        # LLM 이 의도적으로 "ambiguous"(판정 유보)를 답하면 저장값은 규칙 예비 판정이고
+        # provenance 도 rules_fallback — LLM 이 고르지 않은 cause 에 "llm" 라벨 금지.
+        rows = _spiking_rows()
+        prices = [
+            {"trade_date": "2026-05-05", "close": 100.0},
+            {"trade_date": "2026-05-15", "close": 112.0},  # prior jump → fomo prelabel
+            {"trade_date": "2026-05-30", "close": 112.0},
+        ]
+        prelabel = compute_lead_lag(rows, prices, as_of=AS_OF, lookback_days=LOOKBACK).preliminary_cause
+        self.assertIsNotNone(prelabel)
+
+        classifier = FakeClassifier(
+            verdict=CauseVerdict(cause=None, rationale="검색-가격 관계가 뚜렷하지 않다", confidence=0.3, ambiguous=True)
+        )
+        agent = DataLabAnalysisGraphAgent(
+            classifier=classifier, price_provider=_price_provider(prices), lookback_days=LOOKBACK
+        )
+        out = await agent.analyze(self._input(rows, attention_series=_spike_series()))
+
+        self.assertEqual(out.analysis_source, "rules_fallback")
+        self.assertEqual(out.method_detail["cause"], prelabel)
+        self.assertEqual(out.method_detail["cause_source"], "rules_fallback")
+        self.assertIn("판정 유보", out.method_detail["cause_rationale"])
+        self.assertIsNone(out.llm_model)  # 값을 LLM 이 만들지 않았다
+        self.assertIsNone(out.llm_error)  # 실패가 아니라 정상적인 유보
+
+    async def test_malformed_search_rows_degrade_to_rule_only_output(self):
+        # 결정론 사전 계산(lead/lag)이 터져도 이미 산출된 규칙 결과를 잃지 않는다 —
+        # 이전에는 caller 의 광역 except 가 소스 전체를 failed 로 바꿨다.
+        classifier = FakeClassifier(verdict=CauseVerdict("catalyst", "x", 0.9))
+        agent = DataLabAnalysisAgent(
+            classifier=classifier,
+            price_provider=_price_provider([
+                {"trade_date": "2026-05-05", "close": 100.0},
+                {"trade_date": "2026-05-15", "close": 100.0},
+                {"trade_date": "2026-05-30", "close": 112.0},
+            ]),
+            lookback_days=LOOKBACK,
+        )
+        bad = _search_row("2026-05-20", 100)
+        bad["search_index"] = "N/A"  # float() ValueError in lead/lag
+        rule = SourceResult(
+            source="DATALAB",
+            stock_code="005930",
+            direction="unknown",
+            score=0.0,
+            summary="규칙 피처 산출",
+            risk_flags=["attention_spike"],
+            data_status="no_signal",
+        )
+        out = await agent.classify_cause(
+            SourceAgentInput(
+                source="DATALAB", stock_code="005930", stock_id=1,
+                analysis_date=AS_OF, evidence=_evidence([bad]),
+            ),
+            rule,
+        )
+        self.assertEqual(out.data_status, "no_signal")  # failed 아님
+        self.assertEqual(out.analysis_source, "rules")
+        self.assertNotIn("cause", out.method_detail)
+        self.assertEqual(classifier.calls, [])
 
     async def test_score_unchanged_by_cause(self):
         """Cause is a tag only — score/direction stay the rule values (docs §9)."""
@@ -324,10 +407,26 @@ class CauseRoundTripTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(detail["cause_rationale"], "검색 선행")
 
 
+class CauseVerdictParserTest(unittest.TestCase):
+    def test_ambiguous_is_explicit_verdict_not_format_error(self):
+        v = _parse_verdict({"cause": "ambiguous", "rationale": "유보", "confidence": 0.4})
+        self.assertIsNone(v.cause)
+        self.assertTrue(v.ambiguous)
+        self.assertEqual(v.rationale, "유보")
+
+    def test_out_of_enum_cause_is_none_and_not_ambiguous(self):
+        v = _parse_verdict({"cause": "buy_now", "rationale": "x", "confidence": 0.4})
+        self.assertIsNone(v.cause)
+        self.assertFalse(v.ambiguous)
+
+    def test_nan_confidence_clamps_to_zero(self):
+        # patent 쪽 가드의 미러 — NaN 은 min/max 비교를 통과해 1.0 이 되면 안 된다.
+        v = _parse_verdict({"cause": "catalyst", "rationale": "x", "confidence": float("nan")})
+        self.assertEqual(v.confidence, 0.0)
+
+
 class RuleOnlyRoundTripTest(unittest.TestCase):
     def test_non_cause_source_result_has_no_cause_in_detail(self):
-        from app.schemas.source_result import SourceResult
-
         result = SourceResult(
             source="HIRING", stock_code="005930", direction="positive", score=0.4,
             summary="x", data_status="ok",

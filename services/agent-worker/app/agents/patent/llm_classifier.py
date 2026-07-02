@@ -6,7 +6,8 @@ Korean rationale. The rules already produced a prelabel from the filing pattern 
 the LLM's job is to confirm (or correct) it and explain *why*, NOT to invent a
 buy/sell call (docs §9/§10). Output is a strict JSON contract validated here; on a
 malformed or out-of-enum response the verdict degrades to ``materiality=None`` so
-the agent falls back to the deterministic prelabel.
+the agent falls back to the deterministic prelabel (with rules provenance, never
+labeled "llm").
 
 Boundary: this is the agent/enrichment layer — it may call an LLM. The rule
 analyzers never import it (analyzers stay deterministic and only read the cached
@@ -76,7 +77,7 @@ class PatentSignificanceClassifier:
                 requery_focus=requery_focus,
             )
         )
-        return _parse_verdict(payload, fallback=prelabel)
+        return _parse_verdict(payload)
 
 
 def _build_prompt(
@@ -127,11 +128,13 @@ def _format_filings(filings: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def _parse_verdict(payload: Any, *, fallback: Materiality) -> MaterialityVerdict:
+def _parse_verdict(payload: Any) -> MaterialityVerdict:
+    # 형식 오류는 materiality=None 로만 강등한다 — 예비 판정을 여기서 주입하면 에이전트가
+    # 규칙 산출값을 "llm" 출처로 오라벨하게 되므로 폴백(과 provenance)은 에이전트가 맡는다.
     if not isinstance(payload, dict):
         return MaterialityVerdict(
-            materiality=fallback,
-            rationale="(LLM 응답 형식 오류 — 규칙 예비 판정 사용)",
+            materiality=None,
+            rationale="(LLM 응답 형식 오류)",
             confidence=0.0,
         )
     raw = str(payload.get("materiality") or "").strip().lower()

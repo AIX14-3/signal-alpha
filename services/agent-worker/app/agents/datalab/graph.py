@@ -82,8 +82,10 @@ class DataLabAnalysisGraphAgent:
             risk_flags.append("source_must_be_datalab")
         if not input_data.stock_code.strip():
             risk_flags.append("stock_code_required")
-        if not input_data.evidence:
-            risk_flags.append("evidence_required")
+        # 빈 evidence 는 계약 위반이 아니라 정상적인 no_signal 케이스 — DART 그래프와
+        # 같은 규약으로 analyze_rules(DataLabAnalyzer)가 우아하게 no_signal 로 처리한다.
+        # 여기서 failed 로 승격하면 DATALAB_LLM_ENABLED 플래그가 결정론 data_status 를
+        # 바꾸게 된다(langgraph-free 경로와 불일치).
         if not risk_flags:
             return {**state, "graph_nodes": nodes}
         return {
