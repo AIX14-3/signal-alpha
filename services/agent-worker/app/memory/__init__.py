@@ -14,11 +14,15 @@ Invariants (mirrors the plan §4-A / §6):
     leaves publishing untouched (writer is best-effort, recall returns []).
 """
 
+from app.memory.episode_outcome import EpisodeOutcomeRecorder
 from app.memory.episode_recall import EpisodeRecall, RecalledEpisode
 from app.memory.episode_writer import EpisodeWriter
+from app.memory.outcome_task import EpisodeOutcomeTaskHandler
 from app.memory.situation import SituationInput, build_situation_text
 
 __all__ = [
+    "EpisodeOutcomeRecorder",
+    "EpisodeOutcomeTaskHandler",
     "EpisodeRecall",
     "EpisodeWriter",
     "RecalledEpisode",

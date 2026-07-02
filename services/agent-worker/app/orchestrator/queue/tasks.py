@@ -129,6 +129,9 @@ DEFAULT_CYCLE_PLAN: dict[str, int] = {
     "aggregate_signal": 30,
     "synthesize": 20,
     "publish_signals": 20,
+    # 에피소드 아웃컴 리코더 — 종목 무관 배치 스윕(1태스크가 만기분 전체 처리). 드레인 데몬이
+    # 일 1회 재시드하므로 캡 1로 충분(발행 경로와 무관한 사후 유지태스크).
+    "record_episode_outcomes": 1,
 }
 
 

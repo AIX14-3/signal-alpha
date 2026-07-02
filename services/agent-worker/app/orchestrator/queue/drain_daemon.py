@@ -30,6 +30,7 @@ from app.orchestrator.queue.task_types import (
     NORMALIZE_REPORT,
     PROCESS_REPORT,
     PUBLISH_SIGNALS,
+    RECORD_EPISODE_OUTCOMES,
     REQUERY_SOURCE,
     RETURN_COMBINE,
     SRC_INFER,
@@ -67,6 +68,8 @@ DRAIN_ORDER: tuple[str, ...] = (
     AGGREGATE_SIGNAL,
     SYNTHESIZE,
     PUBLISH_SIGNALS,
+    # 사후 유지태스크 — 발행 경로와 무관(맨 끝). 발행 후 만기된 에피소드 outcome 을 채운다.
+    RECORD_EPISODE_OUTCOMES,
 )
 
 
@@ -167,6 +170,44 @@ async def _sweep_stale(pool: Any) -> None:
         logger.info("swept stale queue tasks: %s", swept)
 
 
+async def _seed_episode_outcome_task(pool: Any, settings: Settings) -> None:
+    """일 1회 에피소드 아웃컴 리코더 태스크를 재시드(중복 방지 가드).
+
+    종목 무관 유지태스크라 여느 소스처럼 스케줄러 HTTP 로 인큐되지 않는다 — 대신 드레인 데몬이
+    ``_sweep_stale`` 과 같은 결에서 직접 시드한다. 열린(pending/running/retrying) 태스크가 있거나
+    최근 ``episode_outcome_interval_sec`` 내 완료분이 있으면 시드하지 않아 하루 한 건만 흐른다
+    (stock_id=NULL — 전체 스윕). 리코더 자체가 멱등·degrade 라 과다 시드돼도 안전하지만, 이 가드로
+    큐를 깔끔히 유지한다.
+    """
+    if not getattr(settings, "episode_outcome_enabled", True):
+        return
+    from signal_alpha_data_access.repositories import ProcessingQueueRepository
+
+    async with pool.acquire() as conn:
+        should_seed = await conn.fetchval(
+            """
+            SELECT NOT EXISTS (
+                SELECT 1
+                FROM processing_queue
+                WHERE task_type = $1
+                  AND (
+                      status IN ('pending', 'running', 'retrying')
+                      OR finished_at > NOW() - make_interval(secs => $2)
+                  )
+            )
+            """,
+            RECORD_EPISODE_OUTCOMES,
+            float(settings.episode_outcome_interval_sec),
+        )
+        if should_seed:
+            await ProcessingQueueRepository(conn).enqueue(
+                stock_id=None,
+                task_type=RECORD_EPISODE_OUTCOMES,
+                priority="batch",
+            )
+            logger.info("seeded episode outcome recorder task")
+
+
 async def run_drain_daemon(
     pool: Any,
     settings: Settings,
@@ -181,6 +222,7 @@ async def run_drain_daemon(
                 if runtime_status is not None:
                     runtime_status.mark_started()
                 await _sweep_stale(pool)
+                await _seed_episode_outcome_task(pool, settings)
                 summary = await run_drain_cycle(pool, handler_factory=handler_factory)
                 if runtime_status is not None:
                     runtime_status.mark_cycle(summary)

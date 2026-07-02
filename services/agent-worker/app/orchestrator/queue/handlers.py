@@ -24,6 +24,7 @@ from app.orchestrator.queue.task_types import (
     NORMALIZE_REPORT,
     PROCESS_REPORT,
     PUBLISH_SIGNALS,
+    RECORD_EPISODE_OUTCOMES,
     RETURN_COMBINE,
     SRC_INFER,
     SYNTHESIZE,
@@ -119,7 +120,16 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
         ANALYZE_DATALAB: AlternativeAnalyzeTaskHandler(
             connection, registrations=[registration_for("DATALAB")]
         ),
+        # 에피소드 아웃컴 리코더(Wave 3 후속②) — 발행 후 실현결과를 outcome 에 progressive 기록.
+        # 종목 무관 배치 스윕. 드레인 데몬이 일 1회 재시드. 숫자 불변(recall 참고용).
+        RECORD_EPISODE_OUTCOMES: _build_episode_outcome_handler(connection, settings),
     }
+
+
+def _build_episode_outcome_handler(connection: Any, settings: Any) -> Any:
+    from app.memory import EpisodeOutcomeTaskHandler
+
+    return EpisodeOutcomeTaskHandler(connection, settings=settings)
 
 
 def _build_embedder() -> Any | None:

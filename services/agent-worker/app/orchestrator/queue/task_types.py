@@ -37,6 +37,12 @@ PUBLISH_SIGNALS = "publish_signals"
 # 10 chars (task_type VARCHAR(50)).
 SYNTHESIZE = "synthesize"
 
+# 에피소드 아웃컴 리코더(에이전트화 Wave 3 후속②) — 종목 무관 주기 유지태스크. 발행 후 만기된
+# 에피소드의 실현 forward return/direction hit 을 signal_episodes.outcome 에 progressive 로 기록해
+# recall 근거 품질을 높인다(숫자 불변, recall 참고용). 드레인 데몬이 일 1회 재시드(dedupe by 열린
+# 태스크·최근 완료 여부). stock_id=NULL(배치 전체 스윕). 23 chars (task_type VARCHAR(50)).
+RECORD_EPISODE_OUTCOMES = "record_episode_outcomes"
+
 COLLECT_REPORT = "collect_report"
 PROCESS_REPORT = "process_report"
 NORMALIZE_REPORT = "normalize_report"
