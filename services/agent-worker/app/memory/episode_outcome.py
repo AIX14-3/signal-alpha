@@ -149,6 +149,19 @@ class EpisodeOutcomeRecorder:
         patch: dict[str, Any] = dict(new_entries)
         patch["primary"] = self._primary_key
         patch["computed_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        # Judge (#728) folds a recalled episode's *recorded outcome* into review
+        # calibration by reading a top-level ``result``/``label`` tag (an adverse
+        # tag — miss/false_positive — nudges needs_review). It does not understand
+        # the per-horizon ``hit`` map, so derive that tag from the *primary*
+        # horizon's hit to actually close the write→recall→judge loop. Only set
+        # once the primary horizon is known (hit True/False); a not-yet-matured or
+        # non-directional (hit=None) primary leaves it unset → cold-start safe.
+        primary_entry = new_entries.get(self._primary_key) or existing.get(self._primary_key)
+        primary_hit = primary_entry.get("hit") if isinstance(primary_entry, dict) else None
+        if primary_hit is True:
+            patch["result"] = "hit"
+        elif primary_hit is False:
+            patch["result"] = "miss"
         if finalize:
             # All horizons recorded (normal) or grace elapsed with prices still
             # missing (abandoned): either way stop re-scanning this episode.

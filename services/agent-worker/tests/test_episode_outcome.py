@@ -132,6 +132,32 @@ class RecorderMathTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(patch["complete"])                  # all horizons present
         self.assertNotIn("abandoned", patch)
         self.assertIn("computed_at", patch)
+        # Judge-compat top-level tag derived from the PRIMARY (h20) hit: h20 missed
+        # (positive dir, price down) → "miss" (an adverse tag the judge nudges on).
+        self.assertEqual(patch["result"], "miss")
+
+    async def test_result_tag_from_primary_hit_for_judge(self):
+        """Top-level ``result`` (judge-readable) tracks the primary horizon's hit."""
+        sig = date.today() - timedelta(days=120)
+        # primary h20 up +10% with positive direction → hit → "hit" (no review nudge).
+        market = FakeMarketData(_daily_sessions(sig, 61, {5: 102.0, 20: 110.0, 60: 130.0}))
+        repo = FakeEpisodesRepo([_episode(direction="positive", days_ago=120)])
+        recorder = EpisodeOutcomeRecorder(
+            episodes=repo, market_data=market, horizons=[5, 20, 60], primary_days=20
+        )
+        await recorder.record_due()
+        self.assertEqual(repo.patches[1]["result"], "hit")
+
+    async def test_result_tag_unset_for_neutral_primary(self):
+        """Non-directional (neutral) episode → primary hit None → no ``result`` tag."""
+        sig = date.today() - timedelta(days=120)
+        market = FakeMarketData(_daily_sessions(sig, 61, {5: 102.0, 20: 110.0, 60: 130.0}))
+        repo = FakeEpisodesRepo([_episode(direction="neutral", days_ago=120)])
+        recorder = EpisodeOutcomeRecorder(
+            episodes=repo, market_data=market, horizons=[5, 20, 60], primary_days=20
+        )
+        await recorder.record_due()
+        self.assertNotIn("result", repo.patches[1])
 
     async def test_horizon_is_trading_days_not_calendar(self):
         # Weekday-only sessions: the 20th trading session is >20 calendar days out,
