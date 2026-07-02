@@ -32,6 +32,15 @@ class CollectionScheduleRunsTest(unittest.IsolatedAsyncioTestCase):
             targets=["dart"],
             dart_limit=100,
             price_modes=["snapshot"],
+            report_limit=50,
+            report_days_back=5,
+            report_max_pages=12,
+            alternative_collect_enabled=True,
+            alternative_analyze_enabled=False,
+            alternative_collect_timeout_seconds=900,
+            alternative_analyze_timeout_seconds=1200,
+            backpressure_max_waiting=20,
+            backpressure_max_failed=3,
             frequency_minutes=60,
             active_from_local=time(8, 30),
             active_until_local=time(20, 30),
@@ -40,6 +49,9 @@ class CollectionScheduleRunsTest(unittest.IsolatedAsyncioTestCase):
 
         kind, sql, args = connection.calls[0]
         self.assertEqual(kind, "fetchrow")
+        self.assertIn("report_limit = COALESCE", sql)
+        self.assertIn("alternative_collect_enabled = COALESCE", sql)
+        self.assertIn("backpressure_max_waiting = COALESCE", sql)
         self.assertIn("frequency_minutes = COALESCE", sql)
         self.assertIn("active_from_local = COALESCE", sql)
         self.assertIn("active_until_local = COALESCE", sql)
@@ -53,6 +65,15 @@ class CollectionScheduleRunsTest(unittest.IsolatedAsyncioTestCase):
                 '["dart"]',
                 100,
                 '["snapshot"]',
+                50,
+                5,
+                12,
+                True,
+                False,
+                900,
+                1200,
+                20,
+                3,
                 60,
                 time(8, 30),
                 time(20, 30),

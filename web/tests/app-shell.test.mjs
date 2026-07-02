@@ -37,9 +37,16 @@ test("admin UI exposes split schedule rows and schedule run history", async () =
   assert.match(apiClient, /frequency_minutes: number \| null/);
   assert.match(apiClient, /active_from_local: string \| null/);
   assert.match(apiClient, /active_until_local: string \| null/);
+  assert.match(apiClient, /report_limit: number \| null/);
+  assert.match(apiClient, /alternative_collect_enabled: boolean \| null/);
+  assert.match(apiClient, /backpressure_max_waiting: number \| null/);
   assert.match(apiClient, /health_status: string \| null/);
   assert.match(apiClient, /health_detail: string \| null/);
+  assert.match(apiClient, /export async function adminDryRunSchedule/);
   assert.match(page, /adminListScheduleRuns/);
+  assert.match(page, /adminDryRunSchedule/);
+  assert.match(page, /savePolicy/);
+  assert.match(page, /dryRunSchedule/);
   assert.match(page, /schedules\.map/);
   assert.match(page, /formatScheduleRunDecision/);
   assert.match(page, /formatScheduleRunTargetResult/);
@@ -55,6 +62,11 @@ test("admin UI exposes split schedule rows and schedule run history", async () =
   assert.match(page, /frequency_minutes/);
   assert.match(page, /active_from_local/);
   assert.match(page, /active_until_local/);
+  assert.match(page, /report_limit/);
+  assert.match(page, /alternative_collect_enabled/);
+  assert.match(page, /backpressure_max_waiting/);
+  assert.match(page, /\\uc2e4\\ud589 \\uc815\\ucc45/);
+  assert.match(page, /\\ubbf8\\ub9ac \\ud310\\ub2e8/);
   assert.match(page, /"price", "dart", "report", "alternative"/);
   assert.match(apiClient, /export async function adminGetQueueOverview/);
   assert.match(apiClient, /export async function adminSweepStaleQueue/);

@@ -70,6 +70,14 @@ Before scheduled runs fire, the scheduler agent reads `/internal/stats/queue` an
 
 Policy skips that replace an otherwise due scheduled run are also written to `collection_schedule_runs` with `status=skipped`. This records why the scheduler agent intentionally held back work without changing `collection_schedules.last_run_at` or advancing the source cadence.
 
+Each schedule row can override execution policy without changing code:
+
+- Report collection: `report_limit`, `report_days_back`, `report_max_pages`
+- Alternative data: `alternative_collect_enabled`, `alternative_analyze_enabled`, `alternative_collect_timeout_seconds`, `alternative_analyze_timeout_seconds`
+- Backpressure: `backpressure_max_waiting`, `backpressure_max_failed`
+
+Admin exposes these policy fields and a dry-run action. Dry-run sends the schedule config to the worker's `/internal/schedules/dry-run` endpoint, reads current queue stats, and returns the scheduler-agent decision (`fire` or `skip`), reason, next planned run, and backpressure summary without enqueueing collection or analysis work.
+
 Keep exactly one scheduler agent active for the schedule table. The advisory lock prevents duplicate firing during overlap, but one active scheduler remains the simplest operating model.
 
 ## 3. Collection Cadence

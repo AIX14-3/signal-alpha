@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import date
+from datetime import datetime, time
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends
@@ -49,6 +51,69 @@ class ScheduleReportNormalizeBackfillRequest(BaseModel):
     limit: int = Field(default=100, ge=1, le=1000)
     priority: Literal["batch", "immediate"] = "batch"
     dry_run: bool = True
+
+
+class SchedulerDryRunRequest(BaseModel):
+    schedule: dict[str, Any]
+    now: datetime | None = None
+    queue_stats: dict[str, Any] | None = None
+
+
+def _parse_time(value: Any) -> time | None:
+    if value is None or isinstance(value, time):
+        return value
+    if isinstance(value, str):
+        return time.fromisoformat(value)
+    return value
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    if value is None or isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        return datetime.fromisoformat(value)
+    return value
+
+
+def _normalize_schedule_payload(schedule: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(schedule)
+    for key in ("run_at_local", "active_from_local", "active_until_local"):
+        normalized[key] = _parse_time(normalized.get(key))
+    for key in ("last_run_at", "manual_trigger_requested_at", "next_run_at", "updated_at"):
+        normalized[key] = _parse_datetime(normalized.get(key))
+    return normalized
+
+
+async def _queue_stats(pool: Any) -> dict[str, Any]:
+    from signal_alpha_data_access.repositories import ObservabilityRepository
+
+    async with pool.acquire() as connection:
+        rows = await ObservabilityRepository(connection).queue_stats()
+
+    items = [dict(row) for row in rows]
+    totals_by_status: dict[str, int] = defaultdict(int)
+    for item in items:
+        totals_by_status[item["status"]] += int(item["count"])
+    return {
+        "total": sum(totals_by_status.values()),
+        "totals_by_status": dict(totals_by_status),
+        "items": items,
+    }
+
+
+@router.post("/dry-run")
+async def schedule_dry_run(
+    request: SchedulerDryRunRequest,
+    pool: Any = Depends(get_database_pool),
+) -> dict[str, Any]:
+    from run_scheduler_instance import _scheduler_dry_run
+
+    queue_stats = request.queue_stats if request.queue_stats is not None else await _queue_stats(pool)
+    return _scheduler_dry_run(
+        _normalize_schedule_payload(request.schedule),
+        now=request.now,
+        queue_stats=queue_stats,
+    )
 
 
 @router.post("/report/collect")

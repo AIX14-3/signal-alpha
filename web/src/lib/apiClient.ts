@@ -541,6 +541,15 @@ export type AdminSchedule = {
   targets: string[];
   dart_limit: number | null;
   price_modes: string[];
+  report_limit: number | null;
+  report_days_back: number | null;
+  report_max_pages: number | null;
+  alternative_collect_enabled: boolean | null;
+  alternative_analyze_enabled: boolean | null;
+  alternative_collect_timeout_seconds: number | null;
+  alternative_analyze_timeout_seconds: number | null;
+  backpressure_max_waiting: number | null;
+  backpressure_max_failed: number | null;
   frequency_minutes: number | null;
   active_from_local: string | null;
   active_until_local: string | null;
@@ -567,6 +576,29 @@ export type AdminScheduleRun = {
   started_at: string | null;
   finished_at: string | null;
   created_at: string | null;
+};
+
+export type AdminScheduleDryRun = {
+  would_fire: boolean;
+  evaluated_at: string | null;
+  decision: {
+    agent?: string;
+    policy?: string;
+    action?: string;
+    reason?: string;
+    schedule_id?: number;
+    schedule_name?: string;
+    targets?: string[];
+  };
+  next_run_at: string | null;
+  backpressure: {
+    reason?: string | null;
+    max_waiting?: number | null;
+    max_failed?: number | null;
+    waiting?: number | null;
+    failed?: number | null;
+  };
+  policy?: Record<string, unknown>;
 };
 
 export type AdminQueueOverview = {
@@ -673,6 +705,10 @@ export async function adminListScheduleRuns(
   return apiFetch(`/api/admin/schedules/${scheduleId}/runs?limit=${limit}`, { auth: "admin" });
 }
 
+export async function adminDryRunSchedule(scheduleId: number): Promise<AdminScheduleDryRun> {
+  return apiFetch(`/api/admin/schedules/${scheduleId}/dry-run`, { method: "POST", auth: "admin" });
+}
+
 export async function adminUpdateSchedule(
   scheduleId: number,
   body: {
@@ -682,6 +718,15 @@ export async function adminUpdateSchedule(
     targets?: string[];
     dart_limit?: number;
     price_modes?: string[];
+    report_limit?: number;
+    report_days_back?: number;
+    report_max_pages?: number;
+    alternative_collect_enabled?: boolean;
+    alternative_analyze_enabled?: boolean;
+    alternative_collect_timeout_seconds?: number;
+    alternative_analyze_timeout_seconds?: number;
+    backpressure_max_waiting?: number;
+    backpressure_max_failed?: number;
     frequency_minutes?: number;
     active_from_local?: string;
     active_until_local?: string;

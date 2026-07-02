@@ -747,7 +747,23 @@ CREATE TABLE public.collection_schedules (
     frequency_minutes integer DEFAULT 1440 NOT NULL,
     active_from_local time without time zone,
     active_until_local time without time zone,
-    CONSTRAINT collection_schedules_frequency_minutes_check CHECK (((frequency_minutes >= 1) AND (frequency_minutes <= 1440)))
+    report_limit integer DEFAULT 100 NOT NULL,
+    report_days_back integer DEFAULT 7 NOT NULL,
+    report_max_pages integer DEFAULT 20 NOT NULL,
+    alternative_collect_enabled boolean DEFAULT true NOT NULL,
+    alternative_analyze_enabled boolean DEFAULT true NOT NULL,
+    alternative_collect_timeout_seconds integer DEFAULT 3600 NOT NULL,
+    alternative_analyze_timeout_seconds integer DEFAULT 3600 NOT NULL,
+    backpressure_max_waiting integer,
+    backpressure_max_failed integer,
+    CONSTRAINT collection_schedules_alternative_analyze_timeout_check CHECK (((alternative_analyze_timeout_seconds >= 60) AND (alternative_analyze_timeout_seconds <= 86400))),
+    CONSTRAINT collection_schedules_alternative_collect_timeout_check CHECK (((alternative_collect_timeout_seconds >= 60) AND (alternative_collect_timeout_seconds <= 86400))),
+    CONSTRAINT collection_schedules_backpressure_max_failed_check CHECK (((backpressure_max_failed IS NULL) OR (backpressure_max_failed >= 0))),
+    CONSTRAINT collection_schedules_backpressure_max_waiting_check CHECK (((backpressure_max_waiting IS NULL) OR (backpressure_max_waiting >= 0))),
+    CONSTRAINT collection_schedules_frequency_minutes_check CHECK (((frequency_minutes >= 1) AND (frequency_minutes <= 1440))),
+    CONSTRAINT collection_schedules_report_days_back_check CHECK (((report_days_back >= 1) AND (report_days_back <= 400))),
+    CONSTRAINT collection_schedules_report_limit_check CHECK (((report_limit >= 1) AND (report_limit <= 1000))),
+    CONSTRAINT collection_schedules_report_max_pages_check CHECK (((report_max_pages >= 1) AND (report_max_pages <= 200)))
 );
 
 
@@ -6134,5 +6150,4 @@ ALTER TABLE ONLY public.watchlists
 -- PostgreSQL database dump complete
 --
 
-\unrestrict gWg0zBu2o1a7wlATcUCCdKvpQoVUsIFWzPwzdQEpQIbjR1hSsoelKAhGY1AAwO0
-
+\unrestrict ZjZTh4RvTrbBfNi4596ZnibJSMVLCvdZJJ0leR0jzLAZeDxNG9zA98K8KFYGfCc

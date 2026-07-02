@@ -18,6 +18,15 @@ from app.main import app
 
 class FakeConnection:
     async def fetch(self, sql, *args):
+        if "FROM processing_queue" in sql:
+            return [
+                {
+                    "task_type": "collect_dart",
+                    "status": "pending",
+                    "count": 6,
+                    "oldest_waiting_at": None,
+                }
+            ]
         return [
             {"id": 1, "ticker": "005930"},
             {"id": 2, "ticker": "000660"},
@@ -57,6 +66,39 @@ class ScheduleRouteTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"scheduled_count": 2, "task_ids": [81, 82]})
+
+    def test_schedule_dry_run_returns_scheduler_decision_without_enqueueing(self):
+        app.dependency_overrides[get_database_pool] = lambda: FakePool()
+        client = TestClient(app, headers={"X-Internal-Token": "test-internal-token"})
+
+        response = client.post(
+            "/internal/schedules/dry-run",
+            json={
+                "schedule": {
+                    "id": 1,
+                    "name": "dart-collection",
+                    "enabled": True,
+                    "run_at_local": "08:30",
+                    "timezone": "Asia/Seoul",
+                    "targets": ["dart"],
+                    "dart_limit": 100,
+                    "price_modes": ["snapshot"],
+                    "frequency_minutes": 60,
+                    "active_from_local": "08:30",
+                    "active_until_local": "20:30",
+                    "last_run_at": "2026-07-01T08:30:00+09:00",
+                    "manual_trigger_requested_at": None,
+                    "backpressure_max_waiting": 5,
+                },
+                "now": "2026-07-01T09:31:00+09:00",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertFalse(body["would_fire"])
+        self.assertEqual(body["decision"]["reason"], "queue-backlog")
+        self.assertEqual(body["backpressure"]["waiting"], 6)
 
 
 if __name__ == "__main__":
