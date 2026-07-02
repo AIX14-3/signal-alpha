@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 
@@ -10,7 +11,31 @@ def test_compose_worker_defaults_match_split_topology():
     assert "QUEUE_DRAIN_DAEMON_ENABLED: ${QUEUE_DRAIN_DAEMON_ENABLED:-true}" in compose
     assert "PRICE_COLLECTOR_ENABLED: ${PRICE_COLLECTOR_ENABLED:-false}" in compose
     assert "SYNTHESIS_LLM_MODEL: ${SYNTHESIS_LLM_MODEL:-gemini-2.5-flash}" in compose
+    assert "BACKEND_DATABASE_URL: ${BACKEND_DATABASE_URL:-}" in compose
     assert "INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?INTERNAL_API_TOKEN is required" in compose
+
+
+def test_compose_agent_worker_passes_runtime_settings():
+    compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    config = (ROOT / "services" / "agent-worker" / "app" / "core" / "config.py").read_text(
+        encoding="utf-8"
+    )
+
+    agent_worker_block = compose.split("  agent-worker:", 1)[1].split("\n  analyzer:", 1)[0]
+    configured_env = set(re.findall(r"^\s{6}([A-Z0-9_]+):", agent_worker_block, re.M))
+    runtime_env = set(re.findall(r'getenv\(\s*"([A-Z0-9_]+)"', config, re.S))
+    runtime_env |= set(re.findall(r'_env_(?:bool|list)\(\s*"([A-Z0-9_]+)"', config, re.S))
+
+    runtime_only = {
+        # These are local container metadata or compose-only wiring rather than Settings inputs.
+        "PYTHONPATH",
+        "SERVICE_NAME",
+        "SERVICE_VERSION",
+        "WATCHFILES_FORCE_POLLING",
+    }
+    missing = sorted(runtime_env - configured_env - runtime_only)
+
+    assert missing == []
 
 
 def test_compose_main_server_env_file_is_optional_for_config_validation():
