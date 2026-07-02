@@ -3,7 +3,12 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { type PredictionRate, type ReportSource } from "@/lib/apiClient";
+import {
+  listJournals,
+  type Journal as JournalType,
+  type PredictionRate,
+  type ReportSource,
+} from "@/lib/apiClient";
 import { WatchlistButton } from "@/components/WatchlistButton";
 import {
   directionLabel,
@@ -189,6 +194,33 @@ const JOURNAL_VIEWS: [string, string][] = [
   ["research_more", "추가 확인 필요"],
   ["not_relevant", "낮은 관련도"],
 ];
+const JOURNAL_VIEW_LABEL: Record<string, string> = Object.fromEntries(JOURNAL_VIEWS);
+
+/** 이 종목에 이미 남긴 내 저널 이력 — 중복 저장 전에 과거 판단을 보여준다. */
+function JournalHistory({ items }: { items: JournalType[] }) {
+  if (items.length === 0) return null;
+  return (
+    <div className="mb-4 rounded-[12px] bg-surface-2 p-3" data-flow="journal-history">
+      <div className="flex items-center justify-between">
+        <span className="text-[12.5px] font-bold">이 종목의 내 저널 {items.length}건</span>
+        <Link href="/mypage" className="text-[12px] font-semibold text-sky-deep">
+          전체 보기 →
+        </Link>
+      </div>
+      <ul className="mt-1.5 space-y-1 text-[12.5px]">
+        {items.slice(0, 3).map((j) => (
+          <li key={j.journal_id} className="flex flex-wrap items-baseline gap-x-2">
+            <span className="text-muted">{j.created_at?.slice(0, 10)}</span>
+            <span className="pill flat" style={{ padding: "1px 7px", fontSize: 11 }}>
+              {JOURNAL_VIEW_LABEL[j.user_view] ?? j.user_view}
+            </span>
+            {j.memo && <span className="truncate text-navy-soft">{j.memo}</span>}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 
 function JournalSaveCard({ stockCode, finalSignalId }: { stockCode: string; finalSignalId: number }) {
   const createJournal = useJournalStore((s) => s.create);
@@ -198,17 +230,26 @@ function JournalSaveCard({ stockCode, finalSignalId }: { stockCode: string; fina
   const [tags, setTags] = useState("");
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [history, setHistory] = useState<JournalType[]>([]);
+
+  useEffect(() => {
+    // 이 카드가 렌더링되는 시점 = 구독자 언락 상태라 저널 API 호출 가능.
+    listJournals({ stock_code: stockCode })
+      .then((d) => setHistory(d.items))
+      .catch(() => setHistory([]));
+  }, [stockCode]);
 
   async function save() {
     setBusy(true);
     try {
-      await createJournal({
+      const created = await createJournal({
         stock_code: stockCode,
         final_signal_id: finalSignalId,
         user_view: userView,
         memo: memo.trim() || undefined,
         tags: tags.split(",").map((t) => t.trim()).filter(Boolean),
       });
+      setHistory([created, ...history]);
       setSaved(true);
       showToast("저널에 저장했습니다.", "success");
     } catch (e) {
@@ -220,16 +261,20 @@ function JournalSaveCard({ stockCode, finalSignalId }: { stockCode: string; fina
 
   if (saved)
     return (
-      <div className="card mt-6 flex items-center justify-between p-5" data-flow="journal-save">
-        <p className="text-[14px] font-semibold">이 리포트를 저널에 저장했습니다.</p>
-        <Link href="/mypage" className="text-[13.5px] font-semibold text-sky-deep">
-          마이페이지 저널 보기 →
-        </Link>
+      <div className="card mt-6 p-5" data-flow="journal-save">
+        <JournalHistory items={history} />
+        <div className="flex items-center justify-between">
+          <p className="text-[14px] font-semibold">이 리포트를 저널에 저장했습니다.</p>
+          <Link href="/mypage" className="text-[13.5px] font-semibold text-sky-deep">
+            마이페이지 저널 보기 →
+          </Link>
+        </div>
       </div>
     );
 
   return (
     <section className="card mt-6 p-5" data-flow="journal-save">
+      <JournalHistory items={history} />
       <h2 className="text-[16px] font-bold">이 리포트를 저널에 저장</h2>
       <p className="mt-1 text-[12.5px] text-muted">
         지금 판단을 기록해 두면, 이후 실제 주가 변동(7·30거래일)과 함께 복기할 수 있습니다. 매수·매도 판단이 아닌 관찰 기록입니다.

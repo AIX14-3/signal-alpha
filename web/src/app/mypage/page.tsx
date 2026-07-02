@@ -43,6 +43,16 @@ export default function MyPage() {
   const user = useAuthStore((s) => s.user);
   const status = useAuthStore((s) => s.status);
   const [tab, setTab] = useState<Tab>("watchlist");
+  const journalItems = useJournalStore((s) => s.items);
+  const loadJournals = useJournalStore((s) => s.load);
+
+  // 복기 알림 배지용 — 변동이 확정됐는데 아직 회고가 없는 저널 수.
+  useEffect(() => {
+    if (status === "authenticated" && user?.subscription_active) void loadJournals();
+  }, [status, user?.subscription_active, loadJournals]);
+  const pendingRetro = journalItems.filter(
+    (j) => j.outcomes.length > 0 && !j.retrospective_memo,
+  ).length;
 
   useEffect(() => {
     if (status === "anonymous") router.replace("/login");
@@ -69,6 +79,16 @@ export default function MyPage() {
             }`}
           >
             {label}
+            {key === "journal" && pendingRetro > 0 && (
+              <span
+                className="pill up ml-1 align-middle"
+                style={{ padding: "1px 7px", fontSize: 11 }}
+                data-flow="journal-retro-alert"
+                title={`복기할 저널 ${pendingRetro}건`}
+              >
+                {pendingRetro}
+              </span>
+            )}
           </button>
         ))}
       </div>
@@ -290,8 +310,9 @@ function SubscriptionTab() {
         <div className="mt-7 border-t border-line pt-5">
           <div className="text-[13px] font-bold text-navy-soft">결제 내역</div>
           <ul className="mt-3 space-y-2">
-            {payments.map((p) => (
-              <li key={p.payment_id} className="flex items-center justify-between text-[13.5px]">
+            {/* 같은 payment_id 가 결제/취소 두 행으로 올 수 있어 인덱스를 섞어 키를 유일하게 만든다. */}
+            {payments.map((p, index) => (
+              <li key={`${p.payment_id}-${index}`} className="flex items-center justify-between text-[13.5px]">
                 <span className="text-muted">{p.paid_at ? p.paid_at.slice(0, 10) : "—"}</span>
                 <span className="font-semibold">{(p.order_name ?? "구독").replace("Signal Alpha ", "")} · {won(p.amount)}</span>
               </li>
@@ -390,6 +411,20 @@ function JournalTab() {
   // 확정 변동(가장 긴 horizon 기준). 미확정은 정렬에서 뒤로.
   const outcomeChange = (j: Journal) =>
     j.outcomes.length > 0 ? j.outcomes[j.outcomes.length - 1].change_pct : null;
+
+  // 판단 성향 요약 — 기록 집계일 뿐 성과 평가가 아니다(중립 표현 유지).
+  const viewCounts = items.reduce<Record<string, number>>((acc, j) => {
+    acc[j.user_view] = (acc[j.user_view] ?? 0) + 1;
+    return acc;
+  }, {});
+  const changes7 = items
+    .map((j) => j.outcomes.find((o) => o.horizon === "7td")?.change_pct)
+    .filter((v): v is number => v != null);
+  const avg7 =
+    changes7.length > 0 ? changes7.reduce((a, b) => a + b, 0) / changes7.length : null;
+  const pendingRetroCount = items.filter(
+    (j) => j.outcomes.length > 0 && !j.retrospective_memo,
+  ).length;
   const visible = items
     .filter((j) => !filterView || j.user_view === filterView)
     .filter((j) => !filterTag || j.tags.includes(filterTag))
@@ -403,6 +438,37 @@ function JournalTab() {
 
   return (
     <div data-panel="journal">
+      {/* 판단 성향 요약 — 저장한 기록의 중립적 집계 */}
+      <div className="card mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 px-5 py-3 text-[12.5px]" data-flow="journal-summary">
+        <span className="font-bold text-navy">저널 {items.length}건</span>
+        {JOURNAL_VIEWS.map(([key, label]) =>
+          viewCounts[key] ? (
+            <span key={key} className="text-muted">
+              {label} <b className="text-navy-soft">{viewCounts[key]}</b>
+            </span>
+          ) : null,
+        )}
+        {avg7 != null && (
+          <span className="text-muted">
+            판단 후 7거래일 평균 변동{" "}
+            <b className={avg7 >= 0 ? "text-red" : "text-sky-deep"}>
+              {avg7 >= 0 ? "+" : ""}
+              {avg7.toFixed(2)}%
+            </b>{" "}
+            (확정 {changes7.length}건 기준)
+          </span>
+        )}
+        <span className="ml-auto text-[11.5px] text-muted">기록 집계이며 성과 평가가 아닙니다</span>
+      </div>
+
+      {/* 복기 알림 — 변동이 확정됐는데 회고가 없는 저널 */}
+      {pendingRetroCount > 0 && (
+        <div className="mb-3 rounded-[12px] bg-surface-2 px-5 py-3 text-[13px]" data-flow="journal-retro-banner">
+          복기할 저널 <b className="text-navy">{pendingRetroCount}건</b> — 변동이 확정됐습니다. 카드를 열어
+          회고를 남겨보세요.
+        </div>
+      )}
+
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <div className="flex rounded-full bg-surface-2 p-0.5 text-[12.5px] font-semibold">
           <button
@@ -574,6 +640,15 @@ function JournalTab() {
                     </span>
                   ))}
                 </div>
+              )}
+              {/* 회고 — 결과 확인 후 남긴 복기(있을 때만) */}
+              {j.retrospective_memo && (
+                <p
+                  className="mt-2 rounded-[10px] bg-surface-2 px-3 py-2 text-[12.5px] text-navy-soft"
+                  data-flow="journal-card-retro"
+                >
+                  <b className="text-navy">회고</b> · {j.retrospective_memo}
+                </p>
               )}
             </>
           )}

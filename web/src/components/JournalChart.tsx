@@ -428,38 +428,51 @@ function TimelineChart({ timeline }: { timeline: JournalTimeline }) {
 
         <polyline points={linePath} fill="none" stroke="currentColor" strokeWidth={2} strokeLinejoin="round" opacity={0.75} />
 
-        {/* 저널 작성 시점 마커(번호) — 상세 내용은 아래 목록과 네이티브 툴팁으로 제공 */}
-        {timeline.journals.map((marker, index) => {
-          const pointIndex = marker.trade_date != null ? indexByDate.get(marker.trade_date) : undefined;
-          if (pointIndex == null || marker.price == null) return null;
-          return (
-            <g key={marker.journal_id}>
-              <title>
-                {`${formatDate(marker.trade_date)} · ${VIEW_LABEL[marker.user_view] ?? marker.user_view}${marker.memo ? ` — ${marker.memo}` : ""}`}
-              </title>
-              <line
-                x1={x(pointIndex)}
-                x2={x(pointIndex)}
-                y1={y(marker.price)}
-                y2={H - PAD.bottom}
-                stroke="#94a3b8"
-                strokeWidth={1}
-                strokeDasharray="3 3"
-              />
-              <circle cx={x(pointIndex)} cy={y(marker.price)} r={5} fill="#0284c7" stroke="#fff" strokeWidth={2} />
-              <text
-                x={x(pointIndex)}
-                y={y(marker.price) - 10}
-                textAnchor="middle"
-                fontSize={11.5}
-                fontWeight={700}
-                fill="#0284c7"
-              >
-                {index + 1}
-              </text>
-            </g>
-          );
-        })}
+        {/* 저널 작성 시점 마커(번호) — 같은 거래일의 저널들은 한 점에 번호를 묶어(1·2) 겹침 방지.
+            상세 내용은 아래 목록과 네이티브 툴팁으로 제공 */}
+        {(() => {
+          const groups = new Map<number, number[]>(); // pointIndex → marker index[]
+          timeline.journals.forEach((marker, index) => {
+            const pointIndex = marker.trade_date != null ? indexByDate.get(marker.trade_date) : undefined;
+            if (pointIndex == null || marker.price == null) return;
+            groups.set(pointIndex, [...(groups.get(pointIndex) ?? []), index]);
+          });
+          return [...groups.entries()].map(([pointIndex, markerIndices]) => {
+            const first = timeline.journals[markerIndices[0]];
+            const label = markerIndices.map((i) => i + 1).join("·");
+            const tooltip = markerIndices
+              .map((i) => {
+                const m = timeline.journals[i];
+                return `${i + 1}. ${formatDate(m.trade_date)} · ${VIEW_LABEL[m.user_view] ?? m.user_view}${m.memo ? ` — ${m.memo}` : ""}`;
+              })
+              .join("\n");
+            return (
+              <g key={pointIndex}>
+                <title>{tooltip}</title>
+                <line
+                  x1={x(pointIndex)}
+                  x2={x(pointIndex)}
+                  y1={y(first.price as number)}
+                  y2={H - PAD.bottom}
+                  stroke="#94a3b8"
+                  strokeWidth={1}
+                  strokeDasharray="3 3"
+                />
+                <circle cx={x(pointIndex)} cy={y(first.price as number)} r={5} fill="#0284c7" stroke="#fff" strokeWidth={2} />
+                <text
+                  x={x(pointIndex)}
+                  y={y(first.price as number) - 10}
+                  textAnchor="middle"
+                  fontSize={11.5}
+                  fontWeight={700}
+                  fill="#0284c7"
+                >
+                  {label}
+                </text>
+              </g>
+            );
+          });
+        })()}
 
         <circle cx={x(points.length - 1)} cy={y(last.close as number)} r={4} fill="currentColor" stroke="#fff" strokeWidth={2} />
         <text x={PAD.left} y={H - 8} fontSize={11} fill="#64748b">{formatDate(points[0].trade_date)}</text>

@@ -169,6 +169,10 @@ type SocialLink = { provider: 'naver'|'google'|'kakao'; linked: boolean; linked_
 - 회고: 차트 패널의 `data-flow="journal-retrospective"` 블록 — outcome 확정 전엔 안내만, 확정 후 `retrospective_memo` 작성/수정(`journalStore.update`).
 - 신호 비교: 카드 메타에 "그때 50 · neutral → 지금 63 · positive"(`data-flow="journal-signal-compare"`, `current_signal` 사용).
 - 목록 필터/정렬: user_view 필터 pill(`journal-filter-view`)·태그 select(`journal-filter-tag`)·정렬 select(`journal-sort`, 최신순/확정 변동 큰 순) — 로드된 항목(최대 50건) 기준 클라이언트 사이드.
+- 판단 성향 요약(`journal-summary`): 탭 상단 중립 집계 — 건수·판단 분포·"판단 후 7거래일 평균 변동 ±x%(확정 n건 기준)" + "기록 집계이며 성과 평가가 아닙니다" 고지.
+- 복기 알림: 변동 확정 + 회고 미작성 저널 수를 마이페이지 저널 탭 배지(`journal-retro-alert`)와 탭 상단 배너(`journal-retro-banner`)로 노출. 회고는 목록 카드에도 표시(`journal-card-retro`).
+- 리포트 내 저널 이력(`journal-history`): 리포트의 저장 폼 위에 이 종목의 내 저널 최근 3건(날짜·판단·메모) + 전체 보기 링크 — 중복 저장 전 과거 판단 확인.
+- 타임라인 마커 겹침: 같은 거래일의 저널들은 한 점에 번호를 묶어(예: `1·2`) 표시, 툴팁에 건별 요약.
 - `user_view` = 계속 관찰/추가 확인 필요/낮은 관련도. 매수·매도 표현 금지.
 
 ---
