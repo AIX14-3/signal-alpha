@@ -5,6 +5,7 @@ from typing import Any
 from app.core.config import get_settings
 from app.orchestrator.queue.task_types import (
     AGGREGATE_SIGNAL,
+    REQUERY_SOURCE,
     ANALYZE_DART,
     ANALYZE_DATALAB,
     ANALYZE_HIRING,
@@ -46,6 +47,7 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
         DartNormalizeTaskHandler,
     )
     from app.orchestrator.aggregation.tasks import AggregateSignalTaskHandler
+    from app.orchestrator.aggregation.requery import RequerySourceTaskHandler
     from app.orchestrator.price.tasks import PriceAnalyzeTaskHandler
     from app.ml.return_combine import ReturnCombineTaskHandler
     from app.ml.source_inference import SrcInferTaskHandler
@@ -77,7 +79,13 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
             connection, evidence_extractor=dart_evidence_extractor
         ),
         ANALYZE_PRICE: PriceAnalyzeTaskHandler(connection),
-        AGGREGATE_SIGNAL: AggregateSignalTaskHandler(connection),
+        AGGREGATE_SIGNAL: AggregateSignalTaskHandler(
+            connection,
+            episode_writer=_build_episode_writer(connection),
+            episode_recall=_build_episode_recall(connection),
+        ),
+        # 오케스트레이터 조건부 되묻기(Wave-3 양방향) — 불일치 소스만 집중 재분석 후 재종합.
+        REQUERY_SOURCE: RequerySourceTaskHandler(connection),
         # 소스별 base 모델 추론(#525 Phase 3). run_key=SRC 로 분리 적재(D4). 성공 예측이
         # 있으면 RETURN_COMBINE 을 인큐해 return 채널을 결합한다.
         SRC_INFER: SrcInferTaskHandler(connection),
@@ -112,3 +120,40 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
             connection, registrations=[registration_for("DATALAB")]
         ),
     }
+
+
+def _build_embedder() -> Any | None:
+    """Build the shared Gemini embedder for episodic memory, or None to degrade.
+
+    No GEMINI_API_KEY (or a transport/init failure) → None → the aggregator runs
+    with memory disabled (no recall/write), publishing unchanged. Kept private so
+    the only wiring point is the handler factory.
+    """
+    if not get_settings().gemini_api_key:
+        return None
+    try:
+        from app.clients.embedding_client import GeminiEmbeddingClient
+
+        return GeminiEmbeddingClient()
+    except Exception:  # noqa: BLE001 — missing key/transport: degrade, don't stall
+        return None
+
+
+def _build_episode_writer(connection: Any) -> Any | None:
+    embedder = _build_embedder()
+    if embedder is None:
+        return None
+    from app.memory import EpisodeWriter
+    from signal_alpha_data_access.repositories import SignalEpisodeRepository
+
+    return EpisodeWriter(embedder=embedder, repository=SignalEpisodeRepository(connection))
+
+
+def _build_episode_recall(connection: Any) -> Any | None:
+    embedder = _build_embedder()
+    if embedder is None:
+        return None
+    from app.memory import EpisodeRecall
+    from signal_alpha_data_access.repositories import SignalEpisodeRepository
+
+    return EpisodeRecall(embedder=embedder, repository=SignalEpisodeRepository(connection))
