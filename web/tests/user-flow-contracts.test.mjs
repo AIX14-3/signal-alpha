@@ -84,9 +84,22 @@ test("mypage exposes stable tab panels and subscription action anchors", () => {
     'data-flow="journal-filter-tag"',
     'data-flow="journal-sort"',
     'data-flow="journal-signal-compare"',
+    'data-flow="journal-summary"',
+    'data-flow="journal-retro-alert"',
+    'data-flow="journal-retro-banner"',
+    'data-flow="journal-card-retro"',
     "JournalChartPanel",
     "JournalTimelinePanel",
   ].forEach((expected) => assertIncludes(source, expected, "mypage"));
+});
+
+test("report page surfaces existing journal history before saving again", () => {
+  const source = read("src/app/report/[ticker]/page.tsx");
+
+  [
+    'data-flow="journal-history"',
+    "listJournals({ stock_code: stockCode })",
+  ].forEach((expected) => assertIncludes(source, expected, "report journal history"));
 });
 
 test("journal chart panel is wired to the chart API with base reference", () => {
