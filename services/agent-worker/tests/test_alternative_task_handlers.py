@@ -605,6 +605,72 @@ class _RichAnalyzer:
         )
 
 
+class RequeryFocusContextTest(unittest.IsolatedAsyncioTestCase):
+    """The analyze handler forwards the orchestrator re-query focus into the source
+    agent's input ``context`` — this is where the focus was previously dropped, so
+    it completes the detect→requery→agent consumption path (Wave-3 follow-up ①)."""
+
+    def _recorder_registration(self, received):
+        class _Recorder:
+            source = "HIRING"
+
+            async def analyze(self, input_data):
+                received["context"] = dict(input_data.context or {})
+                return SourceAgentOutput(
+                    source="HIRING",
+                    stock_code=input_data.stock_code,
+                    direction="positive",
+                    score=0.2,
+                    summary="ok",
+                    data_status="ok",
+                )
+
+        return SourceRegistration(
+            source="HIRING",
+            debate_method="D-1",
+            analyzer=_FakeAnalyzer("HIRING", "positive", 0.2),
+            loader_factory=lambda repo: _FakeLoader("HIRING"),
+            agent_factory=lambda conn: _Recorder(),
+        )
+
+    async def test_requery_focus_reaches_source_agent_context(self):
+        received: dict = {}
+        handler = AlternativeAnalyzeTaskHandler(
+            FakeConnection(), registrations=[self._recorder_registration(received)]
+        )
+        await handler(
+            {
+                "id": 5,
+                "stock_id": 1,
+                "task_context": {
+                    "as_of": "2026-06-16",
+                    "stock_code": "005930",
+                    "requery_focus": {"source": "HIRING", "ask": "채용 재확인"},
+                    "requery_round": 1,
+                },
+            }
+        )
+        self.assertEqual(
+            received["context"]["requery_focus"], {"source": "HIRING", "ask": "채용 재확인"}
+        )
+        self.assertEqual(received["context"]["requery_round"], 1)
+
+    async def test_plain_analyze_has_empty_context(self):
+        received: dict = {}
+        handler = AlternativeAnalyzeTaskHandler(
+            FakeConnection(), registrations=[self._recorder_registration(received)]
+        )
+        await handler(
+            {
+                "id": 6,
+                "stock_id": 1,
+                "task_context": {"as_of": "2026-06-16", "stock_code": "005930"},
+            }
+        )
+        # No re-query → empty context == the pre-focus input (byte-identical path).
+        self.assertEqual(received["context"], {})
+
+
 class RunSourceWiringTest(unittest.IsolatedAsyncioTestCase):
     async def test_wired_run_source_equals_direct_analyzer(self):
         # Score-invariance: the SourceResult produced via the wired _run_source

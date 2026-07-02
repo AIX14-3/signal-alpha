@@ -65,7 +65,9 @@ class RequerySourceTaskHandler:
         task_context = _task_context(task.get("task_context"))
         requested = _target_sources(task_context.get("target_sources"))
         requery_round = int(task_context.get("requery_round") or 1)
-        focus = task_context.get("focus") or task_context.get("disagreement_reasons")
+        focus = task_context.get("focus")
+        if focus is None:
+            focus = task_context.get("disagreement_reasons")
 
         requeried: list[str] = []
         skipped: list[str] = []
@@ -85,8 +87,10 @@ class RequerySourceTaskHandler:
                             **{k: v for k, v in task_context.items() if k in ("as_of", "stock_code")},
                             # Focused question surfaced to the source agent's context
                             # (agents that read it can narrow their re-read; those
-                            # that don't are byte-identical to a normal analyze).
-                            "requery_focus": focus,
+                            # that don't are byte-identical to a normal analyze). A
+                            # structured focus is narrowed to *this* source's slice;
+                            # a legacy list/str focus is forwarded verbatim.
+                            "requery_focus": _focus_for_source(focus, source),
                             "requery_round": requery_round,
                         },
                     }
@@ -137,6 +141,32 @@ def _default_analyze_handler_factory(connection: Any, source: str) -> Any:
     return AlternativeAnalyzeTaskHandler(
         connection, registrations=[registration_for(source)]
     )
+
+
+def _focus_for_source(focus: Any, source: str) -> Any:
+    """Narrow a structured focus to the slice for ``source`` (degrade-safe).
+
+    - A structured focus (dict with a per-source ``sources`` map) is flattened to
+      ``{<global keys>, <this source's fields>, "source": source}`` so the source
+      agent sees only its own re-read hint. When the map has no entry for this
+      source, the global focus (minus ``sources``) is passed as a coarse fallback.
+    - A legacy/opaque focus (list of reasons, a string, or None) is forwarded
+      verbatim — byte-identical to the pre-focus behaviour.
+
+    Never raises: any unexpected shape falls through to a verbatim forward, so a
+    malformed focus degrades to "re-query the whole source" instead of blocking.
+    """
+    if not isinstance(focus, Mapping):
+        return focus
+    try:
+        narrowed = {k: v for k, v in focus.items() if k != "sources"}
+        sources = focus.get("sources")
+        per_source = sources.get(source) if isinstance(sources, Mapping) else None
+        if isinstance(per_source, Mapping):
+            narrowed = {**narrowed, **dict(per_source), "source": source}
+        return narrowed
+    except Exception:  # noqa: BLE001 — malformed focus must not block the re-read
+        return focus
 
 
 def _target_sources(value: Any) -> list[str]:

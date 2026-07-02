@@ -29,6 +29,11 @@ class DisagreementVerdict:
     should_requery: bool
     reasons: list[str] = field(default_factory=list)
     target_sources: list[str] = field(default_factory=list)
+    # Structured re-query focus — *what/which axis* is uncertain, per target source
+    # (additive; empty when nothing to re-ask). The re-query path threads a per-source
+    # slice of this into the source agent's input ``context`` so an agent that reads
+    # it can narrow its re-read; agents that don't are byte-identical. See ``_build_focus``.
+    focus: dict = field(default_factory=dict)
 
 
 def detect_disagreement(
@@ -68,11 +73,82 @@ def detect_disagreement(
             should_requery=False,
             reasons=[*reasons, "no_requeryable_target"],
         )
+    deduped_reasons = _dedupe(reasons)
     return DisagreementVerdict(
         should_requery=True,
-        reasons=_dedupe(reasons),
+        reasons=deduped_reasons,
         target_sources=targets,
+        focus=_build_focus(
+            breakdown=breakdown,
+            targets=targets,
+            signal=signal,
+            reasons=deduped_reasons,
+        ),
     )
+
+
+def _build_focus(
+    *,
+    breakdown: dict[str, dict],
+    targets: list[str],
+    signal: str,
+    reasons: list[str],
+) -> dict:
+    """Turn the disagreement into a concrete "what to re-check" hint per source.
+
+    Pure/deterministic (no LLM, no numbers): reads the already-computed per-source
+    breakdown and states, for each target, *which axis looks uncertain* — the
+    source's own direction, whether it diverges from the blended headline, and any
+    review/risk flags it carries — plus a short human-readable ``ask``. This is the
+    evidence the re-query threads to the source agent so a focused re-read has a
+    target; it never touches score/direction (owned by the meta-learner).
+    """
+    per_source: dict[str, dict] = {}
+    for source in targets:
+        entry = breakdown.get(source)
+        if not isinstance(entry, dict):
+            continue
+        direction = str(entry.get("direction") or "").lower() or "unknown"
+        needs_review = bool(entry.get("needs_review"))
+        risk_flags = entry.get("risk_flags")
+        risk_flags = list(risk_flags) if isinstance(risk_flags, (list, tuple)) else []
+        diverges = signal == "mixed" or (
+            direction in ("negative", "mixed") and signal in ("positive", "neutral")
+        )
+        per_source[source] = {
+            "direction": direction,
+            "diverges_from_headline": diverges,
+            "headline_signal": signal,
+            "needs_review": needs_review,
+            "risk_flags": risk_flags,
+            "ask": _focus_ask(source, direction, signal, needs_review, risk_flags),
+        }
+    if not per_source:
+        return {}
+    return {
+        "reasons": list(reasons),
+        "headline_signal": signal,
+        "sources": per_source,
+    }
+
+
+def _focus_ask(
+    source: str,
+    direction: str,
+    signal: str,
+    needs_review: bool,
+    risk_flags: list[str],
+) -> str:
+    """Short Korean re-read prompt for the flagged source (display/agent hint only)."""
+    parts = [
+        f"{source} 재검토 요청: 방향({direction})이 종합 헤드라인({signal})과 어긋나는지 "
+        "근거(원자료)를 다시 확인해 주세요."
+    ]
+    if needs_review:
+        parts.append("이 소스는 needs_review 로 표시되어 있습니다.")
+    if risk_flags:
+        parts.append(f"주의 플래그: {', '.join(risk_flags)}.")
+    return " ".join(parts)
 
 
 def _target_sources(breakdown: dict[str, dict]) -> list[str]:
