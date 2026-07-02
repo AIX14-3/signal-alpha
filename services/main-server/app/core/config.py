@@ -60,6 +60,13 @@ class Settings:
         self.smtp_password = getenv("SMTP_PASSWORD")
         self.email_from = getenv("EMAIL_FROM", "Signal Alpha <no-reply@signal-alpha.app>")
 
+        # Admin 운영 패널은 main-server 경유로 agent-worker 내부 운영 API를 호출한다.
+        self.agent_worker_internal_base_url = getenv(
+            "AGENT_WORKER_INTERNAL_URL",
+            getenv("WORKER_INTERNAL_URL", "http://localhost:8011"),
+        )
+        self.internal_api_token = getenv("INTERNAL_API_TOKEN", "")
+
         # 소셜 OAuth(naver/google/kakao) — provider별 client id/secret.
         self.social_providers = {
             provider: {
