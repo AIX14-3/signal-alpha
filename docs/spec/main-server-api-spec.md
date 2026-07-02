@@ -74,6 +74,7 @@ Authorization: Bearer {access_token}
 | `REPORT_QUOTA_EXCEEDED` | 402 | 무료 열람 3회 소진(구독 유도) |
 | `MEMBERSHIP_REQUIRED` | 401 | 비회원이 잠긴 소스 접근 |
 | `JOURNAL_NOT_FOUND` | 404 | 저널 없음 |
+| `SUBSCRIPTION_REQUIRED` | 402 | 구독 전용 기능(저널 전체, 리포트 비공개 소스 상세) 비구독 접근 |
 | `PLAN_NOT_FOUND` | 404 | 구독 상품 없음 |
 | `PAYMENT_VERIFICATION_FAILED` | 400 | 포트원 결제 검증 실패(금액/상태 불일치) |
 | `ALREADY_SUBSCRIBED` | 409 | 이미 활성 구독 존재 |
@@ -321,14 +322,32 @@ Response: §8.1 회원 언락 응답 + `"access": { "unlocked": true, "issued_vi
 
 발행(열람)한 리포트를 저장해 투자 추이를 기록한다. 발행 시점 스냅샷(`final_signal_id`, score/방향/시점)을 함께 저장.
 
-### `GET /api/journals?stock_code=&limit=20` (인증)
-### `POST /api/journals` (인증)
+**전체 구독 전용**: 조회 포함 모든 저널 엔드포인트는 활성 구독을 요구한다. 비구독 → `402 SUBSCRIPTION_REQUIRED`(프론트는 구독 유도 화면).
+
+### `GET /api/journals?stock_code=&limit=20` (인증·구독)
+### `POST /api/journals` (인증·구독)
 ```json
 { "stock_code": "005930", "final_signal_id": 100, "user_view": "research_more", "memo": "Report 데이터 없어 추가 확인", "tags": ["DART"] }
 ```
 - `user_view` 화이트리스트(watch/research_more/not_relevant). buy/sell/hold → `400 INVALID_USER_VIEW`.
-### `GET|PATCH|DELETE /api/journals/{journal_id}` (인증, 본인만)
+### `GET|PATCH|DELETE /api/journals/{journal_id}` (인증·구독, 본인만)
 PATCH 수정: `user_view`, `memo`, `tags`. DELETE: hard delete(MVP).
+
+응답(단건)에는 작성 시점 스냅샷과 outcome 확정 결과가 포함된다:
+```json
+{
+  "journal_id": 20, "stock_code": "005930", "user_view": "research_more",
+  "memo": "...", "tags": ["DART"],
+  "signal_score_at_time": 63.5, "signal_value_at_time": "positive", "source_agreement_at_time": "HIGH",
+  "outcomes": [
+    { "horizon": "7td", "base_trade_date": "2026-06-22", "base_price": 70000,
+      "outcome_trade_date": "2026-07-01", "outcome_price": 73500, "change_pct": 5.0,
+      "checked_at": "2026-07-02T06:00:00+09:00" }
+  ],
+  "notice": "..."
+}
+```
+- `outcomes` 는 거래일 기준 horizon(`7td`/`30td`)별 확정 결과. 워커 러너(`run_journal_outcomes`)가 매일 채우며, 아직 만기 전이면 빈 배열/일부만 온다(프론트는 "확정 전" 표시).
 
 ---
 

@@ -6,7 +6,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from app.api.routes.auth import NOTICE, get_current_user
+from app.api.routes.auth import NOTICE, _subscription_active, get_current_user
 from app.core.database import get_database_pool
 from signal_alpha_data_access.backend import SignalRepository, StockRepository, UserSignalRepository
 
@@ -40,6 +40,7 @@ async def list_journals(
 ) -> dict[str, Any]:
     clean_stock_code = stock_code.strip() if stock_code else None
     async with pool.acquire() as connection:
+        await _require_subscription(connection, int(current_user["id"]))
         rows = await UserSignalRepository(connection).list_journals(
             user_id=int(current_user["id"]),
             stock_code=clean_stock_code,
@@ -62,6 +63,7 @@ async def create_journal(
     user_view = _validate_user_view(payload.user_view)
     stock_code = payload.stock_code.strip()
     async with pool.acquire() as connection:
+        await _require_subscription(connection, int(current_user["id"]))
         stock = await StockRepository(connection).get_by_ticker(stock_code)
         if stock is None:
             raise _api_error(404, "STOCK_NOT_FOUND", "종목을 찾을 수 없습니다.")
@@ -91,6 +93,7 @@ async def get_journal(
     pool: Any = Depends(get_database_pool),
 ) -> dict[str, Any]:
     async with pool.acquire() as connection:
+        await _require_subscription(connection, int(current_user["id"]))
         row = await UserSignalRepository(connection).get_journal(
             user_id=int(current_user["id"]),
             journal_id=journal_id,
@@ -108,6 +111,7 @@ async def update_journal(
     pool: Any = Depends(get_database_pool),
 ) -> dict[str, Any]:
     async with pool.acquire() as connection:
+        await _require_subscription(connection, int(current_user["id"]))
         repository = UserSignalRepository(connection)
         existing = await repository.get_journal(
             user_id=int(current_user["id"]),
@@ -134,6 +138,7 @@ async def delete_journal(
     pool: Any = Depends(get_database_pool),
 ) -> dict[str, str]:
     async with pool.acquire() as connection:
+        await _require_subscription(connection, int(current_user["id"]))
         repository = UserSignalRepository(connection)
         existing = await repository.get_journal(
             user_id=int(current_user["id"]),
@@ -145,6 +150,12 @@ async def delete_journal(
     return {"status": "deleted"}
 
 
+async def _require_subscription(connection: Any, user_id: int) -> None:
+    # 저널은 전체 구독 전용 — 조회 포함 모든 엔드포인트에서 활성 구독을 요구한다.
+    if not await _subscription_active(connection, user_id):
+        raise _api_error(402, "SUBSCRIPTION_REQUIRED", "구독 시 저널을 이용할 수 있습니다.")
+
+
 def _journal_response(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "journal_id": row["id"],
@@ -154,10 +165,20 @@ def _journal_response(row: dict[str, Any]) -> dict[str, Any]:
         "user_view": row["user_view"],
         "memo": row.get("user_memo"),
         "tags": _json_array(row.get("tags")),
+        "signal_score_at_time": _number(row.get("signal_score_at_time")),
+        "signal_value_at_time": row.get("signal_value_at_time"),
+        "source_agreement_at_time": row.get("source_agreement_at_time"),
+        "outcomes": _json_array(row.get("outcomes")),
         "created_at": _timestamp(row.get("created_at")),
         "updated_at": _timestamp(row.get("updated_at")),
         "notice": NOTICE,
     }
+
+
+def _number(value: Any) -> float | None:
+    if value is None:
+        return None
+    return float(value)
 
 
 def _validate_user_view(value: str) -> str:

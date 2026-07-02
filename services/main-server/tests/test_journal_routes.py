@@ -1,3 +1,4 @@
+import json
 import unittest
 import warnings
 from datetime import UTC, datetime, timedelta
@@ -25,8 +26,17 @@ class FakeConnection:
                 "nickname": "사용자",
                 "agreed_risk": True,
                 "is_verified": False,
-            }
+            },
+            2: {
+                "id": 2,
+                "email": "other@example.com",
+                "nickname": "타사용자",
+                "agreed_risk": True,
+                "is_verified": False,
+            },
         }
+        # 저널은 전체 구독 전용 — 기본은 user 1/2 모두 활성 구독.
+        self.subscribed_user_ids = {1, 2}
         self.stocks_by_ticker = {
             "005930": {
                 "id": 10,
@@ -58,16 +68,31 @@ class FakeConnection:
             "agent_results": [],
             "signal_events": [],
         }
+        # 종목이 다른 시그널 — SIGNAL_STOCK_MISMATCH 검증용.
+        self.other_stock_signal = {**self.signal, "id": 201, "stock_id": 99}
         self.journals = []
         self.next_journal_id = 20
 
     async def fetchrow(self, sql, *args):
         if "FROM users" in sql and "WHERE id = $1" in sql:
             return self.users_by_id.get(args[0])
+        if "FROM signal_subscriptions" in sql:
+            if args[0] in self.subscribed_user_ids:
+                return {
+                    "id": 1,
+                    "user_id": args[0],
+                    "status": "active",
+                    "expires_at": None,
+                    "plan_type": "monthly_9900",
+                }
+            return None
         if "FROM api.stocks" in sql and "WHERE ticker = $1" in sql:
             return self.stocks_by_ticker.get(args[0])
         if "api.signal_detail" in sql:
-            return self.signal if args[0] == self.signal["id"] else None
+            for signal in (self.signal, self.other_stock_signal):
+                if args[0] == signal["id"]:
+                    return signal
+            return None
         if "INSERT INTO signal_journals" in sql:
             stock = next(
                 stock for stock in self.stocks_by_ticker.values() if stock["id"] == args[2]
@@ -83,6 +108,7 @@ class FakeConnection:
                 "signal_score_at_time": args[6],
                 "signal_value_at_time": args[7],
                 "source_agreement_at_time": args[8],
+                "outcomes": "[]",
                 "created_at": datetime(2026, 6, 22, tzinfo=UTC),
                 "updated_at": datetime(2026, 6, 22, tzinfo=UTC),
                 "ticker": stock["ticker"],
@@ -165,18 +191,32 @@ class JournalRoutesTest(unittest.TestCase):
         self.connection = FakeConnection()
         app.dependency_overrides[get_database_pool] = lambda: FakePool(self.connection)
         self.client = TestClient(app)
-        self.token = create_access_token(
-            user_id=1,
-            email="user@example.com",
-            secret_key=get_settings().auth_secret_key,
-            expires_delta=timedelta(minutes=30),
-        )
+        self.token = self.token_for(1, "user@example.com")
 
     def tearDown(self):
         app.dependency_overrides.clear()
 
-    def auth_headers(self):
-        return {"Authorization": f"Bearer {self.token}"}
+    def token_for(self, user_id, email):
+        return create_access_token(
+            user_id=user_id,
+            email=email,
+            secret_key=get_settings().auth_secret_key,
+            expires_delta=timedelta(minutes=30),
+        )
+
+    def auth_headers(self, token=None):
+        return {"Authorization": f"Bearer {token or self.token}"}
+
+    def create_journal(self, **overrides):
+        payload = {
+            "stock_code": "005930",
+            "final_signal_id": 200,
+            "user_view": "research_more",
+            "memo": "Report 데이터가 없어 추가 근거 확인이 필요합니다.",
+            "tags": ["DART", "추가확인"],
+        }
+        payload.update(overrides)
+        return self.client.post("/api/journals", json=payload, headers=self.auth_headers())
 
     def test_journals_require_authentication(self):
         response = self.client.get("/api/journals")
@@ -184,18 +224,31 @@ class JournalRoutesTest(unittest.TestCase):
         self.assertEqual(response.status_code, 401)
         self.assertEqual(response.json()["detail"]["code"], "AUTH_REQUIRED")
 
+    def test_journals_require_subscription_on_every_endpoint(self):
+        self.connection.subscribed_user_ids.discard(1)
+
+        cases = [
+            ("get", "/api/journals", None),
+            (
+                "post",
+                "/api/journals",
+                {"stock_code": "005930", "final_signal_id": 200, "user_view": "watch"},
+            ),
+            ("get", "/api/journals/20", None),
+            ("patch", "/api/journals/20", {"user_view": "watch"}),
+            ("delete", "/api/journals/20", None),
+        ]
+        for method, url, body in cases:
+            with self.subTest(method=method, url=url):
+                kwargs = {"headers": self.auth_headers()}
+                if body is not None:
+                    kwargs["json"] = body
+                response = getattr(self.client, method)(url, **kwargs)
+                self.assertEqual(response.status_code, 402)
+                self.assertEqual(response.json()["detail"]["code"], "SUBSCRIPTION_REQUIRED")
+
     def test_create_list_detail_update_and_delete_journal(self):
-        create_response = self.client.post(
-            "/api/journals",
-            json={
-                "stock_code": "005930",
-                "final_signal_id": 200,
-                "user_view": "research_more",
-                "memo": "Report 데이터가 없어 추가 근거 확인이 필요합니다.",
-                "tags": ["DART", "추가확인"],
-            },
-            headers=self.auth_headers(),
-        )
+        create_response = self.create_journal()
 
         self.assertEqual(create_response.status_code, 200)
         created = create_response.json()
@@ -204,6 +257,10 @@ class JournalRoutesTest(unittest.TestCase):
         self.assertEqual(created["final_signal_id"], 200)
         self.assertEqual(created["user_view"], "research_more")
         self.assertEqual(created["tags"], ["DART", "추가확인"])
+        self.assertEqual(created["signal_score_at_time"], 50.0)
+        self.assertEqual(created["signal_value_at_time"], "neutral")
+        self.assertEqual(created["source_agreement_at_time"], "LOW")
+        self.assertEqual(created["outcomes"], [])
         self.assertIn("데이터 방향성", created["notice"])
 
         list_response = self.client.get("/api/journals?stock_code=005930", headers=self.auth_headers())
@@ -232,20 +289,89 @@ class JournalRoutesTest(unittest.TestCase):
         self.assertEqual(delete_response.status_code, 200)
         self.assertEqual(delete_response.json(), {"status": "deleted"})
 
-    def test_journal_rejects_forbidden_user_view(self):
-        response = self.client.post(
-            "/api/journals",
-            json={
-                "stock_code": "005930",
-                "final_signal_id": 200,
-                "user_view": "buy",
-                "memo": "금지 값",
-            },
-            headers=self.auth_headers(),
+    def test_journal_response_exposes_outcomes(self):
+        self.create_journal()
+        self.connection.journals[0]["outcomes"] = json.dumps(
+            [
+                {
+                    "horizon": "7td",
+                    "base_trade_date": "2026-06-22",
+                    "base_price": 70000,
+                    "outcome_trade_date": "2026-07-01",
+                    "outcome_price": 73500,
+                    "change_pct": 5.0,
+                    "checked_at": "2026-07-02T06:00:00+09:00",
+                }
+            ]
         )
+
+        response = self.client.get("/api/journals/20", headers=self.auth_headers())
+
+        self.assertEqual(response.status_code, 200)
+        outcomes = response.json()["outcomes"]
+        self.assertEqual(len(outcomes), 1)
+        self.assertEqual(outcomes[0]["horizon"], "7td")
+        self.assertEqual(outcomes[0]["change_pct"], 5.0)
+
+    def test_journal_rejects_forbidden_user_view(self):
+        response = self.create_journal(user_view="buy", memo="금지 값")
 
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["detail"]["code"], "INVALID_USER_VIEW")
+
+    def test_create_journal_rejects_unknown_stock(self):
+        response = self.create_journal(stock_code="000000")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["detail"]["code"], "STOCK_NOT_FOUND")
+
+    def test_create_journal_rejects_unknown_signal(self):
+        response = self.create_journal(final_signal_id=999)
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["detail"]["code"], "SIGNAL_NOT_FOUND")
+
+    def test_create_journal_rejects_signal_stock_mismatch(self):
+        response = self.create_journal(final_signal_id=201)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"]["code"], "SIGNAL_STOCK_MISMATCH")
+
+    def test_missing_journal_returns_not_found(self):
+        cases = [
+            ("get", "/api/journals/999", None),
+            ("patch", "/api/journals/999", {"user_view": "watch"}),
+            ("delete", "/api/journals/999", None),
+        ]
+        for method, url, body in cases:
+            with self.subTest(method=method, url=url):
+                kwargs = {"headers": self.auth_headers()}
+                if body is not None:
+                    kwargs["json"] = body
+                response = getattr(self.client, method)(url, **kwargs)
+                self.assertEqual(response.status_code, 404)
+                self.assertEqual(response.json()["detail"]["code"], "JOURNAL_NOT_FOUND")
+
+    def test_journal_is_isolated_between_users(self):
+        self.create_journal()
+        other_token = self.token_for(2, "other@example.com")
+
+        response = self.client.get("/api/journals/20", headers=self.auth_headers(other_token))
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["detail"]["code"], "JOURNAL_NOT_FOUND")
+
+    def test_create_journal_cleans_tags(self):
+        raw_tags = [" DART ", "DART", ""] + [f"태그{i}" for i in range(1, 12)]
+
+        response = self.create_journal(tags=raw_tags)
+
+        self.assertEqual(response.status_code, 200)
+        tags = response.json()["tags"]
+        self.assertEqual(len(tags), 10)
+        self.assertEqual(tags[0], "DART")
+        self.assertEqual(len(tags), len(set(tags)))
+        self.assertNotIn("", tags)
 
 
 if __name__ == "__main__":
