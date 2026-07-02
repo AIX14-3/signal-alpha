@@ -184,6 +184,25 @@ class Settings:
         # 큐가 비었을 때(전 task_type idle) 다음 순회까지 대기 초. 작업이 있으면 쉬지 않고 계속 드레인.
         self.queue_drain_interval_sec = float(getenv("QUEUE_DRAIN_INTERVAL_SEC", "5"))
 
+        # ── 에피소드 아웃컴 리코더 (에이전트화 Wave 3 후속②) ──
+        # 발행 후 실현 결과(forward return·direction hit)를 사후에 signal_episodes.outcome 에
+        # 진행형(progressive)으로 기록해 recall 이 "실제로 맞았던 유사 상황"을 참고하게 한다.
+        # 숫자(메타러너 방향/점수)엔 절대 반영 안 함 — recall 참고·표시용 사후 라벨일 뿐(불변식).
+        self.episode_outcome_enabled = _env_bool("EPISODE_OUTCOME_ENABLED", default=True)
+        # 다중 horizon(일). primary=20 은 프로덕션 return 채널 타깃(fwd_return_20d)과 정렬한다.
+        # 5=단기(어텐션), 20=canonical, 60=장기(펀더멘털/PEAD) — 단일값 하드코딩 위험 회피.
+        self.episode_outcome_horizons = _env_int_list(
+            "EPISODE_OUTCOME_HORIZONS", default=[5, 20, 60]
+        )
+        self.episode_outcome_primary_days = int(getenv("EPISODE_OUTCOME_PRIMARY_DAYS", "20"))
+        # 한 회차(태스크)당 훑는 에피소드 상한(공정 drain — 큰 백로그도 사이클을 안 막게).
+        self.episode_outcome_batch_limit = int(getenv("EPISODE_OUTCOME_BATCH_LIMIT", "500"))
+        # 드레인 데몬이 리코더 태스크를 재시드하는 최소 간격(초, 기본 일 1회). 열린 태스크가
+        # 있거나 최근 이 간격 내 완료분이 있으면 재시드하지 않는다(중복 방지).
+        self.episode_outcome_interval_sec = float(
+            getenv("EPISODE_OUTCOME_INTERVAL_SEC", "86400")
+        )
+
 
 @lru_cache
 def get_settings() -> Settings:
@@ -202,3 +221,19 @@ def _env_list(name: str, *, default: list[str]) -> list[str]:
     if value is None:
         return list(default)
     return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _env_int_list(name: str, *, default: list[int]) -> list[int]:
+    value = getenv(name)
+    if value is None:
+        return list(default)
+    out: list[int] = []
+    for item in value.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        try:
+            out.append(int(item))
+        except ValueError:
+            continue
+    return out or list(default)

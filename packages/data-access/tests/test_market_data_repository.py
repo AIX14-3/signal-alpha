@@ -58,6 +58,21 @@ class MarketDataRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("ORDER BY trade_date ASC", sql)
         self.assertEqual(connection.calls[0][2], (1, 120))
 
+    async def test_list_sessions_from_orders_ascending_with_limit(self):
+        connection = FakeConnection()
+        repository = MarketDataRepository(connection)
+
+        rows = await repository.list_sessions_from(
+            stock_id=1, from_date="2026-06-01", limit=61
+        )
+
+        sql = connection.calls[0][1]
+        self.assertIn("trade_date >= $2", sql)
+        self.assertIn("ORDER BY trade_date ASC", sql)
+        self.assertIn("LIMIT $3", sql)
+        self.assertEqual(connection.calls[0][2], (1, "2026-06-01", 61))
+        self.assertEqual(rows[0]["trade_date"], "2026-06-08")
+
     async def test_upsert_fundamental_uses_unique_period(self):
         connection = FakeConnection()
         repository = MarketDataRepository(connection)
