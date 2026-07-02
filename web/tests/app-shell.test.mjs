@@ -39,6 +39,10 @@ test("admin UI exposes split schedule rows and schedule run history", async () =
   assert.match(apiClient, /active_until_local: string \| null/);
   assert.match(page, /adminListScheduleRuns/);
   assert.match(page, /schedules\.map/);
+  assert.match(page, /formatScheduleRunDecision/);
+  assert.match(page, /formatScheduleRunTargetResult/);
+  assert.match(page, /decision/);
+  assert.match(page, /queue-backlog/);
   assert.match(page, /frequency_minutes/);
   assert.match(page, /active_from_local/);
   assert.match(page, /active_until_local/);
