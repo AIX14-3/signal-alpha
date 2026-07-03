@@ -8,6 +8,7 @@ from app.orchestrator.queue.task_types import (
     COLLECT_DART,
     COLLECT_DART_OWNERSHIP,
     NORMALIZE_DART,
+    NORMALIZE_DART_OWNERSHIP,
 )
 
 
@@ -57,4 +58,5 @@ class DartConfigTest(unittest.TestCase):
         self.assertEqual(COLLECT_DART, "collect_dart")
         self.assertEqual(COLLECT_DART_OWNERSHIP, "collect_dart_ownership")
         self.assertEqual(NORMALIZE_DART, "normalize_dart")
+        self.assertEqual(NORMALIZE_DART_OWNERSHIP, "normalize_dart_ownership")
         self.assertEqual(ANALYZE_DART, "analyze_dart")

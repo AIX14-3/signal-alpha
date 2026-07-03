@@ -18,6 +18,7 @@ from app.orchestrator.queue.context import enqueue_aggregate
 from app.orchestrator.queue.task_types import (
     ANALYZE_DART,
     NORMALIZE_DART,
+    NORMALIZE_DART_OWNERSHIP,
 )
 from signal_alpha_data_access.repositories import (
     AnalysisRepository,
@@ -101,11 +102,13 @@ class DartOwnershipCollectionTaskHandler:
         settings: Any,
         collector: Any | None = None,
         repository: Any | None = None,
+        queue_repository: Any | None = None,
     ) -> None:
         self._connection = connection
         self._settings = settings
         self._collector = collector
         self._repository = repository
+        self._queue_repository = queue_repository or ProcessingQueueRepository(connection)
 
     async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
         stock_id = int(task["stock_id"])
@@ -115,7 +118,17 @@ class DartOwnershipCollectionTaskHandler:
             collector=self._collector or self._build_collector(),
             repository=self._repository or DartOwnershipRepository(self._connection),
         )
-        return await service.sync_ticker(stock_code=stock_code, stock_id=stock_id)
+        result = await service.sync_ticker(stock_code=stock_code, stock_id=stock_id)
+        normalize_task_id = None
+        if int(result.get("upserted_count") or 0) > 0:
+            normalize_task_id = await self._queue_repository.enqueue(
+                stock_id=stock_id,
+                task_type=NORMALIZE_DART_OWNERSHIP,
+                priority=str(task.get("priority") or "batch"),
+                task_context={"stock_code": stock_code},
+                dedupe=True,
+            )
+        return {**result, "normalize_task_id": normalize_task_id}
 
     def _build_collector(self) -> DartOwnershipCollector:
         return DartOwnershipCollector(
@@ -127,6 +140,82 @@ class DartOwnershipCollectionTaskHandler:
                 0.2,
             ),
         )
+
+
+class DartOwnershipNormalizeTaskHandler:
+    EXTERNAL_REF_TYPE = "dart_ownership_events"
+
+    def __init__(
+        self,
+        connection: Any,
+        *,
+        ownership_repository: Any | None = None,
+        normalization_repository: Any | None = None,
+    ) -> None:
+        self._ownership_repository = ownership_repository or DartOwnershipRepository(connection)
+        self._normalization_repository = normalization_repository or NormalizationRepository(
+            connection
+        )
+
+    async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
+        stock_id = int(task["stock_id"])
+        task_context = _task_context(task.get("task_context"))
+        limit = int(task_context.get("limit") or 500)
+        rows = await self._ownership_repository.list_for_normalization(
+            stock_id=stock_id,
+            limit=limit,
+        )
+
+        signal_event_ids: list[int] = []
+        for row in rows:
+            item = dict(row)
+            source_document = await self._normalization_repository.upsert_external_source_document(
+                external_ref_type=self.EXTERNAL_REF_TYPE,
+                external_ref_id=int(item["id"]),
+                stock_id=stock_id,
+                source_type="DART",
+                source_name="OpenDART Ownership",
+                title=_ownership_title(item),
+                source_url=_dart_receipt_url(item.get("rcept_no")),
+                published_at=item["report_date"],
+                collected_at=item.get("fetched_at") or item["report_date"],
+                reliability_level="high",
+                is_official=True,
+            )
+            signal_event = await self._normalization_repository.upsert_signal_event(
+                stock_id=stock_id,
+                source_document_id=int(source_document["id"]),
+                event_hash=_ownership_event_hash(stock_id, int(item["id"])),
+                source_type="DART",
+                event_type="dart_ownership_change",
+                event_date=item["report_date"],
+                signal_direction=_ownership_direction(item),
+                impact_level=_ownership_impact_level(item),
+                title=_ownership_title(item),
+                summary=_ownership_summary(item),
+                evidence_text=_ownership_summary(item),
+                evidence_url=_dart_receipt_url(item.get("rcept_no")),
+                needs_review=False,
+            )
+            signal_event_id = int(signal_event["id"])
+            signal_event_ids.append(signal_event_id)
+            for metric in _ownership_metrics(item):
+                await self._normalization_repository.upsert_signal_metric(
+                    signal_event_id=signal_event_id,
+                    **metric,
+                )
+            await self._normalization_repository.record_validation_log(
+                target_type="signal_event",
+                target_id_int=signal_event_id,
+                validation_type="source_trace",
+                passed=True,
+                message=f"Normalized from dart_ownership_events.id={item['id']}",
+            )
+
+        return {
+            "normalized_count": len(signal_event_ids),
+            "signal_event_ids": signal_event_ids,
+        }
 
 
 class DartNormalizeTaskHandler:
@@ -319,6 +408,87 @@ class DartAnalyzeTaskHandler:
             "needs_review": result.needs_review,
             "analysis_source": result.analysis_source,
         }
+
+
+def _ownership_event_hash(stock_id: int, ownership_event_id: int) -> str:
+    return f"dart-ownership:{stock_id}:{ownership_event_id}"
+
+
+def _ownership_title(row: Mapping[str, Any]) -> str:
+    holder = str(row.get("holder_name") or "확인 필요").strip()
+    holder_type = str(row.get("holder_type") or "unknown").strip()
+    return f"DART 지분변동: {holder} ({holder_type})"
+
+
+def _ownership_summary(row: Mapping[str, Any]) -> str:
+    parts = []
+    shares_delta = row.get("shares_delta")
+    ratio_delta = row.get("ratio_delta")
+    if shares_delta is not None:
+        parts.append(f"보유주식 변화 {_signed(shares_delta)}주")
+    if ratio_delta is not None:
+        parts.append(f"보유비율 변화 {_signed(ratio_delta)}%")
+    if row.get("report_reason"):
+        parts.append(f"보고 사유: {row['report_reason']}")
+    if not parts:
+        parts.append("지분변동 세부 수치 추가 확인 필요")
+    return "; ".join(parts)
+
+
+def _ownership_direction(row: Mapping[str, Any]) -> str:
+    for key in ("ratio_delta", "shares_delta"):
+        value = row.get(key)
+        if value is None:
+            continue
+        number = float(value)
+        if number > 0:
+            return "positive"
+        if number < 0:
+            return "negative"
+    return "neutral"
+
+
+def _ownership_impact_level(row: Mapping[str, Any]) -> str:
+    ratio_delta = row.get("ratio_delta")
+    if ratio_delta is not None and abs(float(ratio_delta)) >= 1.0:
+        return "high"
+    if row.get("shares_delta") is not None or ratio_delta is not None:
+        return "medium"
+    return "low"
+
+
+def _ownership_metrics(row: Mapping[str, Any]) -> list[dict[str, Any]]:
+    metric_specs = (
+        ("shares", "dart_ownership_shares", "shares"),
+        ("ratio", "dart_ownership_ratio", "pct"),
+        ("shares_delta", "dart_ownership_shares_delta", "shares"),
+        ("ratio_delta", "dart_ownership_ratio_delta", "pct"),
+    )
+    return [
+        {
+            "metric_name": metric_name,
+            "metric_value": row[key],
+            "metric_unit": unit,
+        }
+        for key, metric_name, unit in metric_specs
+        if row.get(key) is not None
+    ]
+
+
+def _dart_receipt_url(rcept_no: Any) -> str | None:
+    receipt = str(rcept_no or "").strip()
+    if not receipt:
+        return None
+    return f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={receipt}"
+
+
+def _signed(value: Any) -> str:
+    number = float(value)
+    if number.is_integer():
+        text = str(int(number))
+    else:
+        text = str(number)
+    return text if text.startswith("-") else f"+{text}"
 
 
 def _stock_code_from_context(task_context: dict[str, Any]) -> str:

@@ -19,6 +19,7 @@ from app.orchestrator.queue.task_types import (
     ENRICH_HIRING,
     ENRICH_PATENT,
     NORMALIZE_DART,
+    NORMALIZE_DART_OWNERSHIP,
     NORMALIZE_DATALAB,
     NORMALIZE_HIRING,
     NORMALIZE_PATENT,
@@ -48,6 +49,7 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
         DartCollectionTaskHandler,
         DartNormalizeTaskHandler,
         DartOwnershipCollectionTaskHandler,
+        DartOwnershipNormalizeTaskHandler,
     )
     from app.orchestrator.aggregation.tasks import AggregateSignalTaskHandler
     from app.orchestrator.aggregation.requery import RequerySourceTaskHandler
@@ -81,6 +83,7 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
             connection=connection,
             settings=settings,
         ),
+        NORMALIZE_DART_OWNERSHIP: DartOwnershipNormalizeTaskHandler(connection),
         NORMALIZE_DART: DartNormalizeTaskHandler(connection),
         ANALYZE_DART: DartAnalyzeTaskHandler(
             connection, evidence_extractor=dart_evidence_extractor

@@ -124,6 +124,19 @@ class DartOwnershipRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("MAX(rcept_no)", connection.calls[0][1])
         self.assertEqual(connection.calls[0][2], ("00126380", "major"))
 
+    async def test_list_for_normalization_excludes_existing_external_anchors(self):
+        connection = FakeConnection()
+        repository = DartOwnershipRepository(connection)
+
+        await repository.list_for_normalization(stock_id=7, limit=50)
+
+        sql = connection.calls[0][1]
+        self.assertIn("FROM dart_ownership_events e", sql)
+        self.assertIn("LEFT JOIN source_documents sd", sql)
+        self.assertIn("sd.external_ref_type = 'dart_ownership_events'", sql)
+        self.assertIn("sd.id IS NULL", sql)
+        self.assertEqual(connection.calls[0][2], (7, 50))
+
 
 if __name__ == "__main__":
     unittest.main()
