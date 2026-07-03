@@ -20,6 +20,7 @@ from app.orchestrator.queue.task_types import (
     ANALYZE_PRICE,
     ANALYZE_REPORT,
     COLLECT_DART,
+    COLLECT_DART_OWNERSHIP,
     COLLECT_REPORT,
     ENRICH_HIRING,
     ENRICH_PATENT,
@@ -44,6 +45,7 @@ _RESTART_DELAY_SEC = 60.0
 
 DRAIN_ORDER: tuple[str, ...] = (
     COLLECT_DART,
+    COLLECT_DART_OWNERSHIP,
     NORMALIZE_DART,
     ANALYZE_DART,
     COLLECT_REPORT,
