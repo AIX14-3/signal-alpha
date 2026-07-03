@@ -123,6 +123,25 @@ class DartOwnershipRepository:
             corp_code.strip(),
         )
 
+    async def list_for_normalization(self, *, stock_id: int, limit: int = 500) -> Any:
+        """Ownership rows not yet anchored into source_documents/signal_events."""
+        return await self._connection.fetch(
+            """
+            SELECT e.*
+            FROM dart_ownership_events e
+            LEFT JOIN source_documents sd
+                ON sd.external_ref_type = 'dart_ownership_events'
+               AND sd.external_ref_id = e.id
+               AND sd.stock_id = e.stock_id
+            WHERE e.stock_id = $1
+              AND sd.id IS NULL
+            ORDER BY e.report_date ASC, e.id ASC
+            LIMIT $2
+            """,
+            stock_id,
+            limit,
+        )
+
     async def get_latest_rcept_no(
         self,
         *,

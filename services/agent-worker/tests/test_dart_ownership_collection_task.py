@@ -2,6 +2,7 @@ import unittest
 from datetime import date
 
 from app.orchestrator.dart.tasks import DartOwnershipCollectionTaskHandler
+from app.orchestrator.queue.task_types import NORMALIZE_DART_OWNERSHIP
 
 
 class FakeOwnershipCollector:
@@ -36,15 +37,26 @@ class FakeOwnershipRepository:
         return len(entries)
 
 
+class FakeQueueRepository:
+    def __init__(self):
+        self.calls = []
+
+    async def enqueue(self, **kwargs):
+        self.calls.append(kwargs)
+        return 301
+
+
 class DartOwnershipCollectionTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
-    async def test_collects_and_upserts_ownership_events_with_stock_id(self):
+    async def test_collects_upserts_and_enqueues_ownership_normalization(self):
         collector = FakeOwnershipCollector()
         repository = FakeOwnershipRepository()
+        queue = FakeQueueRepository()
         handler = DartOwnershipCollectionTaskHandler(
             connection=None,
             settings=object(),
             collector=collector,
             repository=repository,
+            queue_repository=queue,
         )
 
         result = await handler(
@@ -61,6 +73,11 @@ class DartOwnershipCollectionTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["upserted_count"], 1)
         self.assertEqual(result["skipped_count"], 0)
         self.assertEqual(result["by_holder_type"], {"executive": 1})
+        self.assertEqual(result["normalize_task_id"], 301)
+        self.assertEqual(queue.calls[0]["stock_id"], 7)
+        self.assertEqual(queue.calls[0]["task_type"], NORMALIZE_DART_OWNERSHIP)
+        self.assertEqual(queue.calls[0]["task_context"], {"stock_code": "005930"})
+        self.assertTrue(queue.calls[0]["dedupe"])
 
 
 if __name__ == "__main__":

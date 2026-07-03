@@ -1,6 +1,7 @@
 COLLECT_DART = "collect_dart"
 COLLECT_DART_OWNERSHIP = "collect_dart_ownership"
 NORMALIZE_DART = "normalize_dart"
+NORMALIZE_DART_OWNERSHIP = "normalize_dart_ownership"
 ANALYZE_DART = "analyze_dart"
 AGGREGATE_SIGNAL = "aggregate_signal"
 
