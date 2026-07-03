@@ -17,6 +17,7 @@ from app.orchestrator.persistence import CollectionPersistence
 from app.orchestrator.queue.context import enqueue_aggregate
 from app.orchestrator.queue.task_types import (
     ANALYZE_DART,
+    BACKFILL_DART_LABELS,
     NORMALIZE_DART,
     NORMALIZE_DART_OWNERSHIP,
 )
@@ -151,11 +152,13 @@ class DartOwnershipNormalizeTaskHandler:
         *,
         ownership_repository: Any | None = None,
         normalization_repository: Any | None = None,
+        queue_repository: Any | None = None,
     ) -> None:
         self._ownership_repository = ownership_repository or DartOwnershipRepository(connection)
         self._normalization_repository = normalization_repository or NormalizationRepository(
             connection
         )
+        self._queue_repository = queue_repository or ProcessingQueueRepository(connection)
 
     async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
         stock_id = int(task["stock_id"])
@@ -212,9 +215,56 @@ class DartOwnershipNormalizeTaskHandler:
                 message=f"Normalized from dart_ownership_events.id={item['id']}",
             )
 
+        label_backfill_task_id = None
+        if signal_event_ids:
+            label_backfill_task_id = await self._queue_repository.enqueue(
+                stock_id=stock_id,
+                task_type=BACKFILL_DART_LABELS,
+                priority=str(task.get("priority") or "batch"),
+                source_signal_event_ids=signal_event_ids,
+                task_context=_dart_label_task_context(task_context),
+                dedupe=True,
+            )
+
         return {
             "normalized_count": len(signal_event_ids),
             "signal_event_ids": signal_event_ids,
+            "label_backfill_task_id": label_backfill_task_id,
+        }
+
+
+class DartEventStudyBackfillTaskHandler:
+    def __init__(
+        self,
+        connection: Any,
+        *,
+        event_study_builder: Any | None = None,
+    ) -> None:
+        self._connection = connection
+        self._event_study_builder = event_study_builder
+
+    async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
+        stock_id = int(task["stock_id"])
+        task_context = _task_context(task.get("task_context"))
+        signal_event_ids = _source_signal_event_ids(task.get("source_signal_event_ids"))
+        builder = self._event_study_builder or _build_event_study_builder(task_context)
+
+        if signal_event_ids:
+            filter_sql = "source_type = $1 AND id = ANY($2::BIGINT[])"
+            filter_args: tuple[Any, ...] = ("DART", signal_event_ids)
+        else:
+            filter_sql = "source_type = $1 AND stock_id = $2"
+            filter_args = ("DART", stock_id)
+
+        count = await builder.run(
+            self._connection,
+            event_filter_sql=filter_sql,
+            event_filter_args=filter_args,
+        )
+        return {
+            "backfilled_count": count,
+            "source_signal_event_ids": signal_event_ids,
+            "universe_snapshot": str(task_context.get("universe_snapshot") or "kospi20_seed"),
         }
 
 
@@ -233,6 +283,7 @@ class DartNormalizeTaskHandler:
 
         signal_event_ids: list[int] = []
         analysis_task_ids: list[int] = []
+        label_backfill_task_ids: list[int] = []
         for row in rows:
             classification = classify_dart_report(
                 row["report_name"],
@@ -300,12 +351,25 @@ class DartNormalizeTaskHandler:
                 dedupe=True,
             )
             analysis_task_ids.append(analysis_task_id)
+            label_backfill_task_id = await self._queue_repository.enqueue(
+                stock_id=int(row["stock_id"]),
+                task_type=BACKFILL_DART_LABELS,
+                priority="batch",
+                source_signal_event_ids=[int(signal_event["id"])],
+                task_context=_dart_label_task_context(task_context, stock_code=stock_code),
+                dedupe=True,
+            )
+            label_backfill_task_ids.append(label_backfill_task_id)
 
         return {
             "normalized_count": len(rows),
             "signal_event_ids": signal_event_ids,
             "analysis_task_id": analysis_task_ids[0] if analysis_task_ids else None,
             "analysis_task_ids": analysis_task_ids,
+            "label_backfill_task_id": (
+                label_backfill_task_ids[0] if label_backfill_task_ids else None
+            ),
+            "label_backfill_task_ids": label_backfill_task_ids,
         }
 
 
@@ -408,6 +472,28 @@ class DartAnalyzeTaskHandler:
             "needs_review": result.needs_review,
             "analysis_source": result.analysis_source,
         }
+
+
+def _build_event_study_builder(task_context: Mapping[str, Any]) -> Any:
+    from app.backtest.event_study import EventStudyBuilder
+
+    universe_snapshot = str(task_context.get("universe_snapshot") or "kospi20_seed")
+    return EventStudyBuilder(universe_snapshot=universe_snapshot)
+
+
+def _dart_label_task_context(
+    task_context: Mapping[str, Any],
+    *,
+    stock_code: str | None = None,
+) -> dict[str, Any]:
+    context: dict[str, Any] = {}
+    code = stock_code or task_context.get("stock_code") or task_context.get("ticker")
+    if code:
+        context["stock_code"] = str(code)
+    context["source_type"] = "DART"
+    if task_context.get("universe_snapshot"):
+        context["universe_snapshot"] = str(task_context["universe_snapshot"])
+    return context
 
 
 def _ownership_event_hash(stock_id: int, ownership_event_id: int) -> str:

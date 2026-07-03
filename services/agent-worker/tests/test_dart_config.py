@@ -5,6 +5,7 @@ from unittest.mock import patch
 from app.core.config import Settings
 from app.orchestrator.queue.task_types import (
     ANALYZE_DART,
+    BACKFILL_DART_LABELS,
     COLLECT_DART,
     COLLECT_DART_OWNERSHIP,
     NORMALIZE_DART,
@@ -59,4 +60,5 @@ class DartConfigTest(unittest.TestCase):
         self.assertEqual(COLLECT_DART_OWNERSHIP, "collect_dart_ownership")
         self.assertEqual(NORMALIZE_DART, "normalize_dart")
         self.assertEqual(NORMALIZE_DART_OWNERSHIP, "normalize_dart_ownership")
+        self.assertEqual(BACKFILL_DART_LABELS, "backfill_dart_labels")
         self.assertEqual(ANALYZE_DART, "analyze_dart")
