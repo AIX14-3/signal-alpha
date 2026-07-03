@@ -77,11 +77,13 @@ class FakeConnection:
             }
         if "UPDATE guard_site_status" in sql and "status = 'blocked'" in sql:
             # 제안 승인 경로 — scope/reason/actor 만 받아 blocked 로 전환.
+            # resume_at 은 SQL 이 명시적으로 NULL 로 지운다(직전 시한부 차단 잔재 제거).
             self.guard_status.update(
                 {
                     "status": "blocked",
                     "scope": args[0],
                     "reason": args[1],
+                    "resume_at": None if "resume_at = NULL" in sql else self.guard_status["resume_at"],
                     "triggered_by": args[2],
                     "updated_at": datetime.now(UTC),
                 }
@@ -306,6 +308,17 @@ class GuardRoutesTest(unittest.TestCase):
         self.assertEqual(body["status"]["scope"], "report_view")
         self.assertEqual(self.connection.guard_status["status"], "blocked")
         self.assertEqual(len(self.connection.audit), 1)
+
+    def test_approve_clears_stale_resume_at(self):
+        # 직전 시한부 차단이 남긴 resume_at 이 제안 승인 후에도 남아 공개 화면에
+        # 새 사유와 뒤섞이면 안 된다 — 승인 경로는 resume_at 을 NULL 로 지운다.
+        self.login()
+        self.connection.guard_status["resume_at"] = datetime(2026, 7, 4, 9, tzinfo=UTC)
+        self.seed_recommendation()
+        response = self.client.post("/api/admin/guard/recommendations/1/approve")
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.json()["status"]["resume_at"])
+        self.assertIsNone(self.connection.guard_status["resume_at"])
 
     def test_reject_recommendation_keeps_status(self):
         self.login()
