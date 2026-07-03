@@ -58,7 +58,7 @@ spec:
               port: 8000
               httpHeaders:
                 - name: Host
-                  value: api.signal-alpha.cloud
+                  value: api.34.36.250.174.nip.io
             initialDelaySeconds: 10
             periodSeconds: 10
           livenessProbe:
@@ -67,7 +67,7 @@ spec:
               port: 8000
               httpHeaders:
                 - name: Host
-                  value: api.signal-alpha.cloud
+                  value: api.34.36.250.174.nip.io
             initialDelaySeconds: 20
             periodSeconds: 20
           resources:

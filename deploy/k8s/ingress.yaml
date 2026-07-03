@@ -19,16 +19,21 @@ metadata:
     #   gcloud compute addresses create sa-ingress-ip --global
     # 와 이름 일치 → 재배포해도 도메인이 가리키는 IP 고정. 가비아 A레코드(www·api)가 이 IP 를 가리킨다.
     kubernetes.io/ingress.global-static-ip-name: sa-ingress-ip
-    # Google 관리형 SSL 인증서(자동 발급/갱신). managed-cert.yaml 의 이름과 일치.
-    networking.gke.io/managed-certificates: signal-alpha-cert
-    # 인증서 발급 전에도 http 접속 허용. 발급(Active) 후 "false" 로 바꾸면 https 강제.
+    # HTTPS = 자체서명 인증서(k8s Secret signal-alpha-tls). nip.io 는 도메인 소유 증명이
+    # 안 돼 Google ManagedCertificate 발급 불가 → 자체서명으로 종단(브라우저 1회 경고).
+    # (인증서/키는 out-of-band 로 `kubectl create secret tls` — 평문 커밋 금지.)
     kubernetes.io/ingress.allow-http: "true"
 spec:
   # 클래스는 위 annotation(kubernetes.io/ingress.class: gce)으로 지정 — 이 클러스터엔
   # gce IngressClass 리소스가 없어 ingressClassName은 쓰지 않는다.
+  tls:
+    - hosts:
+        - www.34.36.250.174.nip.io
+        - api.34.36.250.174.nip.io
+      secretName: signal-alpha-tls
   rules:
-    # FE — www 서브도메인
-    - host: www.signal-alpha.cloud
+    # FE — www (nip.io = IP 기반 무료 DNS, 34.36.250.174 로 자동 해석)
+    - host: www.34.36.250.174.nip.io
       http:
         paths:
           - path: /
@@ -38,8 +43,8 @@ spec:
                 name: web
                 port:
                   number: 3000
-    # BE — api 서브도메인 (main-server 가 루트에서 /health·/api/* 서빙)
-    - host: api.signal-alpha.cloud
+    # BE — api (main-server 가 루트에서 /health·/api/* 서빙)
+    - host: api.34.36.250.174.nip.io
       http:
         paths:
           - path: /

@@ -22,6 +22,14 @@ resources:
 
 # ① in-cluster Postgres 제거 — 관리형 Cloud SQL 로 대체.
 patches:
+  # ManagedCertificate 제거 — nip.io는 Google 관리형 인증서 발급 불가(자체서명 Secret 사용).
+  - patch: |-
+      $patch: delete
+      apiVersion: networking.gke.io/v1
+      kind: ManagedCertificate
+      metadata:
+        name: signal-alpha-cert
+        namespace: signal-alpha
   - patch: |-
       $patch: delete
       apiVersion: v1
@@ -98,11 +106,12 @@ patches:
         namespace: signal-alpha
       data:
         APP_ENV: "production"
-        CORS_ALLOW_ORIGINS: "https://www.signal-alpha.cloud"   # 스킴 포함·끝 슬래시 없이. apex 도 받으려면 ,https://signal-alpha.cloud
-        ALLOWED_HOSTS: "api.signal-alpha.cloud,www.signal-alpha.cloud"  # TrustedHostMiddleware 강제 — 미설정 시 도메인 요청 400
+        # nip.io(IP 기반 무료 DNS) 호스트. signal-alpha.cloud 미등록 → 34.36.250.174.nip.io 사용.
+        CORS_ALLOW_ORIGINS: "https://www.34.36.250.174.nip.io"   # 스킴 포함·끝 슬래시 없이
+        ALLOWED_HOSTS: "api.34.36.250.174.nip.io,www.34.36.250.174.nip.io"  # TrustedHostMiddleware 강제
         COOKIE_SECURE: "true"
         COOKIE_SAMESITE: "lax"
-        COOKIE_DOMAIN: ".signal-alpha.cloud"                   # 맨 앞 점 → www·api 서브도메인 쿠키 공유
+        COOKIE_DOMAIN: ".34.36.250.174.nip.io"                 # 맨 앞 점 → www·api 서브도메인 쿠키 공유
 
 # ④ 이미지 핀 — <PROJECT_ID> 를 실제 GCP 프로젝트로 교체하고 newTag 를 빌드 태그로.
 #    base 의 placeholder 를 직접 고치지 않기 위해 오버레이에서 덮어쓴다.
