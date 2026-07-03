@@ -38,6 +38,10 @@ jobs:
       KIPRIS_API_KEY: ${{ secrets.KIPRIS_API_KEY }}
       NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
       NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
+      # 수집전용 키(등록 시 스케줄 수집도 키워드검증 쿼터와 분리). 미등록이면 빈 값 →
+      # run_collectors.py 가 NAVER_CLIENT_* 로 폴백하므로 무해.
+      NAVER_COLLECT_CLIENT_ID: ${{ secrets.NAVER_COLLECT_CLIENT_ID }}
+      NAVER_COLLECT_CLIENT_SECRET: ${{ secrets.NAVER_COLLECT_CLIENT_SECRET }}
       COLLECTOR_VERSION: ${{ secrets.COLLECTOR_VERSION }}
       TICKER_ARG: ${{ inputs.ticker && format('--ticker {0}', inputs.ticker) || '' }}
     steps:

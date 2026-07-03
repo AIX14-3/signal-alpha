@@ -210,9 +210,13 @@ async def run_once(args: argparse.Namespace) -> None:
                     print(f"✗ patent collect failed for {target['ticker']} {target['stock_name']}: {exc}")
 
         if not args.patent_only:
+            # 수집전용 키(NAVER_COLLECT_*)를 우선 사용해 스케줄(키워드검증·뉴스)이 쓰는
+            # 공유 NAVER_CLIENT_* 쿼터와 분리한다 → 대량 백필이 그 쿼터를 소진해 429(fail-fast)
+            # 나는 것을 방지. 미설정(빈 문자열=falsy) 시 공유 키로 폴백해 스케줄 동작은 불변.
+            # (선례: app/baseline/hiring_baseline_builder.py resolve_naver_client)
             naver_client = NaverDataLabClient(
-                client_id=os.getenv("NAVER_CLIENT_ID", ""),
-                client_secret=os.getenv("NAVER_CLIENT_SECRET", ""),
+                client_id=os.getenv("NAVER_COLLECT_CLIENT_ID") or os.getenv("NAVER_CLIENT_ID", ""),
+                client_secret=os.getenv("NAVER_COLLECT_CLIENT_SECRET") or os.getenv("NAVER_CLIENT_SECRET", ""),
             )
             datalab_collector = DataLabCollector(pool=pool, client=naver_client, collector_ver=collector_ver)
             async with pool.acquire() as conn:
