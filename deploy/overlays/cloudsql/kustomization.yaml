@@ -86,7 +86,9 @@ patches:
   # ③ BE 프로덕션 CORS/쿠키 env (커스텀 도메인 — 팀 docs/gabia-domain-cors-setup.md 채택).
   #    base/dev 를 안 건드리게 prod 오버레이에서만 ConfigMap 에 머지한다(도메인은 비밀 아님 → 커밋 OK).
   #    AUTH_SECRET_KEY 만 Secret(out-of-band). ⚠️ APP_ENV=production 이면 main-server 가 부팅 시
-  #    AUTH_SECRET_KEY(dev- 금지)·CORS_ALLOW_ORIGINS(빈값/`*` 금지) 검증 → 틀리면 CrashLoop(G5/G6).
+  #    AUTH_SECRET_KEY(dev- 금지)·CORS_ALLOW_ORIGINS(빈값/`*` 금지)·ALLOWED_HOSTS(비어있음/`*` 금지) 검증
+  #    → 틀리면 CrashLoop(G5/G6/G7). 또한 main-server 는 TrustedHostMiddleware 로 ALLOWED_HOSTS 를 강제하므로
+  #    미설정 시 코드 기본값(localhost,127.0.0.1,testserver)이 되어 api.signal-alpha.cloud 요청이 400 이 된다.
   #    도메인 = signal-alpha.cloud (ingress host·managed-cert·web build-arg 와 동일).
   - patch: |-
       apiVersion: v1
@@ -97,6 +99,7 @@ patches:
       data:
         APP_ENV: "production"
         CORS_ALLOW_ORIGINS: "https://www.signal-alpha.cloud"   # 스킴 포함·끝 슬래시 없이. apex 도 받으려면 ,https://signal-alpha.cloud
+        ALLOWED_HOSTS: "api.signal-alpha.cloud,www.signal-alpha.cloud"  # TrustedHostMiddleware 강제 — 미설정 시 도메인 요청 400
         COOKIE_SECURE: "true"
         COOKIE_SAMESITE: "lax"
         COOKIE_DOMAIN: ".signal-alpha.cloud"                   # 맨 앞 점 → www·api 서브도메인 쿠키 공유
@@ -105,14 +108,14 @@ patches:
 #    base 의 placeholder 를 직접 고치지 않기 위해 오버레이에서 덮어쓴다.
 images:
   - name: signal-alpha-agent-worker
-    newName: asia-northeast3-docker.pkg.dev/PROJECT_ID/signal-alpha/agent-worker
+    newName: asia-northeast3-docker.pkg.dev/signal-alpha-demo/signal-alpha/agent-worker
     newTag: latest
   - name: signal-alpha-main-server
-    newName: asia-northeast3-docker.pkg.dev/PROJECT_ID/signal-alpha/main-server
+    newName: asia-northeast3-docker.pkg.dev/signal-alpha-demo/signal-alpha/main-server
     newTag: latest
   - name: signal-alpha-web
-    newName: asia-northeast3-docker.pkg.dev/PROJECT_ID/signal-alpha/web
+    newName: asia-northeast3-docker.pkg.dev/signal-alpha-demo/signal-alpha/web
     newTag: latest
   - name: signal-alpha-db-migrate
-    newName: asia-northeast3-docker.pkg.dev/PROJECT_ID/signal-alpha/db-migrate
+    newName: asia-northeast3-docker.pkg.dev/signal-alpha-demo/signal-alpha/db-migrate
     newTag: latest
