@@ -3,7 +3,12 @@ import unittest
 from unittest.mock import patch
 
 from app.core.config import Settings
-from app.orchestrator.queue.task_types import COLLECT_DART, ANALYZE_DART, NORMALIZE_DART
+from app.orchestrator.queue.task_types import (
+    ANALYZE_DART,
+    COLLECT_DART,
+    COLLECT_DART_OWNERSHIP,
+    NORMALIZE_DART,
+)
 
 
 class DartConfigTest(unittest.TestCase):
@@ -50,5 +55,6 @@ class DartConfigTest(unittest.TestCase):
 
     def test_dart_task_type_constants_are_stable(self):
         self.assertEqual(COLLECT_DART, "collect_dart")
+        self.assertEqual(COLLECT_DART_OWNERSHIP, "collect_dart_ownership")
         self.assertEqual(NORMALIZE_DART, "normalize_dart")
         self.assertEqual(ANALYZE_DART, "analyze_dart")

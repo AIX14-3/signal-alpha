@@ -11,6 +11,8 @@ from app.agents.dart.graph import DartAnalysisGraphAgent
 from app.analyzers.dart.financials import extract_dart_financial_metrics
 from app.analyzers.dart.rules import classify_dart_report, make_dart_event_hash
 from app.collectors.dart.disclosure import DartCollector, DartDisclosureClient
+from app.collectors.dart.ownership_api import DartOwnershipCollector
+from app.orchestrator.dart.ownership_sync import DartOwnershipSyncService
 from app.orchestrator.persistence import CollectionPersistence
 from app.orchestrator.queue.context import enqueue_aggregate
 from app.orchestrator.queue.task_types import (
@@ -19,6 +21,7 @@ from app.orchestrator.queue.task_types import (
 )
 from signal_alpha_data_access.repositories import (
     AnalysisRepository,
+    DartOwnershipRepository,
     DartRepository,
     NormalizationRepository,
     ProcessingQueueRepository,
@@ -88,6 +91,42 @@ class DartCollectionTaskHandler:
             last_collector_run_id=result["collector_run_id"],
         )
         return result
+
+
+class DartOwnershipCollectionTaskHandler:
+    def __init__(
+        self,
+        *,
+        connection: Any,
+        settings: Any,
+        collector: Any | None = None,
+        repository: Any | None = None,
+    ) -> None:
+        self._connection = connection
+        self._settings = settings
+        self._collector = collector
+        self._repository = repository
+
+    async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
+        stock_id = int(task["stock_id"])
+        task_context = _task_context(task.get("task_context"))
+        stock_code = _stock_code_from_context(task_context)
+        service = DartOwnershipSyncService(
+            collector=self._collector or self._build_collector(),
+            repository=self._repository or DartOwnershipRepository(self._connection),
+        )
+        return await service.sync_ticker(stock_code=stock_code, stock_id=stock_id)
+
+    def _build_collector(self) -> DartOwnershipCollector:
+        return DartOwnershipCollector(
+            api_key=self._settings.dart_api_key,
+            corp_code_repository=DartRepository(self._connection),
+            min_request_interval_sec=getattr(
+                self._settings,
+                "dart_ownership_min_request_interval_sec",
+                0.2,
+            ),
+        )
 
 
 class DartNormalizeTaskHandler:

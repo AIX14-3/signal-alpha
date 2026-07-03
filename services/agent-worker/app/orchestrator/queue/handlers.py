@@ -13,6 +13,7 @@ from app.orchestrator.queue.task_types import (
     ANALYZE_PRICE,
     ANALYZE_REPORT,
     COLLECT_DART,
+    COLLECT_DART_OWNERSHIP,
     COLLECT_REPORT,
     EMBED_REPORT,
     ENRICH_HIRING,
@@ -46,6 +47,7 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
         DartAnalyzeTaskHandler,
         DartCollectionTaskHandler,
         DartNormalizeTaskHandler,
+        DartOwnershipCollectionTaskHandler,
     )
     from app.orchestrator.aggregation.tasks import AggregateSignalTaskHandler
     from app.orchestrator.aggregation.requery import RequerySourceTaskHandler
@@ -72,6 +74,10 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
 
     return {
         COLLECT_DART: DartCollectionTaskHandler(
+            connection=connection,
+            settings=settings,
+        ),
+        COLLECT_DART_OWNERSHIP: DartOwnershipCollectionTaskHandler(
             connection=connection,
             settings=settings,
         ),

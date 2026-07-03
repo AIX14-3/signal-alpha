@@ -98,6 +98,7 @@ def _should_retry(task: Mapping[str, Any]) -> bool:
 DEFAULT_CYCLE_PLAN: dict[str, int] = {
     # 무거운 수집 — 작은 캡으로 throttle (collect_dart 는 문서 fetch 상한과 병행)
     "collect_dart": 2,
+    "collect_dart_ownership": 2,
     "collect_report": 2,
     # DART 후속 (가벼움)
     "normalize_dart": 10,
