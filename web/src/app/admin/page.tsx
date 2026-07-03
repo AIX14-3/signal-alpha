@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   adminCancelSubscription,
   adminDecideGuardRecommendation,
@@ -40,7 +40,7 @@ import {
   type GuardRecommendation,
   type GuardScope,
 } from "@/lib/apiClient";
-import { won } from "@/lib/format";
+import { dateTimeKST, won } from "@/lib/format";
 
 export default function AdminPage() {
   // null = 쿠키 세션 확인 중. admin 쿠키는 HttpOnly 라 /admin/me 로 상태를 판별한다.
@@ -312,6 +312,10 @@ function GuardControlCard({ onError }: { onError: (msg: string | null) => void }
   const [mode, setMode] = useState<GuardMode>("advisory");
   const [reason, setReason] = useState("");
   const [resumeAt, setResumeAt] = useState("");
+  // draft 는 최초 1회만 서버 상태로 시드한다. apply()/decide() 후 reload 가 draft 를
+  // 덮어쓰면, 관리자가 입력 중이던 scope/reason 이 사라져(예: stale 제안 거절 →
+  // 이어지는 "차단 적용" 이 잘못된 값으로 발동) 안전 스위치가 오작동한다.
+  const draftSeeded = useRef(false);
 
   const load = useCallback(async () => {
     try {
@@ -322,9 +326,12 @@ function GuardControlCard({ onError }: { onError: (msg: string | null) => void }
       setStatus(statusData.status);
       setAudit(statusData.audit);
       setPending(recoData.items);
-      setScope(statusData.status.scope);
-      setMode(statusData.status.mode);
-      setReason(statusData.status.reason ?? "");
+      if (!draftSeeded.current) {
+        setScope(statusData.status.scope);
+        setMode(statusData.status.mode);
+        setReason(statusData.status.reason ?? "");
+        draftSeeded.current = true;
+      }
     } catch (err) {
       onError((err as Error).message);
     }
@@ -394,7 +401,7 @@ function GuardControlCard({ onError }: { onError: (msg: string | null) => void }
       {status && blocked && (
         <p className="mt-2 text-[13.5px] text-muted">
           사유: {status.reason ?? "-"} · 실행: {status.triggered_by ?? "-"} · 갱신:{" "}
-          {status.updated_at ? status.updated_at.slice(0, 16).replace("T", " ") : "-"}
+          {dateTimeKST(status.updated_at)}
         </p>
       )}
 
@@ -527,9 +534,7 @@ function GuardControlCard({ onError }: { onError: (msg: string | null) => void }
             <tbody>
               {audit.slice(0, 8).map((item, index) => (
                 <tr key={index} className="border-t border-line">
-                  <td className="py-1.5 pr-4 text-muted">
-                    {item.created_at ? item.created_at.slice(0, 16).replace("T", " ") : "-"}
-                  </td>
+                  <td className="py-1.5 pr-4 text-muted">{dateTimeKST(item.created_at)}</td>
                   <td className="py-1.5 pr-4 font-semibold">{item.action}</td>
                   <td className="py-1.5 pr-4">{item.scope ?? "-"}</td>
                   <td className="py-1.5 pr-4">{item.actor ?? "-"}</td>

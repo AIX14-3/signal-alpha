@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect } from "react";
 import type { ReactNode } from "react";
+import { dateTimeKST } from "@/lib/format";
 import { useGuardStore } from "@/stores/guardStore";
 
 // whole_site 차단에서도 항상 열어두는 경로 — 운영·결제·로그인 흐름 보호(관리자 잠김 방지).
@@ -74,7 +75,7 @@ function GuardBlockedScreen({
       <p className="mt-4 text-[15px] leading-relaxed text-navy-soft">
         현재 지정학 리스크(전쟁·분쟁 등)로 시장 변동성이 매우 큰 상황입니다.
         <br />
-        잘못된 투자 신호를 막기 위해 리포트 서비스를 일시 중단합니다.
+        데이터 방향성의 신뢰도를 확보할 때까지 리포트 노출을 일시 중단합니다.
       </p>
       <div className="card mt-6 w-full p-5 text-left text-[14px]">
         <div>
@@ -83,7 +84,7 @@ function GuardBlockedScreen({
         </div>
         <div className="mt-1.5">
           <span className="font-semibold text-muted">재개 예정</span>{" "}
-          {resumeAt ? resumeAt.slice(0, 16).replace("T", " ") : "상황 안정 시 (미정)"}
+          {resumeAt ? dateTimeKST(resumeAt) : "상황 안정 시 (미정)"}
         </div>
       </div>
       <div className="mt-8 flex gap-3">
