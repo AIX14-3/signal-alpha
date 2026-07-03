@@ -7,6 +7,11 @@ kind: PersistentVolumeClaim
 metadata:
   name: agent-worker-reports
   namespace: signal-alpha
+  annotations:
+    # 소비자(agent-worker Deployment)와 같은 wave. 기본 SC(standard-rwo)가
+    # WaitForFirstConsumer라 wave 0에 두면 소비자 pod가 없어 영원히 Pending →
+    # Argo가 wave 0 완료를 못 기다림(교착). 같은 wave 2에서 pod와 함께 생성되면 바인딩된다.
+    argocd.argoproj.io/sync-wave: "2"
   labels:
     app.kubernetes.io/part-of: signal-alpha
     app.kubernetes.io/name: agent-worker
