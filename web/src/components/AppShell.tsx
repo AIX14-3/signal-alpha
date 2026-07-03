@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect } from "react";
 import type { ReactNode } from "react";
+import { GuardGate } from "@/components/GuardGate";
 import { Toaster } from "@/components/Toaster";
 import { useAuthStore } from "@/stores/authStore";
 
@@ -66,7 +67,9 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
       </nav>
 
-      <main className="relative z-10 mx-auto w-full max-w-[1080px] flex-1 px-6">{children}</main>
+      <main className="relative z-10 mx-auto w-full max-w-[1080px] flex-1 px-6">
+        <GuardGate>{children}</GuardGate>
+      </main>
 
       <footer className="relative z-10 border-t border-line py-8 text-center text-[13px] text-muted">
         Signal α · 데이터 방향성과 근거를 제공하는 서비스 (투자 권유·수익 보장 아님)
