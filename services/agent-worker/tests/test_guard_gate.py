@@ -99,11 +99,14 @@ class ApplyJudgmentTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(conn.executed_matching("INSERT INTO guard_recommendations")), 1)
         self.assertEqual(conn.executed_matching("UPDATE guard_site_status"), [])
 
-    async def test_advisory_dedupes_pending_recommendation(self):
+    async def test_advisory_refreshes_pending_recommendation(self):
+        # 같은 scope 의 pending 제안이 있으면 새 카드를 쌓지 않고 최신 판정으로 갱신한다
+        # (박제된 옛 사건 대신 지금 사건이 카드에 반영되도록).
         conn = FakeConnection(_status_row(mode="advisory"), pending_scopes={"report_view"})
         result = await apply_judgment(conn, _settings(), _judgment(severity=82), news_event_id=7)
-        self.assertEqual(result["action"], "recommendation_exists")
-        self.assertEqual(conn.executed, [])
+        self.assertEqual(result["action"], "recommendation_refreshed")
+        # 갱신은 UPDATE ... RETURNING(fetchval) 으로 처리 — 새 INSERT 는 없다.
+        self.assertEqual(conn.executed_matching("INSERT INTO guard_recommendations"), [])
 
     async def test_auto_blocks_within_scope_ceiling(self):
         conn = FakeConnection(_status_row(mode="auto"))
@@ -122,7 +125,9 @@ class ApplyJudgmentTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["scope"], "whole_site")
         self.assertEqual(conn.executed_matching("UPDATE guard_site_status"), [])
 
-    async def test_auto_respects_cooldown(self):
+    async def test_auto_cooldown_defers_to_recommendation(self):
+        # 쿨다운 중엔 자동 차단을 못 걸어도 신호를 삼키지 않고 제안으로 남긴다
+        # (급격한 확전이 최대 쿨다운 동안 유실되지 않도록).
         conn = FakeConnection(
             _status_row(
                 mode="auto",
@@ -132,8 +137,11 @@ class ApplyJudgmentTest(unittest.IsolatedAsyncioTestCase):
             )
         )
         result = await apply_judgment(conn, _settings(), _judgment(severity=82), news_event_id=7)
-        self.assertEqual(result["action"], "cooldown")
-        self.assertEqual(conn.executed, [])
+        self.assertEqual(result["auto_deferred"], "cooldown")
+        self.assertEqual(result["action"], "recommended")
+        # 상태(guard_site_status)는 건드리지 않고 제안만 적재.
+        self.assertEqual(conn.executed_matching("UPDATE guard_site_status"), [])
+        self.assertEqual(len(conn.executed_matching("INSERT INTO guard_recommendations")), 1)
 
     async def test_auto_skips_when_already_blocked_at_or_above(self):
         conn = FakeConnection(

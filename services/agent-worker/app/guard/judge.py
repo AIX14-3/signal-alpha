@@ -16,7 +16,10 @@ from app.guard.prompts import GUARD_PROMPT_VERSION, build_prompt
 ALLOWED_DIRECTIONS = {"escalation", "deescalation", "unclear"}
 
 # 투자조언 혼입 가드레일 — summary/evidence 는 차단 안내 화면에 노출될 수 있는 텍스트다.
-_FORBIDDEN_KO = ("매수", "매도", "목표가", "보유")
+# "보유" 는 제외한다: 지정학 텍스트에 흔한 "핵보유국"·"핵무기 보유" 등을 오탐해
+# 판정을 통째로 거부(→ 사이클 중단·기사 미저장·다음 사이클 재실패)하면, 정작 이
+# 스위치가 필요한 위기 구간에 영구 블라인드가 된다. 영어 hold 는 아래 \b 경계로 잡는다.
+_FORBIDDEN_KO = ("매수", "매도", "목표가")
 _FORBIDDEN_EN = re.compile(r"\b(buy|sell|hold)\b", re.IGNORECASE)
 
 

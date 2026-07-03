@@ -60,6 +60,17 @@ class ValidateJudgmentTest(unittest.TestCase):
         with self.assertRaises(GuardJudgeError):
             validate_judgment(_valid_payload(summary="지금은 매수 기회입니다."))
 
+    def test_geopolitical_possession_wording_passes(self):
+        # "보유"(핵보유국·핵무기 보유 등)는 지정학 텍스트에 흔하다 — 투자조언 오탐으로
+        # 판정을 거부하면 위기 구간에 영구 블라인드가 되므로 금지어에서 제외됐다.
+        judgment = validate_judgment(
+            _valid_payload(
+                summary="이란의 핵보유 능력을 둘러싼 긴장이 고조되고 있습니다.",
+                evidence=["북한이 핵무기를 보유하고 있다는 분석"],
+            )
+        )
+        self.assertTrue(judgment.is_geopolitical_risk)
+
     def test_english_investment_advice_rejected_word_boundary(self):
         # "buy/sell/hold" 는 단어 경계로만 걸린다 — household 같은 합성어는 통과.
         with self.assertRaises(GuardJudgeError):

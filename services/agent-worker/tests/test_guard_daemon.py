@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "packages" / "data-access"))
 
-from app.guard.daemon import GuardRuntimeStatus, run_guard_cycle
+from app.guard.daemon import GuardRuntimeStatus, _news_timespan, run_guard_cycle
 from app.guard.gdelt import GuardArticle, GuardCollectError
 
 
@@ -216,6 +216,16 @@ class GuardRuntimeStatusTest(unittest.TestCase):
         self.assertEqual(status.snapshot()["cycles_completed"], 1)
         status.mark_error(RuntimeError("boom"))
         self.assertEqual(status.snapshot()["last_error"], "boom")
+
+
+class NewsTimespanTest(unittest.TestCase):
+    def test_floor_is_60_minutes(self):
+        # 15분 주기여도 GDELT 갱신 지연을 고려해 최소 60분은 되돌아본다.
+        self.assertEqual(_news_timespan(SimpleNamespace(guard_poll_interval_sec=900)), "60min")
+
+    def test_scales_to_twice_the_interval(self):
+        # 2시간 주기면 4시간(240분) lookback 으로 공백을 덮는다.
+        self.assertEqual(_news_timespan(SimpleNamespace(guard_poll_interval_sec=7200)), "240min")
 
 
 if __name__ == "__main__":

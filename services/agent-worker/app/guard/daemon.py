@@ -68,11 +68,27 @@ def _default_llm_factory(settings: Any) -> Any:
     )
 
 
+# GDELT HTTP fetch 는 짧게 끊는다 — LLM 타임아웃(느린 모델용, 최대 수십 초)을 그대로
+# 쓰면 GDELT 가 hang 할 때 매 사이클이 그만큼 묶인다(별개 관심사).
+_NEWS_FETCH_TIMEOUT_SEC = 15.0
+
+
+def _news_timespan(settings: Any) -> str:
+    """폴링 주기(+지터·복구 여유 2배)를 덮는 lookback. 최소 60분(GDELT 갱신 지연 고려).
+
+    "1h" 하드코딩이면 주기를 1시간 넘게 늘리거나 워커/GDELT 가 1시간 넘게 죽으면 그
+    공백에 발행된 기사를 영구히 놓친다 — 주기에 연동해 커버리지 공백을 없앤다.
+    """
+    minutes = max(60, int(settings.guard_poll_interval_sec / 60 * 2))
+    return f"{minutes}min"
+
+
 async def _default_fetch(settings: Any) -> list[GuardArticle]:
     return await fetch_gdelt_articles(
         keywords=list(settings.guard_keywords),
         max_records=settings.guard_news_max_articles,
-        timeout_seconds=settings.guard_llm_timeout_seconds,
+        timeout_seconds=_NEWS_FETCH_TIMEOUT_SEC,
+        timespan=_news_timespan(settings),
     )
 
 

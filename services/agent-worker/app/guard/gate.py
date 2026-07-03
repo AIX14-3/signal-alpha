@@ -86,7 +86,10 @@ async def apply_judgment(
     if row["status"] == "blocked" and _scope_rank(row["scope"]) >= _scope_rank(capped_scope):
         return {"action": "already_blocked", "scope": row["scope"]}
     if row["triggered_by"] == AGENT_ACTOR and not _cooldown_passed(row["updated_at"], settings):
-        return {"action": "cooldown", "scope": capped_scope}
+        # 쿨다운 중이라 자동 차단을 못 걸더라도 신호를 삼키지 않는다 — 관리자가 즉시
+        # 승인·상향할 수 있도록 제안으로 남긴다(급격한 확전이 최대 쿨다운 동안 유실 방지).
+        result = await _recommend(connection, judgment, scope=capped_scope, news_event_id=news_event_id)
+        return {**result, "auto_deferred": "cooldown"}
     await connection.execute(
         "UPDATE guard_site_status"
         " SET status = 'blocked', scope = $1, reason = $2, triggered_by = $3, updated_at = now()"
@@ -106,13 +109,25 @@ async def _recommend(
     scope: str,
     news_event_id: int | None,
 ) -> dict[str, Any]:
-    # 같은 scope 의 pending 제안이 있으면 재적재하지 않는다(관리자 화면 도배 방지).
-    exists = await connection.fetchval(
-        "SELECT 1 FROM guard_recommendations WHERE status = 'pending' AND suggested_scope = $1",
+    # 같은 scope 의 pending 제안이 이미 있으면 카드를 새로 쌓지 않되(도배 방지),
+    # 최신 판정으로 갱신한다 — 그러지 않으면 관리자는 며칠 전 사건의 사유·근거가 박제된
+    # 카드를 보고, 정작 지금 벌어지는 사건(같은 scope 대역)을 놓친다.
+    updated = await connection.fetchval(
+        "UPDATE guard_recommendations"
+        " SET news_event_id = $2, severity = $3, reason = $4, created_at = now()"
+        " WHERE id = ("
+        "   SELECT id FROM guard_recommendations"
+        "   WHERE status = 'pending' AND suggested_scope = $1"
+        "   ORDER BY created_at DESC LIMIT 1"
+        " )"
+        " RETURNING id",
         scope,
+        news_event_id,
+        judgment.severity,
+        judgment.summary,
     )
-    if exists:
-        return {"action": "recommendation_exists", "scope": scope}
+    if updated is not None:
+        return {"action": "recommendation_refreshed", "scope": scope}
     await connection.execute(
         "INSERT INTO guard_recommendations (news_event_id, suggested_scope, severity, reason)"
         " VALUES ($1, $2, $3, $4)",
