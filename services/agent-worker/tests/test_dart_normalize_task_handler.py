@@ -7,6 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "packages" / "data-access"))
 
 from app.orchestrator.dart.tasks import DartAnalyzeTaskHandler, DartNormalizeTaskHandler
+from app.orchestrator.queue.task_types import ANALYZE_DART, BACKFILL_DART_LABELS
 
 
 class FakeConnection:
@@ -84,11 +85,18 @@ class DartNormalizeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any("INSERT INTO validation_logs" in call[1] for call in connection.calls))
         self.assertTrue(any("INSERT INTO processing_queue" in call[1] for call in connection.calls))
         self.assertIsNotNone(result["analysis_task_id"])
-        enqueue_call = next(call for call in connection.calls if "INSERT INTO processing_queue" in call[1])
+        queue_calls = [call for call in connection.calls if "INSERT INTO processing_queue" in call[1]]
+        enqueue_call = next(call for call in queue_calls if call[2][1] == ANALYZE_DART)
         self.assertEqual(enqueue_call[2][4], [402])
         self.assertEqual(
             enqueue_call[2][6],
             '{"stock_code": "005930", "source_type": "DART", "run_key": "DART_EVENT_402"}',
+        )
+        label_enqueue_call = next(call for call in queue_calls if call[2][1] == BACKFILL_DART_LABELS)
+        self.assertEqual(label_enqueue_call[2][4], [402])
+        self.assertEqual(
+            label_enqueue_call[2][6],
+            '{"stock_code": "005930", "source_type": "DART"}',
         )
 
     async def test_handler_accepts_json_string_raw_ids(self):

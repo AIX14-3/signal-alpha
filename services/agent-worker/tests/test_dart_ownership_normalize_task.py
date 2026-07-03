@@ -2,6 +2,7 @@ import unittest
 from datetime import date, datetime
 
 from app.orchestrator.dart.tasks import DartOwnershipNormalizeTaskHandler
+from app.orchestrator.queue.task_types import BACKFILL_DART_LABELS
 
 
 class FakeOwnershipRepository:
@@ -41,6 +42,15 @@ class FakeNormalizationRepository:
         return len(self.validation_logs)
 
 
+class FakeQueueRepository:
+    def __init__(self):
+        self.calls = []
+
+    async def enqueue(self, **kwargs):
+        self.calls.append(kwargs)
+        return 901
+
+
 def _row(**overrides):
     base = {
         "id": 77,
@@ -66,16 +76,19 @@ class DartOwnershipNormalizeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
     async def test_normalizes_ownership_events_with_external_anchor_and_metrics(self):
         ownership = FakeOwnershipRepository([_row()])
         normalization = FakeNormalizationRepository()
+        queue = FakeQueueRepository()
         handler = DartOwnershipNormalizeTaskHandler(
             connection=None,
             ownership_repository=ownership,
             normalization_repository=normalization,
+            queue_repository=queue,
         )
 
         result = await handler({"stock_id": 7, "task_context": {"stock_code": "005930"}})
 
         self.assertEqual(result["normalized_count"], 1)
         self.assertEqual(result["signal_event_ids"], [102])
+        self.assertEqual(result["label_backfill_task_id"], 901)
         self.assertEqual(ownership.calls, [{"stock_id": 7, "limit": 500}])
 
         doc = normalization.docs[0]
@@ -107,6 +120,11 @@ class DartOwnershipNormalizeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(normalization.validation_logs[0]["target_type"], "signal_event")
         self.assertEqual(normalization.validation_logs[0]["validation_type"], "source_trace")
+        self.assertEqual(queue.calls[0]["stock_id"], 7)
+        self.assertEqual(queue.calls[0]["task_type"], BACKFILL_DART_LABELS)
+        self.assertEqual(queue.calls[0]["source_signal_event_ids"], [102])
+        self.assertEqual(queue.calls[0]["task_context"], {"stock_code": "005930", "source_type": "DART"})
+        self.assertTrue(queue.calls[0]["dedupe"])
 
     async def test_negative_delta_becomes_negative_direction(self):
         normalization = FakeNormalizationRepository()
@@ -114,6 +132,7 @@ class DartOwnershipNormalizeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
             connection=None,
             ownership_repository=FakeOwnershipRepository([_row(shares_delta=-10, ratio_delta=-0.01)]),
             normalization_repository=normalization,
+            queue_repository=FakeQueueRepository(),
         )
 
         await handler({"stock_id": 7, "task_context": {"stock_code": "005930"}})
