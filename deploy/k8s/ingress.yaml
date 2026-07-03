@@ -11,6 +11,10 @@ metadata:
     app.kubernetes.io/part-of: signal-alpha
   annotations:
     argocd.argoproj.io/sync-wave: "3"
+    # GKE glbc 컨트롤러가 이 Ingress를 자기 것으로 인식하는 방식. 이 클러스터엔 `gce`
+    # IngressClass 리소스가 없어 spec.ingressClassName만으론 컨트롤러가 무시(이벤트 <none>,
+    # 프로비저닝 0) → 레거시 annotation으로 명시해야 LB가 생성된다.
+    kubernetes.io/ingress.class: "gce"
     # 예약한 글로벌 고정 IP 를 *이름*으로 참조(gce 외부 LB 전용, IP 값 아님).
     #   gcloud compute addresses create sa-ingress-ip --global
     # 와 이름 일치 → 재배포해도 도메인이 가리키는 IP 고정. 가비아 A레코드(www·api)가 이 IP 를 가리킨다.
@@ -20,7 +24,8 @@ metadata:
     # 인증서 발급 전에도 http 접속 허용. 발급(Active) 후 "false" 로 바꾸면 https 강제.
     kubernetes.io/ingress.allow-http: "true"
 spec:
-  ingressClassName: gce          # 글로벌 고정 IP·ManagedCertificate annotation 은 gce(외부 HTTP LB) 에서만 동작
+  # 클래스는 위 annotation(kubernetes.io/ingress.class: gce)으로 지정 — 이 클러스터엔
+  # gce IngressClass 리소스가 없어 ingressClassName은 쓰지 않는다.
   rules:
     # FE — www 서브도메인
     - host: www.signal-alpha.cloud
