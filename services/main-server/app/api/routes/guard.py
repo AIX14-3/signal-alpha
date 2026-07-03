@@ -134,9 +134,11 @@ async def approve_guard_recommendation(
             recommendation = await _decide_recommendation(
                 connection, recommendation_id, decision="approved", actor=actor
             )
+            # resume_at 은 명시적으로 비운다 — 제안 승인 차단에는 예정 재개 시각이 없으므로,
+            # 직전 시한부 차단이 남긴 stale "재개 예정" 이 공개 화면에 새 사유와 뒤섞이지 않게 한다.
             status_row = await connection.fetchrow(
                 "UPDATE guard_site_status"
-                " SET status = 'blocked', scope = $1, reason = $2,"
+                " SET status = 'blocked', scope = $1, reason = $2, resume_at = NULL,"
                 "     triggered_by = $3, updated_at = now()"
                 " WHERE id = 1 RETURNING *",
                 recommendation["suggested_scope"],
