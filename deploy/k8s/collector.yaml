@@ -12,7 +12,8 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "2"
 spec:
-  replicas: 1                  # advisory lock — 다중 기동해도 1개만 수집(중복 방지)
+  replicas: 0                  # KIWOOM_APP_KEY/SECRET 미보유로 가격 수집기 비활성(데모). 키 확보 시 1로 복원.
+
   strategy:
     type: Recreate             # 롤아웃 중 가격 데몬 2중기동 방지
   selector:
