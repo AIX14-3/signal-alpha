@@ -22,6 +22,8 @@ async def lifespan_with_database(app: FastAPI) -> AsyncIterator[None]:
     app.state.ops_daemon_task = None
     app.state.queue_drain_task = None
     app.state.queue_drain_status = None
+    app.state.guard_task = None
+    app.state.guard_status = None
 
     if settings.database_url:
         from signal_alpha_data_access import DatabaseSettings, create_pool
@@ -96,12 +98,32 @@ async def lifespan_with_database(app: FastAPI) -> AsyncIterator[None]:
                 name="queue-drain-daemon",
             )
 
+    # 지정학 리스크 Kill-Switch 감시 데몬 — guard_* 테이블은 backend DB 소유이므로
+    # backend 풀로만 돈다. BACKEND_DATABASE_URL 미설정(로컬 leak 가드)이면 기동하지 않음.
+    if settings.guard_enabled:
+        if app.state.backend_database_pool is None:
+            logger.warning(
+                "GUARD_ENABLED but BACKEND_DATABASE_URL is not set; guard daemon will not start"
+            )
+        else:
+            from app.guard.daemon import GuardRuntimeStatus, supervise_guard_daemon
+
+            app.state.guard_status = GuardRuntimeStatus()
+            app.state.guard_task = asyncio.create_task(
+                supervise_guard_daemon(
+                    app.state.backend_database_pool,
+                    settings,
+                    runtime_status=app.state.guard_status,
+                ),
+                name="guard-daemon",
+            )
+
     try:
         yield
     finally:
         # 순서 고정: 데몬 cancel → 완료 대기 → pool.close
         # (역순이면 데몬이 닫힌 풀을 쓰다 InterfaceError)
-        for attr in ("price_collector_task", "ops_daemon_task", "queue_drain_task"):
+        for attr in ("price_collector_task", "ops_daemon_task", "queue_drain_task", "guard_task"):
             task = getattr(app.state, attr, None)
             if task is not None:
                 task.cancel()
