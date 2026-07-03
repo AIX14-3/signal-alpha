@@ -50,12 +50,24 @@ spec:
               value: main-server
             - name: DATABASE_URL          # 백엔드 DB
               valueFrom: { secretKeyRef: { name: signal-alpha-secrets, key: BACKEND_DATABASE_URL } }
+          # Host 헤더를 ALLOWED_HOSTS 값으로 명시 — TrustedHostMiddleware가 pod IP Host를
+          # 거부(400)해 프로브가 실패, CrashLoop 되던 문제 해소.
           readinessProbe:
-            httpGet: { path: /health, port: 8000 }
+            httpGet:
+              path: /health
+              port: 8000
+              httpHeaders:
+                - name: Host
+                  value: api.signal-alpha.cloud
             initialDelaySeconds: 10
             periodSeconds: 10
           livenessProbe:
-            httpGet: { path: /health, port: 8000 }
+            httpGet:
+              path: /health
+              port: 8000
+              httpHeaders:
+                - name: Host
+                  value: api.signal-alpha.cloud
             initialDelaySeconds: 20
             periodSeconds: 20
           resources:
