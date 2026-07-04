@@ -131,6 +131,17 @@ Agent·ML의 분석 결과와 최종 시그널.
 | `portone_verifications` | PortOne 본인인증 기록(imp_uid 등) |
 | `terms_agreements` | 약관 동의 이력(약관 유형·버전별). `(user_id, terms_type, version)` 유니크 |
 
+## Zone H — 지정학 리스크 Kill-Switch (20260703_2035_guard_kill_switch.sql, target=backend)
+
+전쟁·휴전 등 지정학 충격 구간에 리포트 "노출"을 일시 차단하는 fail-safe 스위치. 발행 파이프라인은 건드리지 않고(노출 차단만), 관리자 수동 토글(안전 핵심 경로)이 워커 없이 동작해야 하므로 backend 소유. 워커 guard 데몬은 BACKEND_DATABASE_URL 로 이력·제안을 기록한다.
+
+| 테이블 | 역할 |
+| --- | --- |
+| `guard_site_status` | 차단 상태 싱글턴 1행(단일 진실원천). `status`(ok/blocked)·`scope`(report_generation/report_view/whole_site)·`mode`(manual/advisory/auto)·`reason`·`resume_at`. 공개 `GET /api/guard/status` 와 프론트 게이트가 읽는다 |
+| `guard_news_events` | GDELT 수집·LLM 판정한 뉴스 이력. `article_hash` 유니크(중복 제거), severity/direction/summary/regions 등 판정 결과 + `prompt_version` |
+| `guard_recommendations` | advisory 모드 차단 제안(pending/approved/rejected). 관리자 승인 시 `guard_site_status` 를 blocked 로 전환 |
+| `guard_status_audit` | 상태 변경 감사 로그(관리자·에이전트 공통 actor). action/scope/reason/actor |
+
 ## Zone G — Admin (011_admin.sql)
 
 | 테이블 | 역할 |
