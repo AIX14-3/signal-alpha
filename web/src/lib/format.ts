@@ -121,6 +121,16 @@ export function won(amount: number): string {
   return `₩${amount.toLocaleString("ko-KR")}`;
 }
 
+// DB 타임스탬프(UTC ISO)를 KST 로 표기. 원문을 그대로 slice 하면 UTC 시각이 로컬처럼
+// 보여 9시간 어긋난다(예: 차단 "재개 예정" 이 실제보다 이르게 표시). null/파싱실패는 "-".
+export function dateTimeKST(value: string | null | undefined): string {
+  if (!value) return "-";
+  const d = new Date(value);
+  return Number.isNaN(d.getTime())
+    ? value
+    : d.toLocaleString("ko-KR", { timeZone: "Asia/Seoul" });
+}
+
 // 수집/LLM 유래 URL은 신뢰할 수 없다 — href 로 렌더하기 전 http(s) 스킴만 허용한다.
 // javascript:/data:/vbscript: 등은 클릭 시 앱 오리진에서 스크립트가 실행돼 토큰 탈취로 이어질 수 있다.
 export function safeHttpUrl(value: string | null | undefined): string | null {
