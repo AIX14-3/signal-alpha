@@ -143,3 +143,14 @@ samsungbio_raw.html
 
 # 발표용 PPTX 빌드 (로컬 전용, 리포 미포함)
 hiring-pptx/
+
+# ML 리서치 산출물 (신호 확정 전 커밋 금지 — research-tooling-no-merge-until-signal)
+#   스윕 렛저/리포트 + 재생성 연구 CSV/유니버스 (전부 로컬·비추적)
+sweep_out/
+**/sweep_results.jsonl
+**/sweep_report.md
+*_krx250.csv
+krx_top250.json
+revenue_dart.csv
+prices_krx250.csv
+stockname_daily_krx250.csv
