@@ -80,9 +80,38 @@ python scripts/within_firm_hiring_revenue.py \
 판정 결과(between_ic·within_ic·BH-q·verdict)를 이 문서 §6 에 채우고
 [[hiring-revenue-nowcast-signal]] 메모리를 갱신할 것. 특허 앵커(`between≈±0.42/within≈0`)와 대조.
 
-## 6. 실 데이터 결과 (대기 중)
+## 5b. MCP-오프라인 실행 경로 (이 머신, DB·uv 없이)
 
-> TODO(실행 머신): 위 명령 출력의 주 신호 between_ic/within_ic/BH-q 와 피처표, verdict 기입.
+이 머신엔 `DATABASE_URL`·`uv`·산출 CSV 가 없어 §5(load_from_env)를 못 쓴다. 대신 **Supabase MCP**
+로 prod 를 읽고(채용은 DB에 온전: `hiring_raw_details` 7,842건, `stocks` 208), 매출만 OpenDART
+에서 새로 인출한다. 매출은 prod DB에 없음(`fundamentals`·`dart_raw_details` 0행 — handoff §2의
+"의도적 우회"). **필요한 외부 시크릿은 `DART_API_KEY` 하나뿐.** 전 과정 anaconda python 로 동작.
+
+신규 코드: `app/ml/research/hiring_mcp_offline.py`(precise rematch 재현 — 기존 `unique_norm_map`/
+`_norm_name` 재사용) + `scripts/within_firm_hiring_revenue_offline.py`(덤프→게이트).
+
+유니버스(2026-07-06 도출): distinct source_name(175) rematch → **7,644/7,842 매칭**, `≥15` 포스팅
+= **97 티커**(confirmed clean-94 와 근접; 잔차는 아카이브 `universe_kospi200.csv` 큐레이션 차이).
+드롭 198건은 비-exact 변형(예: "포스코"/"실리콘웍스"/"에코프로"/"현대중공업")로 precise 규약대로 제외.
+
+실행(작업 디렉터리 services/agent-worker):
+```bash
+# 1) 매출 CSV 인출(DART 키 필요, ~수십분 rate-limited)
+python -m app.ml.research.fundamentals_dart --tickers <clean-97> \
+  --start-year 2016 --end-year 2024 --out <scratch>/revenue_dart.csv
+# 2) 채용 포스팅 덤프(Supabase MCP → hiring_postings.jsonl)  ※ 에이전트가 수행
+# 3) 게이트
+python scripts/within_firm_hiring_revenue_offline.py \
+  --stocks-json <scratch>/stocks.json --postings-jsonl <scratch>/hiring_postings.jsonl \
+  --revenue-csv <scratch>/revenue_dart.csv --universe-json <scratch>/universe_clean15.json \
+  --feature-set volume+duty --n-perm 200
+```
+
+## 6. 실 데이터 결과 (대기 중 — `DART_API_KEY` 필요)
+
+> 준비 완료: 하니스·게이트·오프라인 로더·유니버스(97) 확정, 채용 데이터 MCP 접근 확인.
+> **남은 것: DART 키로 매출 CSV 생성 → 위 명령 실행.** 출력의 between_ic/within_ic/BH-q·피처표·
+> verdict 를 여기 기입하고 [[hiring-revenue-nowcast-signal]] 갱신. 특허 앵커(between≈±0.42/within≈0) 대조.
 
 ## 7. 주의
 
