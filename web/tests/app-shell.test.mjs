@@ -1,6 +1,34 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import test from "node:test";
+
+// apiClient 는 도메인별 모듈(lib/api/*.ts)로 분할되고 apiClient.ts 는 배럴 재-export 다.
+// 계약 검사는 배럴 + 도메인 모듈 소스를 합쳐서 본다(어느 모듈에 있든 무방).
+async function readApiSource() {
+  const barrelUrl = new URL("../src/lib/apiClient.ts", import.meta.url);
+  const apiDirUrl = new URL("../src/lib/api/", import.meta.url);
+  const files = await readdir(apiDirUrl);
+  const parts = await Promise.all([
+    readFile(barrelUrl, "utf8"),
+    ...files
+      .filter((name) => name.endsWith(".ts"))
+      .map((name) => readFile(new URL(name, apiDirUrl), "utf8")),
+  ]);
+  return parts.join("\n");
+}
+
+// admin 화면은 page.tsx + _components/*.tsx + _lib/*.ts 로 분할됐다.
+// UI 계약 검사는 admin 디렉토리 전체 소스를 합쳐서 본다(어느 파일에 있든 무방).
+async function readAdminSource() {
+  const adminDirUrl = new URL("../src/app/admin/", import.meta.url);
+  const entries = await readdir(adminDirUrl, { recursive: true });
+  const parts = await Promise.all(
+    entries
+      .filter((name) => /\.tsx?$/.test(name))
+      .map((name) => readFile(new URL(name.replace(/\\/g, "/"), adminDirUrl), "utf8")),
+  );
+  return parts.join("\n");
+}
 
 test("home page wires the search hero and report links", async () => {
   const page = await readFile(new URL("../src/app/page.tsx", import.meta.url), "utf8");
@@ -15,7 +43,7 @@ test("home page wires the search hero and report links", async () => {
 });
 
 test("api client exposes the contracted endpoints", async () => {
-  const apiClient = await readFile(new URL("../src/lib/apiClient.ts", import.meta.url), "utf8");
+  const apiClient = await readApiSource();
 
   for (const fn of [
     "searchStocks",
@@ -30,8 +58,8 @@ test("api client exposes the contracted endpoints", async () => {
 });
 
 test("admin UI exposes split schedule rows and schedule run history", async () => {
-  const page = await readFile(new URL("../src/app/admin/page.tsx", import.meta.url), "utf8");
-  const apiClient = await readFile(new URL("../src/lib/apiClient.ts", import.meta.url), "utf8");
+  const page = await readAdminSource();
+  const apiClient = await readApiSource();
 
   assert.match(apiClient, /export async function adminListScheduleRuns/);
   assert.match(apiClient, /frequency_minutes: number \| null/);
