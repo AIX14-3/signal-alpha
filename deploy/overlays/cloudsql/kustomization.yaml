@@ -104,22 +104,7 @@ patches:
         COOKIE_SAMESITE: "lax"
         COOKIE_DOMAIN: ".signal-alpha.cloud"                   # 맨 앞 점 → www·api 서브도메인 쿠키 공유
 
-  # ④ collector(가격 수집기) 일시 비활성 — KIWOOM_APP_KEY/APP_SECRET 미보유(팀원 담당)로
-  #    startup 시 "required" 체크에 걸려 CrashLoop → Argo wave2(앱)가 안 끝나 wave3(Ingress)로 못 넘어감.
-  #    키 확보 후 이 패치 제거(또는 replicas 1)로 복구.
-  - target:
-      kind: Deployment
-      name: collector
-    patch: |-
-      apiVersion: apps/v1
-      kind: Deployment
-      metadata:
-        name: collector
-        namespace: signal-alpha
-      spec:
-        replicas: 0
-
-  # ⑤ main-server 헬스체크 TCP 전환 — /health 는 TrustedHostMiddleware(ALLOWED_HOSTS)로 Host 를
+  # ④ main-server 헬스체크 TCP 전환 — /health 는 TrustedHostMiddleware(ALLOWED_HOSTS)로 Host 를
   #    강제하는데(설계·services/main-server/tests/test_security.py), 쿠버네티스/GCP LB 헬스체크는
   #    Host=PodIP 라 400 → Pod NotReady + LB 백엔드 UNHEALTHY → 도메인 서빙 불가.
   #    TCP 프로브는 Host 검사 없이 포트만 확인 → kubelet Ready + (BackendConfig 부재로 GKE가 probe에서
@@ -148,7 +133,7 @@ patches:
                   tcpSocket:
                     port: 8000
 
-# ⑥ 이미지 핀 — <PROJECT_ID> 를 실제 GCP 프로젝트로 교체하고 newTag 를 빌드 태그로.
+# ⑤ 이미지 핀 — <PROJECT_ID> 를 실제 GCP 프로젝트로 교체하고 newTag 를 빌드 태그로.
 #    base 의 placeholder 를 직접 고치지 않기 위해 오버레이에서 덮어쓴다.
 images:
   - name: signal-alpha-agent-worker
