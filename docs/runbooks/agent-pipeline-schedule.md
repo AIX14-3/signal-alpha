@@ -118,7 +118,6 @@ analyze_dart
 process_report
 normalize_report
 analyze_report
-embed_report
 NORMALIZE_HIRING
 NORMALIZE_PATENT
 NORMALIZE_DATALAB

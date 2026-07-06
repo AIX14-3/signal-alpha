@@ -1,13 +1,4 @@
-"""
-네이버 증권 리포트 목록 크롤러
-Signal α — Report RAG 데이터 수집용
-
-수집 대상:
-  - 종목: 삼성전자(005930) / SK하이닉스(000660) / 네이버(035420)
-  - 증권사: 네이버 금융 리서치 목록의 전체 증권사
-  - 유형: Earnings Review / Event Note / Company Report / Earnings Preview
-  - 기간: 2025.07.01 ~ 2025.09.30
-"""
+"""Naver securities report listing crawler for the canonical Report pipeline."""
 from __future__ import annotations
 
 import json

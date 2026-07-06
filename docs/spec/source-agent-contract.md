@@ -121,7 +121,7 @@ validate_input
 Report와 PRICE도 같은 형태로 맞춘다.
 
 ```text
-ReportAnalysisAgent.analyze(SourceAgentInput) -> SourceAgentOutput
+ReportAnalyzeTaskHandler(signal_events + report_valuation_facts) -> analysis_results + agent_results
 PriceAnalysisAgent.analyze(SourceAgentInput) -> SourceAgentOutput
 ```
 
@@ -130,7 +130,7 @@ DART는 `DartAnalysisGraphAgent`라는 호환 이름을 유지하지만 현재 L
 ```text
 load_context
   -> run_dart_agent
-  -> run_report_agent
+  -> run_report_deterministic_analyzer
   -> run_price_agent
   -> aggregate
   -> persist_final_signal
@@ -144,6 +144,6 @@ load_context
 
 - DB 마이그레이션 없음
 - 외부 API 경로 변경 없음
-- Report/PRICE Agent 전환은 후속 작업
+- Report Agent/RAG runtime is out of scope; Report stays on the deterministic valuation path.
 - 다중 source LangGraph workflow 구현은 후속 작업
 - `SourceResult` 제거 또는 대체 없음

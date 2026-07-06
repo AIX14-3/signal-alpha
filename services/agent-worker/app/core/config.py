@@ -70,7 +70,7 @@ class Settings:
         self.dart_llm_provider = getenv("DART_LLM_PROVIDER", "gemini").strip().lower()
         self.dart_llm_model = getenv("DART_LLM_MODEL", "")
         self.dart_llm_timeout_seconds = float(getenv("DART_LLM_TIMEOUT_SECONDS", "20"))
-        # Report RAG agent LLM 종합 — provider/key는 아래 openai/gemini 공유 설정 재사용.
+        # Report PDF parser LLM enrichment uses the shared OpenAI/Gemini settings below.
         self.report_use_llm = _env_bool("REPORT_USE_LLM", default=False)
         self.report_llm_provider = getenv("REPORT_LLM_PROVIDER", "gemini").strip().lower()
         self.report_llm_model = getenv("REPORT_LLM_MODEL", "")

@@ -86,6 +86,7 @@ def test_worker_runbooks_match_current_queue_and_auth_contracts():
     assert "`alternative` target runs Patent/DataLab collection" in schedule
     assert "Hiring collection remains the dedicated hiring crawler CronJob" in schedule
     assert "publish_signals" in schedule
+    assert "embed_report" not in schedule
     assert "ml_infer" not in schedule
     assert "meta_combine" not in schedule
     assert "risk_veto" not in schedule
@@ -103,6 +104,9 @@ def test_worker_runbooks_match_current_queue_and_auth_contracts():
     assert "/internal/queue/$task/run-batch" not in schedule
     assert "X-Internal-Token: $INTERNAL_API_TOKEN" in schedule
     assert "internal/tasks/collect_report/enqueue" in report_smoke
+    assert "aggregate_signal/run-batch" in report_smoke
+    assert "ml_infer" not in report_smoke
+    assert "meta_combine" not in report_smoke
     assert 'Headers @{"X-Internal-Token" = $env:INTERNAL_API_TOKEN}' in report_smoke
     assert "INTERNAL_API_TOKEN=" in gcp
     assert "SYNTHESIS_LLM_MODEL=gemini-2.5-flash" in staging

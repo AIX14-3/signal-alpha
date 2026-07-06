@@ -79,7 +79,7 @@ The internal `enqueue` / `run-batch` endpoints below remain available as dev/man
 ```text
 app/
   collectors/      # DART, report, alternative data collection
-  analyzers/       # LLM/RAG analysis and source scoring
+  analyzers/       # LLM-assisted analysis and source scoring
   orchestrator/    # End-to-end agent run coordination
   schemas/         # Worker-local schemas
   prompts/         # Prompt templates and prompt version notes
