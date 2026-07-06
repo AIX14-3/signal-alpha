@@ -1,6 +1,6 @@
 # Agent Worker Pipeline Schedule Runbook
 
-Updated: 2026-07-01
+Updated: 2026-07-06
 
 This runbook describes how to run Price, DART, Report, and alternative-data collection triggers, queue draining, analysis, and final data-direction aggregation on a schedule.
 
@@ -146,6 +146,25 @@ Why this order:
 - Downstream tasks infer source returns, combine return evidence, optionally re-query conflicted sources, aggregate source results, synthesize user-facing data-direction narratives, publish outputs, and record mature episode outcomes.
 
 Each queue type is idempotent through existing dedupe and upsert behavior. The fair-cycle runner processes at most one task per type per pass, so one source cannot monopolize a scheduled window.
+
+### 4.1 Legacy DART backfill queue cleanup
+
+The removed `backfill_dart_labels` task type is no longer part of the live DART queue topology. If an environment still has old active rows, inspect them first:
+
+```powershell
+cd services/agent-worker
+uv run python run_cleanup_legacy_queue_tasks.py
+```
+
+Expected output is a JSON summary with `dry_run=true`, `matched_count`, and `by_status`.
+
+After confirming the rows are legacy leftovers, close them explicitly:
+
+```powershell
+uv run python run_cleanup_legacy_queue_tasks.py --execute --limit 1000
+```
+
+This marks matching `pending`, `retrying`, and `running` rows as `skipped` with `finished_at` and `error_message`. It does not delete queue rows, touch successful/failed history, or re-enable DART ML label backfill.
 
 ## 5. Local PowerShell Runner
 
