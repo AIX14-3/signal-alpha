@@ -37,6 +37,9 @@ COPY services/agent-worker/run_collectors.py \
      services/agent-worker/run_analyzers.py \
      services/agent-worker/run_altdata_pipeline.sh \
      ./
+# run_collectors.py 가 런타임에 읽는 DataLab 카테고리 레지스트리(REGISTRY_PATH).
+# 이 파일을 함께 COPY 하지 않으면 수집 Job 이 FileNotFoundError 로 크래시한다.
+COPY services/agent-worker/category_registry.json ./
 
 # 인스턴스 분리 엔트리포인트(collector/scheduler/단발 드레인) + 공용 부트스트랩 모듈.
 # 이 이미지를 command 만 바꿔 collector(run_collector_instance) · scheduler
@@ -46,6 +49,7 @@ COPY services/agent-worker/mvp_runtime.py \
      services/agent-worker/run_collector_instance.py \
      services/agent-worker/run_scheduler_instance.py \
      services/agent-worker/run_worker_drain.py \
+     services/agent-worker/run_journal_outcomes.py \
      ./
 
 EXPOSE 8011

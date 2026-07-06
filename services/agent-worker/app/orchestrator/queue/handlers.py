@@ -13,11 +13,16 @@ from app.orchestrator.queue.task_types import (
     ANALYZE_PRICE,
     ANALYZE_REPORT,
     COLLECT_DART,
+    COLLECT_DART_EMPLOYEE,
+    COLLECT_DART_FINANCIALS,
+    COLLECT_DART_OWNERSHIP,
     COLLECT_REPORT,
-    EMBED_REPORT,
     ENRICH_HIRING,
     ENRICH_PATENT,
     NORMALIZE_DART,
+    NORMALIZE_DART_EMPLOYEE,
+    NORMALIZE_DART_FINANCIALS,
+    NORMALIZE_DART_OWNERSHIP,
     NORMALIZE_DATALAB,
     NORMALIZE_HIRING,
     NORMALIZE_PATENT,
@@ -45,7 +50,13 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
     from app.orchestrator.dart.tasks import (
         DartAnalyzeTaskHandler,
         DartCollectionTaskHandler,
+        DartEmployeeCollectionTaskHandler,
+        DartEmployeeNormalizeTaskHandler,
+        DartFinancialsCollectionTaskHandler,
+        DartFinancialsNormalizeTaskHandler,
         DartNormalizeTaskHandler,
+        DartOwnershipCollectionTaskHandler,
+        DartOwnershipNormalizeTaskHandler,
     )
     from app.orchestrator.aggregation.tasks import AggregateSignalTaskHandler
     from app.orchestrator.aggregation.requery import RequerySourceTaskHandler
@@ -65,7 +76,6 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
     from app.orchestrator.report.tasks import (
         ReportCollectTaskHandler,
         ReportAnalyzeTaskHandler,
-        ReportEmbedTaskHandler,
         ReportNormalizeTaskHandler,
         ReportProcessTaskHandler,
     )
@@ -75,6 +85,21 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
             connection=connection,
             settings=settings,
         ),
+        COLLECT_DART_OWNERSHIP: DartOwnershipCollectionTaskHandler(
+            connection=connection,
+            settings=settings,
+        ),
+        COLLECT_DART_FINANCIALS: DartFinancialsCollectionTaskHandler(
+            connection=connection,
+            settings=settings,
+        ),
+        COLLECT_DART_EMPLOYEE: DartEmployeeCollectionTaskHandler(
+            connection=connection,
+            settings=settings,
+        ),
+        NORMALIZE_DART_OWNERSHIP: DartOwnershipNormalizeTaskHandler(connection),
+        NORMALIZE_DART_FINANCIALS: DartFinancialsNormalizeTaskHandler(connection),
+        NORMALIZE_DART_EMPLOYEE: DartEmployeeNormalizeTaskHandler(connection),
         NORMALIZE_DART: DartNormalizeTaskHandler(connection),
         ANALYZE_DART: DartAnalyzeTaskHandler(
             connection, evidence_extractor=dart_evidence_extractor
@@ -98,9 +123,6 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
         COLLECT_REPORT: ReportCollectTaskHandler(connection=connection, settings=settings),
         PROCESS_REPORT: ReportProcessTaskHandler(connection=connection, settings=settings),
         NORMALIZE_REPORT: ReportNormalizeTaskHandler(connection=connection),
-        # RAG 임베딩 적재(#709) — REPORT_USE_LLM=true 일 때 PROCESS 가 인큐. 하류 enqueue 없음.
-        EMBED_REPORT: ReportEmbedTaskHandler(connection=connection, settings=settings),
-        # ANALYZE 는 settings 를 받아 REPORT_USE_LLM 시 RAG 재해석을 method_detail.report_rag 로 가법.
         ANALYZE_REPORT: ReportAnalyzeTaskHandler(connection=connection, settings=settings),
         # Alternative sources (hiring/patent/datalab) — converged onto the queue.
         NORMALIZE_HIRING: HiringNormalizeTaskHandler(connection),

@@ -1,17 +1,14 @@
 """DART 공시 이벤트 → 정형 피처(서술) 산출. (#546 Phase 0 · Wave 2 피처 강화)
 
-Phase 0(#546): 결정론 고정숫자 verdict(direction/score) 제거 — **피처 산출만**. 방향/점수는
-학습형 메타러너의 return 채널이 산출(D1). 각 결과는 ``direction="unknown"`` +
-``data_status="no_signal"`` 로 반환돼 AGGREGATE 점수 평균·방향 합의에서 자연 제외된다(소스는
-커버리지로만 노출, datalab/hiring Phase 0 와 동일 계약). 이벤트 메타(event_type/direction/impact
-카운트·이벤트 목록)는 서술 피처로 method_detail 에 보존 — src_dart base 모델·메타러너가 DB 에서
-직접 읽거나 근거로 쓴다.
+Phase 0(#546): 결정론 고정숫자 verdict(direction/score) 제거 — **피처 산출만**. 각 결과는
+``direction="unknown"`` + ``data_status="no_signal"`` 로 반환돼 AGGREGATE 점수 평균에서 제외된다.
+소스는 커버리지와 근거로만 노출된다. 이벤트 메타(event_type/direction/impact 카운트·이벤트 목록)는
+서술 피처로 method_detail 에 보존되어 score_breakdown.DART 및 SYNTHESIZE 근거로 쓰인다.
 
 Wave 2(피처 품질): method_detail 의 기존 키(source/data_status/event_count/direction_counts/
-event_type_counts/impact_level_counts/events)는 **불변**(Wave 3 융합 메타러너가 그대로 읽는다).
-Wave 3 가 소비할 정형 수치 피처는 **additive** 하게 ``method_detail["derived_features"]`` 블록에만
-추가한다(임팩트 가중·고임팩트 카운트·정정/리뷰 카운트·최신 공시일 등). 숫자(score/direction)는
-여전히 산출하지 않는다 — 판정은 Wave 3 결정론 융합 소유.
+event_type_counts/impact_level_counts/events)는 **불변**이다. 정형 수치 피처는 **additive** 하게
+``method_detail["derived_features"]`` 블록에만 추가한다(임팩트 가중·고임팩트 카운트·정정/리뷰 카운트·
+최신 공시일 등). 숫자(score/direction)는 여전히 산출하지 않는다.
 """
 
 from __future__ import annotations
@@ -122,12 +119,12 @@ def build_dart_analysis_result(events: list[dict[str, Any]]) -> DartAnalysisResu
     }
 
     return DartAnalysisResult(
-        direction="unknown",  # Phase 0: 판정 없음 — 메타러너 return 채널이 산출.
+        direction="unknown",  # Phase 0: 판정 없음 — 근거/커버리지로만 노출.
         score=0.0,
         summary=(
             f"DART 공시 {len(events)}건 피처 산출"
             f"(유형 {dict(event_type_counts)}, 방향 {dict(direction_counts)}). "
-            f"판정은 학습형 메타러너가 수행."
+            f"점수에는 반영하지 않고 근거로만 사용."
         ),
         risk_flags=unique_risk_flags,
         method_detail={
@@ -138,7 +135,7 @@ def build_dart_analysis_result(events: list[dict[str, Any]]) -> DartAnalysisResu
             "event_type_counts": dict(event_type_counts),
             "impact_level_counts": dict(impact_counts),
             "events": detail_events,
-            # Wave 2: Wave 3 융합이 소비할 정형 수치 피처(additive, 기존 키 불변).
+            # Wave 2: 근거/커버리지용 정형 수치 피처(additive, 기존 키 불변).
             "derived_features": derived_features,
         },
         needs_review=needs_review,

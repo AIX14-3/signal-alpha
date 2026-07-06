@@ -142,7 +142,7 @@ queue_row AS (
         'pending',
         'batch',
         ARRAY[raw_doc.raw_document_id],
-        '{"test": true, "flow": "sample_report_rag"}'::JSONB
+        '{"test": true, "flow": "sample_report_canonical"}'::JSONB
     FROM raw_doc
     RETURNING id AS queue_id
 ),

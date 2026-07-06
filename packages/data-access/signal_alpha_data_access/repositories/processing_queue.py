@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from typing import Any
 
 
@@ -222,6 +223,68 @@ class ProcessingQueueRepository:
             limit,
         )
 
+    async def count_tasks_by_status(
+        self,
+        *,
+        task_type: str,
+        statuses: Sequence[str],
+    ) -> dict[str, int]:
+        status_list = _status_list(statuses)
+        rows = await self._connection.fetch(
+            """
+            SELECT status, COUNT(*)::INT AS task_count
+            FROM processing_queue
+            WHERE task_type = $1
+              AND status = ANY($2::VARCHAR[])
+            GROUP BY status
+            ORDER BY status
+            """,
+            task_type,
+            status_list,
+        )
+        return {str(row["status"]): int(row["task_count"]) for row in rows}
+
+    async def mark_tasks_skipped_by_type(
+        self,
+        *,
+        task_type: str,
+        statuses: Sequence[str],
+        message: str,
+        limit: int = 1000,
+    ) -> int:
+        if limit <= 0:
+            raise ValueError("limit must be greater than zero")
+        status_list = _status_list(statuses)
+        updated_count = await self._connection.fetchval(
+            """
+            WITH target_tasks AS (
+                SELECT id
+                FROM processing_queue
+                WHERE task_type = $1
+                  AND status = ANY($2::VARCHAR[])
+                ORDER BY created_at ASC, id ASC
+                LIMIT $4
+                FOR UPDATE SKIP LOCKED
+            ),
+            updated_tasks AS (
+                UPDATE processing_queue
+                SET
+                    status = 'skipped',
+                    error_message = $3,
+                    finished_at = NOW(),
+                    updated_at = NOW()
+                WHERE id IN (SELECT id FROM target_tasks)
+                RETURNING id
+            )
+            SELECT COUNT(*)::INT FROM updated_tasks
+            """,
+            task_type,
+            status_list,
+            message,
+            limit,
+        )
+        return int(updated_count or 0)
+
     async def retry_task(self, *, task_id: int) -> Any:
         return await self._connection.fetchrow(
             """
@@ -375,6 +438,15 @@ def _jsonb(value: Any) -> str | None:
     if isinstance(value, str):
         return value
     return json.dumps(value, ensure_ascii=False)
+
+
+def _status_list(statuses: Sequence[str]) -> list[str]:
+    if isinstance(statuses, str):
+        raise ValueError("statuses must be a sequence of status strings")
+    status_list = list(statuses)
+    if not status_list:
+        raise ValueError("statuses must not be empty")
+    return status_list
 
 
 def _command_row_count(command_status: str) -> int:

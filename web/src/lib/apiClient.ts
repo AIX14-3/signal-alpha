@@ -10,3 +10,4 @@ export * from "./api/reports";
 export * from "./api/journal";
 export * from "./api/billing";
 export * from "./api/admin";
+export * from "./api/guard";

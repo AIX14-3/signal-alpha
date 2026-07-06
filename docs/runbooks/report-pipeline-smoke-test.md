@@ -1,6 +1,6 @@
 # Report 파이프라인 스모크 테스트 런북
 
-최종 갱신일: 2026-06-25
+최종 갱신일: 2026-07-06
 
 이 문서는 로컬 Docker 환경에서 증권사 리포트 수집부터 최종 Aggregator 반영까지 한 번에 확인하는 절차입니다.
 
@@ -15,8 +15,6 @@ collect_report
 -> process_report
 -> normalize_report
 -> analyze_report
--> ml_infer
--> meta_combine 또는 aggregate_signal
 -> aggregate_signal
 ```
 
@@ -201,33 +199,11 @@ docker compose exec -T postgres psql -U signal_alpha -d signal_alpha -c "select 
 - `source = REPORT`
 - `analysis_results`, `agent_results` row가 생성됨
 - `method_detail.report_quant.valuation`에 구조화 payload가 들어감
-- 후속 `ml_infer` 작업이 등록됨
+- 후속 `aggregate_signal` 작업이 등록됨
 
-## 6. ML/Aggregator까지 실행
+## 6. Aggregator 실행
 
-`analyze_report`는 `ml_infer`를 등록합니다. OHLCV 데이터가 부족하면 `ml_infer`는 모델 추론을 건너뛰고 `aggregate_signal`로 바로 넘깁니다.
-
-```powershell
-Invoke-RestMethod `
-  -Method Post `
-  -Uri "http://localhost:8011/internal/queue/ml_infer/run-batch" `
-  -Headers @{"X-Internal-Token" = $env:INTERNAL_API_TOKEN} `
-  -ContentType "application/json" `
-  -Body '{"max_runs":10}'
-```
-
-성공 추론이 있으면 `meta_combine`이 등록될 수 있으므로 한 번 실행합니다. pending 작업이 없으면 `run_count=0`이어도 정상입니다.
-
-```powershell
-Invoke-RestMethod `
-  -Method Post `
-  -Uri "http://localhost:8011/internal/queue/meta_combine/run-batch" `
-  -Headers @{"X-Internal-Token" = $env:INTERNAL_API_TOKEN} `
-  -ContentType "application/json" `
-  -Body '{"max_runs":10}'
-```
-
-마지막으로 Aggregator를 실행합니다.
+`analyze_report`는 Report `analysis_results`를 만든 뒤 `aggregate_signal`을 직접 등록합니다. Report 런타임은 Aggregator로 직접 이어집니다.
 
 ```powershell
 Invoke-RestMethod `
@@ -249,14 +225,14 @@ docker compose exec -T postgres psql -U signal_alpha -d signal_alpha -c "select 
 - `score_breakdown`에 `REPORT` 키가 있음
 - Report가 있으면 `score_breakdown.REPORT.data_status`가 `ok` 또는 `partial`
 - `score_breakdown.REPORT.valuation`이 존재함
-- Report는 근거 소스이므로 현재 `final_score` 산정에는 직접 반영되지 않음
+- Report는 근거 소스이며 현재 `final_score` 산정에는 직접 반영하지 않음
 
 ## 7. Queue 상태 점검
 
 전체 Report 관련 queue 상태:
 
 ```powershell
-docker compose exec -T postgres psql -U signal_alpha -d signal_alpha -c "select task_type, status, count(*) from processing_queue where task_type in ('collect_report','process_report','normalize_report','analyze_report','ml_infer','meta_combine','aggregate_signal') group by task_type, status order by task_type, status;"
+docker compose exec -T postgres psql -U signal_alpha -d signal_alpha -c "select task_type, status, count(*) from processing_queue where task_type in ('collect_report','process_report','normalize_report','analyze_report','aggregate_signal') group by task_type, status order by task_type, status;"
 ```
 
 최근 실패 작업:
@@ -298,11 +274,9 @@ docker compose exec -T agent-worker python -c "from datetime import datetime; fr
 
 ### `analyze_report` 이후 최종 결과가 없는 경우
 
-- `ml_infer` 작업이 pending 상태인지 확인합니다.
-- `ml_infer`가 `no_ohlcv`로 끝났다면 `aggregate_signal`이 등록됐는지 확인합니다.
-- `meta_combine`이 pending이면 먼저 실행한 뒤 `aggregate_signal`을 실행합니다.
+- `aggregate_signal` 작업이 pending 상태인지 확인합니다.
 - `aggregate_signal` 입력의 `source_analysis_result_ids`에 Report `analysis_result_id`가 들어있는지 `processing_queue.task_context`를 확인합니다.
-
+- 큐 드레인 데몬이 꺼져 있다면 `/internal/queue/run-cycle` 또는 `aggregate_signal/run-batch`를 실행합니다.
 ### `score_breakdown.REPORT`가 missing인 경우
 
 - `agent_results.method_detail.source`가 `REPORT`인지 확인합니다.
@@ -318,7 +292,7 @@ docker compose exec -T agent-worker python -c "from datetime import datetime; fr
 - `report_valuation_facts`에 구조화 fact가 저장됨
 - `normalize_report`가 `source_documents`, `signal_events`, `signal_metrics`를 생성함
 - `analyze_report`가 Report `analysis_results`, `agent_results`를 생성함
-- `ml_infer` 이후 `aggregate_signal`이 실행됨
+- 후속 `aggregate_signal` 작업이 등록됨
 - `final_signals.score_breakdown.REPORT.valuation`에서 구조화된 밸류에이션 payload를 확인할 수 있음
 - 사용자-facing 표현이 투자 행동 제안이 아니라 데이터 방향성, 근거, 소스 간 일치도, 추가 확인 필요 중심으로 유지됨
 

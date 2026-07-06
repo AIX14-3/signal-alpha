@@ -80,4 +80,4 @@ type AggregatedSignal = {    // 집계 결과 → final_signals
 - **report_valuation_facts**: 리포트별 목표가·forward EPS·적용 배수·내재 배수(`목표가/EPS`)·피어 그룹을 구조화 저장하는 테이블. 현재 Report 분석의 핵심 입력
 - **corp_code**: DART 고유 기업 코드 (종목코드와 별도 매핑 필요)
 
-> 참고: 과거 기획의 리포트 **PDF 임베딩/RAG 검색(pgvector)** 은 폐지되었습니다(`report_chunks` 테이블·`embed_report`·RAG retriever 제거). 현재 리포트 분석은 RAG가 아니라 결정론 밸류에이션 추출입니다. 상세는 `spec/report-rag-current-state.md`.
+> 참고: 과거 기획의 리포트 **PDF 임베딩/RAG 검색 런타임**은 폐지되었습니다(`embed_report`·RAG retriever 제거). `report_chunks` 스키마가 남아 있을 수 있지만 현재 Report 런타임에서는 적재하거나 조회하지 않습니다. 현재 리포트 분석은 RAG가 아니라 결정론 밸류에이션 추출입니다. 상세는 `spec/report-rag-current-state.md`.

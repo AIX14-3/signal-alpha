@@ -70,7 +70,7 @@ class Settings:
         self.dart_llm_provider = getenv("DART_LLM_PROVIDER", "gemini").strip().lower()
         self.dart_llm_model = getenv("DART_LLM_MODEL", "")
         self.dart_llm_timeout_seconds = float(getenv("DART_LLM_TIMEOUT_SECONDS", "20"))
-        # Report RAG agent LLM 종합 — provider/key는 아래 openai/gemini 공유 설정 재사용.
+        # Report PDF parser LLM enrichment uses the shared OpenAI/Gemini settings below.
         self.report_use_llm = _env_bool("REPORT_USE_LLM", default=False)
         self.report_llm_provider = getenv("REPORT_LLM_PROVIDER", "gemini").strip().lower()
         self.report_llm_model = getenv("REPORT_LLM_MODEL", "")
@@ -183,6 +183,27 @@ class Settings:
         self.queue_drain_daemon_enabled = _env_bool("QUEUE_DRAIN_DAEMON_ENABLED", default=False)
         # 큐가 비었을 때(전 task_type idle) 다음 순회까지 대기 초. 작업이 있으면 쉬지 않고 계속 드레인.
         self.queue_drain_interval_sec = float(getenv("QUEUE_DRAIN_INTERVAL_SEC", "5"))
+
+        # ── 지정학 리스크 Kill-Switch 뉴스 감시 데몬 (guard) ──
+        # GDELT 수집 → LLM 판정 → 차단 제안(advisory)/자동 차단(auto). guard_* 테이블은
+        # backend DB 소유(관리자 수동 토글이 워커 없이도 동작해야 하므로) — 데몬은
+        # BACKEND_DATABASE_URL 풀로만 쓴다(journal_outcomes 러너와 같은 워커→백엔드 계약).
+        # 기본 off(데몬 관례). LLM 키는 공유 gemini_api_key 재사용.
+        self.guard_enabled = _env_bool("GUARD_ENABLED", default=False)
+        self.guard_poll_interval_sec = float(getenv("GUARD_POLL_INTERVAL_SEC", "900"))
+        self.guard_keywords = _env_list(
+            "GUARD_KEYWORDS",
+            default=["war", "ceasefire", "sanctions", "military strike", "nuclear", "확전", "휴전"],
+        )
+        self.guard_news_max_articles = int(getenv("GUARD_NEWS_MAX_ARTICLES", "25"))
+        self.guard_llm_model = getenv("GUARD_LLM_MODEL", "")
+        self.guard_llm_timeout_seconds = float(getenv("GUARD_LLM_TIMEOUT_SECONDS", "20"))
+        # 차단 제안/실행 임계 severity(0~100).
+        self.guard_severity_threshold = int(getenv("GUARD_SEVERITY_THRESHOLD", "70"))
+        # auto 모드가 스스로 걸 수 있는 scope 상한 — whole_site 는 언제나 사람 승인 필요.
+        self.guard_auto_max_scope = getenv("GUARD_AUTO_MAX_SCOPE", "report_generation")
+        # auto 모드 상태 변경 최소 간격(깜빡임 방지 쿨다운).
+        self.guard_auto_cooldown_sec = float(getenv("GUARD_AUTO_COOLDOWN_SEC", "3600"))
 
         # ── 에피소드 아웃컴 리코더 (에이전트화 Wave 3 후속②) ──
         # 발행 후 실현 결과(forward return·direction hit)를 사후에 signal_episodes.outcome 에

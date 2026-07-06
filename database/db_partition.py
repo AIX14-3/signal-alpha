@@ -50,6 +50,13 @@ BACKEND_TABLES: frozenset[str] = frozenset(
         # 수집 스케줄 제어 평면 (어드민/MCP 가 쓰고 워커 스케줄러가 폴링). 백엔드 DB 보유.
         "collection_schedules",
         "collection_schedule_runs",
+        # 지정학 리스크 Kill-Switch — 관리자 수동 토글(안전 핵심 경로)이 워커 없이
+        # 동작해야 하므로 백엔드 소유. 워커 guard 데몬은 BACKEND_DATABASE_URL 로
+        # 이력·제안을 기록(journal_outcomes 와 같은 워커→백엔드 계약).
+        "guard_site_status",
+        "guard_news_events",
+        "guard_recommendations",
+        "guard_status_audit",
     }
 )
 

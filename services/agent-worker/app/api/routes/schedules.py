@@ -22,6 +22,9 @@ class ScheduleDartCollectionRequest(BaseModel):
     limit: int = Field(default=10, ge=1, le=1000)
     end_de: str | None = None
     priority: Literal["batch", "immediate"] = "batch"
+    include_ownership: bool = False
+    include_financials: bool = False
+    include_employee: bool = False
 
 
 class ScheduleReportCollectionRequest(BaseModel):
@@ -165,74 +168,18 @@ async def schedule_report_normalize_backfill(
     request: ScheduleReportNormalizeBackfillRequest,
     pool: Any = Depends(get_database_pool),
 ) -> dict[str, Any]:
-    from signal_alpha_data_access.repositories import (
-        ProcessingQueueRepository,
-        RawDetailRepository,
-        StockRepository,
+    from app.orchestrator.report.normalize_backfill import (
+        schedule_report_normalize_backfill as schedule_backfill,
     )
 
-    from app.orchestrator.queue.task_types import NORMALIZE_REPORT
-
     async with pool.acquire() as connection:
-        stock_id: int | None = None
-        if request.stock_code:
-            stock = await StockRepository(connection).get_by_ticker(request.stock_code)
-            if stock is None:
-                return {
-                    "dry_run": request.dry_run,
-                    "candidate_count": 0,
-                    "scheduled_count": 0,
-                    "enqueued_count": 0,
-                    "reused_count": 0,
-                    "task_ids": [],
-                    "candidates": [],
-                }
-            stock_id = int(stock["id"])
-
-        candidates = [
-            dict(row)
-            for row in await RawDetailRepository(connection).list_report_normalize_backfill_candidates(
-                stock_id=stock_id,
-                limit=request.limit,
-            )
-        ]
-
-        task_ids: list[int] = []
-        enqueued_count = 0
-        reused_count = 0
-        if not request.dry_run:
-            queue_repository = ProcessingQueueRepository(connection)
-            for candidate in candidates:
-                raw_document_id = int(candidate["raw_document_id"])
-                stock_code = str(candidate.get("stock_code") or request.stock_code or "").strip()
-                enqueue_result = await queue_repository.enqueue_with_status(
-                    stock_id=int(candidate["stock_id"]),
-                    task_type=NORMALIZE_REPORT,
-                    priority=request.priority,
-                    source_raw_ids=[raw_document_id],
-                    task_context={
-                        "raw_document_id": raw_document_id,
-                        "stock_code": stock_code,
-                        "source_type": "REPORT",
-                    },
-                    dedupe=True,
-                )
-                task_id = int(enqueue_result["task_id"])
-                task_ids.append(task_id)
-                if enqueue_result["reused"]:
-                    reused_count += 1
-                else:
-                    enqueued_count += 1
-
-        return {
-            "dry_run": request.dry_run,
-            "candidate_count": len(candidates),
-            "scheduled_count": len(task_ids),
-            "enqueued_count": enqueued_count,
-            "reused_count": reused_count,
-            "task_ids": task_ids,
-            "candidates": candidates,
-        }
+        return await schedule_backfill(
+            connection,
+            stock_code=request.stock_code,
+            limit=request.limit,
+            priority=request.priority,
+            dry_run=request.dry_run,
+        )
 
 
 @router.post("/dart/collect")
@@ -251,4 +198,7 @@ async def schedule_dart_collection(
             limit=request.limit,
             end_de=request.end_de,
             priority=request.priority,
+            include_ownership=request.include_ownership,
+            include_financials=request.include_financials,
+            include_employee=request.include_employee,
         )

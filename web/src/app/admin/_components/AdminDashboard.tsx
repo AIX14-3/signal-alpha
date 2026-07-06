@@ -13,6 +13,7 @@ import {
   type AdminUser,
 } from "@/lib/apiClient";
 import { won } from "@/lib/format";
+import { GuardControlCard } from "./GuardControlCard";
 import { QueueOpsCard } from "./QueueOpsCard";
 import { ScheduleCard } from "./ScheduleCard";
 
@@ -119,6 +120,7 @@ export function AdminDashboard({ onLogout }: { onLogout: () => Promise<void> }) 
         </div>
       )}
 
+      <GuardControlCard onError={setError} />
       <QueueOpsCard onError={setError} />
       <ScheduleCard onError={setError} />
 

@@ -1,6 +1,6 @@
 # Agent Worker Pipeline Schedule Runbook
 
-Updated: 2026-07-01
+Updated: 2026-07-06
 
 This runbook describes how to run Price, DART, Report, and alternative-data collection triggers, queue draining, analysis, and final data-direction aggregation on a schedule.
 
@@ -72,6 +72,7 @@ Policy skips that replace an otherwise due scheduled run are also written to `co
 
 Each schedule row can override execution policy without changing code:
 
+- DART collection: `dart_limit`, `dart_include_ownership`, `dart_include_financials`, `dart_include_employee`
 - Report collection: `report_limit`, `report_days_back`, `report_max_pages`
 - Alternative data: `alternative_collect_enabled`, `alternative_analyze_enabled`, `alternative_collect_timeout_seconds`, `alternative_analyze_timeout_seconds`
 - Backpressure: `backpressure_max_waiting`, `backpressure_max_failed`
@@ -110,7 +111,13 @@ The current default fair-cycle plan is:
 
 ```text
 collect_dart
+collect_dart_ownership
+collect_dart_financials
+collect_dart_employee
 collect_report
+normalize_dart_ownership
+normalize_dart_financials
+normalize_dart_employee
 normalize_dart
 analyze_dart
 process_report
@@ -127,20 +134,70 @@ ANALYZE_PATENT
 analyze_price
 src_infer
 return_combine
+requery_source
 aggregate_signal
 synthesize
 publish_signals
+record_episode_outcomes
 ```
 
 Why this order:
 
-- DART: `collect_dart -> normalize_dart -> analyze_dart`
+- DART: `collect_dart -> normalize_dart -> analyze_dart`; ownership events use `collect_dart_ownership -> normalize_dart_ownership -> analyze_dart`. Structured financials and employee tasks use `collect_dart_financials -> normalize_dart_financials -> analyze_dart` and `collect_dart_employee -> normalize_dart_employee -> analyze_dart` to promote official rows into canonical evidence events and metrics.
 - Report: `collect_report -> process_report -> normalize_report -> analyze_report`
 - PRICE: scheduler triggers collection; `analyze_price` reads DB data only.
 - Alternative data: external collection jobs feed normalize, enrich, and per-source analyze tasks.
-- Downstream tasks infer source returns, combine return evidence, aggregate source results, synthesize user-facing data-direction narratives, and publish approved outputs.
+- Downstream tasks infer source returns, combine return evidence, optionally re-query conflicted sources, aggregate source results, synthesize user-facing data-direction narratives, publish outputs, and record mature episode outcomes.
 
 Each queue type is idempotent through existing dedupe and upsert behavior. The fair-cycle runner processes at most one task per type per pass, so one source cannot monopolize a scheduled window.
+
+### 4.1 Legacy DART backfill queue cleanup
+
+The removed `backfill_dart_labels` task type is no longer part of the live DART queue topology. If an environment still has old active rows, inspect them first:
+
+```powershell
+cd services/agent-worker
+uv run python run_cleanup_legacy_queue_tasks.py
+```
+
+Expected output is a JSON summary with `dry_run=true`, `matched_count`, and `by_status`.
+
+After confirming the rows are legacy leftovers, close them explicitly:
+
+```powershell
+uv run python run_cleanup_legacy_queue_tasks.py --execute --limit 1000
+```
+
+This marks matching `pending`, `retrying`, and `running` rows as `skipped` with `finished_at` and `error_message`. It does not delete queue rows, touch successful/failed history, or re-enable DART ML label backfill.
+
+### 4.2 Report normalize backfill
+
+If Report PDF parsing already succeeded but the row was not promoted to canonical `source_documents` and `signal_events`, inspect candidates first:
+
+```powershell
+cd services/agent-worker
+uv run python run_report_normalize_backfill.py
+```
+
+To inspect a single stock:
+
+```powershell
+uv run python run_report_normalize_backfill.py --stock-code 005930 --limit 100
+```
+
+After confirming the candidates, enqueue `normalize_report` tasks:
+
+```powershell
+uv run python run_report_normalize_backfill.py --execute --limit 100 --priority batch
+```
+
+Then drain the queue:
+
+```powershell
+uv run python run_worker_drain.py
+```
+
+The candidate condition is `report_raw_details.parsing_status = 'success'` and no existing `source_documents(source_type='REPORT')` row for the same raw document. The backfill does not recollect PDFs or create user-facing recommendations; it restores Report evidence into the canonical path used for data direction, evidence, source agreement, and review flags.
 
 ## 5. Local PowerShell Runner
 
@@ -202,10 +259,12 @@ cd services/agent-worker
 Notes:
 
 - The worker must be running at `-WorkerBaseUrl`; tasks only call its HTTP endpoints.
-- Publishing needs a scoring source. `REPORT`/`PRICE` are not scoring sources
-  (`SCORING_SOURCES = {DART, HIRING, PATENT, DATALAB}` in `aggregation/tasks.py`),
-  so at least one of DART/hiring/patent/datalab must produce a result for
-  `final_signals.is_published` to become true.
+- DART currently publishes as evidence/coverage only: its agent returns
+  `data_status="no_signal"`, so it appears in `score_breakdown.DART` and
+  `SYNTHESIZE` but is excluded from the numeric `final_score` average. `REPORT`
+  and `PRICE` are also not numeric scoring sources. If no scoring source is
+  available, the worker can still publish an evidence row, but it should carry a
+  warning/review state rather than a directional score.
 - DART collection requires the `dart_corp_codes` mapping. The script runs an
   initial `POST /internal/dart/corp-codes/sync` on registration (skip with
   `-SkipInitialSync`) and re-syncs weekly via the `CorpCodeSync` task; without

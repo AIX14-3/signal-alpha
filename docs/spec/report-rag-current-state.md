@@ -28,13 +28,13 @@ Signal Alpha는 투자 추천 서비스가 아닙니다. 증권사 리포트 데
 
 ## 현재 요약
 
-- 구현된 런타임 경로는 `collect_report -> process_report -> normalize_report -> analyze_report`입니다.
+- 구현된 런타임 경로는 `collect_report -> process_report -> normalize_report -> analyze_report -> aggregate_signal`입니다.
 - `process_report`는 PDF 다운로드/저장, 텍스트 파싱, valuation fact 저장, `normalize_report` enqueue를 담당합니다.
 - `normalize_report`는 Report raw 문서를 `source_documents`, `signal_events`, `signal_metrics`로 승격하고 `analyze_report`를 등록합니다.
-- `analyze_report`는 Report 이벤트와 `report_valuation_facts`를 읽어 deterministic 분석 결과를 `analysis_results`, `agent_results`에 저장합니다. (코드상 `ml_infer`를 등록하지만 **#11에서 메타러너는 라이브 미배선이며 REPORT는 끝단 LLM 종합(SYNTHESIZE)에 근거로 합류**한다.)
+- `analyze_report`는 Report 이벤트와 `report_valuation_facts`를 읽어 deterministic 분석 결과를 `analysis_results`, `agent_results`에 저장하고, `aggregate_ctx.source_analysis_result_ids`에 Report `analysis_result_id`를 담아 `aggregate_signal`을 직접 등록합니다.
 - `report_valuation_facts`와 valuation summary/scenario band helper, 백테스트 fixture는 구현되어 있습니다.
 - `embed_report`, RAG retriever, Report Agent는 현재 코드에 없습니다.
-- Report 분석 결과 ID는 `aggregate_ctx.source_analysis_result_ids`를 통해 ML/Aggregator queue 입력으로 전달됩니다.
+- Report 분석 결과 ID는 `aggregate_ctx.source_analysis_result_ids`를 통해 Aggregator queue 입력으로 전달됩니다.
 - Aggregator는 `REPORT`를 최종 `score_breakdown` 근거 소스로 수용하고, Report valuation payload를 `score_breakdown.REPORT.valuation`에 보존합니다. Report는 현재 점수 산정 소스에는 포함하지 않습니다.
 
 ## 현재 canonical 흐름
@@ -140,7 +140,7 @@ ReportProcessTaskHandler
 
 - 사용자-facing 응답에는 PDF 원문이나 긴 verbatim 청크를 노출하지 않습니다.
 - 현재 런타임은 PDF 전체 원문이나 긴 청크를 사용자-facing 응답으로 내보내지 않습니다.
-- `report_chunks` 기반 내부 RAG 검색은 현재 런타임에 연결되어 있지 않습니다. RAG를 복구할 경우에도 사용자-facing 응답에는 원문 PDF 또는 긴 verbatim 청크를 노출하지 않는 원칙을 유지해야 합니다.
+- `report_chunks` 기반 내부 RAG 검색은 현재 런타임에 연결되어 있지 않으며 제품 범위에서도 제외되어 있습니다. 사용자-facing 응답에는 원문 PDF 또는 긴 verbatim 청크를 노출하지 않는 원칙을 유지해야 합니다.
 - 밸류에이션 재해석 확장에서는 원문 문장을 그대로 저장하는 대신 구조화된 fact와 패러프레이즈된 thesis를 별도 저장하는 방향을 우선합니다.
 
 ### 4. `normalize_report`
@@ -244,7 +244,7 @@ Report RAG는 복구 계획이 없습니다. 신규 개발은 `report_valuation_
 
 - `raw_documents`: source 공통 메타데이터
 - `report_raw_details`: 증권사 리포트 상세, PDF 상태, 파싱 필드
-- `report_chunks`: RAG 복구 후보 스키마입니다. 현재 Report 런타임에서는 청크/embedding을 저장하지 않습니다.
+- `report_chunks`: 과거 Report RAG 계획에서 추가된 비활성 스키마입니다. 현재 Report 런타임에서는 청크/embedding을 저장하거나 조회하지 않습니다.
 - `report_valuation_facts`: 리포트별 목표가 산정 fact, EPS, 적용 배수, 내재 배수, 피어 그룹
 - `processing_queue`: queue 작업 상태
 - `analysis_results`: Report 분석 대표 row를 저장합니다.

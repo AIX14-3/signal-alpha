@@ -783,9 +783,9 @@ erDiagram
 - `users` ← `phone` (025), `status`(active|suspended|deleted) (027). 사용자-소유(BACKEND) 테이블의 `user_id` FK는 `ON DELETE CASCADE`(하드 삭제, `20260626_0244`). `analysis_requests.user_id`(COLLECTION)는 `users`(BACKEND)와 cross-DB 라 **FK 없이 nullable 컬럼**으로 두고, 회원 삭제 시 분리는 앱레벨 publisher 가 담당한다(`20260626_0244`에서 FK 제거).
 - `signal_subscriptions` ← `next_billing_at`, `auto_renew` (027).
 
-## Zone H — Agent 임베딩/메모리 [COLLECTION] (`20260701_1218_agent_embeddings_pgvector.sql`)
+## Zone H — Agent 메모리/비활성 임베딩 스키마 [COLLECTION] (`20260701_1218_agent_embeddings_pgvector.sql`)
 
-7-에이전트화 Stage 0(임베딩 인프라). pgvector 확장 위에 RAG 청크·에피소드 메모리를 768차원으로 저장한다.
+pgvector 확장 위에 에피소드 메모리를 저장한다. `report_chunks`는 과거 Report RAG 계획에서 추가된 잔존 스키마이며 현재 Report 런타임에서는 적재하거나 조회하지 않는다.
 
 ```mermaid
 erDiagram
@@ -816,7 +816,7 @@ erDiagram
     stocks ||--o{ signal_episodes : ""
 ```
 
-`report_chunks`는 리포트 RAG 검색용 청크 임베딩, `signal_episodes`는 시그널 발화 에피소드 메모리(과거 유사상황 회상)다. 둘 다 pgvector `vector(768)` + HNSW cosine ANN 인덱스. 적용 DB에 `vector` 확장 선행 필요(Neon/Supabase 등 지원).
+`signal_episodes`는 시그널 발화 에피소드 메모리(과거 유사상황 회상)다. `report_chunks`는 현재 Report 런타임 저장/조회 경로가 아니며, 신규 Report 개발은 `report_valuation_facts`와 정규화/분석 테이블을 기준으로 한다. 적용 DB에는 `vector` 확장 선행이 필요하다(Neon/Supabase 등 지원).
 
 ## Legacy — report MVP [COLLECTION] ✅ 제거됨
 

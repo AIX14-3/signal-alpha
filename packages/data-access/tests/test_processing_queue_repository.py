@@ -10,10 +10,14 @@ class FakeConnection:
 
     async def fetch(self, sql, *args):
         self.calls.append(("fetch", sql, args))
+        if hasattr(self, "fetch_results"):
+            return self.fetch_results.pop(0)
         return [{"id": 50, "task_type": "normalize_dart", "status": "pending"}]
 
     async def fetchval(self, sql, *args):
         self.calls.append(("fetchval", sql, args))
+        if hasattr(self, "fetchval_results"):
+            return self.fetchval_results.pop(0)
         return 50
 
     async def fetchrow(self, sql, *args):
@@ -206,6 +210,72 @@ class ProcessingQueueRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("status = 'retrying'", connection.calls[0][1])
         self.assertIn("error_message = NULL", connection.calls[0][1])
         self.assertEqual(connection.calls[0][2], (77,))
+
+    async def test_count_tasks_by_status_groups_by_requested_statuses(self):
+        connection = FakeConnection()
+        connection.fetch_results = [
+            [
+                {"status": "pending", "task_count": 2},
+                {"status": "retrying", "task_count": 1},
+            ]
+        ]
+        repository = ProcessingQueueRepository(connection)
+
+        result = await repository.count_tasks_by_status(
+            task_type="backfill_dart_labels",
+            statuses=("pending", "retrying", "running"),
+        )
+
+        self.assertEqual(result, {"pending": 2, "retrying": 1})
+        sql = connection.calls[0][1]
+        self.assertIn("COUNT(*)::INT AS task_count", sql)
+        self.assertIn("GROUP BY status", sql)
+        self.assertEqual(
+            connection.calls[0][2],
+            ("backfill_dart_labels", ["pending", "retrying", "running"]),
+        )
+
+    async def test_mark_tasks_skipped_by_type_updates_only_limited_active_rows(self):
+        connection = FakeConnection()
+        connection.fetchval_results = [3]
+        repository = ProcessingQueueRepository(connection)
+
+        updated_count = await repository.mark_tasks_skipped_by_type(
+            task_type="backfill_dart_labels",
+            statuses=("pending", "retrying", "running"),
+            message="legacy task removed",
+            limit=100,
+        )
+
+        self.assertEqual(updated_count, 3)
+        sql = connection.calls[0][1]
+        self.assertIn("WITH target_tasks AS", sql)
+        self.assertIn("status = 'skipped'", sql)
+        self.assertIn("finished_at = NOW()", sql)
+        self.assertNotIn("DELETE FROM processing_queue", sql)
+        self.assertEqual(
+            connection.calls[0][2],
+            (
+                "backfill_dart_labels",
+                ["pending", "retrying", "running"],
+                "legacy task removed",
+                100,
+            ),
+        )
+
+    async def test_mark_tasks_skipped_by_type_rejects_non_positive_limit(self):
+        connection = FakeConnection()
+        repository = ProcessingQueueRepository(connection)
+
+        with self.assertRaises(ValueError):
+            await repository.mark_tasks_skipped_by_type(
+                task_type="backfill_dart_labels",
+                statuses=("pending",),
+                message="legacy task removed",
+                limit=0,
+            )
+
+        self.assertEqual(connection.calls, [])
 
 
 class _ProbeConnection(FakeConnection):

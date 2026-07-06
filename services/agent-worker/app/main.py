@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 
 from app.api.routes.dart import router as dart_router
 from app.api.routes.dead_letter import router as dead_letter_router
+from app.api.routes.guard import router as guard_router
 from app.api.routes.health import router as health_router
 from app.api.routes.observability import router as observability_router
 from app.api.routes.price import router as price_router
@@ -31,6 +32,7 @@ def create_app() -> FastAPI:
     app.include_router(observability_router)
     app.include_router(schedules_router)
     app.include_router(tasks_router)
+    app.include_router(guard_router)
 
     @app.middleware("http")
     async def _require_internal_token(request: Request, call_next):  # type: ignore[no-untyped-def]

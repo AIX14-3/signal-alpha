@@ -98,16 +98,20 @@ def _should_retry(task: Mapping[str, Any]) -> bool:
 DEFAULT_CYCLE_PLAN: dict[str, int] = {
     # 무거운 수집 — 작은 캡으로 throttle (collect_dart 는 문서 fetch 상한과 병행)
     "collect_dart": 2,
+    "collect_dart_ownership": 2,
+    "collect_dart_financials": 2,
+    "collect_dart_employee": 2,
     "collect_report": 2,
     # DART 후속 (가벼움)
+    "normalize_dart_ownership": 10,
+    "normalize_dart_financials": 10,
+    "normalize_dart_employee": 10,
     "normalize_dart": 10,
     "analyze_dart": 10,
     # Report 후속
     "process_report": 5,
     "normalize_report": 10,
     "analyze_report": 10,
-    # Report RAG 임베딩 — PDF 재추출 + 임베딩 API 호출이라 무거움 → 작은 캡으로 throttle.
-    "embed_report": 3,
     # Alternative 정규화/보강/분석 (수집은 독립 일배치)
     "NORMALIZE_HIRING": 10,
     "NORMALIZE_PATENT": 10,

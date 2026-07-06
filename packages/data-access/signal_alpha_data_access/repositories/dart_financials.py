@@ -133,6 +133,19 @@ class DartFinancialFactsRepository:
             int(bsns_year),
         )
 
+    async def list_for_normalization(self, *, stock_id: int, limit: int = 500) -> list[Any]:
+        return await self._connection.fetch(
+            """
+            SELECT *
+            FROM dart_financial_facts
+            WHERE stock_id = $1
+            ORDER BY bsns_year DESC, reprt_code DESC, fs_div, sj_div, id
+            LIMIT $2
+            """,
+            int(stock_id),
+            int(limit),
+        )
+
     async def get_latest_rcept_no(
         self,
         *,

@@ -79,7 +79,7 @@ The internal `enqueue` / `run-batch` endpoints below remain available as dev/man
 ```text
 app/
   collectors/      # DART, report, alternative data collection
-  analyzers/       # LLM/RAG analysis and source scoring
+  analyzers/       # LLM-assisted analysis and source scoring
   orchestrator/    # End-to-end agent run coordination
   schemas/         # Worker-local schemas
   prompts/         # Prompt templates and prompt version notes
@@ -120,6 +120,19 @@ collect_dart task
   -> RawEvidence(source="DART", content=document_text)
   -> raw_documents + dart_raw_details
   -> normalize_dart queue task
+
+collect_dart_ownership task
+  -> OpenDART majorstock/elestock
+  -> dart_ownership_events
+  -> normalize_dart_ownership queue task
+
+collect_dart_financials task
+  -> OpenDART fnlttSinglAcntAll
+  -> dart_financial_facts
+
+collect_dart_employee task
+  -> OpenDART empSttus
+  -> dart_employee_stats
 ```
 
 Required environment values:
@@ -132,6 +145,14 @@ DART_PAGE_SIZE=100
 DART_FETCH_DOCUMENTS=true
 DART_MAX_RETRIES=2
 DART_RETRY_BACKOFF_SECONDS=0.5
+DART_FINANCIALS_LOOKBACK_YEARS=3
+DART_FINANCIALS_REPRT_CODES=11011,11012,11013,11014
+DART_FINANCIALS_FS_PRIORITY=CFS,OFS
+DART_FINANCIALS_MIN_REQUEST_INTERVAL_SEC=0.2
+DART_OWNERSHIP_MIN_REQUEST_INTERVAL_SEC=0.2
+DART_EMPLOYEE_LOOKBACK_YEARS=3
+DART_EMPLOYEE_REPRT_CODES=11011,11012
+DART_EMPLOYEE_MIN_REQUEST_INTERVAL_SEC=0.2
 DART_USE_LLM=false
 DART_LLM_HIGH_IMPACT_ONLY=true
 DART_LLM_PROVIDER=gemini
@@ -144,6 +165,8 @@ OPENAI_BASE_URL=https://api.openai.com/v1
 ```
 
 Set `DART_FETCH_DOCUMENTS=false` to collect disclosure list metadata only.
+Structured financials and employee collection tasks currently stop at canonical table upsert.
+They do not emit `signal_events` or `analyze_dart` tasks yet.
 Retryable DART failures such as request-limit responses (`020`), maintenance (`800`), undefined
 server errors (`900`), HTTP 429/5xx, and transient network failures are retried with exponential
 backoff. Auth/IP/key failures such as `010`, `011`, `012`, and `901` fail without retry.
@@ -155,13 +178,16 @@ DART analysis runs through `DartAnalysisGraphAgent`, a direct three-step flow th
 delegates to the DART source agent, and records graph provenance in `agent_results.method_detail`.
 The former LangGraph dependency has been removed; the class name and stored `graph_nodes` metadata
 remain for compatibility. DART LLM 판정 경로는 제거되어 현재 DART agent는 features-only output
-(`direction="unknown"`, `data_status="no_signal"`)을 반환합니다. DART disclosure facts still join
-the final `SYNTHESIZE` explanation as evidence, but they do not change the deterministic/ML score.
+(`direction="unknown"`, `data_status="no_signal"`)을 반환합니다. Optional LLM evidence extraction
+adds summary/key-fact evidence only; it is not a DART verdict or ML label channel. DART disclosure
+and ownership facts still join the final `SYNTHESIZE` explanation as evidence, but they do not
+change `final_score`.
 
 After successful `analyze_dart`, the worker enqueues `aggregate_signal`. The aggregator reads the
 DART `agent_results` row and creates the user-facing `final_signals` row with `run_key="AGGREGATED"`.
-DART-only final signals are published as single-source data direction with `warning_level="CAUTION"`
-and `needs_review=true`.
+If DART is the only available source, the row can still be published for evidence coverage, but it
+has no scoring source: `score_breakdown.DART.data_status="no_signal"`, neutral score, and a review
+warning. The removed `backfill_dart_labels` task is not part of the live DART queue path.
 
 The `collect_dart` task expects `processing_queue.task_context` to include `stock_code`.
 Optional date filters use OpenDART parameter names:
@@ -264,12 +290,14 @@ operating profit, and net income. Extracted values are stored in `signal_metrics
 An external cron or operations script can enqueue DART collection tasks for active stocks:
 
 ```powershell
-$body = '{"limit":100,"end_de":"20260610","priority":"batch"}'
+$body = '{"limit":100,"end_de":"20260610","priority":"batch","include_ownership":true,"include_financials":true,"include_employee":true}'
 Invoke-RestMethod -Method Post -Uri "http://localhost:8011/internal/schedules/dart/collect" -Headers $headers -ContentType "application/json" -Body $body
 ```
 
-The schedule endpoint enqueues `collect_dart` tasks only. Actual analysis can run on a separate
-schedule by claiming/running `normalize_dart` and later analysis tasks independently.
+The schedule endpoint always enqueues `collect_dart`; the optional flags also enqueue
+`collect_dart_ownership`, `collect_dart_financials`, and `collect_dart_employee`. Ownership rows
+continue through `normalize_dart_ownership` and `analyze_dart`; financials and employee rows are
+stored for downstream use but are not signalized by the live queue path yet.
 
 ### DART Corp Code Sync
 

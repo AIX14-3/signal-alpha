@@ -4,20 +4,19 @@
 > 대상: `services/agent-worker`의 DART 수집, 정규화, 분석 흐름
 > 목적: DART 관련 개발을 이어갈 때 코드와 DB, API, 운영 방식을 한 번에 파악하기 위한 상세 스펙
 >
-> ⚠️ **#11 업데이트**: 주가(PRICE)는 기술지표 규칙으로 `RiskReport.price_prediction`을 **별도 제공**(ML/DL 주가는 `src_price` 별개; 집계 `final_score`는 `{DART, HIRING, PATENT, DATALAB}` 소스별 독립 유지, 뒤집지 않음). DART/REPORT=근거(LLM/결정론, 헤드라인 점수엔 메타러너 미사용). 발행은 `RISK_VETO` 게이트 뒤. 워커는 큐 드레인 데몬으로 발행까지 연속 소비. 상세 [architecture-diagram.md](../architecture-diagram.md).
->
-> ⚠️ **정리(#11 업데이트):** 이전 계획(§7 판정을 학습형 메타러너로 이관)은 폐기됐다. **메타러너는
-> 미사용**이며, DART는 base 예측/피처를 산출하고 최종 정제는 **끝단 LLM 종합(SYNTHESIZE)**이 공시를
-> 근거로 수행한다(+RISK_VETO). 점수 자체는 주가(PRICE) ML/DL이 원천이다. **수집·정규화(§5·§6)와
-> DB 적재(§4)는 그대로 유효·재사용**한다.
+> ⚠️ **현재 계약:** DART는 판정/점수/ML 라벨 채널이 아니라 근거·커버리지 소스다. 분석 결과는
+> `direction="unknown"`, `score=0`, `data_status="no_signal"`로 저장되어 `score_breakdown.DART`와
+> 끝단 LLM 종합(SYNTHESIZE)에 근거로 남지만 숫자 `final_score` 평균에는 들어가지 않는다.
+> `backfill_dart_labels` 이벤트스터디 라벨 백필과 DART 소스 ML 채널은 운영 경로에서 제거되었다.
+> **수집·정규화(§5·§6)와 DB 적재(§4)는 그대로 유효·재사용**한다.
 
 ---
 
 ## 1. 범위와 원칙
 
-DART 모듈은 OpenDART 공시 데이터를 수집하고, 원문을 표준 이벤트로 정규화한 뒤, LangGraph 기반 DART 분석 graph를 통해 rule 기반 분석과 선택적 LLM 분석을 실행하여 `analysis_results`와 `agent_results`를 생성한다.
+DART 모듈은 OpenDART 공시 및 ownership 데이터를 수집하고, 원천을 표준 이벤트로 정규화한 뒤, DART analysis flow를 통해 정형 피처와 근거를 `analysis_results`와 `agent_results`에 저장한다. 현재 flow는 LangGraph 의존성을 사용하지 않으며, class 이름과 `graph_nodes` 메타데이터만 호환 목적으로 유지한다.
 
-현재 DART 흐름은 세 개의 큐 작업으로 분리된다.
+현재 DART 흐름은 공시 경로와 정형 DART 경로로 분리된다.
 
 ```text
 collect_dart
@@ -28,15 +27,33 @@ collect_dart
   -> analysis_results + agent_results 저장
   -> aggregate_signal 큐 등록
   -> final_signals 생성
+
+collect_dart_ownership
+  -> dart_ownership_events 저장
+  -> normalize_dart_ownership 큐 등록
+  -> source_documents + signal_events + signal_metrics 생성
+  -> analyze_dart 큐 등록
+
+collect_dart_financials
+  -> dart_financial_facts 저장
+  -> normalize_dart_financials 큐 등록
+  -> source_documents + signal_events + signal_metrics 생성
+  -> analyze_dart 큐 등록
+
+collect_dart_employee
+  -> dart_employee_stats 저장
+  -> normalize_dart_employee 큐 등록
+  -> source_documents + signal_events + signal_metrics 생성
+  -> analyze_dart 큐 등록
 ```
 
 핵심 원칙은 다음과 같다.
 
 - 수집기는 OpenDART API 호출과 원천 저장까지만 담당한다.
 - 정규화기는 원문을 `source_documents`, `signal_events`, `signal_metrics`로 변환한다.
-- 분석기는 `signal_events`만 읽어 방향성, 점수, 리스크 플래그를 만든다.
-- `analyze_dart`는 LangGraph runner를 통해 입력 검증, 분석 실행, 출력 검증을 분리한다.
-- LLM은 기본값으로 꺼져 있으며, 활성화하더라도 고임팩트 공시 위주로 선택 적용한다.
+- 분석기는 `signal_events`만 읽어 정형 피처, 근거 요약, 리스크 플래그를 만든다. DART 자체 방향성/점수 verdict는 내지 않는다.
+- `analyze_dart`는 입력 검증, 분석 실행, 출력 검증 흐름을 거쳐 `agent_results.method_detail`에 provenance를 남긴다.
+- LLM은 기본값으로 꺼져 있으며, 활성화하더라도 고임팩트 공시의 근거(summary/key facts/risk flags) 추출에만 선택 적용한다.
 - 투자 추천 문구를 만들지 않고, 공시 기반 정보 방향성과 추가 검토 필요 여부만 제공한다.
 
 ---
@@ -46,15 +63,16 @@ collect_dart
 | 영역 | 위치 | 역할 |
 |---|---|---|
 | DART 수집 클라이언트 | `services/agent-worker/app/collectors/dart/disclosure.py` | `/list.json`, `/document.xml` 호출, ZIP/XML 텍스트 추출 |
+| DART 정형 수집 클라이언트 | `services/agent-worker/app/collectors/dart/financials_api.py`, `services/agent-worker/app/collectors/dart/employee_api.py` | `fnlttSinglAcntAll`, `empSttus` 호출 및 정형 fact/stat 파싱 |
 | corp code 동기화 | `services/agent-worker/app/collectors/dart/corp_codes.py` | `/corpCode.xml` ZIP/XML 다운로드 및 `dart_corp_codes` 적재 |
-| DART 작업 핸들러 | `services/agent-worker/app/orchestrator/dart/tasks.py` | `collect_dart`, `normalize_dart`, `analyze_dart` 실행 |
-| DART 스케줄러 | `services/agent-worker/app/orchestrator/dart/scheduler.py` | 타깃 종목의 수집 작업 일괄 등록 |
+| DART 작업 핸들러 | `services/agent-worker/app/orchestrator/dart/tasks.py` | `collect_dart`, `collect_dart_ownership`, `collect_dart_financials`, `collect_dart_employee`, `normalize_dart_ownership`, `normalize_dart_financials`, `normalize_dart_employee`, `normalize_dart`, `analyze_dart` 실행 |
+| DART 스케줄러 | `services/agent-worker/app/orchestrator/dart/scheduler.py` | 타깃 종목의 수집 작업 일괄 등록. `include_ownership`, `include_financials`, `include_employee`로 정형 수집 task 추가 |
 | 큐 핸들러 등록 | `services/agent-worker/app/orchestrator/queue/handlers.py` | task type별 핸들러 매핑 |
 | 분류 룰 | `services/agent-worker/app/analyzers/dart/rules.py` | 공시 제목 기반 event type, direction, impact 분류 |
-| rule 분석 | `services/agent-worker/app/analyzers/dart/source_result.py` | 이벤트 묶음의 방향성, 점수, 리스크 산출 |
-| LLM 분석 | `services/agent-worker/app/analyzers/dart/llm.py` | Gemini/OpenAI 선택 분석, JSON 검증, fallback |
-| DART Source Agent | `services/agent-worker/app/agents/dart/agent.py` | Source Agent 계약 기반 rule/LLM 분석 결과 생성 |
-| DART LangGraph runner | `services/agent-worker/app/agents/dart/graph.py` | 입력 검증, DART Agent 호출, 출력 메타데이터 보강 |
+| features-only 분석 | `services/agent-worker/app/analyzers/dart/source_result.py` | 이벤트 묶음의 정형 피처, 근거 요약, 리스크 플래그 산출 |
+| LLM 근거 추출 | `services/agent-worker/app/agents/dart/evidence.py` | Gemini/OpenAI 선택 근거 추출, JSON 검증, fallback |
+| DART Source Agent | `services/agent-worker/app/agents/dart/agent.py` | Source Agent 계약 기반 features-only 결과와 선택적 LLM 근거 생성 |
+| DART analysis flow | `services/agent-worker/app/agents/dart/graph.py` | 입력 검증, DART Agent 호출, 출력 메타데이터 보강 |
 | 재무 지표 추출 | `services/agent-worker/app/analyzers/dart/financials.py` | 공시 텍스트에서 매출/영업이익/순이익 수치 추출 |
 | API 라우터 | `services/agent-worker/app/api/routes/dart.py` | DART 조회, E2E 실행, corp code sync |
 
@@ -71,7 +89,7 @@ collect_dart
 | `DART_FETCH_DOCUMENTS` | `true` | `document.xml` ZIP/XML 원문 다운로드 여부 |
 | `DART_MAX_RETRIES` | `2` | 재시도 가능한 DART 오류의 최대 재시도 횟수 |
 | `DART_RETRY_BACKOFF_SECONDS` | `0.5` | 재시도 backoff 시작값 |
-| `DART_USE_LLM` | `false` | DART LLM 분석 사용 여부 |
+| `DART_USE_LLM` | `false` | DART LLM 근거 추출 사용 여부(판정/점수 아님) |
 | `DART_LLM_HIGH_IMPACT_ONLY` | `true` | high impact 이벤트에만 LLM 적용 |
 | `DART_LLM_PROVIDER` | `gemini` | `gemini` 또는 `openai` |
 | `DART_LLM_MODEL` | 없음 | 사용할 LLM 모델명 |
@@ -103,7 +121,7 @@ collect_dart
 | `signal_metrics` | 공시 수, 매출/영업이익/순이익 등 수치 지표 |
 | `validation_logs` | 정규화 trace 및 검증 로그 |
 | `analysis_results` | DART 분석 실행 결과 헤더 |
-| `agent_results` | DART agent의 점수, 신호, 상세 JSON, LLM 메타데이터 |
+| `agent_results` | DART agent의 no-signal 중립 저장값, 상세 JSON, 선택적 LLM 근거 메타데이터 |
 
 현재 `analyze_dart`는 `final_signals`를 직접 발행하지 않는다. 성공 시 `aggregate_signal`을
 enqueue하고, Aggregator가 `final_signals`를 생성한다.
@@ -282,9 +300,9 @@ sha256("DART|{stock_code}|{receipt_no}|{report_name}")
 
 `source_signal_event_ids`가 없으면 분석은 실행하지 않고 `skipped_reason='source_signal_event_ids_required'`를 반환한다.
 
-### LangGraph 실행 흐름
+### DART analysis flow
 
-`DartAnalyzeTaskHandler`는 DB에서 `signal_events`를 조회한 뒤 `SourceAgentInput`을 만들고 `DartAnalysisGraphAgent`를 호출한다. Graph는 다음 node로 구성된다.
+`DartAnalyzeTaskHandler`는 DB에서 `signal_events`를 조회한 뒤 `SourceAgentInput`을 만들고 `DartAnalysisGraphAgent`를 호출한다. 현재 구현은 LangGraph 런타임 의존성 없이 다음 단계를 직접 수행하며, `graph`/`graph_nodes` 메타데이터 이름만 저장 호환을 위해 유지한다.
 
 ```text
 validate_input
@@ -295,27 +313,27 @@ validate_input
 | node | 책임 |
 |---|---|
 | `validate_input` | `source='DART'`, `stock_code`, events 입력을 검증한다. 실패 시 `data_status='failed'`, `analysis_source='graph_validation'` 결과를 반환한다. |
-| `analyze` | 기존 `DartAnalysisAgent`를 호출해 rule 기반 분석 또는 선택적 LLM 분석을 실행한다. |
+| `analyze` | `DartAnalysisAgent`를 호출해 features-only 분석과 선택적 LLM 근거 추출을 실행한다. |
 | `validate_output` | `method_detail.graph='dart_analysis_v1'`, `method_detail.graph_nodes`를 추가한다. |
 
-### rule 기반 분석
+### features-only 분석
 
 `build_dart_analysis_result()`는 이벤트 목록을 기준으로 다음 값을 산출한다.
 
 | 산출값 | 설명 |
 |---|---|
-| `direction` | `positive`, `negative`, `neutral`, `mixed` |
-| `score` | -1.0~1.0 signed score. 기본 0.0에서 방향성과 impact weight로 보정 |
-| `summary` | 공식 공시 이벤트 수와 대표 공시명을 포함한 요약 |
+| `direction` | 항상 `unknown` |
+| `score` | 항상 `0.0`; DART는 숫자 점수 평균에서 제외 |
+| `summary` | 공식 공시/ownership 이벤트 수와 근거 사용 목적을 포함한 요약 |
 | `risk_flags` | 정정, 불확실 방향성, 검토 필요 등 |
-| `method_detail` | source, data_status, event_count, direction_counts, events |
-| `needs_review` | risk flag가 있거나 방향성이 mixed/unknown이면 true |
+| `method_detail` | source, data_status=`no_signal`, event_count, direction_counts, events, derived_features |
+| `needs_review` | risk flag가 있거나 선택적 LLM 근거 추출이 review 필요를 반환하면 true |
 
-impact weight는 `high=3`, `medium=2`, `low=1`이다. 현재 DART 기본 분류는 대부분 neutral/mixed/unknown이라 점수는 보수적으로 움직인다.
+impact weight는 `high=3`, `medium=2`, `low=1`이며 `derived_features.impact_weighted_count` 같은 근거 피처로만 보존된다. `backfill_dart_labels` 기반 이벤트스터디 라벨 백필은 더 이상 운영 큐 경로에 없다.
 
-### 선택적 LLM 분석
+### 선택적 LLM 근거 추출
 
-LLM 분석은 다음 조건을 만족할 때만 시도한다.
+LLM 근거 추출은 다음 조건을 만족할 때만 시도한다. 성공해도 DART 방향성/점수 verdict는 만들지 않는다.
 
 - `DART_USE_LLM=true`
 - provider별 API key와 model이 설정됨
@@ -332,19 +350,19 @@ LLM 응답은 strict JSON으로 검증한다. 다음 상황에서는 rule 결과
 - timeout 또는 API 오류
 - JSON 파싱 실패
 - 필수 필드 누락
-- direction/score/confidence 범위 오류
+- confidence 범위 오류 또는 필수 근거 필드 오류
 - 투자 추천/매수/매도/보유 권유성 문구 감지
 
-LLM 성공 시 `agent_results.method_detail`에는 rule detail에 더해 다음 값이 들어간다.
+LLM 성공 시 `agent_results.method_detail`에는 features-only detail에 더해 다음 값이 들어간다.
 
-- `analysis_source='llm'`
-- `llm_confidence`
-- `key_facts`
-- `data_status='partial'` 또는 `ok`
+- `llm_evidence.summary`
+- `llm_evidence.key_facts`
+- `llm_evidence.risk_flags`
+- `llm_evidence.confidence`
 - `graph='dart_analysis_v1'`
 - `graph_nodes=['validate_input', 'analyze', 'validate_output']`
 
-fallback 시 `analysis_source='rules_fallback'`, `llm_error`가 저장된다.
+fallback 시 `analysis_source='features'`는 유지되고, `llm_error`가 provenance로 저장된다.
 
 ### 저장 결과
 
@@ -355,11 +373,11 @@ fallback 시 `analysis_source='rules_fallback'`, `llm_error`가 저장된다.
 | `analysis_results` | `analysis_mode='dart_only'`, `run_key`, `base_score`, `source_signal_event_ids`, `warning`, `version` |
 | `agent_results` | `debate_method='D-1'`, `method_score`, `method_signal`, `method_detail`, `reliability_score=90`, `evidence_quality`, `llm_model`, `prompt_ver` |
 
-`DartAnalysisAgent`와 LangGraph 출력의 `score`는 -1.0~1.0 범위다. 단, 기존 DB 컬럼 `analysis_results.base_score`와 `agent_results.method_score`는 0~100 CHECK 제약을 유지하므로 저장 시 `(score + 1) * 50`으로 변환한다. 원본 source score는 `agent_results.method_detail.source_score`에 보존한다.
+`DartAnalysisAgent` 출력의 `score`는 현재 항상 `0.0`이다. 기존 DB 컬럼 `analysis_results.base_score`와 `agent_results.method_score`는 0~100 CHECK 제약을 유지하므로 저장 시 `(score + 1) * 50`으로 변환되어 50.0으로 기록된다. 이 값은 DART의 판정 점수가 아니라 no-signal 중립 저장값이다.
 
 `analysis_date`는 이벤트 날짜 중 최신값을 사용한다. 이벤트 날짜가 없으면 task context의 `analysis_date` 또는 실행일을 사용한다.
 
-`agent_results.method_detail`에는 DART graph 실행 경로를 확인할 수 있도록 `graph`와 `graph_nodes`가 포함된다.
+`agent_results.method_detail`에는 DART analysis flow 실행 경로를 확인할 수 있도록 `graph`와 `graph_nodes`가 포함된다.
 
 ---
 
@@ -503,8 +521,8 @@ curl "http://localhost:8011/internal/dart/analysis-results?stock_code=005930&lim
 - `/document.xml` ZIP/XML 파싱과 텍스트 추출
 - 공시명 분류 룰
 - event hash 안정성
-- rule 기반 DART analysis score/direction/risk flag
-- DART LangGraph runner 입력 검증, rule/LLM 경로, graph 메타데이터
+- features-only DART analysis의 no_signal 계약, derived_features, risk flag
+- DART analysis flow 입력 검증, LLM 근거 추출 옵션, graph 메타데이터
 - LLM JSON 파싱, 금지 문구 차단, fallback
 - 재무 지표 정규식 추출
 
@@ -530,16 +548,18 @@ curl "http://localhost:8011/internal/dart/analysis-results?stock_code=005930&lim
 
 현재 구현의 주요 한계는 다음과 같다.
 
-- DART 분석 결과는 `analysis_results`, `agent_results`에 저장되고, 성공 시 `aggregate_signal`이 enqueue되어 DART 단일 source 기반 `final_signals` 생성으로 이어진다.
-- rule 기반 방향성은 공시 제목 중심이라 실제 공시 내용의 긍정/부정 판단은 제한적이다.
-- LLM 분석은 선택 기능이며, provider key/model 설정이 없으면 자동으로 rule 분석만 사용한다.
+- DART 분석 결과는 `analysis_results`, `agent_results`에 저장되고, 성공 시 `aggregate_signal`이 enqueue되어 근거 커버리지용 `final_signals` 생성으로 이어진다.
+- DART는 현재 운영 경로에서 방향성/점수 판정을 내지 않는다. 공시 유형과 ownership 이벤트는 근거 피처로만 보존된다.
+- `collect_dart_financials`, `collect_dart_employee`는 정형 테이블 적재 후 `normalize_dart_financials`, `normalize_dart_employee`를 거쳐 `signal_events`, `signal_metrics`로 승격하고 `analyze_dart`에 근거 이벤트 묶음을 전달한다.
+- LLM 근거 추출은 선택 기능이며, provider key/model 설정이 없으면 자동으로 features-only 분석만 사용한다.
 - `DART_FETCH_DOCUMENTS=false`이면 원문 분석 품질이 낮아지고 공시명 중심 이벤트만 생성된다.
 - 정정 공시는 별도 이벤트로 남기지만, 원공시와 정정공시의 의미 차이를 비교하는 분석은 아직 없다.
-- 공시별 중요도와 점수 조정 룰은 보수적으로 설정되어 있으며, 실제 백테스트 결과에 따라 재조정이 필요하다.
+- 공시별 중요도는 `derived_features`로만 보존되며, 실제 점수화가 필요하면 별도 검증된 집계/모델 경로에서 다뤄야 한다.
 
 후속 구현 우선순위:
 
 1. 정정 공시와 원공시 비교 분석을 추가한다.
-2. 공급계약, 자사주, 유상증자, 감사의견 등 고임팩트 유형별 세부 rule을 확장한다.
-3. LLM 분석 결과의 `key_facts`를 UI evidence 패널에 연결한다.
-4. DART 분석 결과와 Report/PRICE 분석 결과를 같은 scoring policy로 통합한다.
+2. `dart_financial_facts`, `dart_employee_stats`의 파생 지표(YoY, 부채비율, headcount 변화 등)를 추가로 계산할지 결정한다.
+3. 공급계약, 자사주, 유상증자, 감사의견 등 고임팩트 유형별 세부 rule을 확장한다.
+4. LLM 근거 추출 결과의 `key_facts`를 UI evidence 패널에 연결한다.
+5. DART 근거와 Report/PRICE 근거가 같은 `score_breakdown`/SYNTHESIZE 표면에서 잘 구분되도록 UI 문구를 정리한다.

@@ -62,3 +62,43 @@ def test_database_docs_do_not_claim_report_legacy_is_kept_for_runtime_code():
     # 더 이상 '추후 DROP 준비를 위해 보존' 으로 서술하지 않는다.
     assert "20260630_1200_drop_legacy_report_raw_signal" in combined
     assert "추후 DROP migration 준비" not in combined
+
+
+def test_report_contract_docs_do_not_reintroduce_rag_runtime_contract():
+    docs = [
+        ROOT / "services" / "agent-worker" / "AGENTS.md",
+        ROOT / "database" / "README.md",
+        ROOT / "database" / "docs" / "table_descriptions.md",
+        ROOT / "database" / "erd" / "signal_alpha_core_erd.md",
+        ROOT / "docs" / "data-pipeline.md",
+        ROOT / "docs" / "glossary.md",
+        ROOT / "docs" / "spec" / "report-rag-current-state.md",
+        ROOT / "docs" / "db-migration-conventions.md",
+        ROOT / "docs" / "spec" / "data-layers-l2-l10-spec.md",
+        ROOT / "docs" / "spec" / "data-foundations-and-l1-l10-workflow.md",
+        ROOT / "docs" / "spec" / "cross-layer-orchestration-and-risks.md",
+        ROOT / "docs" / "spec" / "report-valuation-reinterpretation-strategy.md",
+    ]
+    combined = "\n".join(path.read_text(encoding="utf-8") for path in docs)
+
+    forbidden_contracts = [
+        "raw_documents -> report_raw_details -> report_chunks",
+        "report_chunks` 테이블 제거",
+        "report_chunks` 테이블·`embed_report`",
+        "리포트 임베딩/RAG 는 7-에이전트화 Stage 0 에서 pgvector",
+        "에이전트 배선은 Stage 1/2",
+        "RAG 리콜 정확 보장",
+        "RAG 복구 후보",
+        "마이그레이션 전체에 vector 흔적 0",
+        "기존 `report_chunks`",
+        "ALTER TABLE report_chunks",
+        "`report_chunks` 적재",
+        "RAG 검색(report_chunks)",
+        "RAG를 복구할 경우 `report_chunks`",
+        "과거 유사 re-rating 사례 RAG",
+    ]
+
+    for phrase in forbidden_contracts:
+        assert phrase not in combined
+
+    assert "Report 런타임에서는 `report_chunks`를 적재하거나 조회하지 않습니다" in combined

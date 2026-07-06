@@ -107,13 +107,13 @@ Agent·ML의 분석 결과와 최종 시그널.
 | `score_history` | 최종 점수 변동 이력. 시그널/분석 결과별 점수 추적 |
 | `backtest_results` | 최종 시그널의 사후 성과(5일 변화율·적중 여부) 백테스트 |
 
-## Zone E — Agent 임베딩/메모리 (20260701_1218_agent_embeddings_pgvector.sql)
+## Zone E — Agent 메모리/비활성 임베딩 스키마 (20260701_1218_agent_embeddings_pgvector.sql)
 
-7-에이전트화 Stage 0 임베딩 인프라(pgvector, 768차원). RAG 검색과 에피소드 메모리가 같은 차원을 공용.
+에피소드 메모리용 pgvector 스키마와, 현재 런타임에서 사용하지 않는 Report RAG 잔존 스키마가 함께 존재한다.
 
 | 테이블 | 역할 |
 | --- | --- |
-| `report_chunks` | 증권사 리포트 본문을 청크로 나눠 임베딩(`vector(768)`) 저장하는 RAG 검색용 테이블. `report_raw_details`(PK `raw_document_id`) 파생이라 원본 삭제 시 동반 삭제. `(report_raw_detail_id, chunk_index)` 유니크, HNSW 코사인 인덱스. 종목 필터를 exact 스캔으로 만들기 위한 `stock_id`(→`stocks`) 비정규화 + btree 인덱스(RAG 리콜 정확 보장) |
+| `report_chunks` | 과거 Report RAG 계획에서 추가된 청크 임베딩 테이블. 현재 Report 런타임에서는 `report_chunks`를 적재하거나 조회하지 않으며, 신규 Report 코드는 `report_valuation_facts`와 정규화/분석 테이블을 사용한다. |
 | `signal_episodes` | 종목·일자·`run_key` 단위 시그널 발화 1건의 에피소드 메모리. 발화 소스/방향/점수 요약(`sources` JSONB)과 임베딩을 보관하고 성패(`outcome` JSONB)는 사후 기록(NULL 시작). `(stock_id, signal_date, run_key)` 유니크, HNSW 코사인 인덱스 |
 
 ## Zone F — User 확장 (010_users_billing_extend.sql)
@@ -131,6 +131,17 @@ Agent·ML의 분석 결과와 최종 시그널.
 | `portone_verifications` | PortOne 본인인증 기록(imp_uid 등) |
 | `terms_agreements` | 약관 동의 이력(약관 유형·버전별). `(user_id, terms_type, version)` 유니크 |
 
+## Zone H — 지정학 리스크 Kill-Switch (20260703_2035_guard_kill_switch.sql, target=backend)
+
+전쟁·휴전 등 지정학 충격 구간에 리포트 "노출"을 일시 차단하는 fail-safe 스위치. 발행 파이프라인은 건드리지 않고(노출 차단만), 관리자 수동 토글(안전 핵심 경로)이 워커 없이 동작해야 하므로 backend 소유. 워커 guard 데몬은 BACKEND_DATABASE_URL 로 이력·제안을 기록한다.
+
+| 테이블 | 역할 |
+| --- | --- |
+| `guard_site_status` | 차단 상태 싱글턴 1행(단일 진실원천). `status`(ok/blocked)·`scope`(report_generation/report_view/whole_site)·`mode`(manual/advisory/auto)·`reason`·`resume_at`. 공개 `GET /api/guard/status` 와 프론트 게이트가 읽는다 |
+| `guard_news_events` | GDELT 수집·LLM 판정한 뉴스 이력. `article_hash` 유니크(중복 제거), severity/direction/summary/regions 등 판정 결과 + `prompt_version` |
+| `guard_recommendations` | advisory 모드 차단 제안(pending/approved/rejected). 관리자 승인 시 `guard_site_status` 를 blocked 로 전환 |
+| `guard_status_audit` | 상태 변경 감사 로그(관리자·에이전트 공통 actor). action/scope/reason/actor |
+
 ## Zone G — Admin (011_admin.sql)
 
 | 테이블 | 역할 |
@@ -141,7 +152,7 @@ Agent·ML의 분석 결과와 최종 시그널.
 레거시 `report_raw` / `report_signal`(구 report RAG MVP)은
 `20260630_1200_drop_legacy_report_raw_signal.sql`로 DROP 됐다. Report 런타임은 공용 경로
 (`raw_documents` → `report_raw_details` 이후 `source_documents`/`signal_events`/`signal_metrics`
-+ 분석 테이블)만 사용한다. (`report_chunks`는 RAG 복구 후보 스키마이며 현재 런타임 저장 경로가 아니다.)
++ 분석 테이블)만 사용한다. (`report_chunks`는 현재 Report 런타임 저장/조회 경로가 아니다.)
 
 ## 시스템 테이블
 

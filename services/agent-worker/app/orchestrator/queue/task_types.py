@@ -1,5 +1,11 @@
 COLLECT_DART = "collect_dart"
+COLLECT_DART_OWNERSHIP = "collect_dart_ownership"
+COLLECT_DART_FINANCIALS = "collect_dart_financials"
+COLLECT_DART_EMPLOYEE = "collect_dart_employee"
 NORMALIZE_DART = "normalize_dart"
+NORMALIZE_DART_OWNERSHIP = "normalize_dart_ownership"
+NORMALIZE_DART_FINANCIALS = "normalize_dart_financials"
+NORMALIZE_DART_EMPLOYEE = "normalize_dart_employee"
 ANALYZE_DART = "analyze_dart"
 AGGREGATE_SIGNAL = "aggregate_signal"
 
@@ -47,12 +53,6 @@ COLLECT_REPORT = "collect_report"
 PROCESS_REPORT = "process_report"
 NORMALIZE_REPORT = "normalize_report"
 ANALYZE_REPORT = "analyze_report"
-
-# Report RAG 임베딩 적재 — 파싱된 리포트 PDF 본문을 청킹→Gemini 임베딩→report_chunks(#709)
-# 적재. 결정론 점수 경로(process→normalize→analyze)와 분리된 사이드 태스크로, PROCESS 뒤에서
-# REPORT_USE_LLM=true 일 때만 인큐된다(NORMALIZE 아님 — 정규화는 임베딩을 기다리지 않는다).
-# 하류 enqueue 없음. 12 chars (task_type VARCHAR(50)).
-EMBED_REPORT = "embed_report"
 
 # Alternative sources (hiring/patent/datalab). The values MUST match the strings
 # the collectors enqueue verbatim: BaseCollector / DataLabCollector / PatentCollector

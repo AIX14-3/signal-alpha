@@ -155,6 +155,16 @@ def _report_policy(schedule: dict[str, Any]) -> dict[str, int | str]:
     }
 
 
+def _dart_policy(schedule: dict[str, Any]) -> dict[str, int | str | bool]:
+    return {
+        "limit": _coerce_int(schedule.get("dart_limit"), 10, minimum=1, maximum=1000),
+        "priority": DEFAULT_PRIORITY,
+        "include_ownership": _coerce_bool(schedule.get("dart_include_ownership"), False),
+        "include_financials": _coerce_bool(schedule.get("dart_include_financials"), False),
+        "include_employee": _coerce_bool(schedule.get("dart_include_employee"), False),
+    }
+
+
 def _alternative_policy(schedule: dict[str, Any]) -> dict[str, Any]:
     return {
         "collect_enabled": _coerce_bool(
@@ -354,7 +364,7 @@ async def _fire(
         try:
             dart = await _post(
                 "/internal/schedules/dart/collect",
-                {"limit": int(schedule.get("dart_limit") or 10), "priority": DEFAULT_PRIORITY},
+                _dart_policy(schedule),
             )
             summary["dart"] = dart.get("scheduled_count") if isinstance(dart, dict) else dart
         except Exception as exc:  # noqa: BLE001 - one target must not block the rest
@@ -487,7 +497,7 @@ def _schedule_backpressure_limits(schedule: dict[str, Any]) -> tuple[int, int]:
 
 # 스케줄 target → processing_queue.task_type 부분 문자열(대소문자 무시) 매핑.
 # enqueue 지점 명명(app/orchestrator/queue/task_types.py): DART/REPORT/price 계열은 소문자
-# (collect_dart/normalize_dart/…, collect_report/…/embed_report, analyze_price),
+# (collect_dart/normalize_dart/…, collect_report/process_report/normalize_report/analyze_report, analyze_price),
 # alternative 는 대문자 소스명(NORMALIZE_/ENRICH_/ANALYZE_ × HIRING/PATENT/DATALAB).
 # 소스명 부분 일치라 같은 소스의 새 스테이지가 추가돼도 대체로 자동으로 따라온다.
 _TARGET_TASK_TYPE_SUBSTRINGS: dict[str, tuple[str, ...]] = {
@@ -660,6 +670,7 @@ def _scheduler_dry_run(
         "next_run_at": _next_run_at(evaluated_at, schedule).isoformat(),
         "backpressure": backpressure,
         "policy": {
+            "dart": _dart_policy(schedule),
             "report": _report_policy(schedule),
             "alternative": _alternative_policy(schedule),
         },

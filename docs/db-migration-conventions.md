@@ -25,19 +25,18 @@
 보통은 과거 마이그레이션을 수정하지 않고 **새 drop 마이그레이션**을 추가한다
 (예: `012_drop_sec_filings.sql`) — 이미 배포된 DB 체크섬을 보존하기 위함.
 
-**예외 — 이번 임베딩/pgvector 완전 제거(배포 전, 운영 DB 없음):**
-pgvector 자체를 의존성에서 빼고 로컬도 일반 `postgres:16` 으로 가기 위해, 과거 마이그레이션을
-직접 편집했다(운영 DB 부재라 체크섬 리셋 비용을 감수).
-- `001_baseline.sql`: `CREATE EXTENSION vector` 와 `report_chunks` 테이블/인덱스 제거.
-- `021_dart_chunks.sql`, `022_dart_document_features.sql`: 임베딩 전용 → **파일 삭제**.
-- → 마이그레이션 전체에 vector 흔적 0. fresh DB 는 pgvector 없이 적용 가능.
+**현재 pgvector 관련 상태:**
+과거에는 배포 전 스키마 정리 과정에서 pgvector 제거 브랜치가 있었지만, 이후
+`20260701_1218_agent_embeddings_pgvector.sql`로 pgvector 기반 `signal_episodes`와
+비활성 `report_chunks` 스키마가 추가됐다. 따라서 현재 기준에서는 vector 확장 자체를 제거된
+상태로 가정하면 안 된다.
 
-⚠️ **체크섬 리셋 필요**: 이 브랜치를 pull 한 기존 로컬/dev DB 는 `001` 체크섬 불일치 +
-삭제된 021/022 ledger 잔존으로 `migrate` 가 실패한다. **DB 를 재생성**(drop→create→
-`migrate apply --seeds`)하면 깨끗하게 적용된다. 배포(GCP Cloud SQL)는 신규 인스턴스라 무관.
+- `signal_episodes`: 에피소드 메모리용 활성 스키마.
+- `report_chunks`: 과거 Report RAG 계획에서 추가된 비활성 스키마. 현재 Report 런타임에서는
+  적재하거나 조회하지 않는다.
+- pgvector 관련 변경도 이미 적용된 마이그레이션을 수정하지 말고 새 타임스탬프 마이그레이션으로 처리한다.
 
-## 검증 결과(이 브랜치)
-- 전체 마이그레이션(27) + 시드(7) 를 **일반 `postgres:16`(pgvector 미설치)** 에 fresh 적용 성공.
-- `check_schema.py` → **드리프트 없음**(전체 시퀀스 무결성 확인).
-- 임베딩 제거 후 테이블 **68 → 65**, `vector` 타입/확장/인덱스 0, `CREATE EXTENSION` 0.
-- docker-compose 이미지 `pgvector/pgvector:pg16` → `postgres:16`.
+## 검증 원칙
+- 전체 마이그레이션 + 시드를 fresh DB에 적용한다.
+- `database/tools/check_schema.py`로 드리프트 없음 여부를 확인한다.
+- pgvector가 필요한 마이그레이션이 있으므로 검증 DB도 `vector` 확장을 지원해야 한다.

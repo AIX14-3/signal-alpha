@@ -30,9 +30,11 @@ class DartSourceResultTest(unittest.TestCase):
             ]
         )
 
-        # 판정 없음 — 메타러너 return 채널이 산출.
+        # 판정 없음 — DART는 근거/커버리지로만 노출.
         self.assertEqual(result.direction, "unknown")
         self.assertEqual(result.score, 0.0)
+        self.assertNotIn("메타러너", result.summary)
+        self.assertIn("근거", result.summary)
         self.assertEqual(result.method_detail["data_status"], "no_signal")
         self.assertEqual(result.method_detail["event_count"], 1)
         # 서술 피처는 보존.
@@ -142,7 +144,7 @@ class DartSourceResultTest(unittest.TestCase):
         self.assertIsNone(features["latest_event_date"])
 
     def test_existing_method_detail_keys_unchanged(self):
-        # Wave 3 융합이 그대로 읽는 기존 키/형태는 불변 — derived_features 만 additive.
+        # 기존 키/형태는 불변 — derived_features 만 additive.
         populated = build_dart_analysis_result(
             [
                 {
