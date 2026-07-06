@@ -369,7 +369,9 @@ def _within_firm_verdict(cell: Cell) -> str | None:
             stock_ids=panel.stock_ids,
             feature_names=[panel.feature_names[i] for i in cols], dropped=Counter(),
         )
-        return gate_report(ds, seed=cell.seed).verdict
+        # purge the gate's OOF folds by the label's outcome span (monthly revenue
+        # duplicates a quarter's label across as_of months → non-purged folds leak).
+        return gate_report(ds, seed=cell.seed, embargo_days=_embargo_days(cell.horizon)).verdict
     except Exception as e:
         return f"gate_error:{type(e).__name__}"
 

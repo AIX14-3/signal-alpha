@@ -95,8 +95,14 @@ def build_dataset_from_dumps(
     lookback_days: int = 90,
     min_observations: int = 2,
     min_cross_section: int = 6,
+    signal_step_days: int = 0,
+    n_signal_steps: int = 3,
 ):
-    """MCP 덤프 + 매출 CSV → 매출 나우캐스트 Dataset (`load_from_env` 오프라인 대체)."""
+    """MCP 덤프 + 매출 CSV → 매출 나우캐스트 Dataset (`load_from_env` 오프라인 대체).
+
+    ``signal_step_days>0`` 이면 분기 라벨을 월별 as_of 로 샘플링(횡단면↑). 누수 방지는
+    스윕 embargo(revenue 라벨 horizon) 몫 — :func:`build_revenue_dataset` 참조.
+    """
     with_duty = feature_set in ("duty", "volume+duty")
     id_by_ticker, hiring_rows_by_stock, matched, dropped = rematch_postings(
         stocks_rows, postings, tickers=set(tickers), with_duty=with_duty
@@ -114,6 +120,8 @@ def build_dataset_from_dumps(
         feature_set=feature_set,
         min_observations=min_observations,
         min_cross_section=min_cross_section,
+        signal_step_days=signal_step_days,
+        n_signal_steps=n_signal_steps,
     )
 
 

@@ -34,9 +34,12 @@ _DIR_LABELS = {
 }
 
 # Revenue/magnitude labels own their binarization inside the builder, so the grid
-# carries a single nominal label; horizon is only used to size the fold embargo
-# (quarters are ~90 days apart, so any small embargo prevents overlap).
-_REVENUE_LABELS = [("rev_nowcast_q", 1, 0.0)]
+# carries a single nominal label; ``horizon`` here exists ONLY to size the purge
+# embargo (_embargo_days(63)≈95 calendar days). A quarterly revenue OUTCOME spans
+# ~90 days, so a ~95-day embargo guarantees no fold has the same quarter's label in
+# both train and test — essential once monthly (--revenue-signal-step-days) samples
+# the SAME quarter label at several as_of dates.
+_REVENUE_LABELS = [("rev_nowcast_q", 63, 0.0)]
 
 # Classifier names (must exist in models.build_classifier_registry). Linear-first
 # per the ml-features guide; trees as a control at larger sizes.

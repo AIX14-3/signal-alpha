@@ -100,6 +100,44 @@ def test_gated_source_records_gate_not_crash(tmp_path):
     assert summary["ok"] == 0
 
 
+def test_monthly_signal_step_multiplies_cross_sections_pit_safe():
+    """``signal_step_days>0`` 은 같은 분기 라벨을 여러 as_of 로 월별 샘플링해 횡단면을 늘리되,
+    라벨은 항상 known_at(공시일) 이후 as_of 만(PIT). quarterly 대비 행수·유니크 날짜가 는다."""
+    from app.ml.research.fundamentals_dataset import build_revenue_dataset
+
+    def _known(y, q):  # 분기말 +45일쯤 공시 (as_of 분기내부보다 항상 이후)
+        m_end = {1: 3, 2: 6, 3: 9, 4: 12}[q]
+        ny, nm = (y + 1, 2) if q == 4 else (y, m_end + 1)
+        return f"{ny:04d}-{nm:02d}-14"
+
+    hiring, revenue = {}, {}
+    for sid in (101, 202, 303):
+        posts = []
+        for y in (2021, 2022):
+            for mo in range(1, 13):
+                posts.append({"observed_date": f"{y:04d}-{mo:02d}-05",
+                              "duty_groups": ["개발"] if (sid + mo) % 2 else ["영업"]})
+        hiring[sid] = posts
+        revenue[sid] = {
+            (y, q): (float(1000 + sid * (y - 2020) * 4 + q * 10), _known(y, q))
+            for y in (2021, 2022) for q in (1, 2, 3, 4)
+        }
+
+    common = dict(hiring_rows_by_stock=hiring, revenue_by_stock=revenue,
+                  feature_set="volume+duty", min_observations=1, min_cross_section=1)
+    q = build_revenue_dataset(**common, signal_step_days=0)
+    m = build_revenue_dataset(**common, signal_step_days=30, n_signal_steps=3)
+
+    assert len(q) > 0 and len(m) > len(q)          # 월별이 표본을 늘림
+    assert len(np.unique(m.dates)) > len(np.unique(q.dates))  # 월별 횡단면 증가
+    # 같은 분기 라벨이 여러 as_of 에 공유 → 한 종목의 동일 성장률이 2개 이상 날짜에 등장
+    import collections
+    per_firm_label_dates = collections.defaultdict(set)
+    for sid, dt, g in zip(m.stock_ids, m.dates, m.excess_returns):
+        per_firm_label_dates[(int(sid), round(float(g), 6))].add(int(dt))
+    assert any(len(v) >= 2 for v in per_firm_label_dates.values())
+
+
 def test_revenue_offline_gates_without_dumps():
     """revenue-offline 어댑터는 덤프 경로(--stocks-json/--postings-jsonl/--revenue-csv)가
     없으면 GateNeeded 로 안내한다(로컬 DATABASE_URL 없이도 크래시 없음)."""

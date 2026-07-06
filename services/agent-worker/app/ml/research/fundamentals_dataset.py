@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import csv
 from collections import Counter, defaultdict
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 import numpy as np
@@ -80,11 +80,19 @@ def build_revenue_dataset(
     feature_set: str = "volume",
     min_observations: int = 2,
     min_cross_section: int = 6,
+    signal_step_days: int = 0,
+    n_signal_steps: int = 3,
 ) -> Dataset:
     """채용 피처(분기말 PIT) → 분기 YoY 매출성장 횡단면 라벨 데이터셋.
 
     ``revenue_by_stock``: stock_id → {(year,quarter): (단일매출, known_at)}.
-    누수 차단: 피처는 as_of(분기말) 이하 공고만, 라벨 성장률은 known_at(공시일) > as_of 일 때만.
+    누수 차단: 피처는 as_of 이하 공고만, 라벨 성장률은 known_at(공시일) > as_of 일 때만.
+
+    ``signal_step_days=0`` (기본): 분기당 as_of 1개(분기말) — 원래 quarterly 동작.
+    ``signal_step_days>0``: 같은 분기 라벨을 as_of ∈ {분기말, 분기말−step, …}(총 ``n_signal_steps``개,
+    모두 분기 내부·PIT ``known_at>as_of``)로 **월별 샘플링**해 횡단면을 늘린다(28분기→~84). 같은 분기
+    라벨이 여러 as_of 에 공유되므로 **outcome-겹침 누수 방지 = 스윕 embargo 를 분기폭(~95일) 이상**으로
+    둬야 한다(:mod:`search_grid` 의 revenue 라벨 horizon 이 그 embargo 를 만든다).
     """
     if feature_set not in ("volume", "duty", "volume+duty"):
         raise ValueError(f"unknown feature_set: {feature_set!r}")
@@ -124,28 +132,38 @@ def build_revenue_dataset(
         dates_sorted = dates_by_stock.get(stock_id, [])
         duty_sorted = duty_by_stock.get(stock_id, [])
         for (year, quarter), growth in growth_by_q.items():
-            as_of = quarter_end_date(year, quarter)
+            q_end = quarter_end_date(year, quarter)
             known_at = _as_date(rev_q[(year, quarter)][1])
-            if known_at is None or known_at <= as_of:
-                dropped["leak_or_missing_known_at"] += 1  # 라벨이 as_of에 이미 알려짐→제외
+            if known_at is None or known_at <= q_end:
+                dropped["leak_or_missing_known_at"] += 1  # 라벨이 분기말에 이미 알려짐→제외
                 continue
-            vol_features, n = hiring_features(
-                dates_sorted, as_of=as_of, lookback_days=lookback_days, factors=factors
-            )
-            if n < min_observations:
-                dropped["too_few_observations"] += 1
-                continue
-            features: dict[str, float] = {}
-            if want_volume:
-                features.update(vol_features)
-            if want_duty:
-                features.update(
-                    duty_features(duty_sorted, as_of=as_of, lookback_days=lookback_days)
+            # as_of 스냅샷: quarterly(분기말 1개) 또는 monthly(분기말, −step, −2·step, …).
+            if signal_step_days and signal_step_days > 0:
+                as_ofs = [q_end - timedelta(days=signal_step_days * k)
+                          for k in range(max(1, n_signal_steps))]
+            else:
+                as_ofs = [q_end]
+            for as_of in as_ofs:
+                if known_at <= as_of:  # PIT(분기말 스냅샷은 항상 통과; 방어적)
+                    dropped["leak_or_missing_known_at"] += 1
+                    continue
+                vol_features, n = hiring_features(
+                    dates_sorted, as_of=as_of, lookback_days=lookback_days, factors=factors
                 )
-            feat_rows.append(features)
-            growths.append(growth)
-            qdates.append(as_of.toordinal())
-            stock_ids.append(stock_id)
+                if n < min_observations:
+                    dropped["too_few_observations"] += 1
+                    continue
+                features: dict[str, float] = {}
+                if want_volume:
+                    features.update(vol_features)
+                if want_duty:
+                    features.update(
+                        duty_features(duty_sorted, as_of=as_of, lookback_days=lookback_days)
+                    )
+                feat_rows.append(features)
+                growths.append(growth)
+                qdates.append(as_of.toordinal())
+                stock_ids.append(stock_id)
 
     keep, y = cross_sectional_median_labels(
         growths, qdates, min_cross_section=min_cross_section

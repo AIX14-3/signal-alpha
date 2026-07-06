@@ -24,6 +24,7 @@ from .datalab_dataset import Dataset
 from .evaluation import (
     _bullish_score,
     evaluate_model,
+    purged_walk_forward_folds,
     walk_forward_folds,
 )
 from .models import build_classifier_registry
@@ -107,9 +108,18 @@ def gate_report(
     seed: int = 42,
     n_perm: int = 200,
     min_obs_per_firm: int = 2,
+    embargo_days: int = 0,
 ) -> GateReport:
-    """매출 나우캐스트 Dataset 을 within-firm 게이트에 통과시켜 판정 리포트를 만든다."""
-    folds = walk_forward_folds(ds.dates, n_folds=n_folds)
+    """매출 나우캐스트 Dataset 을 within-firm 게이트에 통과시켜 판정 리포트를 만든다.
+
+    ``embargo_days>0``: OOF 신호 생성 폴드를 **purge(embargo)** 한다. 월별 신호화처럼 같은 분기
+    라벨이 여러 as_of 에 중복되면 non-purged walk-forward 는 train/test 에 같은 outcome 을 걸쳐
+    OOF 가 누수된다 → 분기폭(~95일) embargo 로 막는다. quarterly(중복 없음)는 0 이면 충분.
+    """
+    folds = (
+        purged_walk_forward_folds(ds.dates, n_folds=n_folds, embargo_days=embargo_days)
+        if embargo_days > 0 else walk_forward_folds(ds.dates, n_folds=n_folds)
+    )
     model = build_classifier_registry(seed=seed)[model_name]
 
     # sanity: confirmed 모델 rankIC(+0.128) 재현?

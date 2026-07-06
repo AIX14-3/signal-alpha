@@ -156,6 +156,34 @@ stocks(208)·HIRING 포스팅(7,842, precise rematch 7,644/7,842) 덤프 + OpenD
   (tech_share 를 앵커 피처로). 매그니튜드/나우캐스트 가치는 유지되나 timing 알파는 **미확정**.
   cf. [[hiring-revenue-nowcast-signal]]·[[patent-volatility-magnitude-signal]](정적붕괴 대조군).
 
+## 6.5 Step 2 — 월별 확대 + 누수-안전 재판정 (2026-07-07) → 🔴 정적특성 확정
+
+quarterly 가 표본 병목(28분기)이었으므로 **월별 신호화**(`--revenue-signal-step-days 30`: 같은 분기
+라벨을 as_of {분기말,−30,−60}로 3배 샘플링, 횡단면 28→~84)로 검정력을 키웠다. **누수 2중 방어**:
+(a) 스윕 purge embargo=95일(revenue 라벨 horizon 63) — 같은 분기 라벨이 train/test 걸치는 것 차단,
+(b) **within-firm 게이트 OOF 폴드도 purge**(`gate_report(embargo_days=)` 신설) — 게이트 자체 누수 차단.
+
+**누수 안전 대조(결정적)**: 매출을 종목 간 derangement(고정점0)로 뒤섞은 **셔플 CSV 월별 스윕 =
+FDR 생존 0**. 즉 월별·중복라벨 구조가 **가짜신호를 만들지 않음**을 실증 → 실런 생존은 진짜.
+
+**실런(월별, 24셀, perm=300)**:
+- **FDR 생존 5 · 홀드아웃 확정 3** (quarterly 0 → 월별서 신호 견고화; sweep-wide p≤0.00997).
+  생존자 전부 `within_firm_z` 변환 tree(random_forest/hist_grad_boost/decision_tree).
+- **purge-안전 within-firm 게이트: 확정 3개 전부 🔴 정적특성 강등** —
+  **between_ic=+0.252 / within_ic=+0.029≈0** (누수 제거하니 between 이 더 뚜렷·within≈0). 특허 앵커
+  (between≈±0.42/within≈0)와 **동형**.
+
+**종합(Step 2 확정)**: 채용→차기분기 매출 **횡단면 나우캐스트 신호는 견고**(월별서 BH+홀드아웃 통과,
+셔플-대조로 누수 배제)하나, **within-firm 분해에선 정적 종목특성 = 트레이더블 timing 아님**. 6.2 의
+quarterly tech_share within(+0.074) 은 피처 단위 잔존 timing 이나, 모델 종합신호·월별 확대판에서는
+static 이 지배. ⇒ **대체데이터 가치 = 매출 레벨 나우캐스팅(횡단면 magnitude), 방향 timing 알파 아님**
+— [[altdata-direction-signal-wall]]·[[patent-volatility-magnitude-signal]] 과 일관. 채용→매출 timing
+추격은 **종료**(park); 나우캐스트 용도는 유지. ⚠️월별은 pseudo-replication(3×중복라벨)으로 perm p 가
+낙관적일 수 있음 — 구조 판정(🔴 static)이 유의성 수치보다 robust 한 결론.
+
+하니스: `--revenue-signal-step-days`(fundamentals_dataset.build_revenue_dataset `signal_step_days`),
+게이트 purge=`within_firm_gate.gate_report(embargo_days)`. 브랜치 `research/source-agnostic-search`.
+
 ## 7. 주의
 
 - research 도구 = **신호 확정 전 main 머지 금지**(백업 브랜치 `research/hiring-ml-step1` push 만).

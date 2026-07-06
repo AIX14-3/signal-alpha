@@ -328,6 +328,7 @@ def _panel_revenue_offline(*, seed: int, **knobs) -> Panel:
         lookback_days=int(knobs.get("lookback", 90)),
         min_observations=int(knobs.get("min_obs", 2)),
         min_cross_section=int(knobs.get("min_cross_section", 6)),
+        signal_step_days=int(knobs.get("signal_step_days", 0)),
     )
     _nonempty(ds, "revenue-offline")
     return _panel_from_dataset(ds, "revenue")
