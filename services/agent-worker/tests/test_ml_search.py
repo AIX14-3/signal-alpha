@@ -100,6 +100,40 @@ def test_gated_source_records_gate_not_crash(tmp_path):
     assert summary["ok"] == 0
 
 
+def test_sector_neutralize_removes_sector_time_effect():
+    """``sector_neutralize_label`` 은 (섹터×시점) 공통성분을 라벨에서 제거한다: 순수 섹터-시점
+    효과로 만든 라벨은 중립화 후 각 (섹터,date) 그룹 평균이 0 이 된다(섹터 파도 제거 실증)."""
+    from collections import Counter
+
+    from app.ml.research.datalab_dataset import Dataset
+    from app.ml.research.fundamentals_dataset import sector_neutralize_label
+
+    rng = np.random.default_rng(0)
+    stock, dates, growth, sector = [], [], [], {}
+    sid = 0
+    for sec_i in range(2):
+        for _ in range(6):  # 섹터당 6종목
+            sid += 1
+            sector[sid] = f"S{sec_i}"
+            for dt in (1, 2, 3):
+                stock.append(sid)
+                dates.append(dt)
+                growth.append(10.0 * sec_i + 5.0 * dt + 0.01 * rng.standard_normal())
+    n = len(stock)
+    ds = Dataset(X=np.zeros((n, 1)), y=np.zeros(n, dtype=int),
+                 excess_returns=np.array(growth, dtype=float), dates=np.array(dates),
+                 stock_ids=np.array(stock), feature_names=["f"], dropped=Counter())
+
+    out = sector_neutralize_label(ds, sector, min_cross_section=2)
+    assert len(out) > 0
+    sec_arr = np.array([sector[int(s)] for s in out.stock_ids])
+    for d in np.unique(out.dates):
+        for sc in np.unique(sec_arr):
+            m = (out.dates == d) & (sec_arr == sc)
+            if m.sum() >= 2:  # 섹터-시점 평균이 제거됨
+                assert abs(float(out.excess_returns[m].mean())) < 1e-9
+
+
 def test_monthly_signal_step_multiplies_cross_sections_pit_safe():
     """``signal_step_days>0`` 은 같은 분기 라벨을 여러 as_of 로 월별 샘플링해 횡단면을 늘리되,
     라벨은 항상 known_at(공시일) 이후 as_of 만(PIT). quarterly 대비 행수·유니크 날짜가 는다."""

@@ -186,6 +186,55 @@ def build_revenue_dataset(
     )
 
 
+def sector_neutralize_label(
+    ds: Dataset,
+    sector_by_stock: dict[int, str | None],
+    *,
+    min_cross_section: int = 6,
+) -> Dataset:
+    """라벨(매출성장)을 **(섹터×시점) 안에서 demean** 해 섹터 공통파도를 제거한다.
+
+    "AI 붐에 테크 섹터가 다 같이 채용·매출↑" 같은 **섹터-시점 공통요인 교란**을 라벨에서 걷어낸다.
+    각 (섹터, date) 그룹에서 성장률 평균을 빼고, 그 잔차로 **date 내부 재-이진화**한다. 섹터가
+    한 종목뿐인 (섹터,date)나 섹터 미상 행은 중립화 불가 → 드롭. 이후 within-firm 게이트가
+    "섹터를 걷어낸 뒤에도 회사가 자기 평소보다 더 뽑은 분기에 (섹터대비) 매출이 더 컸나"를 검정.
+    """
+    sec = [sector_by_stock.get(int(s)) for s in ds.stock_ids]
+    growth = ds.excess_returns.astype(float).copy()
+    dropped: Counter = Counter(ds.dropped)
+    dates = ds.dates
+    for d in np.unique(dates):
+        on_date = np.where(dates == d)[0]
+        groups: dict = defaultdict(list)
+        for i in on_date:
+            groups[sec[i]].append(i)
+        for scv, idxs in groups.items():
+            arr = np.array(idxs)
+            if scv is None:
+                growth[arr] = np.nan
+                dropped["sector_neutral_no_sector"] += len(arr)
+            elif len(arr) >= 2:
+                growth[arr] = growth[arr] - np.nanmean(growth[arr])
+            else:
+                growth[arr] = np.nan
+                dropped["sector_neutral_singleton"] += 1
+    ok = np.where(np.isfinite(growth))[0]
+    keep2, y = cross_sectional_median_labels(
+        [float(growth[i]) for i in ok], [int(dates[i]) for i in ok],
+        min_cross_section=min_cross_section,
+    )
+    final = ok[np.array(keep2, dtype=int)] if len(keep2) else np.array([], dtype=int)
+    return Dataset(
+        X=ds.X[final],
+        y=np.array(y, dtype=int),
+        excess_returns=growth[final],
+        dates=dates[final],
+        stock_ids=ds.stock_ids[final],
+        feature_names=list(ds.feature_names),
+        dropped=dropped,
+    )
+
+
 async def load_from_env(
     *,
     database_url: str,

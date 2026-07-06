@@ -57,6 +57,7 @@ def _parse_args(argv=None):
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--n-perm", type=int, default=200)
     p.add_argument("--min-obs-per-firm", type=int, default=2)
+    p.add_argument("--sector-map", help="{ticker: 섹터} JSON — 주면 라벨을 (섹터×시점) 내 중립화")
     return p.parse_args(argv)
 
 
@@ -81,6 +82,18 @@ def main(argv=None) -> int:
         tickers=tickers, feature_set=args.feature_set, lookback_days=args.lookback,
         min_observations=args.min_obs, min_cross_section=args.min_cross_section,
     )
+    if args.sector_map:
+        from app.ml.research.fundamentals_dataset import sector_neutralize_label
+        sector_by_ticker = json.load(open(args.sector_map, encoding="utf-8"))
+        ticker_by_sid = {int(sid): t for sid, t, *_ in stocks_rows}
+        sector_by_stock = {
+            sid: sector_by_ticker.get(ticker_by_sid.get(sid))
+            for sid in (int(x) for x in np.unique(ds.stock_ids))
+        }
+        ds = sector_neutralize_label(ds, sector_by_stock,
+                                     min_cross_section=args.min_cross_section)
+        print(f"[sector-neutral] 라벨 (섹터×시점) 중립화 적용 → samples={len(ds)}")
+
     print(f"[revenue] samples={len(ds)}  features={len(ds.feature_names)}  "
           f"stocks={len(np.unique(ds.stock_ids)) if len(ds) else 0}  "
           f"quarters={len(np.unique(ds.dates)) if len(ds) else 0}  "

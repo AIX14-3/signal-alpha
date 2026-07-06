@@ -184,6 +184,32 @@ static 이 지배. ⇒ **대체데이터 가치 = 매출 레벨 나우캐스팅(
 하니스: `--revenue-signal-step-days`(fundamentals_dataset.build_revenue_dataset `signal_step_days`),
 게이트 purge=`within_firm_gate.gate_report(embargo_days)`. 브랜치 `research/source-agnostic-search`.
 
+## 6.6 섹터-중립화 — tech_share timing 은 섹터 파도였다 (2026-07-07)
+
+6.2 의 **유일한 timing 실마리 `tech_share`(within=+0.074, BH-q=0.047)** 가 회사 고유 신호인지,
+아니면 **섹터×시점 공통요인**(AI 붐에 테크섹터가 다같이 채용·매출↑ 같은 교란)인지 가른다.
+횡단면 랭킹은 시장-전체는 이미 상쇄하지만 **섹터의 시간 흐름은 통제 못 한다.**
+
+**방법**: 라벨(매출성장)을 **(섹터×시점) 안에서 demean** 후 within-firm 게이트 재실행
+(`sector_neutralize_label`, `within_firm_hiring_revenue_offline --sector-map`). 섹터=DART KSIC
+2자리→6 매크로(IT전자22·금융건설기타18·소재화학17·소비유통15·자동차기계10·바이오의약9; prod
+stocks.sector 는 83/97 null 이라 미사용). 91종목 quarterly.
+
+**결과(결정적)**:
+| | baseline | **sector-neutral** |
+| --- | --- | --- |
+| 모델 within_ic | +0.059 (🟡) | **−0.001 (🔴)** |
+| **tech_share within** | **+0.074 · BH-q 0.047(유의)** | **−0.016 · BH-q 1.000(소멸·부호반전)** |
+| tech_share between | −0.071 | −0.168 |
+
+⇒ **tech_share 의 "개발자 채용↑→매출↑" within-firm timing 은 섹터 공통효과를 걷어내자 완전히
+소멸**(유의 0.047→1.000). 즉 회사 고유 알파가 아니라 **섹터 베타**였다. 이로써 채용→매출의
+**마지막 timing 실마리까지 기각** — 트레이더블 방향/타이밍 신호 없음이 확정.
+
+**교훈(방법론)**: 횡단면 랭킹만으로는 시장-전체만 통제되고 **섹터-시점 교란은 남는다** →
+섹터-중립화가 within-firm 게이트의 필수 짝. 향후 어떤 within 신호든 이 관문을 통과해야 firm-specific.
+⚠️ 6매크로·시점별 얇은 횡단면이라 coarse control 이나, 유의 0.047→1.000·부호반전은 robust 한 방향결론.
+
 ## 7. 주의
 
 - research 도구 = **신호 확정 전 main 머지 금지**(백업 브랜치 `research/hiring-ml-step1` push 만).
