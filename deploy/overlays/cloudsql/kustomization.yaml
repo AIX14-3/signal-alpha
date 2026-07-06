@@ -104,7 +104,36 @@ patches:
         COOKIE_SAMESITE: "lax"
         COOKIE_DOMAIN: ".signal-alpha.cloud"                   # 맨 앞 점 → www·api 서브도메인 쿠키 공유
 
-# ④ 이미지 핀 — <PROJECT_ID> 를 실제 GCP 프로젝트로 교체하고 newTag 를 빌드 태그로.
+  # ④ main-server 헬스체크 TCP 전환 — /health 는 TrustedHostMiddleware(ALLOWED_HOSTS)로 Host 를
+  #    강제하는데(설계·services/main-server/tests/test_security.py), 쿠버네티스/GCP LB 헬스체크는
+  #    Host=PodIP 라 400 → Pod NotReady + LB 백엔드 UNHEALTHY → 도메인 서빙 불가.
+  #    TCP 프로브는 Host 검사 없이 포트만 확인 → kubelet Ready + (BackendConfig 부재로 GKE가 probe에서
+  #    파생하는) LB 헬스체크도 TCP 라 통과. ※ 근본 대안: main-server 가 /health 를 TrustedHost 예외로
+  #    두면(팀원 결정) HTTP 프로브로 되돌릴 것.
+  - target:
+      kind: Deployment
+      name: main-server
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: main-server
+        namespace: signal-alpha
+      spec:
+        template:
+          spec:
+            containers:
+              - name: main-server
+                readinessProbe:
+                  httpGet: null
+                  tcpSocket:
+                    port: 8000
+                livenessProbe:
+                  httpGet: null
+                  tcpSocket:
+                    port: 8000
+
+# ⑤ 이미지 핀 — <PROJECT_ID> 를 실제 GCP 프로젝트로 교체하고 newTag 를 빌드 태그로.
 #    base 의 placeholder 를 직접 고치지 않기 위해 오버레이에서 덮어쓴다.
 images:
   - name: signal-alpha-agent-worker
