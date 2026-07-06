@@ -91,7 +91,7 @@ def test_admin_schedule_dry_run_proxies_schedule_policy_to_worker(monkeypatch):
         "admin_id": 1,
         "admin_email": "admin@example.com",
     }
-    monkeypatch.setattr(admin_routes, "_worker_request", fake_worker_request)
+    monkeypatch.setattr(admin_routes.schedules, "_worker_request", fake_worker_request)
     try:
         client = TestClient(app)
         response = client.post("/api/admin/schedules/1/dry-run")

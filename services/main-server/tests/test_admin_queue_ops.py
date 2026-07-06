@@ -122,7 +122,7 @@ fake_worker_request.calls = []
 
 def _install_overrides(monkeypatch, connection):
     fake_worker_request.calls = []
-    monkeypatch.setattr(admin_routes, "_worker_request", fake_worker_request)
+    monkeypatch.setattr(admin_routes.queue_ops, "_worker_request", fake_worker_request)
     app.dependency_overrides[admin_routes.get_settings] = lambda: FakeSettings()
     app.dependency_overrides[admin_routes.get_database_pool] = lambda: FakePool(connection)
     app.dependency_overrides[admin_routes.get_current_admin] = lambda: {
