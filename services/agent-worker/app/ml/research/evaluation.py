@@ -16,6 +16,7 @@ For each model and fold we record four metric groups (see the plan):
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -64,6 +65,41 @@ def walk_forward_folds(dates: np.ndarray, n_folds: int = 5) -> list[WalkForwardS
                 test_idx=order[np.isin(order, np.where(test_mask)[0])],
             )
         )
+    return folds
+
+
+def purged_walk_forward_folds(
+    dates: np.ndarray, n_folds: int = 5, *, embargo_days: int = 0
+) -> list[WalkForwardSplit]:
+    """Expanding-window folds with a PURGE + EMBARGO gap before each test block.
+
+    Same date-boundary split as :func:`walk_forward_folds`, but every training row
+    whose date falls within ``embargo_days`` (ordinal-day units) *before* the first
+    test date is dropped. With a forward label of horizon ``h`` (sessions), set
+    ``embargo_days`` >= the calendar span of ``h`` trading days so a training row's
+    label window can never overlap the test block (no look-ahead / leakage).
+    """
+    if n_folds < 1:
+        raise ValueError("n_folds must be >= 1")
+    order = np.argsort(dates, kind="stable")
+    unique = np.unique(dates)
+    if len(unique) < n_folds + 1:
+        raise ValueError(
+            f"need >= {n_folds + 1} distinct dates for {n_folds} folds, got {len(unique)}"
+        )
+    chunks = np.array_split(unique, n_folds + 1)
+    folds: list[WalkForwardSplit] = []
+    for i in range(1, n_folds + 1):
+        test_dates = chunks[i]
+        test_start = test_dates.min()
+        train_cutoff = test_start - embargo_days  # strictly-before minus the gap
+        train_mask = dates < train_cutoff
+        test_mask = np.isin(dates, test_dates)
+        train_idx = order[np.isin(order, np.where(train_mask)[0])]
+        test_idx = order[np.isin(order, np.where(test_mask)[0])]
+        if len(train_idx) == 0 or len(test_idx) == 0:
+            continue
+        folds.append(WalkForwardSplit(train_idx=train_idx, test_idx=test_idx))
     return folds
 
 
@@ -225,3 +261,177 @@ def evaluate_model(
             )
         )
     return report
+
+
+# ---------------------------------------------------------------------------
+# Source-agnostic search primitives (ported from the longhorizon sweep engine).
+# Pure numpy/scipy; no new statistics. Used by ``search.py`` / ``adapters.py``.
+# ---------------------------------------------------------------------------
+
+
+def oos_predictions(
+    model,
+    X: np.ndarray,
+    y: np.ndarray,
+    folds: list[WalkForwardSplit],
+    *,
+    task: str = "magnitude",
+) -> tuple[np.ndarray, np.ndarray]:
+    """Out-of-sample base predictions aligned to original row indices.
+
+    For each fold, clone+fit the model on the (purged) train block and predict the
+    test block. Returns ``(pred, mask)`` where ``pred[i]`` is the OOS prediction for
+    row ``i`` (nan where the row was never in a scorable test block) and ``mask`` is
+    the boolean of rows that received a prediction. ``task='direction'`` stores the
+    bullish probability/score; ``task='magnitude'`` stores the regressed value.
+
+    Every returned prediction used only data from strictly-earlier dates (the fold's
+    train block), so these columns don't leak the future.
+    """
+    from sklearn.base import clone
+
+    pred = np.full(len(y), np.nan, dtype=float)
+    is_regression = task == "magnitude"
+    for fold in folds:
+        Xtr, ytr = X[fold.train_idx], y[fold.train_idx]
+        Xte = X[fold.test_idx]
+        # Drop train rows whose (source-specific) target is missing — lets a sparse
+        # heterogeneous label (e.g. a forward revenue print) train on the rows it
+        # covers while still predicting every test row.
+        finite = np.isfinite(ytr)
+        Xtr, ytr = Xtr[finite], ytr[finite]
+        degenerate = (
+            len(ytr) < 3 or (np.std(ytr) == 0 if is_regression else len(np.unique(ytr)) < 2)
+        )
+        if degenerate or len(Xte) == 0:
+            continue
+        try:
+            est = clone(model)
+            est.fit(Xtr, ytr)
+            pred[fold.test_idx] = (
+                est.predict(Xte) if is_regression else _bullish_score(est, Xte)
+            )
+        except Exception:
+            continue
+    mask = ~np.isnan(pred)
+    return pred, mask
+
+
+def permutation_pvalue(
+    scores: np.ndarray,
+    returns: np.ndarray,
+    dates: np.ndarray,
+    *,
+    n_perm: int = 1000,
+    seed: int = 0,
+    metric: str = "rank_ic",
+) -> tuple[float, float]:
+    """One-sided permutation p-value for the score↔return association.
+
+    The null shuffles ``returns`` WITHIN each date (destroying the cross-sectional
+    ranking skill while preserving the per-date return distribution), recomputes the
+    pooled metric ``n_perm`` times, and reports P(null >= observed). Small samples
+    make the analytic t untrustworthy; this is the honest alternative.
+
+    Returns ``(observed_metric, p_value)``.
+    """
+    rng = np.random.default_rng(seed)
+    corr = spearmanr if metric == "rank_ic" else pearsonr
+    obs = _safe_corr(corr, scores, returns)
+    if not np.isfinite(obs):
+        return obs, float("nan")
+    # Group row indices by date for within-date shuffling.
+    groups: dict = {}
+    for i, d in enumerate(dates):
+        groups.setdefault(d, []).append(i)
+    idx_groups = [np.array(v) for v in groups.values() if len(v) > 1]
+    ge = 0
+    for _ in range(n_perm):
+        permuted = returns.copy()
+        for g in idx_groups:
+            permuted[g] = returns[rng.permutation(g)]
+        null = _safe_corr(corr, scores, permuted)
+        if np.isfinite(null) and null >= obs:
+            ge += 1
+    p = (ge + 1) / (n_perm + 1)
+    return float(obs), float(p)
+
+
+def within_firm_ic(
+    scores: np.ndarray, returns: np.ndarray, stock_ids: np.ndarray
+) -> float:
+    """Rank-IC after removing each firm's own mean score & return (within-firm).
+
+    If a pooled IC is driven by a STATIC cross-sectional trait (e.g. "R&D-heavy
+    names are always high-vol"), demeaning per firm collapses it. A within-firm IC
+    that stays positive is evidence of genuine TIME-VARYING (tradeable) skill —
+    the 2026-07-01 lesson.
+    """
+    s = scores.astype(float).copy()
+    r = returns.astype(float).copy()
+    for sid in np.unique(stock_ids):
+        m = stock_ids == sid
+        if m.sum() >= 2:
+            s[m] -= s[m].mean()
+            r[m] -= r[m].mean()
+        else:
+            s[m] = np.nan
+    ok = np.isfinite(s) & np.isfinite(r)
+    return _safe_corr(spearmanr, s[ok], r[ok])
+
+
+@dataclass
+class PerPeriodIC:
+    """Time-series diagnostic of the per-signal-date cross-sectional rank-IC.
+
+    Instead of one pooled IC (which averages away regime structure), we compute a
+    Spearman rank-IC WITHIN each signal date (across that date's stocks) and treat
+    the sequence as a time series. A conditional-reversal effect — e.g. attention
+    flips momentum's sign in some regimes — shows up as a per-period IC that swings
+    sign across dates even when the pooled mean is ~0.
+    """
+
+    n_periods: int
+    mean_ic: float
+    std_ic: float
+    t_stat: float  # mean / (std / sqrt(n)) — Newey-West-free, autocorr caveat noted
+    frac_negative: float  # share of periods with IC < 0 (0.5 == no directional tilt)
+    frac_positive: float
+    ics: list[float]
+
+
+def per_period_ic(
+    scores: np.ndarray,
+    returns: np.ndarray,
+    dates: np.ndarray,
+    *,
+    min_per_date: int = 5,
+) -> PerPeriodIC:
+    """Per-date cross-sectional rank-IC series + its mean/std/t and sign-flip share.
+
+    Only dates with ``>= min_per_date`` scorable stocks contribute an IC (a 3-name
+    cross-section is noise). ``frac_negative`` near 0.5 with a small mean is the
+    signature of a sign-UNSTABLE relationship (conditional reversal by regime),
+    while a consistent tilt pushes ``frac_negative`` toward 0 or 1.
+    """
+    by_date: dict = {}
+    for i, d in enumerate(dates):
+        by_date.setdefault(d, []).append(i)
+    ics: list[float] = []
+    for idx in by_date.values():
+        if len(idx) < min_per_date:
+            continue
+        idx = np.array(idx)
+        ic = _safe_corr(spearmanr, scores[idx], returns[idx])
+        if np.isfinite(ic):
+            ics.append(float(ic))
+    if not ics:
+        return PerPeriodIC(0, float("nan"), float("nan"), float("nan"),
+                           float("nan"), float("nan"), [])
+    arr = np.array(ics, dtype=float)
+    mean = float(arr.mean())
+    std = float(arr.std(ddof=1)) if len(arr) > 1 else float("nan")
+    t = float(mean / (std / math.sqrt(len(arr)))) if (std and std > 0) else float("nan")
+    neg = float(np.mean(arr < 0))
+    pos = float(np.mean(arr > 0))
+    return PerPeriodIC(len(arr), mean, std, t, neg, pos, ics)
