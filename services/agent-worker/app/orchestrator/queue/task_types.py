@@ -1,5 +1,7 @@
 COLLECT_DART = "collect_dart"
 COLLECT_DART_OWNERSHIP = "collect_dart_ownership"
+COLLECT_DART_FINANCIALS = "collect_dart_financials"
+COLLECT_DART_EMPLOYEE = "collect_dart_employee"
 NORMALIZE_DART = "normalize_dart"
 NORMALIZE_DART_OWNERSHIP = "normalize_dart_ownership"
 ANALYZE_DART = "analyze_dart"

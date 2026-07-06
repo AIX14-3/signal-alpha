@@ -6,6 +6,8 @@ from app.core.config import Settings
 from app.orchestrator.queue.task_types import (
     ANALYZE_DART,
     COLLECT_DART,
+    COLLECT_DART_EMPLOYEE,
+    COLLECT_DART_FINANCIALS,
     COLLECT_DART_OWNERSHIP,
     NORMALIZE_DART,
     NORMALIZE_DART_OWNERSHIP,
@@ -57,6 +59,8 @@ class DartConfigTest(unittest.TestCase):
     def test_dart_task_type_constants_are_stable(self):
         self.assertEqual(COLLECT_DART, "collect_dart")
         self.assertEqual(COLLECT_DART_OWNERSHIP, "collect_dart_ownership")
+        self.assertEqual(COLLECT_DART_FINANCIALS, "collect_dart_financials")
+        self.assertEqual(COLLECT_DART_EMPLOYEE, "collect_dart_employee")
         self.assertEqual(NORMALIZE_DART, "normalize_dart")
         self.assertEqual(NORMALIZE_DART_OWNERSHIP, "normalize_dart_ownership")
         self.assertEqual(ANALYZE_DART, "analyze_dart")

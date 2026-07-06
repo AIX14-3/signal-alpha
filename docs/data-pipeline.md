@@ -26,7 +26,7 @@ aggregate 소스 결과 통합 → final_signals (소스 방향성 일치도·�
 
 | 소스 | 수집 | 주요 처리 |
 |---|---|---|
-| **DART** | OpenDART corp_code/list/document.xml + ownership API | `raw_documents` + `dart_raw_details` / `dart_ownership_events` → 정규화 → features-only 분석. 선택적 LLM은 근거 추출용이며 판정·점수는 내지 않음 |
+| **DART** | OpenDART corp_code/list/document.xml + ownership/financials/employee API | `raw_documents` + `dart_raw_details` / `dart_ownership_events` → 정규화 → features-only 분석. `dart_financial_facts`, `dart_employee_stats`는 정형 테이블 적재까지 수행. 선택적 LLM은 근거 추출용이며 판정·점수는 내지 않음 |
 | **Report** | 네이버 리포트 목록 + PDF | `report_raw_details`(PDF 파싱: 목표가·의견·근거) → `report_valuation_facts`(EPS·적용/내재 배수) → 결정론 분석. 원문 PDF 미노출, 구조화 fact·링크 중심 |
 | **PRICE** | 키움 REST (수집기 인스턴스 `run_collector_instance.py`, 워커 내장 on/off는 `PRICE_COLLECTOR_ENABLED`) | `price_snapshots`, `ohlcv_data` 저장 → PRICE analyzer는 **DB만** 읽어 분석 |
 | **Alternative** | 채용 / 특허(KIPRIS) / 네이버 DataLab / SEC | 소스별 collector→analyzer. DataLab은 카테고리 기반 키워드 검색량 |
@@ -59,7 +59,7 @@ stocks
 
 > 정확한 최신 상태는 `AGENTS.md`와 코드를 확인하세요. 기획 문서를 구현 완료로 취급하지 않습니다.
 
-- **구현됨**: DART 큐 핸들러 `collect_dart` / `normalize_dart` / `analyze_dart` 및 ownership 경로 `collect_dart_ownership` / `normalize_dart_ownership`.
+- **구현됨**: DART 큐 핸들러 `collect_dart` / `normalize_dart` / `analyze_dart` 및 ownership 경로 `collect_dart_ownership` / `normalize_dart_ownership`. 정형 수집 `collect_dart_financials`, `collect_dart_employee`는 각각 `dart_financial_facts`, `dart_employee_stats`까지 적재하며 아직 `signal_events`/`analyze_dart`로 이어지지 않습니다.
 - **구현됨**: 가격 수집은 **수집기 인스턴스**(`run_collector_instance.py`)로 동작하며 `price_snapshots`/`ohlcv_data`
   적재(`PRICE_COLLECTOR_ENABLED`로 워커 내장 on/off 가능, 단일 통합 기동 시 워커 lifespan에 내장)(#11 업데이트).
   PRICE analyzer는 DB만 읽음(키움 API 직접 호출 금지).

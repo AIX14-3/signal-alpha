@@ -13,6 +13,8 @@ from app.orchestrator.queue.task_types import (
     ANALYZE_PRICE,
     ANALYZE_REPORT,
     COLLECT_DART,
+    COLLECT_DART_EMPLOYEE,
+    COLLECT_DART_FINANCIALS,
     COLLECT_DART_OWNERSHIP,
     COLLECT_REPORT,
     ENRICH_HIRING,
@@ -46,6 +48,8 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
     from app.orchestrator.dart.tasks import (
         DartAnalyzeTaskHandler,
         DartCollectionTaskHandler,
+        DartEmployeeCollectionTaskHandler,
+        DartFinancialsCollectionTaskHandler,
         DartNormalizeTaskHandler,
         DartOwnershipCollectionTaskHandler,
         DartOwnershipNormalizeTaskHandler,
@@ -78,6 +82,14 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
             settings=settings,
         ),
         COLLECT_DART_OWNERSHIP: DartOwnershipCollectionTaskHandler(
+            connection=connection,
+            settings=settings,
+        ),
+        COLLECT_DART_FINANCIALS: DartFinancialsCollectionTaskHandler(
+            connection=connection,
+            settings=settings,
+        ),
+        COLLECT_DART_EMPLOYEE: DartEmployeeCollectionTaskHandler(
             connection=connection,
             settings=settings,
         ),

@@ -316,6 +316,41 @@ def test_fire_uses_schedule_report_payload_over_defaults(monkeypatch):
     ]
 
 
+def test_fire_uses_schedule_dart_payload_over_defaults(monkeypatch):
+    monkeypatch.setenv("INTERNAL_API_TOKEN", "secret")
+    client = RecordingClient()
+
+    summary = asyncio.run(
+        _fire(
+            client,
+            base_url="http://worker",
+            schedule={
+                "targets": ["dart"],
+                "dart_limit": 12,
+                "dart_include_ownership": True,
+                "dart_include_financials": "true",
+                "dart_include_employee": True,
+            },
+        )
+    )
+
+    assert summary == {"dart": 2}
+    assert client.posts == [
+        {
+            "path": "/internal/schedules/dart/collect",
+            "json": {
+                "limit": 12,
+                "priority": "batch",
+                "include_ownership": True,
+                "include_financials": True,
+                "include_employee": True,
+            },
+            "headers": {"X-Internal-Token": "secret"},
+            "timeout": 120.0,
+        }
+    ]
+
+
 def test_fire_records_each_target_and_continues_after_report_failure(monkeypatch):
     monkeypatch.setenv("INTERNAL_API_TOKEN", "secret")
     client = RecordingClient(failures={"/internal/schedules/report/collect"})

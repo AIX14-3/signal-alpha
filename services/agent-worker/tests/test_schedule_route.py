@@ -17,6 +17,9 @@ from app.main import app
 
 
 class FakeConnection:
+    def __init__(self):
+        self.next_task_id = 80
+
     async def fetch(self, sql, *args):
         if "FROM processing_queue" in sql:
             return [
@@ -35,7 +38,8 @@ class FakeConnection:
     async def fetchval(self, sql, *args):
         if "SELECT id" in sql:
             return None
-        return 80 + args[0]
+        self.next_task_id += 1
+        return self.next_task_id
 
 
 class FakeAcquire:
@@ -66,6 +70,29 @@ class ScheduleRouteTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"scheduled_count": 2, "task_ids": [81, 82]})
+
+    def test_schedule_dart_collection_can_include_structured_collections(self):
+        app.dependency_overrides[get_database_pool] = lambda: FakePool()
+        client = TestClient(app, headers={"X-Internal-Token": "test-internal-token"})
+
+        response = client.post(
+            "/internal/schedules/dart/collect",
+            json={
+                "limit": 2,
+                "end_de": "20260610",
+                "priority": "batch",
+                "include_ownership": True,
+                "include_financials": True,
+                "include_employee": True,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["scheduled_count"], 8)
+        self.assertEqual(response.json()["collect_dart_task_ids"], [81, 85])
+        self.assertEqual(response.json()["collect_dart_ownership_task_ids"], [82, 86])
+        self.assertEqual(response.json()["collect_dart_financials_task_ids"], [83, 87])
+        self.assertEqual(response.json()["collect_dart_employee_task_ids"], [84, 88])
 
     def test_schedule_dry_run_returns_scheduler_decision_without_enqueueing(self):
         app.dependency_overrides[get_database_pool] = lambda: FakePool()
