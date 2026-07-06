@@ -51,6 +51,8 @@ def _extra_from_args(args) -> dict:
         "min_cross_section": args.min_cross_section, "feature_set": args.feature_set,
         "xs_normalize": args.xs_normalize, "precise_rematch": args.precise_rematch,
         "fusion_sources": args.fusion_sources, "target": args.target,
+        # offline (MCP-dump) revenue path — no DATABASE_URL needed.
+        "stocks_json": args.stocks_json or "", "postings_jsonl": args.postings_jsonl or "",
     }
     if args.fusion_min_sources is not None:
         extra["fusion_min_sources"] = args.fusion_min_sources
@@ -81,6 +83,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--benchmark", default=None)
     p.add_argument("--prices-csv", default=None)
     p.add_argument("--revenue-csv", default=None)
+    # offline revenue-nowcast dumps (source=revenue-offline; MCP stocks/HIRING dumps)
+    p.add_argument("--stocks-json", default=None, help="stocks 덤프 JSON (revenue-offline)")
+    p.add_argument("--postings-jsonl", default=None, help="HIRING 포스팅 JSONL (revenue-offline)")
     p.add_argument("--lookback", type=int, default=90)
     p.add_argument("--signal-step", type=int, default=20)
     p.add_argument("--min-obs", type=int, default=2)

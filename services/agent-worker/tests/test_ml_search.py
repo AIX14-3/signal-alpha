@@ -100,6 +100,26 @@ def test_gated_source_records_gate_not_crash(tmp_path):
     assert summary["ok"] == 0
 
 
+def test_revenue_offline_gates_without_dumps():
+    """revenue-offline 어댑터는 덤프 경로(--stocks-json/--postings-jsonl/--revenue-csv)가
+    없으면 GateNeeded 로 안내한다(로컬 DATABASE_URL 없이도 크래시 없음)."""
+    try:
+        build_panel_for("revenue-offline", horizon=1, band=0.0, seed=42, extra={})
+        raised = False
+    except GateNeeded:
+        raised = True
+    assert raised
+
+    cell = Cell(
+        source="revenue-offline", universe="u", label="rev_nowcast_q", task="revenue",
+        horizon=1, band=0.0, feature_family="all", transform="raw", model="logistic",
+        seed=42, extra=(),
+    )
+    card = run_cell(cell, n_perm=10)
+    assert card.status == "gate"
+    assert card.reason
+
+
 def test_resume_ledger_skips_completed(tmp_path):
     """The ledger is resumable: a second run over the same grid adds no new rows."""
     cells = _synth_grid(noise=1.0)

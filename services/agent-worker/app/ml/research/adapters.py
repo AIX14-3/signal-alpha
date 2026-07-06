@@ -298,6 +298,41 @@ def _panel_revenue(*, seed: int, **knobs) -> Panel:
     return _panel_from_dataset(ds, "revenue")
 
 
+def _panel_revenue_offline(*, seed: int, **knobs) -> Panel:
+    """오프라인 채용→매출 나우캐스트 — MCP 덤프 + revenue CSV (``load_from_env`` 대체).
+
+    이 머신엔 prod ``DATABASE_URL`` 이 없어 DB 어댑터(:func:`_panel_revenue`)가 GATE 되므로,
+    ``within_firm_hiring_revenue_offline`` 과 **동일한** ``build_dataset_from_dumps`` 경로로
+    (Supabase MCP 로 뽑은 stocks/HIRING 덤프 + OpenDART revenue CSV) → confirmed 런과 동형의
+    Dataset 을 만든다. 덤프 경로·유니버스·피처셋은 ``extra`` knob 으로 받는다. 파일 부재는
+    :class:`GateNeeded` 로 안내(크래시 없음).
+    """
+    import json
+
+    from .hiring_mcp_offline import build_dataset_from_dumps
+
+    stocks_json = _require(knobs, "stocks_json", "--stocks-json")
+    postings_jsonl = _require(knobs, "postings_jsonl", "--postings-jsonl")
+    revenue_csv = _require(knobs, "revenue_csv", "--revenue-csv")
+    try:
+        stocks_rows = [tuple(r) for r in json.load(open(stocks_json, encoding="utf-8"))]
+        postings = [json.loads(ln) for ln in open(postings_jsonl, encoding="utf-8") if ln.strip()]
+    except FileNotFoundError as e:
+        raise GateNeeded(f"file missing: {e.filename or e}")
+    fs = knobs.get("feature_set", "volume+duty")
+    if fs not in ("volume", "duty", "volume+duty"):
+        fs = "volume+duty"
+    ds = build_dataset_from_dumps(
+        stocks_rows=stocks_rows, postings=postings, revenue_csv=revenue_csv,
+        tickers=_tickers(knobs), feature_set=fs,
+        lookback_days=int(knobs.get("lookback", 90)),
+        min_observations=int(knobs.get("min_obs", 2)),
+        min_cross_section=int(knobs.get("min_cross_section", 6)),
+    )
+    _nonempty(ds, "revenue-offline")
+    return _panel_from_dataset(ds, "revenue")
+
+
 def _panel_patent_revenue(*, seed: int, **knobs) -> Panel:
     from .fundamentals_dataset import load_patent_revenue_from_env
 
@@ -403,6 +438,7 @@ DATASET_SPECS = {
     "patent": _panel_patent,
     "fusion": _panel_fusion,
     "revenue": _panel_revenue,
+    "revenue-offline": _panel_revenue_offline,
     "patent-revenue": _panel_patent_revenue,
     "fusion-revenue": _panel_fusion_revenue,
 }
@@ -411,7 +447,8 @@ DATASET_SPECS = {
 SOURCE_TASK = {
     "synthetic": "direction", "datalab-demo": "direction", "datalab": "direction",
     "hiring": "direction", "patent": "direction", "fusion": "direction",
-    "revenue": "revenue", "patent-revenue": "revenue", "fusion-revenue": "revenue",
+    "revenue": "revenue", "revenue-offline": "revenue",
+    "patent-revenue": "revenue", "fusion-revenue": "revenue",
 }
 
 # Sources that need no credentials — the offline-testable set.
@@ -462,6 +499,7 @@ _SOURCE_FAMILIES: dict[str, tuple[str, ...]] = {
     "patent": ("all", "pt_count", "pt_momentum", "pt_significance"),
     "fusion": ("all", "src_patent", "src_hiring", "src_datalab"),
     "revenue": ("all",),
+    "revenue-offline": ("all", "hr_duty"),
     "patent-revenue": ("all",),
     "fusion-revenue": ("all", "src_patent", "src_hiring"),
 }
