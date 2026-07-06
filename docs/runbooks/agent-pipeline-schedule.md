@@ -72,6 +72,7 @@ Policy skips that replace an otherwise due scheduled run are also written to `co
 
 Each schedule row can override execution policy without changing code:
 
+- DART collection: `dart_limit`, `dart_include_ownership`, `dart_include_financials`, `dart_include_employee`
 - Report collection: `report_limit`, `report_days_back`, `report_max_pages`
 - Alternative data: `alternative_collect_enabled`, `alternative_analyze_enabled`, `alternative_collect_timeout_seconds`, `alternative_analyze_timeout_seconds`
 - Backpressure: `backpressure_max_waiting`, `backpressure_max_failed`
@@ -111,6 +112,8 @@ The current default fair-cycle plan is:
 ```text
 collect_dart
 collect_dart_ownership
+collect_dart_financials
+collect_dart_employee
 collect_report
 normalize_dart_ownership
 normalize_dart
@@ -138,7 +141,7 @@ record_episode_outcomes
 
 Why this order:
 
-- DART: `collect_dart -> normalize_dart -> analyze_dart`; ownership events use `collect_dart_ownership -> normalize_dart_ownership -> analyze_dart`.
+- DART: `collect_dart -> normalize_dart -> analyze_dart`; ownership events use `collect_dart_ownership -> normalize_dart_ownership -> analyze_dart`. Structured financials and employee tasks use `collect_dart_financials` and `collect_dart_employee` to upsert `dart_financial_facts` and `dart_employee_stats`; they do not enqueue signalization tasks yet.
 - Report: `collect_report -> process_report -> normalize_report -> analyze_report`
 - PRICE: scheduler triggers collection; `analyze_price` reads DB data only.
 - Alternative data: external collection jobs feed normalize, enrich, and per-source analyze tasks.

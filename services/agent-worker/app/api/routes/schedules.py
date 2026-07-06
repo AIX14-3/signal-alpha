@@ -23,6 +23,8 @@ class ScheduleDartCollectionRequest(BaseModel):
     end_de: str | None = None
     priority: Literal["batch", "immediate"] = "batch"
     include_ownership: bool = False
+    include_financials: bool = False
+    include_employee: bool = False
 
 
 class ScheduleReportCollectionRequest(BaseModel):
@@ -197,4 +199,6 @@ async def schedule_dart_collection(
             end_de=request.end_de,
             priority=request.priority,
             include_ownership=request.include_ownership,
+            include_financials=request.include_financials,
+            include_employee=request.include_employee,
         )

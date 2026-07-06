@@ -11,7 +11,11 @@ from app.agents.dart.graph import DartAnalysisGraphAgent
 from app.analyzers.dart.financials import extract_dart_financial_metrics
 from app.analyzers.dart.rules import classify_dart_report, make_dart_event_hash
 from app.collectors.dart.disclosure import DartCollector, DartDisclosureClient
+from app.collectors.dart.employee_api import DartEmployeeCollector
+from app.collectors.dart.financials_api import DartFinancialsCollector
 from app.collectors.dart.ownership_api import DartOwnershipCollector
+from app.orchestrator.dart.employee_sync import DartEmployeeSyncService
+from app.orchestrator.dart.financials_sync import DartFinancialsSyncService
 from app.orchestrator.dart.ownership_sync import DartOwnershipSyncService
 from app.orchestrator.persistence import CollectionPersistence
 from app.orchestrator.queue.context import enqueue_aggregate
@@ -22,6 +26,8 @@ from app.orchestrator.queue.task_types import (
 )
 from signal_alpha_data_access.repositories import (
     AnalysisRepository,
+    DartEmployeeStatsRepository,
+    DartFinancialFactsRepository,
     DartOwnershipRepository,
     DartRepository,
     NormalizationRepository,
@@ -137,6 +143,93 @@ class DartOwnershipCollectionTaskHandler:
             min_request_interval_sec=getattr(
                 self._settings,
                 "dart_ownership_min_request_interval_sec",
+                0.2,
+            ),
+        )
+
+
+class DartFinancialsCollectionTaskHandler:
+    def __init__(
+        self,
+        *,
+        connection: Any,
+        settings: Any,
+        collector: Any | None = None,
+        repository: Any | None = None,
+        current_year: int | None = None,
+    ) -> None:
+        self._connection = connection
+        self._settings = settings
+        self._collector = collector
+        self._repository = repository
+        self._current_year = current_year
+
+    async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
+        stock_id = int(task["stock_id"])
+        task_context = _task_context(task.get("task_context"))
+        stock_code = _stock_code_from_context(task_context)
+        service = DartFinancialsSyncService(
+            collector=self._collector or self._build_collector(),
+            repository=self._repository or DartFinancialFactsRepository(self._connection),
+            lookback_years=int(getattr(self._settings, "dart_financials_lookback_years", 3)),
+            reprt_codes=_settings_tuple(
+                getattr(self._settings, "dart_financials_reprt_codes", ())
+            ),
+            current_year=self._current_year,
+        )
+        return await service.sync_ticker(stock_code=stock_code, stock_id=stock_id)
+
+    def _build_collector(self) -> DartFinancialsCollector:
+        return DartFinancialsCollector(
+            api_key=self._settings.dart_api_key,
+            corp_code_repository=DartRepository(self._connection),
+            fs_priority=_settings_tuple(
+                getattr(self._settings, "dart_financials_fs_priority", ("CFS", "OFS"))
+            ),
+            min_request_interval_sec=getattr(
+                self._settings,
+                "dart_financials_min_request_interval_sec",
+                0.2,
+            ),
+        )
+
+
+class DartEmployeeCollectionTaskHandler:
+    def __init__(
+        self,
+        *,
+        connection: Any,
+        settings: Any,
+        collector: Any | None = None,
+        repository: Any | None = None,
+        current_year: int | None = None,
+    ) -> None:
+        self._connection = connection
+        self._settings = settings
+        self._collector = collector
+        self._repository = repository
+        self._current_year = current_year
+
+    async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
+        stock_id = int(task["stock_id"])
+        task_context = _task_context(task.get("task_context"))
+        stock_code = _stock_code_from_context(task_context)
+        service = DartEmployeeSyncService(
+            collector=self._collector or self._build_collector(),
+            repository=self._repository or DartEmployeeStatsRepository(self._connection),
+            lookback_years=int(getattr(self._settings, "dart_employee_lookback_years", 3)),
+            reprt_codes=_settings_tuple(getattr(self._settings, "dart_employee_reprt_codes", ())),
+            current_year=self._current_year,
+        )
+        return await service.sync_ticker(stock_code=stock_code, stock_id=stock_id)
+
+    def _build_collector(self) -> DartEmployeeCollector:
+        return DartEmployeeCollector(
+            api_key=self._settings.dart_api_key,
+            corp_code_repository=DartRepository(self._connection),
+            min_request_interval_sec=getattr(
+                self._settings,
+                "dart_employee_min_request_interval_sec",
                 0.2,
             ),
         )
@@ -535,6 +628,14 @@ def _task_context(value: Any) -> dict[str, Any]:
     if isinstance(value, str):
         return json.loads(value)
     return dict(value)
+
+
+def _settings_tuple(value: Any) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        return tuple(item.strip() for item in value.split(",") if item.strip())
+    return tuple(str(item).strip() for item in value if str(item).strip())
 
 
 def _source_raw_ids(value: Any) -> list[int]:
