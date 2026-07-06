@@ -83,6 +83,8 @@ def test_sweep_wide_fdr_spans_full_ledger():
 
 def test_db_source_gates_without_credentials(monkeypatch, tmp_path):
     monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("DATALAB_SWEEP_DATABASE_URL", raising=False)
+    monkeypatch.setattr(sweep_grid, "_load_dotenv_once", lambda: None)  # ignore any .env
     cells = build_grid(
         source="db", size="small",
         extra={"tickers": ("005930", "000660"), "start": "2021-01-01",
@@ -139,6 +141,8 @@ def test_revenue_planted_demo_survives_null_does_not(tmp_path):
 
 def test_search_tasks_gate_on_db_without_credentials(monkeypatch, tmp_path):
     monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("DATALAB_SWEEP_DATABASE_URL", raising=False)
+    monkeypatch.setattr(sweep_grid, "_load_dotenv_once", lambda: None)  # ignore any .env
     for task in ("magnitude", "revenue"):
         cells = build_grid(
             source="db", size="small", task=task,

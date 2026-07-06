@@ -105,23 +105,41 @@ def _panel_demo(*, n_stocks: int, weeks: int, horizon: int, band: float,
                  list(ds.feature_names), "direction")
 
 
-def _panel_db(*, tickers: tuple[str, ...], start: str, end: str, benchmark: str,
-              horizon: int, band: float, signal_step: int, prices_csv: str | None,
-              **_) -> Panel:
-    """Live DataLab-DB pipeline — GATES when DATABASE_URL / data are absent."""
-    if not os.environ.get("DATABASE_URL"):
-        raise GateNeeded("DATABASE_URL unset — supply Supabase DSN (or --prices-csv + loaded DataLab/OHLCV)")
-    import asyncio
-
-    from .datalab_db import load_from_env
-
+def _load_dotenv_once() -> None:
+    """Best-effort ``.env`` load from cwd upward (tolerated absent)."""
     try:
         from dotenv import find_dotenv, load_dotenv
 
         load_dotenv(find_dotenv(usecwd=True))
     except ImportError:
         pass
-    database_url = os.environ["DATABASE_URL"]
+
+
+def _sweep_database_url() -> str | None:
+    """DSN for the live DataLab sweep — a Supabase URL for the research sweep can be
+    set WITHOUT clobbering the local/worker ``DATABASE_URL``.
+
+    Prefers ``DATALAB_SWEEP_DATABASE_URL`` (paste the Supabase DSN here), falling
+    back to ``DATABASE_URL``. Loads ``.env`` first so either can live in a file.
+    """
+    _load_dotenv_once()
+    return os.environ.get("DATALAB_SWEEP_DATABASE_URL") or os.environ.get("DATABASE_URL")
+
+
+def _panel_db(*, tickers: tuple[str, ...], start: str, end: str, benchmark: str,
+              horizon: int, band: float, signal_step: int, prices_csv: str | None,
+              **_) -> Panel:
+    """Live DataLab-DB pipeline — GATES when no DSN / data are absent."""
+    database_url = _sweep_database_url()
+    if not database_url:
+        raise GateNeeded(
+            "no DSN — set DATALAB_SWEEP_DATABASE_URL (Supabase) or DATABASE_URL "
+            "(or --prices-csv + loaded DataLab/OHLCV)"
+        )
+    import asyncio
+
+    from .datalab_db import load_from_env
+
     ds = asyncio.run(
         load_from_env(
             database_url=database_url,
@@ -185,10 +203,10 @@ def _panel_demo_revenue(*, n_stocks: int, weeks: int, signal_step: int, lag: int
 
 def _panel_db_magnitude(*, prices_csv: str | None = None, **_) -> Panel:
     """Live search→magnitude — GATES (offline scope); names exactly what's needed."""
-    if not os.environ.get("DATABASE_URL"):
+    if not _sweep_database_url():
         raise GateNeeded(
-            "DATABASE_URL unset — search→magnitude db run needs Supabase DSN + "
-            "OHLCV(close,volume) + name-search DataLab"
+            "no DSN — set DATALAB_SWEEP_DATABASE_URL (Supabase) or DATABASE_URL; "
+            "search→magnitude db run also needs OHLCV(close,volume) + name-search DataLab"
         )
     raise GateNeeded(
         "db magnitude run not wired offline — supply name-search + OHLCV(volume); "
@@ -198,10 +216,11 @@ def _panel_db_magnitude(*, prices_csv: str | None = None, **_) -> Panel:
 
 def _panel_db_revenue(*, prices_csv: str | None = None, **_) -> Panel:
     """Live search→revenue-nowcast — GATES (offline scope); names exactly what's needed."""
-    if not os.environ.get("DATABASE_URL"):
+    if not _sweep_database_url():
         raise GateNeeded(
-            "DATABASE_URL unset — search→revenue db run needs Supabase DSN + "
-            "DataLab search + dart_krx250.csv (ticker,year,reprt,account,amount)"
+            "no DSN — set DATALAB_SWEEP_DATABASE_URL (Supabase) or DATABASE_URL; "
+            "search→revenue db run also needs DataLab search + dart_krx250.csv "
+            "(ticker,year,reprt,account,amount)"
         )
     raise GateNeeded(
         "db revenue run not wired offline — supply dart_krx250.csv + DataLab search; "
