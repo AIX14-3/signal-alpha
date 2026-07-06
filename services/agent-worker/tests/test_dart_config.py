@@ -10,6 +10,8 @@ from app.orchestrator.queue.task_types import (
     COLLECT_DART_FINANCIALS,
     COLLECT_DART_OWNERSHIP,
     NORMALIZE_DART,
+    NORMALIZE_DART_EMPLOYEE,
+    NORMALIZE_DART_FINANCIALS,
     NORMALIZE_DART_OWNERSHIP,
 )
 
@@ -63,4 +65,6 @@ class DartConfigTest(unittest.TestCase):
         self.assertEqual(COLLECT_DART_EMPLOYEE, "collect_dart_employee")
         self.assertEqual(NORMALIZE_DART, "normalize_dart")
         self.assertEqual(NORMALIZE_DART_OWNERSHIP, "normalize_dart_ownership")
+        self.assertEqual(NORMALIZE_DART_FINANCIALS, "normalize_dart_financials")
+        self.assertEqual(NORMALIZE_DART_EMPLOYEE, "normalize_dart_employee")
         self.assertEqual(ANALYZE_DART, "analyze_dart")

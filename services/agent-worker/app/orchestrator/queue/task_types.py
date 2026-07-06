@@ -4,6 +4,8 @@ COLLECT_DART_FINANCIALS = "collect_dart_financials"
 COLLECT_DART_EMPLOYEE = "collect_dart_employee"
 NORMALIZE_DART = "normalize_dart"
 NORMALIZE_DART_OWNERSHIP = "normalize_dart_ownership"
+NORMALIZE_DART_FINANCIALS = "normalize_dart_financials"
+NORMALIZE_DART_EMPLOYEE = "normalize_dart_employee"
 ANALYZE_DART = "analyze_dart"
 AGGREGATE_SIGNAL = "aggregate_signal"
 

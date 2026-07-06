@@ -59,7 +59,7 @@ stocks
 
 > 정확한 최신 상태는 `AGENTS.md`와 코드를 확인하세요. 기획 문서를 구현 완료로 취급하지 않습니다.
 
-- **구현됨**: DART 큐 핸들러 `collect_dart` / `normalize_dart` / `analyze_dart` 및 ownership 경로 `collect_dart_ownership` / `normalize_dart_ownership`. 정형 수집 `collect_dart_financials`, `collect_dart_employee`는 각각 `dart_financial_facts`, `dart_employee_stats`까지 적재하며 아직 `signal_events`/`analyze_dart`로 이어지지 않습니다.
+- **구현됨**: DART 큐 핸들러 `collect_dart` / `normalize_dart` / `analyze_dart` 및 ownership 경로 `collect_dart_ownership` / `normalize_dart_ownership`. 정형 수집 `collect_dart_financials`, `collect_dart_employee`는 각각 `dart_financial_facts`, `dart_employee_stats`에 적재한 뒤 `normalize_dart_financials`, `normalize_dart_employee`를 통해 검증된 근거 이벤트와 지표(`signal_events`, `signal_metrics`)로 승격하고 `analyze_dart`로 이어집니다.
 - **구현됨**: 가격 수집은 **수집기 인스턴스**(`run_collector_instance.py`)로 동작하며 `price_snapshots`/`ohlcv_data`
   적재(`PRICE_COLLECTOR_ENABLED`로 워커 내장 on/off 가능, 단일 통합 기동 시 워커 lifespan에 내장)(#11 업데이트).
   PRICE analyzer는 DB만 읽음(키움 API 직접 호출 금지).

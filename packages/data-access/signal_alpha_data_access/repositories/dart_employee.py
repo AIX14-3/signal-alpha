@@ -136,6 +136,19 @@ class DartEmployeeStatsRepository:
             corp_code.strip(),
         )
 
+    async def list_for_normalization(self, *, stock_id: int, limit: int = 500) -> list[Any]:
+        return await self._connection.fetch(
+            """
+            SELECT *
+            FROM dart_employee_stats
+            WHERE stock_id = $1
+            ORDER BY bsns_year DESC, reprt_code DESC, segment, sex, line_seq, id
+            LIMIT $2
+            """,
+            int(stock_id),
+            int(limit),
+        )
+
     async def get_latest_rcept_no(
         self,
         *,

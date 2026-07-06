@@ -116,6 +116,8 @@ collect_dart_financials
 collect_dart_employee
 collect_report
 normalize_dart_ownership
+normalize_dart_financials
+normalize_dart_employee
 normalize_dart
 analyze_dart
 process_report
@@ -141,7 +143,7 @@ record_episode_outcomes
 
 Why this order:
 
-- DART: `collect_dart -> normalize_dart -> analyze_dart`; ownership events use `collect_dart_ownership -> normalize_dart_ownership -> analyze_dart`. Structured financials and employee tasks use `collect_dart_financials` and `collect_dart_employee` to upsert `dart_financial_facts` and `dart_employee_stats`; they do not enqueue signalization tasks yet.
+- DART: `collect_dart -> normalize_dart -> analyze_dart`; ownership events use `collect_dart_ownership -> normalize_dart_ownership -> analyze_dart`. Structured financials and employee tasks use `collect_dart_financials -> normalize_dart_financials -> analyze_dart` and `collect_dart_employee -> normalize_dart_employee -> analyze_dart` to promote official rows into canonical evidence events and metrics.
 - Report: `collect_report -> process_report -> normalize_report -> analyze_report`
 - PRICE: scheduler triggers collection; `analyze_price` reads DB data only.
 - Alternative data: external collection jobs feed normalize, enrich, and per-source analyze tasks.

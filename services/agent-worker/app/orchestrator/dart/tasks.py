@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping
 from datetime import date, datetime, timedelta
 from typing import Any
@@ -22,6 +23,8 @@ from app.orchestrator.queue.context import enqueue_aggregate
 from app.orchestrator.queue.task_types import (
     ANALYZE_DART,
     NORMALIZE_DART,
+    NORMALIZE_DART_EMPLOYEE,
+    NORMALIZE_DART_FINANCIALS,
     NORMALIZE_DART_OWNERSHIP,
 )
 from signal_alpha_data_access.repositories import (
@@ -156,12 +159,14 @@ class DartFinancialsCollectionTaskHandler:
         settings: Any,
         collector: Any | None = None,
         repository: Any | None = None,
+        queue_repository: Any | None = None,
         current_year: int | None = None,
     ) -> None:
         self._connection = connection
         self._settings = settings
         self._collector = collector
         self._repository = repository
+        self._queue_repository = queue_repository or ProcessingQueueRepository(connection)
         self._current_year = current_year
 
     async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
@@ -177,7 +182,17 @@ class DartFinancialsCollectionTaskHandler:
             ),
             current_year=self._current_year,
         )
-        return await service.sync_ticker(stock_code=stock_code, stock_id=stock_id)
+        result = await service.sync_ticker(stock_code=stock_code, stock_id=stock_id)
+        normalize_task_id = None
+        if int(result.get("upserted_count") or 0) > 0:
+            normalize_task_id = await self._queue_repository.enqueue(
+                stock_id=stock_id,
+                task_type=NORMALIZE_DART_FINANCIALS,
+                priority=str(task.get("priority") or "batch"),
+                task_context={"stock_code": stock_code},
+                dedupe=True,
+            )
+        return {**result, "normalize_task_id": normalize_task_id}
 
     def _build_collector(self) -> DartFinancialsCollector:
         return DartFinancialsCollector(
@@ -202,12 +217,14 @@ class DartEmployeeCollectionTaskHandler:
         settings: Any,
         collector: Any | None = None,
         repository: Any | None = None,
+        queue_repository: Any | None = None,
         current_year: int | None = None,
     ) -> None:
         self._connection = connection
         self._settings = settings
         self._collector = collector
         self._repository = repository
+        self._queue_repository = queue_repository or ProcessingQueueRepository(connection)
         self._current_year = current_year
 
     async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
@@ -221,7 +238,17 @@ class DartEmployeeCollectionTaskHandler:
             reprt_codes=_settings_tuple(getattr(self._settings, "dart_employee_reprt_codes", ())),
             current_year=self._current_year,
         )
-        return await service.sync_ticker(stock_code=stock_code, stock_id=stock_id)
+        result = await service.sync_ticker(stock_code=stock_code, stock_id=stock_id)
+        normalize_task_id = None
+        if int(result.get("upserted_count") or 0) > 0:
+            normalize_task_id = await self._queue_repository.enqueue(
+                stock_id=stock_id,
+                task_type=NORMALIZE_DART_EMPLOYEE,
+                priority=str(task.get("priority") or "batch"),
+                task_context={"stock_code": stock_code},
+                dedupe=True,
+            )
+        return {**result, "normalize_task_id": normalize_task_id}
 
     def _build_collector(self) -> DartEmployeeCollector:
         return DartEmployeeCollector(
@@ -233,6 +260,180 @@ class DartEmployeeCollectionTaskHandler:
                 0.2,
             ),
         )
+
+
+class DartFinancialsNormalizeTaskHandler:
+    EXTERNAL_REF_TYPE = "dart_financial_facts"
+
+    def __init__(
+        self,
+        connection: Any,
+        *,
+        financials_repository: Any | None = None,
+        normalization_repository: Any | None = None,
+        queue_repository: Any | None = None,
+    ) -> None:
+        self._financials_repository = financials_repository or DartFinancialFactsRepository(
+            connection
+        )
+        self._normalization_repository = normalization_repository or NormalizationRepository(
+            connection
+        )
+        self._queue_repository = queue_repository or ProcessingQueueRepository(connection)
+
+    async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
+        stock_id = int(task["stock_id"])
+        task_context = _task_context(task.get("task_context"))
+        limit = int(task_context.get("limit") or 500)
+        rows = await self._financials_repository.list_for_normalization(
+            stock_id=stock_id,
+            limit=limit,
+        )
+
+        signal_event_ids: list[int] = []
+        for group in _financial_groups(rows):
+            source_document = await self._normalization_repository.upsert_external_source_document(
+                external_ref_type=self.EXTERNAL_REF_TYPE,
+                external_ref_id=_min_row_id(group),
+                stock_id=stock_id,
+                source_type="DART",
+                source_name="OpenDART Financials",
+                title=_financial_title(group),
+                source_url=_dart_receipt_url(group[0].get("rcept_no")),
+                published_at=_receipt_or_period_date(group[0]),
+                collected_at=_collected_at(group),
+                reliability_level="high",
+                is_official=True,
+            )
+            signal_event = await self._normalization_repository.upsert_signal_event(
+                stock_id=stock_id,
+                source_document_id=int(source_document["id"]),
+                event_hash=_financial_event_hash(stock_id, group[0]),
+                source_type="DART",
+                event_type="dart_financial_snapshot",
+                event_date=_receipt_or_period_date(group[0]),
+                signal_direction="neutral",
+                impact_level="medium",
+                title=_financial_title(group),
+                summary=_financial_summary(group),
+                evidence_text=_financial_summary(group),
+                evidence_url=_dart_receipt_url(group[0].get("rcept_no")),
+                needs_review=False,
+            )
+            signal_event_id = int(signal_event["id"])
+            signal_event_ids.append(signal_event_id)
+            for metric in _financial_metrics(group):
+                await self._normalization_repository.upsert_signal_metric(
+                    signal_event_id=signal_event_id,
+                    **metric,
+                )
+            await self._normalization_repository.record_validation_log(
+                target_type="signal_event",
+                target_id_int=signal_event_id,
+                validation_type="source_trace",
+                passed=True,
+                message=f"Normalized from dart_financial_facts ids={_row_ids_csv(group)}",
+            )
+
+        analysis_task_id = await _enqueue_dart_analysis(
+            queue_repository=self._queue_repository,
+            task=task,
+            stock_id=stock_id,
+            task_context=task_context,
+            signal_event_ids=signal_event_ids,
+            run_key_prefix="DART_FINANCIALS",
+        )
+        return {
+            "normalized_count": len(signal_event_ids),
+            "signal_event_ids": signal_event_ids,
+            "analysis_task_id": analysis_task_id,
+        }
+
+
+class DartEmployeeNormalizeTaskHandler:
+    EXTERNAL_REF_TYPE = "dart_employee_stats"
+
+    def __init__(
+        self,
+        connection: Any,
+        *,
+        employee_repository: Any | None = None,
+        normalization_repository: Any | None = None,
+        queue_repository: Any | None = None,
+    ) -> None:
+        self._employee_repository = employee_repository or DartEmployeeStatsRepository(connection)
+        self._normalization_repository = normalization_repository or NormalizationRepository(
+            connection
+        )
+        self._queue_repository = queue_repository or ProcessingQueueRepository(connection)
+
+    async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
+        stock_id = int(task["stock_id"])
+        task_context = _task_context(task.get("task_context"))
+        limit = int(task_context.get("limit") or 500)
+        rows = await self._employee_repository.list_for_normalization(
+            stock_id=stock_id,
+            limit=limit,
+        )
+
+        signal_event_ids: list[int] = []
+        for group in _employee_groups(rows):
+            source_document = await self._normalization_repository.upsert_external_source_document(
+                external_ref_type=self.EXTERNAL_REF_TYPE,
+                external_ref_id=_min_row_id(group),
+                stock_id=stock_id,
+                source_type="DART",
+                source_name="OpenDART Employee",
+                title=_employee_title(group),
+                source_url=_dart_receipt_url(group[0].get("rcept_no")),
+                published_at=_receipt_or_period_date(group[0]),
+                collected_at=_collected_at(group),
+                reliability_level="high",
+                is_official=True,
+            )
+            signal_event = await self._normalization_repository.upsert_signal_event(
+                stock_id=stock_id,
+                source_document_id=int(source_document["id"]),
+                event_hash=_employee_event_hash(stock_id, group[0]),
+                source_type="DART",
+                event_type="dart_employee_snapshot",
+                event_date=_receipt_or_period_date(group[0]),
+                signal_direction="neutral",
+                impact_level="low",
+                title=_employee_title(group),
+                summary=_employee_summary(group),
+                evidence_text=_employee_summary(group),
+                evidence_url=_dart_receipt_url(group[0].get("rcept_no")),
+                needs_review=False,
+            )
+            signal_event_id = int(signal_event["id"])
+            signal_event_ids.append(signal_event_id)
+            for metric in _employee_metrics(group):
+                await self._normalization_repository.upsert_signal_metric(
+                    signal_event_id=signal_event_id,
+                    **metric,
+                )
+            await self._normalization_repository.record_validation_log(
+                target_type="signal_event",
+                target_id_int=signal_event_id,
+                validation_type="source_trace",
+                passed=True,
+                message=f"Normalized from dart_employee_stats ids={_row_ids_csv(group)}",
+            )
+
+        analysis_task_id = await _enqueue_dart_analysis(
+            queue_repository=self._queue_repository,
+            task=task,
+            stock_id=stock_id,
+            task_context=task_context,
+            signal_event_ids=signal_event_ids,
+            run_key_prefix="DART_EMPLOYEE",
+        )
+        return {
+            "normalized_count": len(signal_event_ids),
+            "signal_event_ids": signal_event_ids,
+            "analysis_task_id": analysis_task_id,
+        }
 
 
 class DartOwnershipNormalizeTaskHandler:
@@ -532,6 +733,179 @@ def _dart_source_task_context(
     if task_context.get("universe_snapshot"):
         context["universe_snapshot"] = str(task_context["universe_snapshot"])
     return context
+
+
+_METRIC_SLUG_PATTERN = re.compile(r"[^a-z0-9_]+")
+
+
+def _financial_groups(rows: list[Mapping[str, Any]]) -> list[list[dict[str, Any]]]:
+    groups: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
+    for row in rows:
+        item = dict(row)
+        key = (
+            item.get("corp_code"),
+            item.get("rcept_no"),
+            item.get("bsns_year"),
+            item.get("reprt_code"),
+            item.get("fs_div"),
+        )
+        groups.setdefault(key, []).append(item)
+    return list(groups.values())
+
+
+def _employee_groups(rows: list[Mapping[str, Any]]) -> list[list[dict[str, Any]]]:
+    groups: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
+    for row in rows:
+        item = dict(row)
+        key = (
+            item.get("corp_code"),
+            item.get("rcept_no"),
+            item.get("bsns_year"),
+            item.get("reprt_code"),
+        )
+        groups.setdefault(key, []).append(item)
+    return list(groups.values())
+
+
+def _min_row_id(group: list[Mapping[str, Any]]) -> int:
+    return min(int(row["id"]) for row in group)
+
+
+def _row_ids_csv(group: list[Mapping[str, Any]]) -> str:
+    return ",".join(str(row["id"]) for row in group)
+
+
+def _financial_event_hash(stock_id: int, row: Mapping[str, Any]) -> str:
+    return (
+        f"dart-financial:{stock_id}:{row.get('rcept_no')}:{row.get('bsns_year')}:"
+        f"{row.get('reprt_code')}:{row.get('fs_div')}"
+    )
+
+
+def _employee_event_hash(stock_id: int, row: Mapping[str, Any]) -> str:
+    return (
+        f"dart-employee:{stock_id}:{row.get('rcept_no')}:{row.get('bsns_year')}:"
+        f"{row.get('reprt_code')}"
+    )
+
+
+def _financial_title(group: list[Mapping[str, Any]]) -> str:
+    row = group[0]
+    period = row.get("period_label") or row.get("bsns_year") or "unknown period"
+    fs_div = row.get("fs_div") or "unknown fs"
+    return f"DART financial facts: {period} ({fs_div})"
+
+
+def _employee_title(group: list[Mapping[str, Any]]) -> str:
+    row = group[0]
+    year = row.get("bsns_year") or "unknown year"
+    reprt_code = row.get("reprt_code") or "unknown report"
+    return f"DART employee stats: {year} {reprt_code}"
+
+
+def _financial_summary(group: list[Mapping[str, Any]]) -> str:
+    row = group[0]
+    period = row.get("period_label") or row.get("bsns_year") or "unknown period"
+    fs_div = row.get("fs_div") or "unknown fs"
+    metric_count = len(_financial_metrics(group))
+    return f"OpenDART financial facts for {period} {fs_div}; {metric_count} metrics extracted."
+
+
+def _employee_summary(group: list[Mapping[str, Any]]) -> str:
+    row = group[0]
+    year = row.get("bsns_year") or "unknown year"
+    metric_count = len(_employee_metrics(group))
+    return f"OpenDART employee stats for {year}; {metric_count} metrics extracted."
+
+
+def _financial_metrics(group: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    metrics = []
+    for row in group:
+        amount = row.get("amount_krw")
+        if amount is None:
+            continue
+        metric_name = f"dart_financial_{_slug(row.get('account_id') or row.get('account_nm'))}"
+        metrics.append(
+            {
+                "metric_name": metric_name,
+                "metric_value": amount,
+                "metric_unit": row.get("currency") or "KRW",
+            }
+        )
+    return metrics
+
+
+def _employee_metrics(group: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    specs = (
+        ("headcount", "count"),
+        ("regular_count", "count"),
+        ("contract_count", "count"),
+        ("avg_tenure_years", "years"),
+        ("avg_salary_krw", "KRW"),
+        ("salary_total_krw", "KRW"),
+    )
+    metrics = []
+    for row in group:
+        prefix = (
+            f"dart_employee_{_slug(row.get('segment'), fallback='all')}_"
+            f"{_slug(row.get('sex'), fallback='all')}_{int(row.get('line_seq') or 0)}"
+        )
+        for field, unit in specs:
+            value = row.get(field)
+            if value is None:
+                continue
+            metrics.append(
+                {
+                    "metric_name": f"{prefix}_{field}",
+                    "metric_value": value,
+                    "metric_unit": unit,
+                }
+            )
+    return metrics
+
+
+def _slug(value: Any, *, fallback: str = "unknown") -> str:
+    text = str(value or "").strip().lower().replace("-", "_")
+    text = _METRIC_SLUG_PATTERN.sub("_", text).strip("_")
+    return text or fallback
+
+
+def _receipt_or_period_date(row: Mapping[str, Any]) -> date:
+    receipt = str(row.get("rcept_no") or "").strip()
+    if len(receipt) >= 8 and receipt[:8].isdigit():
+        return _to_date(receipt[:8])
+    year = int(row.get("bsns_year") or date.today().year)
+    return date(year, 12, 31)
+
+
+def _collected_at(group: list[Mapping[str, Any]]) -> datetime | date:
+    for row in group:
+        if row.get("fetched_at") is not None:
+            return row["fetched_at"]
+    return _receipt_or_period_date(group[0])
+
+
+async def _enqueue_dart_analysis(
+    *,
+    queue_repository: Any,
+    task: Mapping[str, Any],
+    stock_id: int,
+    task_context: Mapping[str, Any],
+    signal_event_ids: list[int],
+    run_key_prefix: str,
+) -> int | None:
+    if not signal_event_ids:
+        return None
+    analysis_context = _dart_source_task_context(task_context)
+    analysis_context["run_key"] = f"{run_key_prefix}_{signal_event_ids[0]}"
+    return await queue_repository.enqueue(
+        stock_id=stock_id,
+        task_type=ANALYZE_DART,
+        priority=str(task.get("priority") or "batch"),
+        source_signal_event_ids=signal_event_ids,
+        task_context=analysis_context,
+        dedupe=True,
+    )
 
 
 def _ownership_event_hash(stock_id: int, ownership_event_id: int) -> str:
