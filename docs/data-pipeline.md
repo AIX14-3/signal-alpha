@@ -65,14 +65,14 @@ stocks
   PRICE analyzer는 DB만 읽음(키움 API 직접 호출 금지).
 - **구현됨**: DataLab 카테고리 기반 수집 경로.
 - **구현됨**: Report 큐 경로 `collect_report → process_report → normalize_report → analyze_report → aggregate_signal` (결정론 밸류에이션 fact 추출). `analyze_report` 가 `aggregate_ctx.source_analysis_result_ids`에 Report `analysis_result_id`를 담아 **AGGREGATE 로 직접** 넘기며(과거 경유하던 vol ML 채널 `ml_infer` 는 C안 Phase 1 #585 에서 제거), Aggregator는 `REPORT`를 최종 `score_breakdown.REPORT` 근거 소스로 수용합니다. Report는 valuation payload를 보존하지만 현재 점수 산정 소스에는 포함하지 않습니다.
-- **폐지됨**: 리포트 PDF **임베딩/RAG 검색**과 **pgvector** 확장은 제거되었습니다(`report_chunks` 테이블 제거, `embed_report`/RAG retriever/Report Agent 부재). 리포트 분석은 RAG가 아니라 `report_valuation_facts` 기반 결정론 추출입니다. 자세한 현황은 `spec/report-rag-current-state.md`.
+- **폐지됨**: 리포트 PDF **임베딩/RAG 검색 런타임**은 제거되었습니다(`embed_report`/RAG retriever/Report Agent 부재). `report_chunks` 스키마가 남아 있을 수 있지만 현재 Report 런타임에서는 `report_chunks`를 적재하거나 조회하지 않습니다. 리포트 분석은 RAG가 아니라 `report_valuation_facts` 기반 결정론 추출입니다. 자세한 현황은 `spec/report-rag-current-state.md`.
 - **구현됨(#11 업데이트)**: 워커 드레인 데몬이 큐를 끝단까지 소비한다 — 주가(PRICE)는 `analyzers/price`
   의 **기술지표 규칙**으로 `RiskReport.price_prediction`을 **별도 제공**합니다. DART는 현재
   `direction="unknown"`, `data_status="no_signal"`인 근거/커버리지 소스로 집계에 합류하므로
   `score_breakdown.DART`와 끝단 LLM 종합(`SYNTHESIZE`)에는 남지만 숫자 `final_score` 평균에는 들어가지 않습니다.
   `backfill_dart_labels` 기반 이벤트스터디 라벨 백필 및 DART 소스 ML 채널은 운영 경로에서 제거되었습니다.
   Report도 valuation payload와 근거를 보존하지만 현재 점수 산정 소스에는 포함하지 않습니다. 라우팅 상세는
-  [architecture-diagram.md](./architecture-diagram.md). legacy `report_raw`, `report_signal`은 과거 경로용으로만 유지.
+  [architecture-diagram.md](./architecture-diagram.md). legacy `report_raw`, `report_signal`은 제거되었으며 신규 경로에서 사용하지 않습니다.
 
 ## LLM·분석 규칙
 

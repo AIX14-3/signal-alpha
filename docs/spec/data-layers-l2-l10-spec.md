@@ -97,14 +97,14 @@ CREATE TABLE dart_employee_stats (
 
 **소스**: DART `document.xml`(수집됨) + SEC 10-K/10-Q. 섹션: 사업의 내용 / MD&A / 위험요인 / 주석 / 감사보고서.
 
-**스키마**: 기존 `report_chunks`(VECTOR(1024)·BGE-M3·ivfflat) **재사용**하되 **섹션 메타 추가 필요**(현재 컬럼에 section_type 없음).
+**스키마**: `report_chunks`는 현재 Report 런타임에서 사용하지 않는 잔존 스키마이므로 L4에서 재사용하지 않는다. L4 착수 시 DART/SEC용 신규 `document_sections`/`document_chunks` 계열 스키마를 별도 마이그레이션으로 설계한다.
 ```sql
--- report_chunks 확장(ALTER) 또는 신규 report_sections 도입
-ALTER TABLE report_chunks ADD COLUMN section_type VARCHAR(40);   -- mdna/risk/notes/audit/business
-ALTER TABLE report_chunks ADD COLUMN source VARCHAR(10) DEFAULT 'dart';  -- dart/sec
-CREATE INDEX idx_chunks_section ON report_chunks (stock_id, section_type);
+-- 예시: L4 전용 신규 스키마. 실제 컬럼/인덱스는 별도 구현 PR에서 확정한다.
+CREATE TABLE document_sections (...);
+CREATE TABLE document_chunks (...);
+CREATE INDEX idx_document_chunks_section ON document_chunks (stock_id, section_type);
 ```
-**워크플로우**: 원문 → 섹션 분해 → 청킹 → BGE-M3 임베딩 → `report_chunks` 적재 → top-k 검색(evidence_ref 부착).
+**워크플로우**: 원문 → 섹션 분해 → 청킹 → 임베딩 → L4 전용 chunk 테이블 적재 → top-k 검색(evidence_ref 부착).
 **선결 과제**: `chunker.py`의 `langchain_text_splitters` **의존성 미선언/미설치 정리**(선언 or 자체 splitter) — L4 착수 전 필수.
 **엣지케이스**: 섹션 경계 모호, 표/이미지, 다국어(BGE-M3 OK), 토큰 한도, 정정본 재임베딩.
 **분담**: 🙋 섹션분해·임베딩 파이프라인 / 👥 섹션 사전 정의.

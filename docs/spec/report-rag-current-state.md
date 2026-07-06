@@ -140,7 +140,7 @@ ReportProcessTaskHandler
 
 - 사용자-facing 응답에는 PDF 원문이나 긴 verbatim 청크를 노출하지 않습니다.
 - 현재 런타임은 PDF 전체 원문이나 긴 청크를 사용자-facing 응답으로 내보내지 않습니다.
-- `report_chunks` 기반 내부 RAG 검색은 현재 런타임에 연결되어 있지 않습니다. RAG를 복구할 경우에도 사용자-facing 응답에는 원문 PDF 또는 긴 verbatim 청크를 노출하지 않는 원칙을 유지해야 합니다.
+- `report_chunks` 기반 내부 RAG 검색은 현재 런타임에 연결되어 있지 않으며 제품 범위에서도 제외되어 있습니다. 사용자-facing 응답에는 원문 PDF 또는 긴 verbatim 청크를 노출하지 않는 원칙을 유지해야 합니다.
 - 밸류에이션 재해석 확장에서는 원문 문장을 그대로 저장하는 대신 구조화된 fact와 패러프레이즈된 thesis를 별도 저장하는 방향을 우선합니다.
 
 ### 4. `normalize_report`
@@ -244,7 +244,7 @@ Report RAG는 복구 계획이 없습니다. 신규 개발은 `report_valuation_
 
 - `raw_documents`: source 공통 메타데이터
 - `report_raw_details`: 증권사 리포트 상세, PDF 상태, 파싱 필드
-- `report_chunks`: RAG 복구 후보 스키마입니다. 현재 Report 런타임에서는 청크/embedding을 저장하지 않습니다.
+- `report_chunks`: 과거 Report RAG 계획에서 추가된 비활성 스키마입니다. 현재 Report 런타임에서는 청크/embedding을 저장하거나 조회하지 않습니다.
 - `report_valuation_facts`: 리포트별 목표가 산정 fact, EPS, 적용 배수, 내재 배수, 피어 그룹
 - `processing_queue`: queue 작업 상태
 - `analysis_results`: Report 분석 대표 row를 저장합니다.

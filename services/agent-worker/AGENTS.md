@@ -1,6 +1,6 @@
 # AGENTS.md
 
-이 디렉터리는 내부 워커 서비스입니다. 데이터 수집, 정규화, 큐 실행, 분석, LLM/RAG 작업, 키움 가격 수집 데몬을 담당합니다.
+이 디렉터리는 내부 워커 서비스입니다. 데이터 수집, 정규화, 큐 실행, 분석, 선택적 LLM 보강, 키움 가격 수집 데몬을 담당합니다.
 
 ## 경계
 
@@ -42,7 +42,7 @@ Collector가 하면 안 되는 일:
 특수 저장 흐름:
 
 - DART: `raw_documents -> dart_raw_details -> processing_queue`
-- Report: canonical 경로는 `raw_documents -> report_raw_details -> report_chunks`입니다. legacy `report_raw`/`report_signal`에 신규 의존성을 만들지 마세요.
+- Report: canonical 경로는 `raw_documents -> report_raw_details -> processing_queue` 이후 정규화/분석 테이블입니다. `report_chunks`는 현재 Report 런타임에서 적재하거나 조회하지 않습니다. legacy `report_raw`/`report_signal`에 신규 의존성을 만들지 마세요.
 - Hiring: `raw_documents -> hiring_raw_details -> processing_queue`
 - Patent: `raw_documents -> patent_raw_details -> processing_queue`
 - DataLab: 카테고리 기반 `datalab_raw_documents -> datalab_raw_details -> processing_queue(stock_id=NULL)`
