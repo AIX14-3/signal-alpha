@@ -91,7 +91,7 @@ result = await DartAnalysisGraphAgent(...).analyze(
 )
 ```
 
-DART LangGraph 흐름:
+DART analysis flow:
 
 ```text
 validate_input
@@ -102,15 +102,15 @@ validate_input
 각 node 책임:
 
 - `validate_input`: source, stock code, event 입력을 검증하고 실패 시 `data_status="failed"` 결과를 만든다.
-- `analyze`: 기존 `DartAnalysisAgent`를 호출해 rule 기반 또는 선택적 LLM 분석을 수행한다.
+- `analyze`: `DartAnalysisAgent`를 호출해 features-only 분석과 선택적 LLM 근거 추출을 수행한다.
 - `validate_output`: `method_detail.graph`, `method_detail.graph_nodes`를 추가해 실행 경로를 남긴다.
 
 `DartAnalysisAgent` 내부 책임:
 
 - `build_dart_analysis_result(events)`로 rule 기반 결과 생성
-- `should_use_dart_llm()`으로 LLM 사용 여부 판단
-- LLM 성공 시 `analysis_source="llm"`과 `key_facts`, `llm_confidence`를 `method_detail`에 포함
-- LLM 실패 시 rule 결과로 fallback하고 `analysis_source="rules_fallback"`, `llm_error` 반환
+- `DartLlmEvidenceExtractor`가 주입된 경우에만 LLM 근거 추출 시도
+- LLM 성공 시 `method_detail.llm_evidence`에 `summary`, `key_facts`, `risk_flags`, `confidence`를 additive로 포함
+- LLM 실패 시 features-only 결과를 유지하고 `analysis_source="features"`, `llm_error` provenance 반환
 
 `DartAnalyzeTaskHandler`는 `SourceAgentInput`을 만들고 기본값으로 `DartAnalysisGraphAgent`를 호출한 뒤 기존처럼 `analysis_results`, `agent_results`에 저장한다.
 
@@ -125,7 +125,7 @@ ReportAnalysisAgent.analyze(SourceAgentInput) -> SourceAgentOutput
 PriceAnalysisAgent.analyze(SourceAgentInput) -> SourceAgentOutput
 ```
 
-DART는 먼저 LangGraph 기반 graph runner를 적용했다. Report/PRICE 확장 시에도 각 node는 `SourceAgentInput`을 구성해 Agent를 호출하고, `SourceAgentOutput`을 graph state에 누적한다.
+DART는 `DartAnalysisGraphAgent`라는 호환 이름을 유지하지만 현재 LangGraph 런타임 의존성 없이 입력 검증 → Agent 호출 → 출력 메타데이터 보강 흐름을 직접 수행한다. Report/PRICE 확장 시에도 각 단계는 `SourceAgentInput`을 구성해 Agent를 호출하고, `SourceAgentOutput`을 state에 누적한다.
 
 ```text
 load_context

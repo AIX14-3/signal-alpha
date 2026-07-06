@@ -103,7 +103,6 @@ DEFAULT_CYCLE_PLAN: dict[str, int] = {
     # DART 후속 (가벼움)
     "normalize_dart_ownership": 10,
     "normalize_dart": 10,
-    "backfill_dart_labels": 10,
     "analyze_dart": 10,
     # Report 후속
     "process_report": 5,

@@ -155,13 +155,16 @@ DART analysis runs through `DartAnalysisGraphAgent`, a direct three-step flow th
 delegates to the DART source agent, and records graph provenance in `agent_results.method_detail`.
 The former LangGraph dependency has been removed; the class name and stored `graph_nodes` metadata
 remain for compatibility. DART LLM 판정 경로는 제거되어 현재 DART agent는 features-only output
-(`direction="unknown"`, `data_status="no_signal"`)을 반환합니다. DART disclosure facts still join
-the final `SYNTHESIZE` explanation as evidence, but they do not change the deterministic/ML score.
+(`direction="unknown"`, `data_status="no_signal"`)을 반환합니다. Optional LLM evidence extraction
+adds summary/key-fact evidence only; it is not a DART verdict or ML label channel. DART disclosure
+and ownership facts still join the final `SYNTHESIZE` explanation as evidence, but they do not
+change `final_score`.
 
 After successful `analyze_dart`, the worker enqueues `aggregate_signal`. The aggregator reads the
 DART `agent_results` row and creates the user-facing `final_signals` row with `run_key="AGGREGATED"`.
-DART-only final signals are published as single-source data direction with `warning_level="CAUTION"`
-and `needs_review=true`.
+If DART is the only available source, the row can still be published for evidence coverage, but it
+has no scoring source: `score_breakdown.DART.data_status="no_signal"`, neutral score, and a review
+warning. The removed `backfill_dart_labels` task is not part of the live DART queue path.
 
 The `collect_dart` task expects `processing_queue.task_context` to include `stock_code`.
 Optional date filters use OpenDART parameter names:

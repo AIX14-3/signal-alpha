@@ -2,7 +2,7 @@
 
 DART 는 고정숫자 verdict 를 내지 않는다. ``build_dart_analysis_result`` 가 산출한 서술/수치 피처를
 ``direction="unknown"`` + ``data_status="no_signal"`` 로 감싸 반환 → AGGREGATE 점수/방향에서 자연
-제외, 판정(숫자)은 Wave 3 결정론 융합(메타러너)이 소유(불변식).
+제외한다. 현재 운영 경로에서 DART 는 점수 채널이 아니라 근거·커버리지 채널이다.
 
 Wave 2: 옵션 ``evidence_extractor``(``DartLlmEvidenceExtractor``)가 주입되면 고임팩트 공시에 한해
 LLM 이 **근거**(summary/key_facts/risk_flags)를 뽑아 ``method_detail["llm_evidence"]`` 로 **additive**
@@ -49,7 +49,7 @@ class DartAnalysisAgent:
                 rule_result=result,
             )
             if evidence.payload is not None:
-                # 근거는 기존 피처 옆에 additive — 기존 키 불변(Wave 3 융합이 그대로 읽음).
+                # 근거는 기존 피처 옆에 additive — 기존 키 불변.
                 method_detail = {**method_detail, "llm_evidence": evidence.payload}
                 needs_review = needs_review or evidence.needs_review
             llm_model = evidence.llm_model
@@ -58,8 +58,8 @@ class DartAnalysisAgent:
         return SourceAgentOutput(
             source="DART",
             stock_code=input_data.stock_code,
-            direction=result.direction,  # "unknown" — 판정 없음(D1). LLM 은 근거만.
-            score=result.score,  # 0.0 — 숫자는 결정론(Wave 3 융합) 소유.
+            direction=result.direction,  # "unknown" — 판정 없음. LLM 은 근거만.
+            score=result.score,  # 0.0 — DART 는 숫자 점수 채널이 아님.
             summary=result.summary,
             risk_flags=result.risk_flags,
             method_detail=method_detail,  # data_status="no_signal" (+ 옵션 llm_evidence)

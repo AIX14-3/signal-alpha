@@ -26,7 +26,7 @@ aggregate 소스 결과 통합 → final_signals (소스 방향성 일치도·�
 
 | 소스 | 수집 | 주요 처리 |
 |---|---|---|
-| **DART** | OpenDART corp_code/list/document.xml | `raw_documents` + `dart_raw_details` → 정규화 → 규칙 기반 분석, 고임팩트 공시는 선택적 LLM |
+| **DART** | OpenDART corp_code/list/document.xml + ownership API | `raw_documents` + `dart_raw_details` / `dart_ownership_events` → 정규화 → features-only 분석. 선택적 LLM은 근거 추출용이며 판정·점수는 내지 않음 |
 | **Report** | 네이버 리포트 목록 + PDF | `report_raw_details`(PDF 파싱: 목표가·의견·근거) → `report_valuation_facts`(EPS·적용/내재 배수) → 결정론 분석. 원문 PDF 미노출, 구조화 fact·링크 중심 |
 | **PRICE** | 키움 REST (수집기 인스턴스 `run_collector_instance.py`, 워커 내장 on/off는 `PRICE_COLLECTOR_ENABLED`) | `price_snapshots`, `ohlcv_data` 저장 → PRICE analyzer는 **DB만** 읽어 분석 |
 | **Alternative** | 채용 / 특허(KIPRIS) / 네이버 DataLab / SEC | 소스별 collector→analyzer. DataLab은 카테고리 기반 키워드 검색량 |
@@ -59,7 +59,7 @@ stocks
 
 > 정확한 최신 상태는 `AGENTS.md`와 코드를 확인하세요. 기획 문서를 구현 완료로 취급하지 않습니다.
 
-- **구현됨**: DART 큐 핸들러 `collect_dart` / `normalize_dart` / `analyze_dart`.
+- **구현됨**: DART 큐 핸들러 `collect_dart` / `normalize_dart` / `analyze_dart` 및 ownership 경로 `collect_dart_ownership` / `normalize_dart_ownership`.
 - **구현됨**: 가격 수집은 **수집기 인스턴스**(`run_collector_instance.py`)로 동작하며 `price_snapshots`/`ohlcv_data`
   적재(`PRICE_COLLECTOR_ENABLED`로 워커 내장 on/off 가능, 단일 통합 기동 시 워커 lifespan에 내장)(#11 업데이트).
   PRICE analyzer는 DB만 읽음(키움 API 직접 호출 금지).
@@ -67,11 +67,11 @@ stocks
 - **구현됨**: Report 큐 경로 `collect_report → process_report → normalize_report → analyze_report → aggregate_signal` (결정론 밸류에이션 fact 추출). `analyze_report` 가 `aggregate_ctx.source_analysis_result_ids`에 Report `analysis_result_id`를 담아 **AGGREGATE 로 직접** 넘기며(과거 경유하던 vol ML 채널 `ml_infer` 는 C안 Phase 1 #585 에서 제거), Aggregator는 `REPORT`를 최종 `score_breakdown.REPORT` 근거 소스로 수용합니다. Report는 valuation payload를 보존하지만 현재 점수 산정 소스에는 포함하지 않습니다.
 - **폐지됨**: 리포트 PDF **임베딩/RAG 검색**과 **pgvector** 확장은 제거되었습니다(`report_chunks` 테이블 제거, `embed_report`/RAG retriever/Report Agent 부재). 리포트 분석은 RAG가 아니라 `report_valuation_facts` 기반 결정론 추출입니다. 자세한 현황은 `spec/report-rag-current-state.md`.
 - **구현됨(#11 업데이트)**: 워커 드레인 데몬이 큐를 끝단까지 소비한다 — 주가(PRICE)는 `analyzers/price`
-  의 **기술지표 규칙**으로 `RiskReport.price_prediction`을 **별도 제공**하고(ML/DL 주가 모델 `src_price` 는
-  메타러너 라인 별개; 집계 `final_score`는 `SCORING_SOURCES`(`{DART, HIRING, PATENT, DATALAB}`, 소스별 독립)
-  유지, 뒤집지 않음), DART/REPORT/대안데이터는 근거로 끝단 LLM 종합(`SYNTHESIZE`) → `RISK_VETO` 게이트
-  통과 뒤 `PUBLISH_SIGNALS`로 발행됩니다(헤드라인 점수엔 메타러너 미사용; 소스 학습형 `SRC_INFER` 채널은
-  `ANALYZE_PRICE` 가 인큐해 **배선됨**). 라우팅 상세는
+  의 **기술지표 규칙**으로 `RiskReport.price_prediction`을 **별도 제공**합니다. DART는 현재
+  `direction="unknown"`, `data_status="no_signal"`인 근거/커버리지 소스로 집계에 합류하므로
+  `score_breakdown.DART`와 끝단 LLM 종합(`SYNTHESIZE`)에는 남지만 숫자 `final_score` 평균에는 들어가지 않습니다.
+  `backfill_dart_labels` 기반 이벤트스터디 라벨 백필 및 DART 소스 ML 채널은 운영 경로에서 제거되었습니다.
+  Report도 valuation payload와 근거를 보존하지만 현재 점수 산정 소스에는 포함하지 않습니다. 라우팅 상세는
   [architecture-diagram.md](./architecture-diagram.md). legacy `report_raw`, `report_signal`은 과거 경로용으로만 유지.
 
 ## LLM·분석 규칙

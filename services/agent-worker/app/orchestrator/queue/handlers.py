@@ -12,7 +12,6 @@ from app.orchestrator.queue.task_types import (
     ANALYZE_PATENT,
     ANALYZE_PRICE,
     ANALYZE_REPORT,
-    BACKFILL_DART_LABELS,
     COLLECT_DART,
     COLLECT_DART_OWNERSHIP,
     COLLECT_REPORT,
@@ -48,7 +47,6 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
     from app.orchestrator.dart.tasks import (
         DartAnalyzeTaskHandler,
         DartCollectionTaskHandler,
-        DartEventStudyBackfillTaskHandler,
         DartNormalizeTaskHandler,
         DartOwnershipCollectionTaskHandler,
         DartOwnershipNormalizeTaskHandler,
@@ -87,7 +85,6 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
         ),
         NORMALIZE_DART_OWNERSHIP: DartOwnershipNormalizeTaskHandler(connection),
         NORMALIZE_DART: DartNormalizeTaskHandler(connection),
-        BACKFILL_DART_LABELS: DartEventStudyBackfillTaskHandler(connection),
         ANALYZE_DART: DartAnalyzeTaskHandler(
             connection, evidence_extractor=dart_evidence_extractor
         ),

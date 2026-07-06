@@ -38,7 +38,7 @@ VALID_DATA_STATUS = {"ok", "partial", "failed", "no_signal"}
 # direction 허용값 — aggregation 의 VALID_DIRECTIONS({positive/negative/neutral/mixed})에
 # **"unknown"** 을 더한 집합. Phase 0 소스(DART/REPORT 등 features-only, data_status="no_signal")는
 # 결정론 verdict 를 내지 않고 method_signal="unknown" 으로 보낸다 — 정당한 계약값이며 aggregation 은
-# 이를 neutral 로 매핑하고 방향 합의에서 제외한다. 그래서 검증기도 "unknown" 을 위반으로 보지 않는다.
+# 저장 시 neutral 로 정규화하되 점수 평균에서는 제외한다. 그래서 검증기도 "unknown" 을 위반으로 보지 않는다.
 VALID_CONTRACT_DIRECTIONS = VALID_DIRECTIONS | {"unknown"}
 
 # 점수 면제 상태 — coverage-only(점수 평균서 제외) 소스는 numeric score 가 없어도 위반이 아니다.
