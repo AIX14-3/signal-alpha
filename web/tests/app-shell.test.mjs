@@ -17,6 +17,19 @@ async function readApiSource() {
   return parts.join("\n");
 }
 
+// admin 화면은 page.tsx + _components/*.tsx + _lib/*.ts 로 분할됐다.
+// UI 계약 검사는 admin 디렉토리 전체 소스를 합쳐서 본다(어느 파일에 있든 무방).
+async function readAdminSource() {
+  const adminDirUrl = new URL("../src/app/admin/", import.meta.url);
+  const entries = await readdir(adminDirUrl, { recursive: true });
+  const parts = await Promise.all(
+    entries
+      .filter((name) => /\.tsx?$/.test(name))
+      .map((name) => readFile(new URL(name.replace(/\\/g, "/"), adminDirUrl), "utf8")),
+  );
+  return parts.join("\n");
+}
+
 test("home page wires the search hero and report links", async () => {
   const page = await readFile(new URL("../src/app/page.tsx", import.meta.url), "utf8");
   const hero = await readFile(new URL("../src/components/SearchHero.tsx", import.meta.url), "utf8");
@@ -45,7 +58,7 @@ test("api client exposes the contracted endpoints", async () => {
 });
 
 test("admin UI exposes split schedule rows and schedule run history", async () => {
-  const page = await readFile(new URL("../src/app/admin/page.tsx", import.meta.url), "utf8");
+  const page = await readAdminSource();
   const apiClient = await readApiSource();
 
   assert.match(apiClient, /export async function adminListScheduleRuns/);
