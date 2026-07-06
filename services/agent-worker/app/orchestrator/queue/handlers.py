@@ -20,6 +20,8 @@ from app.orchestrator.queue.task_types import (
     ENRICH_HIRING,
     ENRICH_PATENT,
     NORMALIZE_DART,
+    NORMALIZE_DART_EMPLOYEE,
+    NORMALIZE_DART_FINANCIALS,
     NORMALIZE_DART_OWNERSHIP,
     NORMALIZE_DATALAB,
     NORMALIZE_HIRING,
@@ -49,7 +51,9 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
         DartAnalyzeTaskHandler,
         DartCollectionTaskHandler,
         DartEmployeeCollectionTaskHandler,
+        DartEmployeeNormalizeTaskHandler,
         DartFinancialsCollectionTaskHandler,
+        DartFinancialsNormalizeTaskHandler,
         DartNormalizeTaskHandler,
         DartOwnershipCollectionTaskHandler,
         DartOwnershipNormalizeTaskHandler,
@@ -94,6 +98,8 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
             settings=settings,
         ),
         NORMALIZE_DART_OWNERSHIP: DartOwnershipNormalizeTaskHandler(connection),
+        NORMALIZE_DART_FINANCIALS: DartFinancialsNormalizeTaskHandler(connection),
+        NORMALIZE_DART_EMPLOYEE: DartEmployeeNormalizeTaskHandler(connection),
         NORMALIZE_DART: DartNormalizeTaskHandler(connection),
         ANALYZE_DART: DartAnalyzeTaskHandler(
             connection, evidence_extractor=dart_evidence_extractor

@@ -16,7 +16,7 @@
 
 DART 모듈은 OpenDART 공시 및 ownership 데이터를 수집하고, 원천을 표준 이벤트로 정규화한 뒤, DART analysis flow를 통해 정형 피처와 근거를 `analysis_results`와 `agent_results`에 저장한다. 현재 flow는 LangGraph 의존성을 사용하지 않으며, class 이름과 `graph_nodes` 메타데이터만 호환 목적으로 유지한다.
 
-현재 DART 흐름은 공시 경로와 ownership 경로로 분리된다.
+현재 DART 흐름은 공시 경로와 정형 DART 경로로 분리된다.
 
 ```text
 collect_dart
@@ -36,9 +36,15 @@ collect_dart_ownership
 
 collect_dart_financials
   -> dart_financial_facts 저장
+  -> normalize_dart_financials 큐 등록
+  -> source_documents + signal_events + signal_metrics 생성
+  -> analyze_dart 큐 등록
 
 collect_dart_employee
   -> dart_employee_stats 저장
+  -> normalize_dart_employee 큐 등록
+  -> source_documents + signal_events + signal_metrics 생성
+  -> analyze_dart 큐 등록
 ```
 
 핵심 원칙은 다음과 같다.
@@ -59,7 +65,7 @@ collect_dart_employee
 | DART 수집 클라이언트 | `services/agent-worker/app/collectors/dart/disclosure.py` | `/list.json`, `/document.xml` 호출, ZIP/XML 텍스트 추출 |
 | DART 정형 수집 클라이언트 | `services/agent-worker/app/collectors/dart/financials_api.py`, `services/agent-worker/app/collectors/dart/employee_api.py` | `fnlttSinglAcntAll`, `empSttus` 호출 및 정형 fact/stat 파싱 |
 | corp code 동기화 | `services/agent-worker/app/collectors/dart/corp_codes.py` | `/corpCode.xml` ZIP/XML 다운로드 및 `dart_corp_codes` 적재 |
-| DART 작업 핸들러 | `services/agent-worker/app/orchestrator/dart/tasks.py` | `collect_dart`, `collect_dart_ownership`, `collect_dart_financials`, `collect_dart_employee`, `normalize_dart_ownership`, `normalize_dart`, `analyze_dart` 실행 |
+| DART 작업 핸들러 | `services/agent-worker/app/orchestrator/dart/tasks.py` | `collect_dart`, `collect_dart_ownership`, `collect_dart_financials`, `collect_dart_employee`, `normalize_dart_ownership`, `normalize_dart_financials`, `normalize_dart_employee`, `normalize_dart`, `analyze_dart` 실행 |
 | DART 스케줄러 | `services/agent-worker/app/orchestrator/dart/scheduler.py` | 타깃 종목의 수집 작업 일괄 등록. `include_ownership`, `include_financials`, `include_employee`로 정형 수집 task 추가 |
 | 큐 핸들러 등록 | `services/agent-worker/app/orchestrator/queue/handlers.py` | task type별 핸들러 매핑 |
 | 분류 룰 | `services/agent-worker/app/analyzers/dart/rules.py` | 공시 제목 기반 event type, direction, impact 분류 |
@@ -544,7 +550,7 @@ curl "http://localhost:8011/internal/dart/analysis-results?stock_code=005930&lim
 
 - DART 분석 결과는 `analysis_results`, `agent_results`에 저장되고, 성공 시 `aggregate_signal`이 enqueue되어 근거 커버리지용 `final_signals` 생성으로 이어진다.
 - DART는 현재 운영 경로에서 방향성/점수 판정을 내지 않는다. 공시 유형과 ownership 이벤트는 근거 피처로만 보존된다.
-- `collect_dart_financials`, `collect_dart_employee`는 정형 테이블 적재까지 완료하지만 아직 `signal_events`, `signal_metrics`, `analyze_dart`로 승격하지 않는다.
+- `collect_dart_financials`, `collect_dart_employee`는 정형 테이블 적재 후 `normalize_dart_financials`, `normalize_dart_employee`를 거쳐 `signal_events`, `signal_metrics`로 승격하고 `analyze_dart`에 근거 이벤트 묶음을 전달한다.
 - LLM 근거 추출은 선택 기능이며, provider key/model 설정이 없으면 자동으로 features-only 분석만 사용한다.
 - `DART_FETCH_DOCUMENTS=false`이면 원문 분석 품질이 낮아지고 공시명 중심 이벤트만 생성된다.
 - 정정 공시는 별도 이벤트로 남기지만, 원공시와 정정공시의 의미 차이를 비교하는 분석은 아직 없다.
@@ -553,7 +559,7 @@ curl "http://localhost:8011/internal/dart/analysis-results?stock_code=005930&lim
 후속 구현 우선순위:
 
 1. 정정 공시와 원공시 비교 분석을 추가한다.
-2. `dart_financial_facts`, `dart_employee_stats`를 검증된 근거 이벤트 또는 별도 분석 피처로 승격할지 결정한다.
+2. `dart_financial_facts`, `dart_employee_stats`의 파생 지표(YoY, 부채비율, headcount 변화 등)를 추가로 계산할지 결정한다.
 3. 공급계약, 자사주, 유상증자, 감사의견 등 고임팩트 유형별 세부 rule을 확장한다.
 4. LLM 근거 추출 결과의 `key_facts`를 UI evidence 패널에 연결한다.
 5. DART 근거와 Report/PRICE 근거가 같은 `score_breakdown`/SYNTHESIZE 표면에서 잘 구분되도록 UI 문구를 정리한다.

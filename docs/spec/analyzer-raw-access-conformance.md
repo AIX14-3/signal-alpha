@@ -30,7 +30,7 @@
 
 | 소스 | 노멀라이저 존재? | `signal_events`/`signal_metrics` 채워짐? | 로더를 정규화로 바꾸면 |
 | --- | --- | --- | --- |
-| DART | ✅ `dart/tasks.py` (`NORMALIZE_DART`) | ✅ | (해당 없음 — Alternative harness 미사용) |
+| DART | ✅ `dart/tasks.py` (`NORMALIZE_DART`, `NORMALIZE_DART_OWNERSHIP`, `NORMALIZE_DART_FINANCIALS`, `NORMALIZE_DART_EMPLOYEE`) | ✅ | (해당 없음 — Alternative harness 미사용) |
 | HIRING | ❌ 없음 | ❌ | **빈 결과 → 분석기 무력화** |
 | PATENT | ❌ (`NORMALIZE_PATENT` enqueue만, 소비 핸들러 없음) | ❌ | **빈 결과 → 분석기 무력화** |
 | DATALAB | ❌ (`NORMALIZE_DATALAB` enqueue만, 소비 핸들러 없음) | ❌ | **빈 결과 → 분석기 무력화** |
