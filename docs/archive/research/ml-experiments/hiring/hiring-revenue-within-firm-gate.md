@@ -107,11 +107,54 @@ python scripts/within_firm_hiring_revenue_offline.py \
   --feature-set volume+duty --n-perm 200
 ```
 
-## 6. 실 데이터 결과 (대기 중 — `DART_API_KEY` 필요)
+## 6. 실 데이터 결과 (2026-07-06 실행 완료 — 🟡 모호, 정적붕괴 아님)
 
-> 준비 완료: 하니스·게이트·오프라인 로더·유니버스(97) 확정, 채용 데이터 MCP 접근 확인.
-> **남은 것: DART 키로 매출 CSV 생성 → 위 명령 실행.** 출력의 between_ic/within_ic/BH-q·피처표·
-> verdict 를 여기 기입하고 [[hiring-revenue-nowcast-signal]] 갱신. 특허 앵커(between≈±0.42/within≈0) 대조.
+**실행 조건**: MCP-오프라인 경로(`within_firm_hiring_revenue_offline.py`). Supabase MCP 로 뽑은
+stocks(208)·HIRING 포스팅(7,842, precise rematch 7,644/7,842) 덤프 + OpenDART revenue CSV
+(97종목 요청, 매출계정 있는 **91종목** 확정 — 금융주 6개는 '매출액' 계정 부재로 자연 제외).
+`--feature-set volume+duty --n-perm 200`. 표본 = 748 (stock,quarter), 84종목, 28분기.
+
+### 6.1 주 신호(decision_tree OOF score) 분해 — 🟡 모호
+
+| 지표 | 값 | 판정 |
+| --- | --- | --- |
+| sanity `rank_ic_xs` | **+0.106** | confirmed +0.128 근사 재현 ✅ |
+| `between_ic` (정적) | **+0.147** | 특허 앵커(±0.42) 대비 **훨씬 작음** |
+| `within_ic` (timing) | **+0.059** | 0 아님(≥0.03)이나… |
+| `within` perm-p / BH-q | 0.095 / **0.333** | **비유의** (q≫0.05) |
+
+⇒ **VERDICT: 🟡 모호** — within_ic 가 0 부근이 아니라 **양(+0.059)** 이므로 특허식 정적붕괴
+(within≈0)와 **동형이 아니다**. 그러나 이 표본에서 BH 유의(q<0.05)에는 미달 → timing 승격도 불가.
+
+### 6.2 피처별 분해 — `tech_share`(직무믹스)는 유의한 within-firm timing
+
+| feature | between | within | perm-p | BH-q |
+| --- | --- | --- | --- | --- |
+| **`hiring__tech_share`** | **−0.071** | **+0.074** | **0.000** | **0.000** ✅ |
+| `hiring__days_since_latest` | −0.055 | −0.138 | 1.000 | 1.000 |
+| 그 외(deseason/tech_share_mom·yoy/yoy_change) | nan | nan | — | 1.000 |
+
+⇒ 지배 피처 **tech_share** 는 between 이 **음(−0.071)** = 정적 종목특성이 아니고, within=+0.074 로
+**유의한 within-firm 타이밍**(BH-q=0.000). "자기 평소보다 tech 직군을 더 뽑은 분기 → 자기 평소보다
+차기 매출↑". 채용→매출 채널의 timing 성분이 **직무믹스에 실재**함을 시사.
+
+### 6.3 사전등록 스윕(loop) 교차검증 — grid-wide BH 에서 0 생존(정직 NULL), 단 near-miss 전부 양
+
+`run_feature_search --source revenue-offline --grid full`(24셀: label×{all,hr_duty}×{raw,within_firm_z}
+×{logistic,ridge,lda,hist_grad_boost,random_forest,decision_tree}, perm=300). **FDR 생존 0**
+(최소 perm_p=**0.040** < BH 문턱 ~0.004 미달). 그러나 near-miss 상위셀은 **전부 rank_ic 양
+(+0.08~0.15)·within_firm_ic 양(+0.05~0.19)**, 특히 **`within_firm_z` 변환(정적특성 제거) 후에도
+양의 신호 잔존** → 6.1/6.2 와 일치(약한 within-firm 타이밍 실재, 다중검정 후 유의 미달).
+
+### 6.4 종합 판정
+
+- **특허 매그니튜드처럼 정적특성으로 붕괴하지 않았다**(between 작음·within 양·within_firm_z 후 잔존).
+- 그러나 **트레이더블 timing 으로 승격하기엔 약하다**(모델 within BH-q=0.333, 스윕 grid-wide 0 생존).
+- 유일하게 깨끗이 유의한 timing = **tech_share**(피처패밀리 BH q=0.000).
+- ⇒ **🟡 모호/유망**. 채널은 살아있고 방향은 timing 쪽이나, 이 표본(quarterly·91종목·28분기)에선
+  보정 후 미달. 다음 레버 = **§4 Step2(월별×깨끗한 KOSPI200 확대)** 로 표본을 키워 재판정
+  (tech_share 를 앵커 피처로). 매그니튜드/나우캐스트 가치는 유지되나 timing 알파는 **미확정**.
+  cf. [[hiring-revenue-nowcast-signal]]·[[patent-volatility-magnitude-signal]](정적붕괴 대조군).
 
 ## 7. 주의
 

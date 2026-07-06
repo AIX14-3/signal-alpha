@@ -42,8 +42,10 @@ _REVENUE_LABELS = [("rev_nowcast_q", 1, 0.0)]
 # per the ml-features guide; trees as a control at larger sizes.
 _MODELS = {
     "small": ("logistic", "ridge"),
-    "demo": ("logistic", "ridge", "lda", "hist_grad_boost"),
-    "full": ("logistic", "ridge", "lda", "hist_grad_boost", "random_forest"),
+    "demo": ("logistic", "ridge", "lda", "hist_grad_boost", "decision_tree"),
+    # decision_tree is the confirmed hiring→revenue winner (rankIC +0.128); include the
+    # tree family so the honest sweep can reproduce/refute it under grid-wide BH.
+    "full": ("logistic", "ridge", "lda", "hist_grad_boost", "random_forest", "decision_tree"),
 }
 
 
