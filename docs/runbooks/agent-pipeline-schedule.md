@@ -166,6 +166,35 @@ uv run python run_cleanup_legacy_queue_tasks.py --execute --limit 1000
 
 This marks matching `pending`, `retrying`, and `running` rows as `skipped` with `finished_at` and `error_message`. It does not delete queue rows, touch successful/failed history, or re-enable DART ML label backfill.
 
+### 4.2 Report normalize backfill
+
+If Report PDF parsing already succeeded but the row was not promoted to canonical `source_documents` and `signal_events`, inspect candidates first:
+
+```powershell
+cd services/agent-worker
+uv run python run_report_normalize_backfill.py
+```
+
+To inspect a single stock:
+
+```powershell
+uv run python run_report_normalize_backfill.py --stock-code 005930 --limit 100
+```
+
+After confirming the candidates, enqueue `normalize_report` tasks:
+
+```powershell
+uv run python run_report_normalize_backfill.py --execute --limit 100 --priority batch
+```
+
+Then drain the queue:
+
+```powershell
+uv run python run_worker_drain.py
+```
+
+The candidate condition is `report_raw_details.parsing_status = 'success'` and no existing `source_documents(source_type='REPORT')` row for the same raw document. The backfill does not recollect PDFs or create user-facing recommendations; it restores Report evidence into the canonical path used for data direction, evidence, source agreement, and review flags.
+
 ## 5. Local PowerShell Runner
 
 The local runner calls only HTTP endpoints.
