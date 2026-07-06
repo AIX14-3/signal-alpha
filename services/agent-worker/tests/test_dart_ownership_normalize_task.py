@@ -2,7 +2,7 @@ import unittest
 from datetime import date, datetime
 
 from app.orchestrator.dart.tasks import DartOwnershipNormalizeTaskHandler
-from app.orchestrator.queue.task_types import ANALYZE_DART, BACKFILL_DART_LABELS
+from app.orchestrator.queue.task_types import ANALYZE_DART
 
 
 class FakeOwnershipRepository:
@@ -88,8 +88,8 @@ class DartOwnershipNormalizeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result["normalized_count"], 1)
         self.assertEqual(result["signal_event_ids"], [102])
-        self.assertEqual(result["label_backfill_task_id"], 901)
-        self.assertEqual(result["analysis_task_id"], 902)
+        self.assertNotIn("label_backfill_task_id", result)
+        self.assertEqual(result["analysis_task_id"], 901)
         self.assertEqual(ownership.calls, [{"stock_id": 7, "limit": 500}])
 
         doc = normalization.docs[0]
@@ -122,18 +122,14 @@ class DartOwnershipNormalizeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(normalization.validation_logs[0]["target_type"], "signal_event")
         self.assertEqual(normalization.validation_logs[0]["validation_type"], "source_trace")
         self.assertEqual(queue.calls[0]["stock_id"], 7)
-        self.assertEqual(queue.calls[0]["task_type"], BACKFILL_DART_LABELS)
+        self.assertEqual(queue.calls[0]["task_type"], ANALYZE_DART)
         self.assertEqual(queue.calls[0]["source_signal_event_ids"], [102])
-        self.assertEqual(queue.calls[0]["task_context"], {"stock_code": "005930", "source_type": "DART"})
-        self.assertTrue(queue.calls[0]["dedupe"])
-        self.assertEqual(queue.calls[1]["stock_id"], 7)
-        self.assertEqual(queue.calls[1]["task_type"], ANALYZE_DART)
-        self.assertEqual(queue.calls[1]["source_signal_event_ids"], [102])
         self.assertEqual(
-            queue.calls[1]["task_context"],
+            queue.calls[0]["task_context"],
             {"stock_code": "005930", "source_type": "DART", "run_key": "DART_OWNERSHIP_102"},
         )
-        self.assertTrue(queue.calls[1]["dedupe"])
+        self.assertTrue(queue.calls[0]["dedupe"])
+        self.assertEqual(len(queue.calls), 1)
 
     async def test_negative_delta_becomes_negative_direction(self):
         normalization = FakeNormalizationRepository()
