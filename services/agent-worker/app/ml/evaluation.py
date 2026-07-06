@@ -129,7 +129,9 @@ def oos_predictions(
     from sklearn.base import clone
 
     pred = np.full(len(y), np.nan, dtype=float)
-    is_regression = task == "magnitude"
+    # Both the magnitude and the search→revenue-nowcast targets are continuous, so
+    # they share the regression path (the classifier path is direction-only).
+    is_regression = task in ("magnitude", "revenue")
     for fold in folds:
         Xtr, ytr = X[fold.train_idx], y[fold.train_idx]
         Xte = X[fold.test_idx]

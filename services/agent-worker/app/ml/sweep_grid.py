@@ -143,10 +143,85 @@ def _panel_db(*, tickers: tuple[str, ...], start: str, end: str, benchmark: str,
                  list(ds.feature_names), "direction")
 
 
+def _panel_demo_magnitude(*, n_stocks: int, weeks: int, signal_step: int,
+                          horizon: int, target: str, seed: int, **_) -> Panel:
+    """Real magnitude pipeline (build_magnitude_dataset) on generated search+prices."""
+    from .datalab_demo import generate_magnitude_demo
+    from .magnitude_dataset import build_magnitude_dataset
+
+    search, prices, signal_dates = generate_magnitude_demo(
+        n_stocks=n_stocks, weeks=weeks, seed=seed, signal_step=signal_step,
+    )
+    ds = build_magnitude_dataset(
+        search_by_ticker=search, prices_by_ticker=prices,
+        signal_dates_by_ticker=signal_dates, target=target, horizon_sessions=horizon,
+    )
+    return Panel(ds.X, ds.y, ds.excess_returns, ds.dates, ds.stock_ids,
+                 list(ds.feature_names), "magnitude")
+
+
+def _panel_demo_revenue(*, n_stocks: int, weeks: int, signal_step: int, lag: int,
+                        seed: int, planted: bool = True, **_) -> Panel:
+    """Real search→revenue-nowcast pipeline on generated search + annual revenue.
+
+    Revenue needs several fiscal years, so ``weeks`` is floored at ~8y regardless
+    of the generic demo default; ``planted=False`` builds the true-null control.
+    """
+    from .datalab_demo import generate_revenue_demo
+    from .revenue_dataset import build_revenue_dataset
+
+    search, revenue, trading_days, signal_dates = generate_revenue_demo(
+        n_stocks=n_stocks, weeks=max(int(weeks), 416), seed=seed,
+        signal_step=signal_step, lag=lag, planted=planted,
+    )
+    ds = build_revenue_dataset(
+        search_by_ticker=search, revenue_by_ticker=revenue,
+        trading_days_by_ticker=trading_days, signal_dates_by_ticker=signal_dates,
+        lag=lag,
+    )
+    return Panel(ds.X, ds.y, ds.excess_returns, ds.dates, ds.stock_ids,
+                 list(ds.feature_names), "revenue")
+
+
+def _panel_db_magnitude(*, prices_csv: str | None = None, **_) -> Panel:
+    """Live search→magnitude — GATES (offline scope); names exactly what's needed."""
+    if not os.environ.get("DATABASE_URL"):
+        raise GateNeeded(
+            "DATABASE_URL unset — search→magnitude db run needs Supabase DSN + "
+            "OHLCV(close,volume) + name-search DataLab"
+        )
+    raise GateNeeded(
+        "db magnitude run not wired offline — supply name-search + OHLCV(volume); "
+        "the loop is validated via --source demo --task magnitude"
+    )
+
+
+def _panel_db_revenue(*, prices_csv: str | None = None, **_) -> Panel:
+    """Live search→revenue-nowcast — GATES (offline scope); names exactly what's needed."""
+    if not os.environ.get("DATABASE_URL"):
+        raise GateNeeded(
+            "DATABASE_URL unset — search→revenue db run needs Supabase DSN + "
+            "DataLab search + dart_krx250.csv (ticker,year,reprt,account,amount)"
+        )
+    raise GateNeeded(
+        "db revenue run not wired offline — supply dart_krx250.csv + DataLab search; "
+        "the loop is validated via --source demo --task revenue"
+    )
+
+
 DATASET_SPECS = {
     "synthetic": _panel_synthetic,
     "demo": _panel_demo,
     "db": _panel_db,
+}
+
+# Task-aware panel registry: (source, task) → spec. Falls back to DATASET_SPECS
+# (direction) when a (source, task) pair isn't overridden.
+_TASK_SPECS = {
+    ("demo", "magnitude"): _panel_demo_magnitude,
+    ("db", "magnitude"): _panel_db_magnitude,
+    ("demo", "revenue"): _panel_demo_revenue,
+    ("db", "revenue"): _panel_db_revenue,
 }
 
 
@@ -154,17 +229,29 @@ DATASET_SPECS = {
 # Feature families — named subsets of the built matrix, selected by substring. #
 # --------------------------------------------------------------------------- #
 
-# Substrings that identify each family within a feature name (production DataLab
-# indicators are prefixed ``datalab__``). "all" keeps every column.
+# Substrings that identify each family within a feature name. The DIRECTION path
+# uses production DataLab indicators (prefixed ``datalab__``); the MAGNITUDE and
+# REVENUE paths use the validated attention feature set (prefixed ``magnitude__``
+# / ``search__``): abn, abn_mom, search_level, obs_age. Tokens for both coexist —
+# a given panel only carries one prefix, so cross-task tokens simply don't match.
+# "all" keeps every column.
 _FAMILY_TOKENS: dict[str, tuple[str, ...]] = {
-    "level": ("weighted_recent_avg", "weighted_prior_avg", "avg_change_pct"),
-    "momentum": ("momentum_pct", "risk_momentum_pct"),
+    "level": ("weighted_recent_avg", "weighted_prior_avg", "avg_change_pct",
+              "magnitude__search_level", "search__search_level"),
+    "momentum": ("momentum_pct", "risk_momentum_pct",
+                 "magnitude__abn_mom", "search__abn_mom"),
     "spike": ("spike_ratio",),
     "activity": ("observations", "prior_observations", "risk_prior_observations",
                  "days_since_latest"),
+    # search-attention families (magnitude/revenue): abn token also matches abn_mom.
+    "attention": ("magnitude__abn", "search__abn"),
+    "recency": ("magnitude__obs_age", "search__obs_age"),
 }
 
-FEATURE_FAMILIES = ("all", *sorted(_FAMILY_TOKENS))
+# Direction keeps its original 5 families; the search tasks use the attention set.
+DIRECTION_FAMILIES = ("all", "activity", "level", "momentum", "spike")
+SEARCH_FAMILIES = ("all", "attention", "momentum", "level", "recency")
+FEATURE_FAMILIES = DIRECTION_FAMILIES  # back-compat export
 
 
 def select_family(feature_names: list[str], family: str) -> list[int]:
@@ -228,7 +315,7 @@ def build_model(name: str, task: str, seed: int):
 
     registry = (
         build_regressor_registry(seed=seed)
-        if task == "magnitude"
+        if task in ("magnitude", "revenue")  # both continuous targets → regression
         else build_classifier_registry(seed=seed)
     )
     if name not in registry:
@@ -288,9 +375,9 @@ class Cell:
 
 
 def build_panel_for(cell: Cell) -> Panel:
-    spec = DATASET_SPECS.get(cell.source)
+    spec = _TASK_SPECS.get((cell.source, cell.task)) or DATASET_SPECS.get(cell.source)
     if spec is None:
-        raise KeyError(f"unknown source: {cell.source!r}")
+        raise KeyError(f"no panel spec for source={cell.source!r} task={cell.task!r}")
     kwargs = dict(cell.extra)
     kwargs.update(horizon=cell.horizon, band=cell.band, seed=cell.seed)
     return spec(**kwargs)
@@ -311,6 +398,68 @@ _DIR_LABELS = {
              ("dir_h60_b0.8", 60, 0.8)],
 }
 
+# Magnitude labels: (name, forward horizon sessions, target). The band is unused
+# for a continuous target (kept 0.0); ``target`` rides in the cell's ``extra`` so
+# it is part of the panel identity.
+_MAG_LABELS = {
+    "small": [("mag_vol_h5", 5, "volatility"), ("mag_vol_h20", 20, "volatility")],
+    "demo": [("mag_vol_h5", 5, "volatility"), ("mag_vol_h20", 20, "volatility"),
+             ("mag_volume_h20", 20, "volume")],
+    "full": [("mag_vol_h1", 1, "volatility"), ("mag_vol_h5", 5, "volatility"),
+             ("mag_vol_h20", 20, "volatility"), ("mag_volume_h5", 5, "volume"),
+             ("mag_volume_h20", 20, "volume")],
+}
+
+# Revenue-nowcast labels: (name, lag). lag1 = soonest upcoming annual print (the
+# 2026-06-30 headline), lag0 = concurrent, lag2 = the one after. ``lag`` rides in
+# ``extra``; the horizon field carries a fixed embargo basis (annual label, weekly
+# signals → cross-sectional per-date IC is the unit, so a modest embargo suffices).
+_REV_EMBARGO_H = 20
+_REV_LABELS = {
+    "small": [("rev_lag1", 1), ("rev_lag2", 2)],
+    "demo": [("rev_lag0", 0), ("rev_lag1", 1), ("rev_lag2", 2)],
+    "full": [("rev_lag0", 0), ("rev_lag1", 1), ("rev_lag2", 2)],
+}
+
+
+def _grid_axes(source: str, size: str, task: str) -> tuple[list, list[str], list[str], list[str]]:
+    """Return (label_specs, families, transforms, models) for one (source,size,task).
+
+    ``label_specs`` items are ``(name, horizon, band, label_extra)`` — ``label_extra``
+    carries the per-cell panel knob (magnitude ``target`` / revenue ``lag``) that
+    must enter the cell's ``extra`` (and thus the panel key).
+    """
+    if task == "direction":
+        labels = _DIR_LABELS.get(size)
+        if labels is None:
+            raise KeyError(f"unknown grid size: {size!r}")
+        specs = [(n, h, b, {}) for (n, h, b) in labels]
+        if source == "synthetic":
+            return specs, ["all"], ["raw"], ["logistic", "ridge"]
+        if size == "small":
+            return specs, ["all", "level", "momentum"], ["raw", "within_firm_z"], ["logistic", "ridge"]
+        return specs, list(DIRECTION_FAMILIES), list(TRANSFORMS), list(DIRECTION_MODELS)
+
+    if source == "synthetic":
+        raise ValueError(f"task {task!r} has no synthetic source — use --source demo")
+
+    if task == "magnitude":
+        labels = _MAG_LABELS.get(size)
+        if labels is None:
+            raise KeyError(f"unknown grid size: {size!r}")
+        specs = [(n, h, 0.0, {"target": t}) for (n, h, t) in labels]
+    elif task == "revenue":
+        labels = _REV_LABELS.get(size)
+        if labels is None:
+            raise KeyError(f"unknown grid size: {size!r}")
+        specs = [(n, _REV_EMBARGO_H, 0.0, {"lag": lag}) for (n, lag) in labels]
+    else:
+        raise KeyError(f"unknown task: {task!r}")
+
+    if size == "small":
+        return specs, ["all", "attention", "momentum"], ["raw", "within_firm_z"], ["ridge", "linear"]
+    return specs, list(SEARCH_FAMILIES), list(TRANSFORMS), list(MAGNITUDE_MODELS)
+
 
 def build_grid(
     *,
@@ -319,38 +468,28 @@ def build_grid(
     universe: str = "demo",
     seed: int = 42,
     extra: dict | None = None,
+    task: str = "direction",
 ) -> list[Cell]:
-    """Enumerate the pre-registered cartesian product for ``source``/``size``.
+    """Enumerate the pre-registered cartesian product for ``source``/``size``/``task``.
 
     ``extra`` carries source-specific panel knobs (demo: n_stocks/weeks/
-    signal_step; db: tickers/start/end/benchmark/prices_csv). Only feature
-    families that can be non-empty for the source are used (synthetic → "all").
+    signal_step[/planted]; db: tickers/start/end/benchmark/prices_csv). ``task`` picks
+    the label/family/model axes: ``direction`` (sign of forward excess return),
+    ``magnitude`` (forward realized vol / abnormal volume), or ``revenue`` (next-print
+    revenue-YoY nowcast). The magnitude/revenue tasks are DataLab-search only and
+    have no synthetic source.
     """
-    labels = _DIR_LABELS.get(size)
-    if labels is None:
-        raise KeyError(f"unknown grid size: {size!r}")
-
-    if source == "synthetic":
-        families = ["all"]
-        transforms = ["raw"]
-        models = ["logistic", "ridge"]
-    elif size == "small":
-        families = ["all", "level", "momentum"]
-        transforms = ["raw", "within_firm_z"]
-        models = ["logistic", "ridge"]
-    else:
-        families = list(FEATURE_FAMILIES)
-        transforms = list(TRANSFORMS)
-        models = list(DIRECTION_MODELS)
-
-    extra_items = tuple(sorted((extra or {}).items()))
+    label_specs, families, transforms, models = _grid_axes(source, size, task)
+    base_extra = dict(extra or {})
     cells: list[Cell] = []
-    for (lname, horizon, band), family, transform, model in itertools.product(
-        labels, families, transforms, models
+    for (lname, horizon, band, label_extra), family, transform, model in itertools.product(
+        label_specs, families, transforms, models
     ):
+        merged = {**base_extra, **label_extra}
+        extra_items = tuple(sorted(merged.items()))
         cells.append(
             Cell(
-                source=source, universe=universe, label=lname, task="direction",
+                source=source, universe=universe, label=lname, task=task,
                 horizon=horizon, band=band, feature_family=family,
                 transform=transform, model=model, seed=seed, extra=extra_items,
             )
@@ -360,7 +499,7 @@ def build_grid(
 
 __all__ = [
     "GateNeeded", "Panel", "Cell", "DATASET_SPECS", "FEATURE_FAMILIES",
-    "TRANSFORMS", "DIRECTION_MODELS", "MAGNITUDE_MODELS",
-    "select_family", "apply_transform", "build_model", "build_panel_for",
-    "build_grid",
+    "DIRECTION_FAMILIES", "SEARCH_FAMILIES", "TRANSFORMS", "DIRECTION_MODELS",
+    "MAGNITUDE_MODELS", "select_family", "apply_transform", "build_model",
+    "build_panel_for", "build_grid",
 ]

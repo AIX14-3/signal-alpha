@@ -413,6 +413,9 @@ def _write_report(out_dir, rows, ok, survivors, confirmed, gates, skips, *,
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="DataLab feature×label sweep")
     p.add_argument("--source", default="demo", choices=["synthetic", "demo", "db"])
+    p.add_argument("--task", default="direction",
+                   choices=["direction", "magnitude", "revenue", "all"],
+                   help="label axis: direction / magnitude / revenue-nowcast / all")
     p.add_argument("--grid", default="small", choices=["small", "demo", "full"],
                    help="pre-registered grid size")
     p.add_argument("--out", default="sweep_out", help="output dir (ledger + report)")
@@ -447,9 +450,17 @@ def main(argv: list[str] | None = None) -> int:
     else:
         extra = {"n_stocks": 60, "n_dates": 60, "noise": 1.0}
 
-    cells = build_grid(source=args.source, size=args.grid, universe=args.universe,
-                       seed=args.seed, extra=extra)
-    print(f"[sweep] {len(cells)} cells  source={args.source} grid={args.grid}")
+    tasks = ["direction", "magnitude", "revenue"] if args.task == "all" else [args.task]
+    cells = []
+    for task in tasks:
+        if task != "direction" and args.source == "synthetic":
+            print(f"[sweep] skip task={task} (no synthetic source; use --source demo)")
+            continue
+        cells.extend(build_grid(source=args.source, size=args.grid,
+                                universe=args.universe, seed=args.seed,
+                                extra=extra, task=task))
+    print(f"[sweep] {len(cells)} cells  source={args.source} "
+          f"task={args.task} grid={args.grid}")
     summary = run_sweep(
         cells, out_dir=args.out, n_folds=args.folds, n_perm=args.perm, q=args.q,
         resume=not args.no_resume, holdout=not args.no_holdout,

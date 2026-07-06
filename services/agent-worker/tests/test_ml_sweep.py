@@ -93,3 +93,60 @@ def test_db_source_gates_without_credentials(monkeypatch, tmp_path):
     summary = sweep.run_sweep(cells, out_dir=out, n_folds=3, n_perm=20, holdout=False)
     assert summary["gate"] == len(cells)      # every db cell gated, none crashed
     assert summary["ok"] == 0
+
+
+# --------------------------------------------------------------------------- #
+# Magnitude + revenue-nowcast tasks (the search feature×label hunt beyond dir). #
+# --------------------------------------------------------------------------- #
+
+
+def test_magnitude_and_revenue_grids_enumerate_unique_keys():
+    # small search grids: 2 labels × 3 families × 2 transforms × 2 models = 24.
+    for task in ("magnitude", "revenue"):
+        cells = build_grid(source="demo", size="small", task=task,
+                           extra={"n_stocks": 8, "weeks": 140, "signal_step": 5})
+        assert len(cells) == 24, task
+        keys = [c.key() for c in cells]
+        assert len(set(keys)) == len(keys), f"{task} keys must be unique"
+        assert all(c.task == task for c in cells)
+
+
+def test_magnitude_demo_sweep_produces_ok_cards(tmp_path):
+    cells = build_grid(source="demo", size="small", task="magnitude",
+                       extra={"n_stocks": 8, "weeks": 140, "signal_step": 5})
+    out = str(tmp_path / "mag")
+    summary = sweep.run_sweep(cells, out_dir=out, n_folds=3, n_perm=40, holdout=False)
+    assert summary["ok"] >= 1                 # a regressor scored on real magnitude
+    assert summary["gate"] == 0
+
+
+def test_revenue_planted_demo_survives_null_does_not(tmp_path):
+    common = {"n_stocks": 14, "weeks": 416, "signal_step": 10}
+    # Planted cross-sectional lag1 relationship → at least one cell clears FDR.
+    planted = build_grid(source="demo", size="small", task="revenue",
+                         extra={**common, "planted": True})
+    s_hit = sweep.run_sweep(cells=planted, out_dir=str(tmp_path / "rev_hit"),
+                            n_folds=3, n_perm=100, q=0.10, holdout=False)
+    assert s_hit["fdr_survivors"] >= 1, "planted search→revenue signal must survive"
+
+    # True-null control (search independent of revenue) → nothing survives.
+    null = build_grid(source="demo", size="small", task="revenue",
+                      extra={**common, "planted": False})
+    s_null = sweep.run_sweep(cells=null, out_dir=str(tmp_path / "rev_null"),
+                             n_folds=3, n_perm=100, q=0.10, holdout=False)
+    assert s_null["fdr_survivors"] == 0, "true-null must not manufacture a signal"
+
+
+def test_search_tasks_gate_on_db_without_credentials(monkeypatch, tmp_path):
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    for task in ("magnitude", "revenue"):
+        cells = build_grid(
+            source="db", size="small", task=task,
+            extra={"tickers": ("005930",), "start": "2021-01-01",
+                   "end": "2023-12-31", "benchmark": "KS11", "prices_csv": None,
+                   "signal_step": 5},
+        )
+        summary = sweep.run_sweep(cells, out_dir=str(tmp_path / f"db_{task}"),
+                                  n_folds=3, n_perm=20, holdout=False)
+        assert summary["gate"] == len(cells), task
+        assert summary["ok"] == 0, task
