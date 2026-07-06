@@ -31,7 +31,7 @@ Signal Alpha는 투자 추천 서비스가 아닙니다. 이 전략의 출력은
 - 사용자-facing 응답에는 원문 PDF 또는 긴 verbatim 청크를 노출하지 않습니다.
 - 밸류에이션 전략용 저장물은 구조화 fact 중심으로 둡니다.
 - `rerating_thesis`는 원문 인용이 아니라 짧은 패러프레이즈로 저장합니다.
-- RAG를 복구할 경우 `report_chunks`는 근거 검색과 검증용으로만 사용하고, 장기적으로 보존 기간 또는 fact-only 모드를 검토합니다. 현재 Report 런타임은 `report_chunks` 기반 RAG를 실행하지 않습니다.
+- Report RAG는 현재 제품 범위 밖입니다. `report_chunks`가 스키마에 남아 있더라도 현재 Report 런타임은 이를 적재하거나 조회하지 않으며, 밸류에이션 전략용 저장물은 구조화 fact 중심으로 둡니다.
 
 ## 추출 대상
 
@@ -124,7 +124,7 @@ Bear/Base/Bull은 투자 행동 제안이 아닙니다. 각 시나리오는 “�
 LangGraph는 아래 요구가 생길 때 검토합니다.
 
 - 글로벌 피어 배수 fetch
-- 과거 유사 re-rating 사례 RAG
+- 과거 유사 re-rating 사례 조회는 현재 범위 밖이며, 필요 시 구조화 fact 기반 별도 설계로 검토
 - DART/DataLab/Price를 동적으로 재조회하는 루프
 - 근거 부족 시 제한된 횟수로 재수집 또는 재검색하는 control flow
 

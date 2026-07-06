@@ -114,7 +114,7 @@
 | **L1 정형 재무** | OpenDART `fnlttSinglAcntAll` | `dart_financial_facts`(+known_at) | ★4 YoY/QoQ·부채비율·CAPEX 신호 | — |
 | **L2 지분·내부자** | `majorstock`·`elestock` | `dart_ownership_events` | 내부자 순매수/매도 추세 신호 | L5(엔티티) |
 | **L3 임직원** | `empSttus` | `dart_employee_stats` | 고용 모멘텀(★크로스 NPS/채용) | L1 |
-| **L4 비정형 corpus** | DART/SEC 본문 섹션 | `report_chunks`(+section_type) | RAG 검색·톤 신호의 evidence | — |
+| **L4 비정형 corpus** | DART/SEC 본문 섹션 | 신규 `document_sections`/`document_chunks` 계열 | RAG 검색·톤 신호의 evidence | — |
 | **L5 엔티티·관계** | corp_code·CIK·발주처 추출 | `entities`/`entity_relations` | 공급망 동반 feature | L4 |
 | **L6 백테스트 패널** | `signal_events`⨯`ohlcv_data` | `event_study_panel` | **채택의 심판**(신호 소비) | A·B·C, 모든 신호 |
 | **L7 멀티스텝 추론·시나리오** | (L1·L4·L5 종합) | (신호 후보) | 멀티섹션 근거 종합 → 구조화 thesis 후보 | L1~L5, L6 게이트 |
