@@ -57,8 +57,8 @@ Signal Alpha가 아래 기능을 제공하는 것처럼 표현하면 안 됩니�
 
 ## 현재 구현 상태
 
-- DART 큐 핸들러는 `collect_dart`, `normalize_dart`, `analyze_dart`, Report는 `collect_report → process_report → normalize_report → analyze_report`가 구현되어 있습니다.
-- (#11 업데이트) 워커의 **큐 드레인 데몬**(`app/orchestrator/queue/drain_daemon.py`, `QUEUE_DRAIN_DAEMON_ENABLED`)이 `processing_queue`를 체인 순서대로 끝단(`PUBLISH_SIGNALS` 발행)까지 연속 소비합니다(advisory-lock 단일 기동, 단발/CI 검증은 `run_worker_drain.py`). 스케줄러 인스턴스(`run_scheduler_instance.py`)가 수집·분석 작업을 주기 인큐합니다. 주가(PRICE) ML/DL 예측은 `RiskReport.price_prediction`으로 **별도 제공**되고(집계 `final_score`는 `SCORING_SOURCES`(DART·ALTERNATIVE) 기준 유지 — 뒤집지 않음), DART/REPORT/대안데이터는 끝단 LLM 종합(`SYNTHESIZE`)이 합치는 근거입니다(메타러너 미사용, `SRC_INFER`는 코드만 있고 라이브 미배선). 토폴로지는 [docs/architecture-diagram.md](docs/architecture-diagram.md) 참조.
+- DART 큐 핸들러는 `collect_dart`, `normalize_dart`, `analyze_dart` 및 ownership 경로 `collect_dart_ownership`, `normalize_dart_ownership`, Report는 `collect_report → process_report → normalize_report → analyze_report`가 구현되어 있습니다.
+- (#11 업데이트) 워커의 **큐 드레인 데몬**(`app/orchestrator/queue/drain_daemon.py`, `QUEUE_DRAIN_DAEMON_ENABLED`)이 `processing_queue`를 체인 순서대로 끝단(`PUBLISH_SIGNALS` 발행)까지 연속 소비합니다(advisory-lock 단일 기동, 단발/CI 검증은 `run_worker_drain.py`). 스케줄러 인스턴스(`run_scheduler_instance.py`)가 수집·분석 작업을 주기 인큐합니다. 주가(PRICE) 예측은 `RiskReport.price_prediction`으로 **별도 제공**됩니다. DART는 현재 `direction="unknown"`, `data_status="no_signal"`인 근거·커버리지 소스로 집계에 합류하며 `score_breakdown.DART`와 `SYNTHESIZE`에는 남지만 숫자 `final_score` 평균에는 들어가지 않습니다. `backfill_dart_labels` 이벤트스터디 라벨 백필과 DART 소스 ML 채널은 운영 경로에서 제거되었습니다. 토폴로지는 [docs/architecture-diagram.md](docs/architecture-diagram.md) 참조.
 - DataLab 수집은 카테고리 기반이며 `datalab_raw_documents -> datalab_raw_details -> processing_queue(stock_id=NULL)` 경로를 사용합니다.
 - (#11 업데이트) 가격 수집은 기본적으로 **수집기 인스턴스**(`run_collector_instance.py`)에서 실행되며 `price_snapshots`, `ohlcv_data`에 저장합니다(`PRICE_COLLECTOR_ENABLED`로 워커 lifespan 내장 on/off).
 - PRICE analyzer는 DB 데이터를 읽어야 하며 키움 API를 직접 호출하면 안 됩니다.

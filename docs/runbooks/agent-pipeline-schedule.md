@@ -110,12 +110,15 @@ The current default fair-cycle plan is:
 
 ```text
 collect_dart
+collect_dart_ownership
 collect_report
+normalize_dart_ownership
 normalize_dart
 analyze_dart
 process_report
 normalize_report
 analyze_report
+embed_report
 NORMALIZE_HIRING
 NORMALIZE_PATENT
 NORMALIZE_DATALAB
@@ -127,18 +130,20 @@ ANALYZE_PATENT
 analyze_price
 src_infer
 return_combine
+requery_source
 aggregate_signal
 synthesize
 publish_signals
+record_episode_outcomes
 ```
 
 Why this order:
 
-- DART: `collect_dart -> normalize_dart -> analyze_dart`
+- DART: `collect_dart -> normalize_dart -> analyze_dart`; ownership events use `collect_dart_ownership -> normalize_dart_ownership -> analyze_dart`.
 - Report: `collect_report -> process_report -> normalize_report -> analyze_report`
 - PRICE: scheduler triggers collection; `analyze_price` reads DB data only.
 - Alternative data: external collection jobs feed normalize, enrich, and per-source analyze tasks.
-- Downstream tasks infer source returns, combine return evidence, aggregate source results, synthesize user-facing data-direction narratives, and publish approved outputs.
+- Downstream tasks infer source returns, combine return evidence, optionally re-query conflicted sources, aggregate source results, synthesize user-facing data-direction narratives, publish outputs, and record mature episode outcomes.
 
 Each queue type is idempotent through existing dedupe and upsert behavior. The fair-cycle runner processes at most one task per type per pass, so one source cannot monopolize a scheduled window.
 
@@ -202,10 +207,12 @@ cd services/agent-worker
 Notes:
 
 - The worker must be running at `-WorkerBaseUrl`; tasks only call its HTTP endpoints.
-- Publishing needs a scoring source. `REPORT`/`PRICE` are not scoring sources
-  (`SCORING_SOURCES = {DART, HIRING, PATENT, DATALAB}` in `aggregation/tasks.py`),
-  so at least one of DART/hiring/patent/datalab must produce a result for
-  `final_signals.is_published` to become true.
+- DART currently publishes as evidence/coverage only: its agent returns
+  `data_status="no_signal"`, so it appears in `score_breakdown.DART` and
+  `SYNTHESIZE` but is excluded from the numeric `final_score` average. `REPORT`
+  and `PRICE` are also not numeric scoring sources. If no scoring source is
+  available, the worker can still publish an evidence row, but it should carry a
+  warning/review state rather than a directional score.
 - DART collection requires the `dart_corp_codes` mapping. The script runs an
   initial `POST /internal/dart/corp-codes/sync` on registration (skip with
   `-SkipInitialSync`) and re-syncs weekly via the `CorpCodeSync` task; without

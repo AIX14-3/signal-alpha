@@ -40,15 +40,15 @@ COLLECT_* → NORMALIZE_* → ANALYZE_* → SRC_INFER → RETURN_COMBINE
 
 ---
 
-## 3. 소스별 라우팅 — "점수=결정론 집계(DART+대체데이터), 주가=별도 예측, LLM이 합침"
+## 3. 소스별 라우팅 — "점수=검증된 scoring source, DART=근거, 주가=별도 예측, LLM이 합침"
 
 핵심 설계 결정(#11). **점수를 뒤집지 않는다**:
 
 - **주가(PRICE) ML/DL** → `RiskReport.price_prediction` 으로 **별도 정량 신호** 제공(방향+예측확률 score_100).
-- **집계 점수(`final_score`)** = `SCORING_SOURCES`(현재 `{DART, HIRING, PATENT, DATALAB}`) 평균 — 대체데이터를
-  소스별 독립 산입(C안 Phase 2, #584 — 단일 ALTERNATIVE collapse 폐기). 점수를 뒤집지 않는다.
+- **집계 점수(`final_score`)** = available scoring source 중 `data_status!="no_signal"`인 signed score 평균.
+  DART는 현재 `data_status="no_signal"` 근거 소스라 `score_breakdown.DART`에는 남지만 숫자 평균에는 들어가지 않는다.
 - **DART·증권사리포트·대안데이터 = 근거** → 끝단 LLM 종합(`SYNTHESIZE`)이 *집계 점수 + 주가 예측 + 근거*를 합쳐 서술(temperature=0, 점수 불변).
-  - **DART** → 끝단 LLM 정제(+ 치명 키워드는 `RISK_VETO` 결정론 룰). 메타러너 미사용.
+  - **DART** → 공시/ownership 이벤트를 근거·커버리지로 제공. DART 소스 ML 및 `backfill_dart_labels` 라벨 백필은 운영 경로에서 제거.
   - **REPORT** → 투자의견(`signal_direction`) 컨센서스로 **결정론 방향**(`_report_consensus_direction`, 의견 없으면 no_signal 폴백).
 - 메타러너 예측 라인(`SRC_INFER`)은 **구현·배선됨**(주가 BASE 앵커 + 대체데이터 가산 → 7예측률). §5 참조.
 
