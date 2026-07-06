@@ -226,9 +226,23 @@ class DartOwnershipNormalizeTaskHandler:
                 dedupe=True,
             )
 
+        analysis_task_id = None
+        if signal_event_ids:
+            analysis_context = _dart_label_task_context(task_context)
+            analysis_context["run_key"] = f"DART_OWNERSHIP_{signal_event_ids[0]}"
+            analysis_task_id = await self._queue_repository.enqueue(
+                stock_id=stock_id,
+                task_type=ANALYZE_DART,
+                priority=str(task.get("priority") or "batch"),
+                source_signal_event_ids=signal_event_ids,
+                task_context=analysis_context,
+                dedupe=True,
+            )
+
         return {
             "normalized_count": len(signal_event_ids),
             "signal_event_ids": signal_event_ids,
+            "analysis_task_id": analysis_task_id,
             "label_backfill_task_id": label_backfill_task_id,
         }
 

@@ -2,7 +2,7 @@ import unittest
 from datetime import date, datetime
 
 from app.orchestrator.dart.tasks import DartOwnershipNormalizeTaskHandler
-from app.orchestrator.queue.task_types import BACKFILL_DART_LABELS
+from app.orchestrator.queue.task_types import ANALYZE_DART, BACKFILL_DART_LABELS
 
 
 class FakeOwnershipRepository:
@@ -48,7 +48,7 @@ class FakeQueueRepository:
 
     async def enqueue(self, **kwargs):
         self.calls.append(kwargs)
-        return 901
+        return 900 + len(self.calls)
 
 
 def _row(**overrides):
@@ -89,6 +89,7 @@ class DartOwnershipNormalizeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["normalized_count"], 1)
         self.assertEqual(result["signal_event_ids"], [102])
         self.assertEqual(result["label_backfill_task_id"], 901)
+        self.assertEqual(result["analysis_task_id"], 902)
         self.assertEqual(ownership.calls, [{"stock_id": 7, "limit": 500}])
 
         doc = normalization.docs[0]
@@ -125,6 +126,14 @@ class DartOwnershipNormalizeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(queue.calls[0]["source_signal_event_ids"], [102])
         self.assertEqual(queue.calls[0]["task_context"], {"stock_code": "005930", "source_type": "DART"})
         self.assertTrue(queue.calls[0]["dedupe"])
+        self.assertEqual(queue.calls[1]["stock_id"], 7)
+        self.assertEqual(queue.calls[1]["task_type"], ANALYZE_DART)
+        self.assertEqual(queue.calls[1]["source_signal_event_ids"], [102])
+        self.assertEqual(
+            queue.calls[1]["task_context"],
+            {"stock_code": "005930", "source_type": "DART", "run_key": "DART_OWNERSHIP_102"},
+        )
+        self.assertTrue(queue.calls[1]["dedupe"])
 
     async def test_negative_delta_becomes_negative_direction(self):
         normalization = FakeNormalizationRepository()
