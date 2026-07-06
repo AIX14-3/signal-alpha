@@ -7,7 +7,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "packages" / "data-access"))
 
-from app.agents.base import SourceAgentOutput
 from app.orchestrator.report import tasks as report_tasks
 from app.orchestrator.report.tasks import (
     ReportAnalyzeTaskHandler,
@@ -18,21 +17,9 @@ from app.orchestrator.report.tasks import (
 
 
 class _LlmSettings:
-    """Minimal settings shim toggling the RAG gate (REPORT_USE_LLM)."""
+    """Minimal settings shim for REPORT_USE_LLM parser configuration."""
 
     report_use_llm = True
-
-
-class _FakeReportAgent:
-    """Stand-in ReportAnalysisAgent — records the input and returns a fixed output."""
-
-    def __init__(self, output):
-        self._output = output
-        self.calls = []
-
-    async def analyze(self, input_data):
-        self.calls.append(input_data)
-        return self._output
 
 
 class FakeStorage:
@@ -167,7 +154,7 @@ class ReportProcessTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(conn.valuation_facts[0][11], 15.0)
         self.assertTrue(any(args[1] == "normalize_report" for _, args in conn.fetchvals))
 
-    async def test_enqueues_embed_report_only_when_llm_enabled(self):
+    async def test_does_not_enqueue_embed_report_when_llm_enabled(self):
         def _fake_process(s3_key, passed_storage, *, settings=None):
             return {"opinion": "neutral", "target_price": 120000, "valuation_facts": {},
                     "key_rationale": "근거", "raw_text": "본문"}
@@ -185,7 +172,7 @@ class ReportProcessTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("embed_report", types_off)
         self.assertIsNone(result_off["embed_task_id"])
 
-        # Gate ON → embed_report enqueued alongside normalize_report.
+        # REPORT_USE_LLM now affects parser enrichment only; it must not enqueue RAG.
         conn_on = ProcessHandlerConn()
         handler_on = ReportProcessTaskHandler(
             connection=conn_on, settings=_LlmSettings(), storage=FakeStorage(exists=True)
@@ -193,8 +180,8 @@ class ReportProcessTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         result_on = await handler_on({"task_context": {"raw_document_id": 42}})
         types_on = [args[1] for _, args in conn_on.fetchvals]
         self.assertIn("normalize_report", types_on)
-        self.assertIn("embed_report", types_on)
-        self.assertIsNotNone(result_on["embed_task_id"])
+        self.assertNotIn("embed_report", types_on)
+        self.assertIsNone(result_on["embed_task_id"])
 
 
 # ── normalize_report ─────────────────────────────────────────────
@@ -411,77 +398,9 @@ class ReportAnalyzeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("run_key", task_context)
         self.assertNotIn("aggregation_key", task_context)
 
-    async def test_rag_sidecar_is_additive_and_never_touches_score(self):
+    async def test_report_llm_setting_does_not_enable_rag_sidecar(self):
         conn = AnalyzeHandlerConn()
-        # Agent asserts a DIFFERENT needs_review than the deterministic path (False) to
-        # prove its judgment lands only inside report_rag, not the top-level feature key.
-        agent = _FakeReportAgent(
-            SourceAgentOutput(
-                source="REPORT",
-                stock_code="005930",
-                direction="positive",
-                score=1.0,
-                summary="재해석 요약",
-                risk_flags=["demand_slowdown"],
-                method_detail={"report_rag": {"status": "ok", "evidence": [{"point": "근거"}]}},
-                needs_review=True,
-                analysis_source="llm",
-                llm_model="gemini-fake",
-                prompt_ver="report-rag-v1",
-            )
-        )
-        handler = ReportAnalyzeTaskHandler(connection=conn, settings=_LlmSettings(), agent=agent)
-
-        result = await handler(
-            {
-                "stock_id": 1,
-                "source_signal_event_ids": [801],
-                "task_context": {"stock_code": "005930", "run_key": "REPORT_EVENT_801"},
-            }
-        )
-
-        # Deterministic score/direction unchanged (invariant).
-        self.assertEqual(result["direction"], "positive")
-        agent_call = conn._insert("agent_results")
-        self.assertEqual(agent_call[2][4], 100.0)  # method_score = _score_to_100(1.0)
-        self.assertEqual(agent_call[2][5], "positive")  # method_signal
-        method_detail = json.loads(agent_call[2][6])
-        # Existing feature keys preserved verbatim (ML guardrail — Wave 3 reads these).
-        self.assertEqual(method_detail["report_quant"]["valuation"]["target_price"], 90000)
-        self.assertFalse(method_detail["needs_review"])  # deterministic value, NOT the agent's True
-        # New additive side-car carries the LLM reinterpretation only.
-        rag = method_detail["report_rag"]
-        self.assertEqual(rag["status"], "ok")
-        self.assertEqual(rag["summary"], "재해석 요약")
-        self.assertEqual(rag["needs_review"], True)  # agent judgment lives here
-        self.assertEqual(rag["evidence"], [{"point": "근거"}])
-        self.assertEqual(rag["llm_model"], "gemini-fake")
-        # Agent received the deterministic context to echo (never to recompute).
-        self.assertEqual(agent.calls[0].context["direction"], "positive")
-
-    async def test_rag_sidecar_absent_when_llm_disabled(self):
-        conn = AnalyzeHandlerConn()
-        handler = ReportAnalyzeTaskHandler(connection=conn)  # settings=None → gate OFF
-
-        await handler(
-            {
-                "stock_id": 1,
-                "source_signal_event_ids": [801],
-                "task_context": {"stock_code": "005930", "run_key": "REPORT"},
-            }
-        )
-
-        method_detail = json.loads(conn._insert("agent_results")[2][6])
-        self.assertNotIn("report_rag", method_detail)
-
-    async def test_rag_agent_failure_does_not_break_deterministic_write(self):
-        conn = AnalyzeHandlerConn()
-
-        class _BoomAgent:
-            async def analyze(self, input_data):
-                raise RuntimeError("agent exploded")
-
-        handler = ReportAnalyzeTaskHandler(connection=conn, settings=_LlmSettings(), agent=_BoomAgent())
+        handler = ReportAnalyzeTaskHandler(connection=conn, settings=_LlmSettings())
 
         result = await handler(
             {
@@ -491,11 +410,11 @@ class ReportAnalyzeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        # Deterministic write still succeeds; failure captured as a side-car status.
         self.assertEqual(result["agent_result_id"], 902)
         method_detail = json.loads(conn._insert("agent_results")[2][6])
-        self.assertEqual(method_detail["report_rag"]["status"], "error")
-
+        self.assertEqual(method_detail["source"], "REPORT")
+        self.assertIn("report_quant", method_detail)
+        self.assertNotIn("report_rag", method_detail)
 
 class ReportConsensusDirectionTest(unittest.TestCase):
     """결정론 밸류에이션 컨센서스 — 투자의견 분포 → (direction, score, data_status)."""

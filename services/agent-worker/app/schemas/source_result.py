@@ -26,7 +26,7 @@ class EvidenceItem:
 
 @dataclass(frozen=True)
 class ReportMeta:
-    """Report RAG 전용 집계 메타데이터"""
+    """Report valuation aggregation metadata."""
     avg_target: float | None
     upside_pct: float | None
     target_trend: Literal["up", "down", "flat", "unknown"]

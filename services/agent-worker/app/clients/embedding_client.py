@@ -1,7 +1,7 @@
-"""Shared async Gemini embedding client for agent RAG / episodic memory.
+"""Shared async Gemini embedding client for episodic memory.
 
-Stage 0 (agent embeddings infra): both report RAG (``report_chunks``) and the
-episodic memory (``signal_episodes``) store a ``vector(768)``. This client turns
+Stage 0 (agent embeddings infra): episodic memory (``signal_episodes``) stores a
+``vector(768)``. This client turns
 text into those 768-dim vectors via Gemini's ``embedContent`` /
 ``batchEmbedContents`` endpoints. It mirrors ``gemini_client.py`` exactly:
 

@@ -108,8 +108,6 @@ DEFAULT_CYCLE_PLAN: dict[str, int] = {
     "process_report": 5,
     "normalize_report": 10,
     "analyze_report": 10,
-    # Report RAG 임베딩 — PDF 재추출 + 임베딩 API 호출이라 무거움 → 작은 캡으로 throttle.
-    "embed_report": 3,
     # Alternative 정규화/보강/분석 (수집은 독립 일배치)
     "NORMALIZE_HIRING": 10,
     "NORMALIZE_PATENT": 10,
