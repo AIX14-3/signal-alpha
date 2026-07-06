@@ -21,6 +21,13 @@ pip-delete-this-directory.txt
 !.env.example
 .envrc
 
+# ML research artifacts (never committed until a signal survives the gauntlet)
+# — sweep/search ledgers + reports, and self-fetched research CSVs/dumps.
+search_out/
+sweep_out/
+revenue_dart.csv
+hiring_postings.jsonl
+
 # Python bytecode/cache
 __pycache__/
 *.py[codz]
