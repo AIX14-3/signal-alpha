@@ -58,9 +58,11 @@ export type NewsSummary = {
   stock_count: number;
   recent_articles: number;
   latest_collected_at: string | null;
+  recent_hours: number;
   notice: string;
 };
 
-export async function getNewsSummary(): Promise<NewsSummary> {
-  return apiFetch(`/api/news/summary`, { auth: "none" });
+// recentHours 로 recent_articles 집계 창 조절(기본 24h, 서버가 1h~30d 로 클램프).
+export async function getNewsSummary(recentHours = 24): Promise<NewsSummary> {
+  return apiFetch(`/api/news/summary?recent_hours=${recentHours}`, { auth: "none" });
 }
