@@ -1,0 +1,17 @@
+%% 저널 커뮤니티 게시판 — 유저 플로우 (대응: FR-1..5, NFR 권한/프라이버시)
+%% plan-flow 산출. 읽기 공개, 쓰기 로그인, 라이브 참조 원본 부재 처리.
+flowchart TD
+    Start([진입]) --> Feed[커뮤니티 피드<br/>인기·주간인기·최신]
+    Feed -->|비로그인도 열람 가능| Detail[게시글 상세<br/>닉네임·종목·판단·메모 · 손익 비공개]
+    Detail --> React{반응/댓글 시도?}
+    React -->|비로그인| Login[로그인 유도]
+    Login --> React
+    React -->|로그인| Do[좋아요·북마크·댓글/대댓글]
+    Do --> Detail
+    Detail -->|원본 저널 삭제·비공개| Gone[원본 없음 표시]
+
+    subgraph share["공유 (저널 소유자 = 구독자)"]
+        MyJournal[마이페이지 저널 항목] -->|공유 opt-in| Compose[게시글 작성<br/>title·body + 저널 라이브 참조]
+        Compose --> Publish[게시]
+    end
+    Publish --> Detail

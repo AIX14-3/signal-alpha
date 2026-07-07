@@ -57,6 +57,15 @@ BACKEND_TABLES: frozenset[str] = frozenset(
         "guard_news_events",
         "guard_recommendations",
         "guard_status_audit",
+        # 커뮤니티 게시판 — 유저 콘텐츠(공개 공유 레이어). 저자·저널 FK 로 users/
+        # signal_journals 와 같은 백엔드 DB 에 공존. 랭킹 스냅샷은 워커가
+        # BACKEND_DATABASE_URL 로 기록(journal_outcomes 와 같은 워커→백엔드 계약).
+        "community_posts",
+        "community_comments",
+        "community_reactions",
+        "community_post_views",
+        "community_reports",
+        "community_post_rankings",
     }
 )
 
