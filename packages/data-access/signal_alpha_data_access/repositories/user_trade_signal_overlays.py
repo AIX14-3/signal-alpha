@@ -30,17 +30,18 @@ class UserTradeSignalOverlayRepository:
         source_ref: str,
         detail: str,
     ) -> None:
-        """멱등 적재 — (user, stock, date, kind, source_ref) 자연키. detail(jsonb)은 갱신.
+        """멱등 적재 — (user, stock, date, kind, source_ref) 자연키.
 
         source_ref(공시 rcept_no:line_seq)로 같은 날 여러 내부자 공시를 각각 보존한다.
+        공시 1건의 detail 은 불변(정정은 새 rcept_no)이라 재적재 시 DO NOTHING — 워커에
+        UPDATE 권한이 필요 없다(grant=SELECT/INSERT).
         """
         await self._connection.execute(
             """
             INSERT INTO user_trade_signal_overlays
                 (user_id, stock_id, ticker, signal_date, kind, source_ref, detail)
             VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
-            ON CONFLICT (user_id, stock_id, signal_date, kind, source_ref) DO UPDATE SET
-                detail = EXCLUDED.detail
+            ON CONFLICT (user_id, stock_id, signal_date, kind, source_ref) DO NOTHING
             """,
             user_id,
             stock_id,

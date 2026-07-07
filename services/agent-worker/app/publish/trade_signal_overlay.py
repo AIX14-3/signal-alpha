@@ -4,7 +4,8 @@
 DB 에서 읽어 backend 오버레이에 멱등 적재한다. signal_journal_outcomes 워커와 같은 이중풀
 계약(수집=읽기, backend=쓰기). report_date(공시 접수일)=known_at 이라 사후확신이 섞이지 않는다.
 
-진입 이전 신호(살 시기 판단 근거)도 잡기 위해 거래 시작일보다 lookback 만큼 앞부터 읽는다.
+조회 구간 = 유저 보유 구간(거래 시작~종료). 라우트의 signals_in_window 가 라운드트립별로
+다시 필터한다. (진입 이전 "살 시기 판단" 신호까지 잡는 건 missed-buy 부검 후속에서.)
 연결·리포지토리 주입형이라 faked 로 단위테스트한다.
 """
 

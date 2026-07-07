@@ -173,7 +173,8 @@ def _dec(value: Any) -> Decimal | None:
     if value is None:
         return None
     try:
-        return Decimal(str(value))
+        # 콤마 포함 문자열("95,000")도 허용 — 없으면 손절 판정이 조용히 스킵된다.
+        return Decimal(str(value).replace(",", "").strip())
     except (ValueError, ArithmeticError):
         return None
 

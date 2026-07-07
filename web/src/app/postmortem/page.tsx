@@ -78,6 +78,7 @@ function PlanSection() {
   const [stop, setStop] = useState("");
   const [sell, setSell] = useState("");
   const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
   const num = (v: string): number | null => {
     const n = Number(v);
@@ -115,6 +116,7 @@ function PlanSection() {
           e.preventDefault();
           if (!code.trim()) return;
           setBusy(true);
+          setErr(null);
           try {
             await savePlan({
               stock_code: code.trim(),
@@ -128,6 +130,9 @@ function PlanSection() {
             setTarget("");
             setStop("");
             setSell("");
+          } catch (error) {
+            // 실패 시 입력을 보존하고 사유를 표시한다(unhandled rejection 방지).
+            setErr(error instanceof Error ? error.message : "계획 저장에 실패했습니다.");
           } finally {
             setBusy(false);
           }
@@ -140,6 +145,7 @@ function PlanSection() {
           <input className="card w-full px-4 py-2.5 text-[13.5px] outline-none focus:border-sky" placeholder="손절가" inputMode="numeric" value={stop} onChange={(e) => setStop(e.target.value)} />
         </div>
         <input className="card w-full px-4 py-2.5 text-[13.5px] outline-none focus:border-sky" placeholder="매도 조건 (예: 실적 발표 후)" value={sell} onChange={(e) => setSell(e.target.value)} />
+        {err ? <p className="text-[13px] text-red">{err}</p> : null}
         <button type="submit" disabled={busy || !code.trim()} className="brand-grad rounded-full px-5 py-2 text-[13px] font-bold text-white disabled:opacity-60">
           {busy ? "저장 중…" : "계획 저장"}
         </button>
