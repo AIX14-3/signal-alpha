@@ -201,6 +201,48 @@ def _panel_demo_revenue(*, n_stocks: int, weeks: int, signal_step: int, lag: int
                  list(ds.feature_names), "revenue")
 
 
+def _panel_csv_magnitude(*, keyword_csv: str, prices_csv: str, start: str, end: str,
+                         horizon: int, target: str, signal_step: int, **_) -> Panel:
+    """Real magnitude from CSVs (name-search + close/volume) — no DB, no keys."""
+    from datetime import date as _date
+
+    from .magnitude_dataset import load_magnitude_dataset
+
+    ds = load_magnitude_dataset(
+        keyword_csv=keyword_csv, prices_csv=prices_csv,
+        start=_date.fromisoformat(start), end=_date.fromisoformat(end),
+        target=target, horizon_sessions=horizon, signal_step=signal_step,
+    )
+    if len(ds) == 0:
+        raise GateNeeded(
+            f"no magnitude samples — check {keyword_csv} (ticker,keyword,period,ratio) "
+            f"& {prices_csv} (ticker,date,close,volume) overlap in [{start},{end}]"
+        )
+    return Panel(ds.X, ds.y, ds.excess_returns, ds.dates, ds.stock_ids,
+                 list(ds.feature_names), "magnitude")
+
+
+def _panel_csv_revenue(*, keyword_csv: str, prices_csv: str, revenue_csv: str,
+                       start: str, end: str, lag: int, signal_step: int, **_) -> Panel:
+    """Real search→revenue-nowcast from CSVs (name-search + prices + DART revenue)."""
+    from datetime import date as _date
+
+    from .revenue_dataset import load_revenue_dataset
+
+    ds = load_revenue_dataset(
+        keyword_csv=keyword_csv, prices_csv=prices_csv, revenue_csv=revenue_csv,
+        start=_date.fromisoformat(start), end=_date.fromisoformat(end),
+        lag=lag, signal_step=signal_step,
+    )
+    if len(ds) == 0:
+        raise GateNeeded(
+            f"no revenue samples — check {revenue_csv} (ticker,name,year,reprt,account,"
+            f"fs_div,amount) + search/price overlap in [{start},{end}]"
+        )
+    return Panel(ds.X, ds.y, ds.excess_returns, ds.dates, ds.stock_ids,
+                 list(ds.feature_names), "revenue")
+
+
 def _panel_db_magnitude(*, prices_csv: str | None = None, **_) -> Panel:
     """Live search→magnitude — GATES (offline scope); names exactly what's needed."""
     if not _sweep_database_url():
@@ -239,8 +281,10 @@ DATASET_SPECS = {
 _TASK_SPECS = {
     ("demo", "magnitude"): _panel_demo_magnitude,
     ("db", "magnitude"): _panel_db_magnitude,
+    ("csv", "magnitude"): _panel_csv_magnitude,
     ("demo", "revenue"): _panel_demo_revenue,
     ("db", "revenue"): _panel_db_revenue,
+    ("csv", "revenue"): _panel_csv_revenue,
 }
 
 

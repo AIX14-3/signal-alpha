@@ -412,7 +412,7 @@ def _write_report(out_dir, rows, ok, survivors, confirmed, gates, skips, *,
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="DataLab feature×label sweep")
-    p.add_argument("--source", default="demo", choices=["synthetic", "demo", "db"])
+    p.add_argument("--source", default="demo", choices=["synthetic", "demo", "db", "csv"])
     p.add_argument("--task", default="direction",
                    choices=["direction", "magnitude", "revenue", "all"],
                    help="label axis: direction / magnitude / revenue-nowcast / all")
@@ -436,6 +436,9 @@ def main(argv: list[str] | None = None) -> int:
     # demo knobs
     p.add_argument("--stocks-real", type=int, default=8)
     p.add_argument("--weeks", type=int, default=120)
+    # csv knobs (real name-search magnitude/revenue runs)
+    p.add_argument("--keyword-csv", default="stockname_daily_krx250.csv")
+    p.add_argument("--revenue-csv", default="dart_krx250.csv")
     args = p.parse_args(argv)
 
     if args.source == "db":
@@ -443,6 +446,13 @@ def main(argv: list[str] | None = None) -> int:
             "tickers": tuple(t.strip() for t in args.tickers.split(",") if t.strip()),
             "start": args.start, "end": args.end, "benchmark": args.benchmark,
             "prices_csv": args.prices_csv, "signal_step": args.signal_step,
+        }
+    elif args.source == "csv":
+        extra = {
+            "keyword_csv": args.keyword_csv,
+            "prices_csv": args.prices_csv or "prices_krx250.csv",
+            "revenue_csv": args.revenue_csv,
+            "start": args.start, "end": args.end, "signal_step": args.signal_step,
         }
     elif args.source == "demo":
         extra = {"n_stocks": args.stocks_real, "weeks": args.weeks,

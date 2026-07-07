@@ -154,3 +154,6 @@ krx_top250.json
 revenue_dart.csv
 prices_krx250.csv
 stockname_daily_krx250.csv
+stockname_terms.txt
+sweep_out*/
+_build_*.log

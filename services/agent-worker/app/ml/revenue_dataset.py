@@ -146,3 +146,58 @@ def build_revenue_dataset(
         feature_names=names,
         dropped=dropped,
     )
+
+
+def load_revenue_dataset(
+    *,
+    keyword_csv: str,
+    prices_csv: str,
+    revenue_csv: str,
+    start: date,
+    end: date,
+    tickers: list[str] | None = None,
+    lag: int = 1,
+    signal_step: int = 5,
+    mom_lag: int = 5,
+    win: int = WIN,
+) -> Dataset:
+    """Load name-search + annual-revenue CSVs and build the revenue-nowcast Dataset.
+
+    Mirrors ``magnitude_dataset.load_magnitude_dataset`` but the target is next-print
+    revenue-YoY (``bakeoff_ab.load_annual_revenue`` for the label). The trading-day
+    calendar (for the search rolling-z) comes from the prices CSV. ``tickers=None``
+    uses every ticker present in the search AND price files. No DB.
+    """
+    from datetime import date as _date  # noqa: F401 - keep date import explicit
+
+    from .bakeoff_ab import load_annual_revenue
+    from .datalab_dataset import weekly_signal_dates
+    from .magnitude_dataset import aggregate_search_by_ticker
+    from .period_keyword_dataset import load_keyword_series
+    from .prices_csv import load_prices_csv
+
+    search_by_ticker = aggregate_search_by_ticker(load_keyword_series(keyword_csv))
+    prices_by_ticker = load_prices_csv(prices_csv)
+    revenue_by_ticker = load_annual_revenue(revenue_csv)
+    if not tickers:
+        tickers = sorted(set(search_by_ticker) & set(prices_by_ticker))
+
+    trading_days_by_ticker: dict[str, list[date]] = {}
+    signal_dates_by_ticker: dict[str, list[date]] = {}
+    for ticker in tickers:
+        prices = prices_by_ticker.get(ticker)
+        if prices is None:
+            continue
+        trading_days_by_ticker[ticker] = prices.dates
+        in_window = [d for d in prices.dates if start <= d <= end]
+        signal_dates_by_ticker[ticker] = weekly_signal_dates(in_window, step=signal_step)
+
+    return build_revenue_dataset(
+        search_by_ticker=search_by_ticker,
+        revenue_by_ticker=revenue_by_ticker,
+        trading_days_by_ticker=trading_days_by_ticker,
+        signal_dates_by_ticker=signal_dates_by_ticker,
+        lag=lag,
+        mom_lag=mom_lag,
+        win=win,
+    )
