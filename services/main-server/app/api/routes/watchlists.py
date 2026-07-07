@@ -90,6 +90,17 @@ async def news_summary(
     return {**_news_summary_response(data), "recent_hours": window}
 
 
+@news_router.get("/recent")
+async def recent_news(
+    limit: int = 30,
+    pool: Any = Depends(get_database_pool),
+) -> dict[str, Any]:
+    """전역 최신 뉴스 목록(공개) — 홈 2-pane 좌측 '뉴스 피드'(종목명 포함)."""
+    async with pool.acquire() as connection:
+        rows = await StockNewsRepository(connection).list_recent(limit=min(max(limit, 1), 50))
+    return {"items": [_recent_news_response(dict(row)) for row in rows]}
+
+
 @watchlists_router.get("")
 async def list_watchlists(
     current_user: dict[str, Any] = Depends(get_current_user),
@@ -167,6 +178,14 @@ def _news_response(row: dict[str, Any]) -> dict[str, Any]:
         "press": row.get("press"),
         "source": row.get("source"),
         "published_at": published_at.isoformat() if published_at else None,
+    }
+
+
+def _recent_news_response(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "stock_code": row.get("stock_code"),
+        "stock_name": row.get("stock_name"),
+        **_news_response(row),
     }
 
 

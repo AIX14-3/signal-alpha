@@ -66,3 +66,13 @@ export type NewsSummary = {
 export async function getNewsSummary(recentHours = 24): Promise<NewsSummary> {
   return apiFetch(`/api/news/summary?recent_hours=${recentHours}`, { auth: "none" });
 }
+
+// 전역 최신 뉴스 피드(공개) — 홈 2-pane 좌측 목록용. 종목명 포함(미매핑은 null).
+export type RecentNewsItem = StockNewsItem & {
+  stock_code: string;
+  stock_name: string | null;
+};
+
+export async function listRecentNews(limit = 30): Promise<{ items: RecentNewsItem[] }> {
+  return apiFetch(`/api/news/recent?limit=${limit}`, { auth: "none" });
+}

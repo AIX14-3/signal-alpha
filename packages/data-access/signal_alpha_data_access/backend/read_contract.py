@@ -89,6 +89,24 @@ class StockNewsRepository:
         )
         return int(value or 0)
 
+    async def list_recent(self, *, limit: int = 30) -> list[Any]:
+        """전역 최신 뉴스(종목 무관) + 종목명 조인. 홈 2-pane 좌측 '뉴스 피드'용(공개).
+
+        api.stock_news 는 ticker(stock_code)만 있어 표시용 종목명은 api.stocks 를 LEFT JOIN
+        해 채운다(미매핑/상장폐지 종목은 stock_name NULL 로 보존).
+        """
+        return await self._connection.fetch(
+            """
+            SELECT n.stock_code, s.name AS stock_name,
+                   n.title, n.summary, n.url, n.press, n.source, n.published_at
+            FROM api.stock_news n
+            LEFT JOIN api.stocks s ON s.ticker = n.stock_code
+            ORDER BY n.published_at DESC NULLS LAST, n.collected_at DESC
+            LIMIT $1
+            """,
+            limit,
+        )
+
     async def summary(self, *, recent_hours: int = 24) -> dict[str, Any]:
         """전역 뉴스 집계 — 총 기사수·뉴스 보유 종목수·최근 N시간 기사수·최신 수집시각.
 
