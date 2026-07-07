@@ -172,6 +172,73 @@ def test_monthly_signal_step_multiplies_cross_sections_pit_safe():
     assert any(len(v) >= 2 for v in per_firm_label_dates.values())
 
 
+def test_revenue_sue_is_pit_and_standardized():
+    """``revenue_sue`` = within-firm 놀라움: 각 분기 SUE 는 **직전 K분기 YoY** 만으로
+    (YoY−mean)/(std+eps). trailing 이 K개 미만이면 그 분기는 라벨 없음(PIT·엄격히 과거만)."""
+    from app.ml.research.fundamentals_dataset import revenue_sue, yoy_growth
+
+    # 8분기 매출(2020Q1..2021Q4) → YoY 는 2021Q1..Q4 4개만 정의.
+    rev = {}
+    base = {1: 100.0, 2: 110.0, 3: 120.0, 4: 130.0}
+    for q in (1, 2, 3, 4):
+        rev[(2020, q)] = base[q]
+        rev[(2021, q)] = base[q] * (1.0 + 0.10 * q)  # 분기마다 다른 YoY
+
+    yoy = yoy_growth(rev)
+    assert len(yoy) == 4  # 2021 4개만
+    # K=4 → 앞선 4개 trailing 이 필요. YoY 는 4개뿐이라 어느 분기도 trailing 4개 없음 → 전부 제외.
+    assert revenue_sue(rev, k=4) == {}
+
+    # K=2 로 낮추면 2021Q3(앞 Q1,Q2), 2021Q4(앞 Q2,Q3) 두 분기 SUE 정의.
+    sue = revenue_sue(rev, k=2)
+    assert set(sue.keys()) == {(2021, 3), (2021, 4)}
+    ordered = sorted(yoy)
+    for i in (2, 3):
+        key = ordered[i]
+        prior = [yoy[ordered[i - 2]], yoy[ordered[i - 1]]]
+        expect = (yoy[key] - np.mean(prior)) / (np.std(prior) + 1e-9)
+        assert abs(sue[key] - expect) < 1e-6
+    # 미래 분기를 baseline 에 절대 쓰지 않음(PIT): trailing 은 항상 key 보다 앞.
+    assert all(all(p < key for p in ordered[:ordered.index(key)]) for key in sue)
+
+
+def test_label_mode_surprise_changes_excess_returns():
+    """``label_mode='surprise'`` 는 excess_returns(연속 타깃)를 yoy 와 다르게 채운다:
+    같은 (종목,분기) 라벨셋에서 surprise 는 SUE, yoy 는 성장률 → 값·랭킹이 달라진다."""
+    from app.ml.research.fundamentals_dataset import build_revenue_dataset
+
+    def _known(y, q):
+        m_end = {1: 3, 2: 6, 3: 9, 4: 12}[q]
+        ny, nm = (y + 1, 2) if q == 4 else (y, m_end + 1)
+        return f"{ny:04d}-{nm:02d}-14"
+
+    hiring, revenue = {}, {}
+    for sid in (101, 202, 303, 404, 505, 606):
+        posts = [{"observed_date": f"{y:04d}-{mo:02d}-05"}
+                 for y in (2019, 2020, 2021, 2022) for mo in range(1, 13)]
+        hiring[sid] = posts
+        revenue[sid] = {
+            (y, q): (float(1000 + sid * (y - 2018) + q * 7 * (sid % 3 + 1)), _known(y, q))
+            for y in (2019, 2020, 2021, 2022) for q in (1, 2, 3, 4)
+        }
+
+    common = dict(hiring_rows_by_stock=hiring, revenue_by_stock=revenue,
+                  feature_set="volume", min_observations=1, min_cross_section=2)
+    ds_yoy = build_revenue_dataset(**common, label_mode="yoy")
+    ds_sue = build_revenue_dataset(**common, label_mode="surprise")
+
+    assert len(ds_sue) > 0
+    # surprise 는 K=4 trailing 요구 → yoy 보다 표본이 적거나 같다(초기 분기 제외).
+    assert len(ds_sue) <= len(ds_yoy)
+    # 같은 (종목,분기)에서 두 라벨의 연속 타깃이 다르다.
+    yoy_map = {(int(s), int(d)): float(v)
+               for s, d, v in zip(ds_yoy.stock_ids, ds_yoy.dates, ds_yoy.excess_returns)}
+    diffs = [abs(yoy_map[(int(s), int(d))] - float(v))
+             for s, d, v in zip(ds_sue.stock_ids, ds_sue.dates, ds_sue.excess_returns)
+             if (int(s), int(d)) in yoy_map]
+    assert diffs and max(diffs) > 1e-6
+
+
 def test_revenue_offline_gates_without_dumps():
     """revenue-offline 어댑터는 덤프 경로(--stocks-json/--postings-jsonl/--revenue-csv)가
     없으면 GateNeeded 로 안내한다(로컬 DATABASE_URL 없이도 크래시 없음)."""

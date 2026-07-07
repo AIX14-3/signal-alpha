@@ -58,6 +58,10 @@ def _parse_args(argv=None):
     p.add_argument("--n-perm", type=int, default=200)
     p.add_argument("--min-obs-per-firm", type=int, default=2)
     p.add_argument("--sector-map", help="{ticker: 섹터} JSON — 주면 라벨을 (섹터×시점) 내 중립화")
+    p.add_argument("--label-mode", default="yoy", choices=["yoy", "surprise"],
+                   help="revenue 라벨: yoy(LEVEL) 또는 surprise(within-firm SUE)")
+    p.add_argument("--embargo-days", type=int, default=0,
+                   help="within-firm 게이트 OOF purge embargo(월별 신호 누수 방지, ~95=분기폭)")
     return p.parse_args(argv)
 
 
@@ -81,6 +85,7 @@ def main(argv=None) -> int:
         stocks_rows=stocks_rows, postings=postings, revenue_csv=args.revenue_csv,
         tickers=tickers, feature_set=args.feature_set, lookback_days=args.lookback,
         min_observations=args.min_obs, min_cross_section=args.min_cross_section,
+        label_mode=args.label_mode,
     )
     if args.sector_map:
         from app.ml.research.fundamentals_dataset import sector_neutralize_label
@@ -104,6 +109,7 @@ def main(argv=None) -> int:
     report = gate_report(
         ds, model_name=args.model, n_folds=args.folds, seed=args.seed,
         n_perm=args.n_perm, min_obs_per_firm=args.min_obs_per_firm,
+        embargo_days=args.embargo_days,
     )
     print(render_gate(report))
     return 0

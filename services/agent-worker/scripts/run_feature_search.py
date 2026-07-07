@@ -54,6 +54,8 @@ def _extra_from_args(args) -> dict:
         # offline (MCP-dump) revenue path — no DATABASE_URL needed.
         "stocks_json": args.stocks_json or "", "postings_jsonl": args.postings_jsonl or "",
         "signal_step_days": args.revenue_signal_step_days,
+        "label_mode": args.label_mode,
+        "patent_json": args.patent_json or "",
     }
     if args.fusion_min_sources is not None:
         extra["fusion_min_sources"] = args.fusion_min_sources
@@ -87,6 +89,10 @@ def main(argv: list[str] | None = None) -> int:
     # offline revenue-nowcast dumps (source=revenue-offline; MCP stocks/HIRING dumps)
     p.add_argument("--stocks-json", default=None, help="stocks 덤프 JSON (revenue-offline)")
     p.add_argument("--postings-jsonl", default=None, help="HIRING 포스팅 JSONL (revenue-offline)")
+    p.add_argument("--patent-json", default=None,
+                   help="특허 스칼라 덤프 JSONL (patent-revenue-offline/fusion-revenue-offline)")
+    p.add_argument("--label-mode", default="yoy", choices=["yoy", "surprise"],
+                   help="revenue 라벨: yoy(LEVEL 성장) 또는 surprise(within-firm SUE)")
     p.add_argument("--revenue-signal-step-days", type=int, default=0,
                    help="revenue-offline 월별 신호(0=quarterly; 30=월별 3스냅샷/분기, 횡단면↑). "
                         "누수 방지 embargo 는 revenue 라벨 horizon 이 담당")

@@ -58,6 +58,34 @@ def yoy_growth(
     return out
 
 
+def revenue_sue(
+    rev_by_q: dict[tuple[int, int], float], k: int = 4, eps: float = 1e-9
+) -> dict[tuple[int, int], float]:
+    """{(year,quarter): 단일분기매출} → {(year,quarter): 매출 SURPRISE(SUE)}.
+
+    ``SUE_t = (YoY_t − mean(직전 K분기 YoY)) / (std(직전 K분기 YoY) + eps)`` — 회사가
+    *자기 과거 성장 추세 대비* 이번 분기에 얼마나 놀라운 성장을 냈는지(within-firm·time-varying).
+    LEVEL(yoy)이 정적·섹터-베타로 강등된 것과 달리, SURPRISE 는 구성상 회사 자기기준
+    시계열 편차라 트레이더블 지향 타깃이다.
+
+    **PIT**: 각 분기 t 의 SUE 는 t 보다 **엄격히 앞선** K개 분기의 YoY 만으로 계산한다(모두
+    as_of 이전 공시). ``yoy_growth`` 시리즈에서 t 직전의 K개(연속) 항목을 baseline 으로 쓰며,
+    disclosed 된 trailing 분기가 K개 미만이면 그 분기는 SUE 를 낼 수 없어 제외한다.
+    라벨(t) 자체의 known_at>as_of 누수가드는 ``build_revenue_dataset`` 루프가 담당한다.
+    """
+    yoy = yoy_growth(rev_by_q)
+    ordered = sorted(yoy.keys())  # (year, quarter) 는 사전식=시간순
+    out: dict[tuple[int, int], float] = {}
+    for i, key in enumerate(ordered):
+        if i < k:
+            continue  # trailing 분기 K개 미충족 → 놀라움 정의 불가
+        prior = [yoy[ordered[j]] for j in range(i - k, i)]
+        mean = float(np.mean(prior))
+        std = float(np.std(prior))
+        out[key] = (yoy[key] - mean) / (std + eps)
+    return out
+
+
 def load_revenue_csv(
     path: str,
 ) -> dict[str, dict[tuple[int, int], tuple[float, str]]]:
@@ -82,6 +110,8 @@ def build_revenue_dataset(
     min_cross_section: int = 6,
     signal_step_days: int = 0,
     n_signal_steps: int = 3,
+    label_mode: str = "yoy",
+    sue_k: int = 4,
 ) -> Dataset:
     """채용 피처(분기말 PIT) → 분기 YoY 매출성장 횡단면 라벨 데이터셋.
 
@@ -96,6 +126,8 @@ def build_revenue_dataset(
     """
     if feature_set not in ("volume", "duty", "volume+duty"):
         raise ValueError(f"unknown feature_set: {feature_set!r}")
+    if label_mode not in ("yoy", "surprise"):
+        raise ValueError(f"unknown label_mode: {label_mode!r}")
     want_volume = feature_set in ("volume", "volume+duty")
     want_duty = feature_set in ("duty", "volume+duty")
 
@@ -128,7 +160,11 @@ def build_revenue_dataset(
 
     for stock_id, rev_q in revenue_by_stock.items():
         rev_only = {k: v[0] for k, v in rev_q.items()}
-        growth_by_q = yoy_growth(rev_only)
+        growth_by_q = (
+            revenue_sue(rev_only, k=sue_k)
+            if label_mode == "surprise"
+            else yoy_growth(rev_only)
+        )
         dates_sorted = dates_by_stock.get(stock_id, [])
         duty_sorted = duty_by_stock.get(stock_id, [])
         for (year, quarter), growth in growth_by_q.items():
@@ -411,6 +447,7 @@ def _as_date(value: Any) -> date | None:
 __all__ = [
     "quarter_end_date",
     "yoy_growth",
+    "revenue_sue",
     "load_revenue_csv",
     "build_revenue_dataset",
     "load_from_env",
