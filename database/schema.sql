@@ -5563,6 +5563,13 @@ CREATE INDEX idx_patent_stock_pubdate ON public.patent_raw_details USING btree (
 
 
 --
+-- Name: COLUMN patent_raw_details.publication_date; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.patent_raw_details.publication_date IS '특허 공개일(출원 후 ~18개월). 시장에 정보가 노출되는 이벤트 시점. NULL 가능(미상). 출처: KIPRIS OpeningDate / Google Patents publication_date';
+
+
+--
 -- Name: idx_patent_stock_tech; Type: INDEX; Schema: public; Owner: -
 --
 
