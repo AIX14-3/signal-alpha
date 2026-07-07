@@ -126,15 +126,9 @@ jobs:
       - name: Apply migrations and seeds
         run: uv run python database/migrate.py apply --seeds
 
-      # Report RAG(#709 report_chunks) 실 pgvector 통합 테스트 — $N::vector 캐스팅·<=> 코사인·
-      # hnsw.ef_search·종목 스코프·ON CONFLICT 멱등을 실제 DB로 검증(fake 로는 못 잡음). opt-in
-      # 게이트라 일반 python 잡에서는 skip 되고, DB 가 뜬 이 잡에서만 REPORT_RAG_DB_TEST=1 로 돈다.
-      - name: Report RAG pgvector integration test
-        working-directory: services/agent-worker
-        env:
-          REPORT_RAG_DB_TEST: "1"
-          TEST_DATABASE_URL: postgresql://signal_alpha:signal_alpha_password@localhost:5432/signal_alpha
-        run: uv run python -m pytest tests/test_report_rag_db.py -v
+      # (Report RAG pgvector 통합 테스트 스텝 제거 — 런타임·테스트 파일이 ca71043
+      #  "Report RAG 런타임 제거" 에서 삭제됐는데 이 CI 스텝만 남아
+      #  tests/test_report_rag_db.py 부재로 모든 PR 에서 항상 실패하고 있었다.)
 
       - name: Show migration status
         run: uv run python database/migrate.py status
