@@ -1,0 +1,71 @@
+from __future__ import annotations
+
+from typing import Any
+
+from fastapi import APIRouter, Depends
+
+from app.core.database import get_database_pool
+from signal_alpha_data_access.backend import UserSignalRepository
+
+router = APIRouter(prefix="/api/methodology", tags=["methodology"])
+
+_MIN_SAMPLE_SIZE = 20
+_HORIZON_LABELS = {"7td": "7거래일", "30td": "30거래일"}
+
+
+@router.get("/posthoc-alignment")
+async def get_posthoc_alignment(pool: Any = Depends(get_database_pool)) -> dict[str, Any]:
+    async with pool.acquire() as connection:
+        rows = await UserSignalRepository(connection).get_journal_posthoc_alignment_summary()
+
+    return {
+        "scope": "journal_based",
+        "metric_label": "저널 기준 사후정합성",
+        "items": [_alignment_item(dict(row)) for row in rows],
+        "methodology": {
+            "basis": "저널에 저장된 발행 당시 데이터 방향성과 이후 확정된 관측 결과를 분리해 비교합니다.",
+            "included": "positive/negative 방향성이 저장되고 7거래일 또는 30거래일 outcome이 확정된 케이스",
+            "excluded": "neutral/mixed 방향, 확정 대기, 데이터 부족, 표본 부족 케이스",
+        },
+        "notice": "사후정합성은 과거 데이터 방향성의 검증 기록이며 미래 결과를 보장하지 않습니다. 특정 종목 행동 권유가 아니라 사용자 판단 보조를 위한 근거입니다.",
+    }
+
+
+def _alignment_item(row: dict[str, Any]) -> dict[str, Any]:
+    confirmed_count = int(row.get("confirmed_count") or 0)
+    pending_count = int(row.get("pending_count") or 0)
+    return {
+        "horizon": row["horizon"],
+        "label": _HORIZON_LABELS.get(row["horizon"], row["horizon"]),
+        "alignment_rate": _number(row.get("alignment_rate")),
+        "confirmed_count": confirmed_count,
+        "aligned_count": int(row.get("aligned_count") or 0),
+        "not_aligned_count": int(row.get("not_aligned_count") or 0),
+        "pending_count": pending_count,
+        "sample_status": _sample_status(confirmed_count, pending_count),
+        "first_outcome_trade_date": _timestamp(row.get("first_outcome_trade_date")),
+        "last_outcome_trade_date": _timestamp(row.get("last_outcome_trade_date")),
+        "checked_at": _timestamp(row.get("checked_at")),
+    }
+
+
+def _sample_status(confirmed_count: int, pending_count: int) -> str:
+    if confirmed_count == 0 and pending_count > 0:
+        return "확정 대기"
+    if confirmed_count < _MIN_SAMPLE_SIZE:
+        return "표본 부족"
+    return "집계 가능"
+
+
+def _number(value: Any) -> float | None:
+    if value is None:
+        return None
+    return float(value)
+
+
+def _timestamp(value: Any) -> str | None:
+    if value is None:
+        return None
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value)

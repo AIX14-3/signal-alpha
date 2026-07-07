@@ -172,3 +172,16 @@ class UserSignalRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("trade_date >= $2", sql)
         self.assertIn("ORDER BY trade_date ASC", sql)
         self.assertEqual(connection.calls[0][2], (10, "2026-05-23"))
+
+    async def test_get_journal_posthoc_alignment_summary_aggregates_confirmed_outcomes(self):
+        connection = FakeConnection()
+        repository = UserSignalRepository(connection)
+
+        await repository.get_journal_posthoc_alignment_summary()
+
+        sql = connection.calls[0][1]
+        self.assertIn("signal_journal_outcomes", sql)
+        self.assertIn("signal_value_at_time IN ('positive', 'negative')", sql)
+        self.assertIn("COUNT(classified.journal_id)", sql)
+        self.assertIn("aligned_count", sql)
+        self.assertIn("pending_count", sql)

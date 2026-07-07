@@ -64,3 +64,23 @@ test("mypage keeps account guard and tab data sources wired", () => {
     "useSocialStore",
   ].forEach((expected) => assertIncludes(source, expected, "mypage"));
 });
+
+test("methodology page explains posthoc alignment without recommendation framing", () => {
+  const source = read("src/app/methodology/page.tsx");
+  const shell = read("src/components/AppShell.tsx");
+
+  [
+    'data-page="methodology"',
+    "사후정합성",
+    "데이터 방향성",
+    "소스 간 일치도",
+    "확정 대기",
+    "표본 부족",
+    "미래 결과를 보장하지 않습니다",
+    "사용자 판단 보조",
+    "PosthocAlignmentSummary",
+  ].forEach((expected) => assertIncludes(source, expected, "methodology page"));
+
+  assertIncludes(read("src/components/PosthocAlignmentSummary.tsx"), "getPosthocAlignment", "methodology summary");
+  assertIncludes(shell, 'href: "/methodology"', "app shell navigation");
+});

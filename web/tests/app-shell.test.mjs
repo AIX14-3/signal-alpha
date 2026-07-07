@@ -49,6 +49,7 @@ test("api client exposes the contracted endpoints", async () => {
     "searchStocks",
     "listWatchlists",
     "getReport",
+    "getPosthocAlignment",
     "getMySubscription",
     "adminLogin",
     "adminGetStats",
