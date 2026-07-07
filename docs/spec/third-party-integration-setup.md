@@ -34,7 +34,6 @@
 | 백엔드 | `PORTONE_API_SECRET` | V2 **API Secret**(서버 검증용) — 미설정 시 백엔드 dev 모드 |
 | 백엔드 | `PORTONE_STORE_ID` | (선택) Store ID |
 | 백엔드 | `SUBSCRIPTION_PRICE_KRW` | 구독가(기본 `9900`) — 결제 검증 금액 |
-| 백엔드 | `FREE_REPORT_QUOTA` | 무료 열람 횟수(기본 `3`) |
 
 > 백엔드 `PORTONE_API_SECRET` 가 있으면 실 모드. 없으면 dev 모드(`config.py: portone_dev_mode`).
 > 프론트는 `NEXT_PUBLIC_PORTONE_STORE_ID` 가 있으면 실 SDK, 없으면 dev 모드.
@@ -145,7 +144,6 @@
 DATABASE_URL=postgresql://signal_alpha:signal_alpha_password@localhost:5432/signal_alpha
 CORS_ALLOW_ORIGINS=http://localhost:3000
 SUBSCRIPTION_PRICE_KRW=9900
-FREE_REPORT_QUOTA=3
 # 포트원
 PORTONE_API_BASE=https://api.iamport.kr
 PORTONE_API_KEY=

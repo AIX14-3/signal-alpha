@@ -48,7 +48,7 @@ flowchart LR
 
     subgraph BDB["백엔드 DB — Postgres 인스턴스 ②"]
         direction TB
-        bt["BACKEND 16 테이블<br/>users · sessions · subscriptions · payments ·<br/>watchlists · journals · admin_* · report_issuances ·<br/>collection_schedules · ..."]
+        bt["BACKEND 테이블<br/>users · sessions · subscriptions · payments ·<br/>watchlists · journals · admin_* ·<br/>collection_schedules · ..."]
         bsched["collection_schedules<br/>수집 스케줄 config + 상태<br/>(어드민 쓰기 / 스케줄러 폴링)"]
         bpub["PUBLISHED 발행 사본<br/>final_signals · stocks · analysis_results · ..."]
         bv["api.signals_current · signal_detail"]

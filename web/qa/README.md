@@ -19,8 +19,8 @@ signal-alpha 웹 프론트엔드를 **로컬에서** 자연어 기반 E2E/QA 하
 
 | 영역 | 자동화 | 방법 |
 |---|---|---|
-| 홈 / 검색 / 비회원 블라인드 리포트 | ✅ 무인 | 인증 불필요 |
-| 리포트 쿼터·관심종목·마이페이지·구독중 UI | ✅ | 시드 + 쿠키 주입 |
+| 홈 / 검색 / 리포트(전체 공개) / 소스 상세 | ✅ 무인 | 인증 불필요 |
+| 관심종목·마이페이지·구독중 UI·저널 | ✅ | 시드 + 쿠키 주입 |
 | 관리자 대시보드 | ✅ | 관리자 계정 시드 후 이메일/비번 로그인 |
 | PortOne 본인인증 로그인/가입, 카드 결제 위젯 | ❌ 수동만 | real 전용 |
 
@@ -59,9 +59,9 @@ cd web && npm install && npm run dev                              # :3000
 ## 인증 상태 만들기 (시드 + 쿠키 주입)
 
 ```bash
-# 무료 사용자 시드(쿼터/관심종목용)
+# 무료 사용자 시드(관심종목/마이페이지용)
 uv run --package signal-alpha-main-server python services/main-server/scripts/seed_e2e_user.py
-# 구독중 사용자 시드(무제한 UI용)
+# 구독중 사용자 시드(저널 등 구독 전용 UI용)
 E2E_SUBSCRIBE=1 uv run --package signal-alpha-main-server python services/main-server/scripts/seed_e2e_user.py
 ```
 
