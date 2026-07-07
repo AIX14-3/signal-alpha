@@ -87,3 +87,47 @@ class BacktestRepository:
             change_pct_5d,
             is_hit,
         )
+
+    async def get_signal_posthoc_alignment_summary(self) -> list[Any]:
+        """전체 발행 신호 backtest 결과의 5거래일 사후 정합성을 집계한다."""
+        return await self._connection.fetch(
+            """
+            WITH classified AS (
+                SELECT
+                    '5td' AS horizon,
+                    id AS signal_id,
+                    signal_date AS outcome_trade_date,
+                    checked_at,
+                    is_hit
+                FROM backtest_results
+                WHERE signal_value IN ('positive', 'negative')
+            )
+            SELECT
+                '5td' AS horizon,
+                COUNT(signal_id)
+                    FILTER (WHERE is_hit IS NOT NULL)::INT AS confirmed_count,
+                COUNT(signal_id)
+                    FILTER (WHERE is_hit IS TRUE)::INT AS aligned_count,
+                COUNT(signal_id)
+                    FILTER (WHERE is_hit IS FALSE)::INT AS not_aligned_count,
+                COUNT(signal_id)
+                    FILTER (WHERE checked_at IS NULL OR is_hit IS NULL)::INT AS pending_count,
+                ROUND(
+                    COUNT(signal_id)
+                        FILTER (WHERE is_hit IS TRUE)::NUMERIC
+                    / NULLIF(
+                        COUNT(signal_id)
+                            FILTER (WHERE is_hit IS NOT NULL),
+                        0
+                    )
+                    * 100,
+                    1
+                ) AS alignment_rate,
+                MIN(outcome_trade_date)
+                    FILTER (WHERE is_hit IS NOT NULL) AS first_outcome_trade_date,
+                MAX(outcome_trade_date)
+                    FILTER (WHERE is_hit IS NOT NULL) AS last_outcome_trade_date,
+                MAX(checked_at) AS checked_at
+            FROM classified
+            """
+        )

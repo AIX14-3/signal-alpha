@@ -14,14 +14,22 @@ export type PosthocAlignmentItem = {
   checked_at: string | null;
 };
 
-export type PosthocAlignmentResponse = {
-  scope: "journal_based";
+export type PosthocAlignmentGroup = {
+  scope: "journal_based" | "signal_based";
   metric_label: string;
   items: PosthocAlignmentItem[];
+};
+
+export type PosthocAlignmentResponse = {
+  scope: "journal_based" | "signal_based";
+  metric_label: string;
+  items: PosthocAlignmentItem[];
+  groups: PosthocAlignmentGroup[];
   methodology: {
     basis: string;
     included: string;
     excluded: string;
+    signal_based_basis?: string;
   };
   notice: string;
 };

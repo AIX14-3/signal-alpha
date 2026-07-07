@@ -88,5 +88,8 @@ test("methodology page explains posthoc alignment without recommendation framing
   assertIncludes(read("src/components/PosthocAlignmentSummary.tsx"), "item.not_aligned_count", "methodology summary");
   assertIncludes(read("src/components/PosthocAlignmentSummary.tsx"), "정합", "methodology summary");
   assertIncludes(read("src/components/PosthocAlignmentSummary.tsx"), "비정합", "methodology summary");
+  assertIncludes(read("src/components/PosthocAlignmentSummary.tsx"), "data.groups", "methodology summary");
+  assertIncludes(read("src/components/PosthocAlignmentSummary.tsx"), "전체 발행 신호 기준", "methodology summary");
+  assertIncludes(read("src/components/PosthocAlignmentSummary.tsx"), "저널 기준", "methodology summary");
   assertIncludes(shell, 'href: "/methodology"', "app shell navigation");
 });

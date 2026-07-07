@@ -18,6 +18,7 @@ from signal_alpha_data_access.backend.read_contract import (
     StockRepository,
 )
 from signal_alpha_data_access.repositories.admin import AdminRepository
+from signal_alpha_data_access.repositories.backtests import BacktestRepository
 from signal_alpha_data_access.repositories.collection_schedules import (
     CollectionScheduleRepository,
     parse_schedule_row,
@@ -29,6 +30,7 @@ from signal_alpha_data_access.repositories.users_billing import UserBillingRepos
 
 __all__ = [
     "AdminRepository",
+    "BacktestRepository",
     "CollectionScheduleRepository",
     "ProcessingQueueRepository",
     "SignalRepository",

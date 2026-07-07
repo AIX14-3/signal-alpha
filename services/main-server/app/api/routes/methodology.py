@@ -5,27 +5,45 @@ from typing import Any
 from fastapi import APIRouter, Depends
 
 from app.core.database import get_database_pool
-from signal_alpha_data_access.backend import UserSignalRepository
+from signal_alpha_data_access.backend import BacktestRepository, UserSignalRepository
 
 router = APIRouter(prefix="/api/methodology", tags=["methodology"])
 
 _MIN_SAMPLE_SIZE = 20
-_HORIZON_LABELS = {"7td": "7거래일", "30td": "30거래일"}
+_HORIZON_LABELS = {"5td": "5거래일", "7td": "7거래일", "30td": "30거래일"}
 
 
 @router.get("/posthoc-alignment")
 async def get_posthoc_alignment(pool: Any = Depends(get_database_pool)) -> dict[str, Any]:
     async with pool.acquire() as connection:
-        rows = await UserSignalRepository(connection).get_journal_posthoc_alignment_summary()
+        journal_rows = await UserSignalRepository(connection).get_journal_posthoc_alignment_summary()
+        signal_rows = await BacktestRepository(connection).get_signal_posthoc_alignment_summary()
+
+    journal_items = [_alignment_item(dict(row)) for row in journal_rows]
+    signal_items = [_alignment_item(dict(row)) for row in signal_rows]
+    groups = [
+        {
+            "scope": "journal_based",
+            "metric_label": "저널 기준 사후정합성",
+            "items": journal_items,
+        },
+        {
+            "scope": "signal_based",
+            "metric_label": "전체 발행 신호 기준 사후정합성",
+            "items": signal_items,
+        },
+    ]
 
     return {
         "scope": "journal_based",
         "metric_label": "저널 기준 사후정합성",
-        "items": [_alignment_item(dict(row)) for row in rows],
+        "items": journal_items,
+        "groups": groups,
         "methodology": {
             "basis": "저널에 저장된 발행 당시 데이터 방향성과 이후 확정된 관측 결과를 분리해 비교합니다.",
             "included": "positive/negative 방향성이 저장되고 7거래일 또는 30거래일 outcome이 확정된 케이스",
             "excluded": "neutral/mixed 방향, 확정 대기, 데이터 부족, 표본 부족 케이스",
+            "signal_based_basis": "전체 발행 신호 기준은 별도 검증 기록에 남은 5거래일 확정 결과만 집계합니다.",
         },
         "notice": "사후정합성은 과거 데이터 방향성의 검증 기록이며 미래 결과를 보장하지 않습니다. 특정 종목 행동 권유가 아니라 사용자 판단 보조를 위한 근거입니다.",
     }
