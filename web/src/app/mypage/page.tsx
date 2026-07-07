@@ -7,6 +7,7 @@ import {
   cancelPayment,
   checkout,
   confirmPayment,
+  createPost,
   deleteMe,
   getMySubscription,
   paymentHistory,
@@ -333,6 +334,7 @@ const JOURNAL_VIEW_LABEL: Record<string, string> = Object.fromEntries(JOURNAL_VI
 const HORIZON_LABEL: Record<string, string> = { "7td": "7거래일", "30td": "30거래일" };
 
 function JournalTab() {
+  const router = useRouter();
   const user = useAuthStore((s) => s.user);
   const { items, loading, error, load, update, remove } = useJournalStore();
   const showToast = useToastStore((s) => s.show);
@@ -340,6 +342,12 @@ function JournalTab() {
   const [editView, setEditView] = useState("watch");
   const [editMemo, setEditMemo] = useState("");
   const [editTags, setEditTags] = useState("");
+  // 저널 → 커뮤니티 공유 폼(게시글 생성). show_pnl 켜면 수익률%만 공개(가격/절대손익은 항상 비공개).
+  const [sharingId, setSharingId] = useState<number | null>(null);
+  const [shareTitle, setShareTitle] = useState("");
+  const [shareBody, setShareBody] = useState("");
+  const [sharePnl, setSharePnl] = useState(false);
+  const [shareBusy, setShareBusy] = useState(false);
   // 카드 클릭 시 펼치는 주가 차트(작성 시점 대비 등락) 대상 저널.
   const [chartId, setChartId] = useState<number | null>(null);
   // 목록 ↔ 종목 타임라인(한 차트 위 판단 마커) 보기 전환.
@@ -403,6 +411,36 @@ function JournalTab() {
       showToast("저널을 삭제했습니다.", "success");
     } catch (e) {
       showToast((e as Error).message, "error");
+    }
+  }
+
+  function startShare(j: Journal) {
+    setSharingId(j.journal_id);
+    setShareTitle(`${j.stock_name ?? j.stock_code} — 나의 판단`);
+    setShareBody(j.memo ?? "");
+    setSharePnl(false);
+  }
+
+  async function submitShare(journalId: number) {
+    if (!shareTitle.trim()) {
+      showToast("제목을 입력하세요.", "error");
+      return;
+    }
+    setShareBusy(true);
+    try {
+      const post = await createPost({
+        journal_id: journalId,
+        title: shareTitle.trim(),
+        body: shareBody,
+        show_pnl: sharePnl,
+      });
+      setSharingId(null);
+      showToast("커뮤니티에 공유했습니다.", "success");
+      router.push(`/community/${post.id}`);
+    } catch (e) {
+      showToast((e as Error).message, "error");
+    } finally {
+      setShareBusy(false);
     }
   }
 
@@ -576,6 +614,18 @@ function JournalTab() {
               </button>
               <button
                 type="button"
+                data-flow="journal-share"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (sharingId === j.journal_id) setSharingId(null);
+                  else startShare(j);
+                }}
+                className="text-[13px] font-semibold text-muted hover:text-sky-deep"
+              >
+                공유
+              </button>
+              <button
+                type="button"
                 data-flow="journal-delete"
                 onClick={(e) => {
                   e.stopPropagation();
@@ -587,6 +637,54 @@ function JournalTab() {
               </button>
             </div>
           </div>
+
+          {sharingId === j.journal_id && (
+            <div
+              className="mt-3 space-y-2 border-t border-line pt-3"
+              data-flow="journal-share-form"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <input
+                value={shareTitle}
+                onChange={(e) => setShareTitle(e.target.value)}
+                className="card w-full px-4 py-2.5 text-[13.5px] font-semibold outline-none focus:border-sky"
+                placeholder="공유 제목"
+              />
+              <textarea
+                value={shareBody}
+                onChange={(e) => setShareBody(e.target.value)}
+                rows={2}
+                className="card w-full px-4 py-2.5 text-[13.5px] outline-none focus:border-sky"
+                placeholder="공유할 내용 (선택)"
+              />
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSharePnl((v) => !v)}
+                  className={`pill flat text-[12.5px] ${sharePnl ? "!border-sky !text-sky-deep font-bold" : ""}`}
+                  style={{ padding: "4px 12px", border: "1px solid var(--color-line)" }}
+                >
+                  수익률% 공개 {sharePnl ? "ON" : "OFF"}
+                </button>
+                <span className="text-[11.5px] text-muted">
+                  가격·절대손익은 공개되지 않습니다.
+                </span>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => void submitShare(j.journal_id)}
+                  disabled={shareBusy}
+                  className="brand-grad rounded-full px-4 py-1.5 text-[13px] font-bold text-white disabled:opacity-50"
+                >
+                  공유하기
+                </button>
+                <button type="button" onClick={() => setSharingId(null)} className="text-[13px] text-muted">
+                  취소
+                </button>
+              </div>
+            </div>
+          )}
 
           {editingId === j.journal_id ? (
             <div className="mt-3 space-y-2 border-t border-line pt-3" onClick={(e) => e.stopPropagation()}>
