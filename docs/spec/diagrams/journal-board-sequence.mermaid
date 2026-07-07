@@ -1,0 +1,56 @@
+%% 저널 커뮤니티 게시판 — 시퀀스 (대응: FR-1 공유, FR-2 피드, FR-3 반응, FR-5 랭킹)
+%% plan-sequence 산출. 라이브 참조 + 읽기공개/쓰기로그인 + 손익 제외 화이트리스트 반영.
+sequenceDiagram
+    actor U as 유저(로그인)
+    participant C as Client(web)
+    participant A as API(routes/community.py)
+    participant J as DB signal_journals
+    participant P as DB community_posts
+    participant R as DB community_reactions
+    participant RP as DB community_reports
+    participant W as Worker(랭킹 배치)
+    participant K as DB community_post_rankings
+
+    Note over U,P: FR-1 저널 공유 (라이브 참조)
+    U->>C: 저널 항목에서 "공유"
+    C->>A: POST /api/community/posts {journal_id, title, body}
+    A->>A: get_current_user (없으면 401)
+    A->>J: SELECT id WHERE id=journal_id AND user_id=me
+    alt 소유 아님/없음
+        A-->>C: 403 NOT_OWNER
+    else 소유 확인
+        A->>P: INSERT (author_user_id, journal_id 참조, title, body)
+        A-->>C: 201 post
+    end
+
+    Note over C,J: FR-2 피드 열람 (공개, 비로그인 허용, 커서 페이지네이션)
+    C->>A: GET /api/community/posts?cursor=...
+    A->>P: SELECT posts WHERE deleted_at IS NULL (cursor)
+    A->>J: JOIN 화이트리스트(stock, user_view, user_memo) — 손익/가격 컬럼 제외
+    A-->>C: 200 posts[] + next_cursor (원본 삭제 시 "원본 없음")
+
+    Note over U,R: FR-3 반응 토글 (로그인, 자가반응 금지, unique)
+    U->>C: 좋아요/북마크
+    C->>A: POST /api/community/posts/{id}/reactions {type}
+    A->>A: get_current_user
+    A->>R: UPSERT/DELETE unique(user_id, target, type)
+    A-->>C: 200 {counts}
+
+    Note over W,K: FR-5 주간 인기 배치 (워커, 가중합)
+    W->>R: 집계 좋아요·댓글 (롤링 7일)
+    W->>P: 집계 조회수
+    W->>K: UPSERT score = Σ(가중치), window='weekly'
+    C->>A: GET /api/community/popular?window=weekly
+    A->>K: SELECT 상위 N
+    A-->>C: 200 ranking[]
+
+    Note over U,P: FR-7 신고 → 자동숨김 (로그인)
+    U->>C: 게시글/댓글 신고
+    C->>A: POST /api/community/posts/{id}/report {reason}
+    A->>A: get_current_user
+    A->>RP: INSERT unique(reporter, target) — 중복신고 방지
+    A->>RP: COUNT(distinct reporter) for target
+    alt 신고 수 >= 임계
+        A->>P: UPDATE status='hidden' (피드 제외 + 관리자 검토 큐)
+    end
+    A-->>C: 200

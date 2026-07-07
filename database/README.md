@@ -69,6 +69,7 @@ docker compose run --rm db-migrate apply --seeds
 | F User 확장 | `signal_subscriptions`, `watchlists`, `signal_journals`, `signal_journal_outcomes`, `signal_journal_chart_prices`, `user_signal_reads`, `user_sessions`, `social_accounts`, `portone_verifications`, `terms_agreements` |
 | G Admin | `admin_accounts`, `admin_sessions` |
 | H Guard (지정학 Kill-Switch) | `guard_site_status`, `guard_news_events`, `guard_recommendations`, `guard_status_audit` (backend 소유) |
+| I 커뮤니티 게시판 | `community_posts`, `community_comments`, `community_reactions`, `community_post_views`, `community_reports`, `community_post_rankings` (backend 소유, 유저 콘텐츠 공개 공유 레이어) |
 | 트리거 | (트리거 함수 2종 + updated_at 트리거 일괄 부착) |
 | ~~Legacy~~ | ~~`report_raw`, `report_signal`~~ ← **제거됨** (`20260630_1200…`, §7) |
 
