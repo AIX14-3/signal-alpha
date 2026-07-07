@@ -49,12 +49,18 @@ test("api client exposes the contracted endpoints", async () => {
     "searchStocks",
     "listWatchlists",
     "getReport",
+    "getPosthocAlignment",
     "getMySubscription",
     "adminLogin",
     "adminGetStats",
   ]) {
     assert.match(apiClient, new RegExp(`export async function ${fn}`));
   }
+
+  assert.match(apiClient, /groups: PosthocAlignmentGroup\[\]/);
+  assert.match(apiClient, /scope: "journal_based" \| "signal_based"/);
+  assert.match(apiClient, /export type PosthocDirectionBreakdownItem/);
+  assert.match(apiClient, /direction_breakdown: PosthocDirectionBreakdownItem\[\]/);
 });
 
 test("admin UI exposes split schedule rows and schedule run history", async () => {

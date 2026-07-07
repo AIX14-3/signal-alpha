@@ -59,3 +59,20 @@ class BacktestRepositoryTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(row["is_hit"])
         self.assertIn("checked_at = NOW()", connection.calls[0][1])
+
+    async def test_get_signal_posthoc_alignment_summary_aggregates_backtest_results(self):
+        connection = FakeConnection()
+        repository = BacktestRepository(connection)
+
+        await repository.get_signal_posthoc_alignment_summary()
+
+        sql = connection.calls[0][1]
+        self.assertIn("FROM backtest_results", sql)
+        self.assertIn("'5td'", sql)
+        self.assertIn("is_hit IS NOT NULL", sql)
+        self.assertIn("checked_at IS NULL", sql)
+        self.assertIn("aligned_count", sql)
+        self.assertIn("pending_count", sql)
+        self.assertIn("direction_breakdown", sql)
+        self.assertIn("signal_value AS direction", sql)
+        self.assertIn("GROUP BY classified.horizon, classified.direction", sql)

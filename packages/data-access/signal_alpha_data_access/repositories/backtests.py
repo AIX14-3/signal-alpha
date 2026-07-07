@@ -87,3 +87,103 @@ class BacktestRepository:
             change_pct_5d,
             is_hit,
         )
+
+    async def get_signal_posthoc_alignment_summary(self) -> list[Any]:
+        """전체 발행 신호 backtest 결과의 5거래일 사후 정합성을 집계한다."""
+        return await self._connection.fetch(
+            """
+            WITH classified AS (
+                SELECT
+                    '5td' AS horizon,
+                    signal_value AS direction,
+                    id AS signal_id,
+                    signal_date AS outcome_trade_date,
+                    checked_at,
+                    is_hit
+                FROM backtest_results
+                WHERE signal_value IN ('positive', 'negative')
+            ),
+            horizon_summary AS (
+                SELECT
+                    '5td' AS horizon,
+                    COUNT(signal_id)
+                        FILTER (WHERE is_hit IS NOT NULL)::INT AS confirmed_count,
+                    COUNT(signal_id)
+                        FILTER (WHERE is_hit IS TRUE)::INT AS aligned_count,
+                    COUNT(signal_id)
+                        FILTER (WHERE is_hit IS FALSE)::INT AS not_aligned_count,
+                    COUNT(signal_id)
+                        FILTER (WHERE checked_at IS NULL OR is_hit IS NULL)::INT AS pending_count,
+                    ROUND(
+                        COUNT(signal_id)
+                            FILTER (WHERE is_hit IS TRUE)::NUMERIC
+                        / NULLIF(
+                            COUNT(signal_id)
+                                FILTER (WHERE is_hit IS NOT NULL),
+                            0
+                        )
+                        * 100,
+                        1
+                    ) AS alignment_rate,
+                    MIN(outcome_trade_date)
+                        FILTER (WHERE is_hit IS NOT NULL) AS first_outcome_trade_date,
+                    MAX(outcome_trade_date)
+                        FILTER (WHERE is_hit IS NOT NULL) AS last_outcome_trade_date,
+                    MAX(checked_at) AS checked_at
+                FROM classified
+            ),
+            direction_summary AS (
+                SELECT
+                    classified.horizon,
+                    classified.direction,
+                    COUNT(classified.signal_id)
+                        FILTER (WHERE classified.is_hit IS NOT NULL)::INT AS confirmed_count,
+                    COUNT(classified.signal_id)
+                        FILTER (WHERE classified.is_hit IS TRUE)::INT AS aligned_count,
+                    COUNT(classified.signal_id)
+                        FILTER (WHERE classified.is_hit IS FALSE)::INT AS not_aligned_count,
+                    COUNT(classified.signal_id)
+                        FILTER (WHERE classified.checked_at IS NULL OR classified.is_hit IS NULL)::INT AS pending_count,
+                    ROUND(
+                        COUNT(classified.signal_id)
+                            FILTER (WHERE classified.is_hit IS TRUE)::NUMERIC
+                        / NULLIF(
+                            COUNT(classified.signal_id)
+                                FILTER (WHERE classified.is_hit IS NOT NULL),
+                            0
+                        )
+                        * 100,
+                        1
+                    ) AS alignment_rate
+                FROM classified
+                GROUP BY classified.horizon, classified.direction
+            ),
+            direction_breakdown AS (
+                SELECT
+                    direction_summary.horizon,
+                    JSONB_AGG(
+                        JSONB_BUILD_OBJECT(
+                            'direction', direction_summary.direction,
+                            'confirmed_count', direction_summary.confirmed_count,
+                            'aligned_count', direction_summary.aligned_count,
+                            'not_aligned_count', direction_summary.not_aligned_count,
+                            'pending_count', direction_summary.pending_count,
+                            'alignment_rate', direction_summary.alignment_rate
+                        )
+                        ORDER BY CASE direction_summary.direction
+                            WHEN 'positive' THEN 1
+                            WHEN 'negative' THEN 2
+                            ELSE 99
+                        END
+                    ) AS direction_breakdown
+                FROM direction_summary
+                GROUP BY direction_summary.horizon
+            )
+            SELECT
+                horizon_summary.*,
+                COALESCE(direction_breakdown.direction_breakdown, '[]'::JSONB) AS direction_breakdown
+            FROM horizon_summary
+            LEFT JOIN direction_breakdown
+              ON direction_breakdown.horizon = horizon_summary.horizon
+            """
+        )

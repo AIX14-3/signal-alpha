@@ -9,6 +9,7 @@ import { useAuthStore } from "@/stores/authStore";
 
 const NAV = [
   { href: "/", label: "홈" },
+  { href: "/methodology", label: "방법론" },
   { href: "/pricing", label: "요금제" },
   { href: "/mypage", label: "마이" },
 ];

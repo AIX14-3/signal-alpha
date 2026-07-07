@@ -136,6 +136,12 @@ export default function ReportPage() {
             </div>
           </div>
         )}
+        <div className="w-full border-t border-line pt-4 text-[12.5px] text-muted">
+          <span>데이터 방향성과 소스 간 일치도는 발행 시점 기준으로 확인합니다.</span>{" "}
+          <Link href="/methodology" data-flow="methodology-link" className="font-semibold text-sky-deep">
+            방법론 보기
+          </Link>
+        </div>
       </div>
 
       {/* AI 예측률 — 주가 BASE ⊕ 각 공공데이터로 만든 0–100 예측 점수(통합은 위 종합 점수). */}
