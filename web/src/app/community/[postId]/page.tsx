@@ -1,0 +1,254 @@
+"use client";
+
+import Link from "next/link";
+import { useParams, useRouter } from "next/navigation";
+import { useCallback, useEffect, useState } from "react";
+import { CommentList } from "@/components/community/CommentList";
+import { ReactionButton } from "@/components/community/ReactionButton";
+import { ReportButton } from "@/components/community/ReportButton";
+import { authorLabel, formatDate, viewLabel } from "@/components/community/util";
+import {
+  ApiError,
+  deletePost,
+  getPost,
+  updatePost,
+  type CommunityPost,
+} from "@/lib/apiClient";
+import { useAuthStore } from "@/stores/authStore";
+import { useToastStore } from "@/stores/toastStore";
+
+export default function CommunityPostPage() {
+  const params = useParams<{ postId: string }>();
+  const postId = Number(params.postId);
+  const router = useRouter();
+  const user = useAuthStore((s) => s.user);
+  const status = useAuthStore((s) => s.status);
+  const showToast = useToastStore((s) => s.show);
+
+  const [post, setPost] = useState<CommunityPost | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+
+  const reload = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      setPost(await getPost(postId));
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "게시글을 불러오지 못했습니다.");
+    } finally {
+      setLoading(false);
+    }
+  }, [postId]);
+
+  useEffect(() => {
+    // 로그인 시 조회수 1회 기록되므로 auth hydrate 완료 후 로드(비로그인도 열람 가능).
+    if (Number.isNaN(postId)) return;
+    if (status === "idle" || status === "loading") return;
+    void reload();
+  }, [postId, status, reload]);
+
+  if (loading) return <p className="py-16 text-center text-muted">불러오는 중…</p>;
+  if (error) return <p className="py-16 text-center text-red">{error}</p>;
+  if (!post) return null;
+
+  const mine = !!user && post.author.member_code === user.member_code;
+  const j = post.journal;
+  const pnl = j?.pnl_pct;
+
+  async function remove() {
+    if (!window.confirm("게시글을 삭제할까요?")) return;
+    try {
+      await deletePost(postId);
+      showToast("게시글을 삭제했습니다.", "success");
+      router.push("/community");
+    } catch (e) {
+      showToast(e instanceof ApiError ? e.message : "삭제에 실패했습니다.", "error");
+    }
+  }
+
+  return (
+    <div className="py-10" data-page="community-detail">
+      <Link href="/community" className="text-[13px] font-semibold text-muted hover:text-navy">
+        ← 커뮤니티
+      </Link>
+
+      {editing ? (
+        <EditForm
+          post={post}
+          onCancel={() => setEditing(false)}
+          onSaved={(updated) => {
+            setPost(updated);
+            setEditing(false);
+            showToast("게시글을 수정했습니다.", "success");
+          }}
+        />
+      ) : (
+        <article className="card mt-3 px-6 py-5" data-panel="community-post">
+          <div className="flex items-start justify-between gap-3">
+            <h1 className="text-[22px] font-bold leading-snug">{post.title}</h1>
+            {mine && (
+              <div className="flex shrink-0 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setEditing(true)}
+                  className="text-[13px] font-semibold text-muted hover:text-sky-deep"
+                >
+                  수정
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void remove()}
+                  className="text-[13px] font-semibold text-muted hover:text-red"
+                >
+                  삭제
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div className="mt-2 flex items-center gap-3 text-[12px] text-muted">
+            <span className="font-semibold text-navy-soft">{authorLabel(post.author)}</span>
+            <span>{formatDate(post.created_at)}</span>
+            <span>👁 {post.view_count}</span>
+          </div>
+
+          {/* 라이브 참조 저널 요약(화이트리스트). 원본 삭제 시 안내만. */}
+          {j ? (
+            <div className="mt-4 rounded-[12px] border border-line bg-surface-2 px-4 py-3 text-[13px]">
+              <div className="flex flex-wrap items-center gap-2">
+                {j.stock ? (
+                  <Link
+                    href={`/report/${j.stock.ticker}`}
+                    className="font-bold hover:text-sky-deep"
+                  >
+                    {j.stock.name ?? j.stock.ticker}
+                    <span className="font-normal text-muted"> {j.stock.ticker}</span>
+                  </Link>
+                ) : (
+                  <span className="font-bold">종목 정보 없음</span>
+                )}
+                {j.user_view && <span className="text-muted">· {viewLabel(j.user_view)}</span>}
+                {post.show_pnl && pnl != null && (
+                  <span
+                    className={`pill ${pnl >= 0 ? "up" : "down"}`}
+                    style={{ padding: "3px 9px" }}
+                  >
+                    {pnl >= 0 ? "+" : ""}
+                    {pnl.toFixed(2)}%
+                  </span>
+                )}
+              </div>
+              {j.user_memo && (
+                <p className="mt-2 whitespace-pre-wrap text-navy-soft">{j.user_memo}</p>
+              )}
+            </div>
+          ) : (
+            post.journal === null && (
+              <p className="mt-4 text-[12.5px] text-muted">참조한 저널 원본이 없습니다.</p>
+            )
+          )}
+
+          {post.body && (
+            <p className="mt-4 whitespace-pre-wrap text-[15px] leading-relaxed">{post.body}</p>
+          )}
+
+          <div className="mt-5 flex items-center gap-3 border-t border-line pt-4">
+            <ReactionButton
+              target="post"
+              targetId={post.id}
+              count={post.like_count}
+              onCount={(likeCount) => setPost((p) => (p ? { ...p, like_count: likeCount } : p))}
+            />
+            <span className="text-[13px] text-muted">💬 {post.comment_count}</span>
+            {!mine && (
+              <span className="ml-auto">
+                <ReportButton target="post" targetId={post.id} />
+              </span>
+            )}
+          </div>
+        </article>
+      )}
+
+      <CommentList postId={post.id} />
+    </div>
+  );
+}
+
+function EditForm({
+  post,
+  onCancel,
+  onSaved,
+}: {
+  post: CommunityPost;
+  onCancel: () => void;
+  onSaved: (updated: CommunityPost) => void;
+}) {
+  const showToast = useToastStore((s) => s.show);
+  const [title, setTitle] = useState(post.title);
+  const [body, setBody] = useState(post.body);
+  const [showPnl, setShowPnl] = useState(post.show_pnl);
+  const [busy, setBusy] = useState(false);
+
+  async function save() {
+    if (!title.trim()) {
+      showToast("제목을 입력하세요.", "error");
+      return;
+    }
+    setBusy(true);
+    try {
+      const updated = await updatePost(post.id, { title: title.trim(), body, show_pnl: showPnl });
+      onSaved(updated);
+    } catch (e) {
+      showToast(e instanceof ApiError ? e.message : "수정에 실패했습니다.", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="card mt-3 space-y-3 px-6 py-5" data-panel="community-post-edit">
+      <input
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+        placeholder="제목"
+        className="card w-full px-4 py-2.5 text-[15px] font-semibold outline-none focus:border-sky"
+      />
+      <textarea
+        value={body}
+        onChange={(e) => setBody(e.target.value)}
+        rows={5}
+        placeholder="내용"
+        className="card w-full px-4 py-2.5 text-[14px] outline-none focus:border-sky"
+      />
+      {post.journal && (
+        <button
+          type="button"
+          onClick={() => setShowPnl((v) => !v)}
+          className={`pill flat text-[12.5px] ${showPnl ? "!border-sky !text-sky-deep font-bold" : ""}`}
+          style={{ padding: "4px 12px", border: "1px solid var(--color-line)" }}
+        >
+          수익률% 공개 {showPnl ? "ON" : "OFF"}
+        </button>
+      )}
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={() => void save()}
+          disabled={busy}
+          className="brand-grad rounded-full px-6 py-2.5 text-[13.5px] font-bold text-white disabled:opacity-50"
+        >
+          저장
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="rounded-full border border-line px-6 py-2.5 text-[13.5px] font-semibold text-navy-soft hover:border-navy"
+        >
+          취소
+        </button>
+      </div>
+    </div>
+  );
+}
