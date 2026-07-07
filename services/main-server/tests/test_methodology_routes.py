@@ -24,6 +24,24 @@ class FakeConnection:
                     "not_aligned_count": 3,
                     "pending_count": 4,
                     "alignment_rate": Decimal("75.0"),
+                    "direction_breakdown": [
+                        {
+                            "direction": "positive",
+                            "confirmed_count": 8,
+                            "aligned_count": 6,
+                            "not_aligned_count": 2,
+                            "pending_count": 1,
+                            "alignment_rate": Decimal("75.0"),
+                        },
+                        {
+                            "direction": "negative",
+                            "confirmed_count": 4,
+                            "aligned_count": 3,
+                            "not_aligned_count": 1,
+                            "pending_count": 3,
+                            "alignment_rate": Decimal("75.0"),
+                        },
+                    ],
                     "first_outcome_trade_date": "2026-06-22",
                     "last_outcome_trade_date": "2026-07-07",
                 },
@@ -34,6 +52,7 @@ class FakeConnection:
                     "not_aligned_count": 0,
                     "pending_count": 16,
                     "alignment_rate": None,
+                    "direction_breakdown": [],
                     "first_outcome_trade_date": None,
                     "last_outcome_trade_date": None,
                 },
@@ -47,6 +66,24 @@ class FakeConnection:
                     "not_aligned_count": 9,
                     "pending_count": 6,
                     "alignment_rate": Decimal("62.5"),
+                    "direction_breakdown": [
+                        {
+                            "direction": "positive",
+                            "confirmed_count": 14,
+                            "aligned_count": 10,
+                            "not_aligned_count": 4,
+                            "pending_count": 3,
+                            "alignment_rate": Decimal("71.4"),
+                        },
+                        {
+                            "direction": "negative",
+                            "confirmed_count": 10,
+                            "aligned_count": 5,
+                            "not_aligned_count": 5,
+                            "pending_count": 3,
+                            "alignment_rate": Decimal("50.0"),
+                        },
+                    ],
                     "first_outcome_trade_date": "2026-06-01",
                     "last_outcome_trade_date": "2026-07-07",
                     "checked_at": "2026-07-07T09:00:00+09:00",
@@ -93,6 +130,10 @@ class MethodologyRoutesTest(unittest.TestCase):
         self.assertEqual(body["items"][0]["horizon"], "7td")
         self.assertEqual(body["items"][0]["alignment_rate"], 75.0)
         self.assertEqual(body["items"][0]["sample_status"], "표본 부족")
+        self.assertEqual(body["items"][0]["direction_breakdown"][0]["direction"], "positive")
+        self.assertEqual(body["items"][0]["direction_breakdown"][0]["label"], "긍정 방향성")
+        self.assertEqual(body["items"][0]["direction_breakdown"][0]["aligned_count"], 6)
+        self.assertEqual(body["items"][0]["direction_breakdown"][1]["label"], "부정 방향성")
         self.assertEqual(body["items"][1]["sample_status"], "확정 대기")
         self.assertEqual(len(body["groups"]), 2)
         self.assertEqual(body["groups"][0]["scope"], "journal_based")
@@ -100,6 +141,7 @@ class MethodologyRoutesTest(unittest.TestCase):
         self.assertEqual(body["groups"][1]["metric_label"], "전체 발행 신호 기준 사후정합성")
         self.assertEqual(body["groups"][1]["items"][0]["horizon"], "5td")
         self.assertEqual(body["groups"][1]["items"][0]["alignment_rate"], 62.5)
+        self.assertEqual(body["groups"][1]["items"][0]["direction_breakdown"][0]["alignment_rate"], 71.4)
         self.assertIn("데이터 방향성", body["methodology"]["basis"])
         self.assertIn("미래 결과를 보장하지 않습니다", body["notice"])
 

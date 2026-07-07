@@ -18,6 +18,7 @@ const FALLBACK_ITEMS: PosthocAlignmentItem[] = [
     not_aligned_count: 0,
     pending_count: 0,
     sample_status: "집계 준비 중",
+    direction_breakdown: [],
     first_outcome_trade_date: null,
     last_outcome_trade_date: null,
     checked_at: null,
@@ -31,6 +32,7 @@ const FALLBACK_ITEMS: PosthocAlignmentItem[] = [
     not_aligned_count: 0,
     pending_count: 0,
     sample_status: "확정 대기",
+    direction_breakdown: [],
     first_outcome_trade_date: null,
     last_outcome_trade_date: null,
     checked_at: null,
@@ -47,6 +49,7 @@ const FALLBACK_SIGNAL_ITEMS: PosthocAlignmentItem[] = [
     not_aligned_count: 0,
     pending_count: 0,
     sample_status: "확정 대기",
+    direction_breakdown: [],
     first_outcome_trade_date: null,
     last_outcome_trade_date: null,
     checked_at: null,
@@ -71,6 +74,11 @@ const SCOPE_DESCRIPTION: Record<PosthocAlignmentGroup["scope"], string> = {
   signal_based: "전체 발행 신호 기준의 5거래일 확정 결과를 비교합니다.",
 };
 
+const DIRECTION_LABELS: Record<string, string> = {
+  positive: "긍정 방향성",
+  negative: "부정 방향성",
+};
+
 const FALLBACK_METHODOLOGY: PosthocAlignmentResponse["methodology"] = {
   basis: "저널에 저장된 발행 당시 데이터 방향성과 이후 확정된 관측 결과를 분리해 비교합니다.",
   included: "positive/negative 방향성이 저장되고 7거래일 또는 30거래일 outcome이 확정된 케이스",
@@ -93,6 +101,10 @@ function displayValue(item: PosthocAlignmentItem): string {
 function dateRange(item: PosthocAlignmentItem): string {
   if (!item.first_outcome_trade_date || !item.last_outcome_trade_date) return "확정 결과 대기";
   return `${item.first_outcome_trade_date.slice(0, 10)} ~ ${item.last_outcome_trade_date.slice(0, 10)}`;
+}
+
+function breakdownLabel(direction: string, label: string): string {
+  return label || DIRECTION_LABELS[direction] || direction;
 }
 
 function summaryStatus(items: PosthocAlignmentItem[]): string {
@@ -149,6 +161,23 @@ export function PosthocAlignmentSummary() {
                   정합 {item.aligned_count.toLocaleString("ko-KR")}건 · 비정합 {item.not_aligned_count.toLocaleString("ko-KR")}건
                 </p>
                 <p className="mt-1 text-[12.5px] leading-5 text-muted">{dateRange(item)}</p>
+                {item.direction_breakdown.length ? (
+                  <div className="mt-3 space-y-2 border-t border-line pt-3">
+                    {item.direction_breakdown.map((breakdown) => (
+                      <div key={breakdown.direction} className="text-[12.5px] leading-5 text-navy-soft">
+                        <div className="font-semibold text-navy">
+                          {breakdownLabel(breakdown.direction, breakdown.label)}
+                        </div>
+                        <div>
+                          확정 {breakdown.confirmed_count.toLocaleString("ko-KR")}건 · 정합{" "}
+                          {breakdown.aligned_count.toLocaleString("ko-KR")}건 · 비정합{" "}
+                          {breakdown.not_aligned_count.toLocaleString("ko-KR")}건 · 대기{" "}
+                          {breakdown.pending_count.toLocaleString("ko-KR")}건
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
               </div>
             ))}
           </div>

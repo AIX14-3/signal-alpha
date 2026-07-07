@@ -1,5 +1,16 @@
 import { apiFetch } from "./core";
 
+export type PosthocDirectionBreakdownItem = {
+  direction: "positive" | "negative";
+  label: string;
+  alignment_rate: number | null;
+  confirmed_count: number;
+  aligned_count: number;
+  not_aligned_count: number;
+  pending_count: number;
+  sample_status: string;
+};
+
 export type PosthocAlignmentItem = {
   horizon: string;
   label: string;
@@ -9,6 +20,7 @@ export type PosthocAlignmentItem = {
   not_aligned_count: number;
   pending_count: number;
   sample_status: string;
+  direction_breakdown: PosthocDirectionBreakdownItem[];
   first_outcome_trade_date: string | null;
   last_outcome_trade_date: string | null;
   checked_at: string | null;

@@ -94,6 +94,9 @@ test("methodology page explains posthoc alignment without recommendation framing
   assertIncludes(read("src/components/PosthocAlignmentSummary.tsx"), "검증 기준", "methodology summary");
   assertIncludes(read("src/components/PosthocAlignmentSummary.tsx"), "포함 기준", "methodology summary");
   assertIncludes(read("src/components/PosthocAlignmentSummary.tsx"), "제외 기준", "methodology summary");
+  assertIncludes(read("src/components/PosthocAlignmentSummary.tsx"), "item.direction_breakdown", "methodology summary");
+  assertIncludes(read("src/components/PosthocAlignmentSummary.tsx"), "긍정 방향성", "methodology summary");
+  assertIncludes(read("src/components/PosthocAlignmentSummary.tsx"), "부정 방향성", "methodology summary");
   assertIncludes(read("src/components/PosthocAlignmentSummary.tsx"), "전체 발행 신호 기준", "methodology summary");
   assertIncludes(read("src/components/PosthocAlignmentSummary.tsx"), "저널 기준", "methodology summary");
   assertIncludes(shell, 'href: "/methodology"', "app shell navigation");

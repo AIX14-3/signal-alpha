@@ -185,3 +185,6 @@ class UserSignalRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("COUNT(classified.journal_id)", sql)
         self.assertIn("aligned_count", sql)
         self.assertIn("pending_count", sql)
+        self.assertIn("direction_breakdown", sql)
+        self.assertIn("signal_value_at_time AS direction", sql)
+        self.assertIn("GROUP BY classified.horizon, classified.direction", sql)

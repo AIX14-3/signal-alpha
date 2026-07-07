@@ -336,21 +336,22 @@ class UserSignalRepository:
                 VALUES ('7td'), ('30td')
             ),
             eligible_journals AS (
-                SELECT id, signal_value_at_time
+                SELECT id, signal_value_at_time AS direction
                 FROM signal_journals
                 WHERE signal_value_at_time IN ('positive', 'negative')
             ),
             classified AS (
                 SELECT
                     horizons.horizon,
+                    eligible_journals.direction,
                     eligible_journals.id AS journal_id,
                     outcomes.outcome_trade_date,
                     outcomes.checked_at,
                     CASE
                         WHEN outcomes.journal_id IS NULL THEN NULL
-                        WHEN eligible_journals.signal_value_at_time = 'positive'
+                        WHEN eligible_journals.direction = 'positive'
                              AND outcomes.change_pct > 0 THEN TRUE
-                        WHEN eligible_journals.signal_value_at_time = 'negative'
+                        WHEN eligible_journals.direction = 'negative'
                              AND outcomes.change_pct < 0 THEN TRUE
                         ELSE FALSE
                     END AS is_aligned
@@ -359,36 +360,91 @@ class UserSignalRepository:
                 LEFT JOIN signal_journal_outcomes outcomes
                   ON outcomes.journal_id = eligible_journals.id
                  AND outcomes.horizon = horizons.horizon
+            ),
+            horizon_summary AS (
+                SELECT
+                    horizons.horizon,
+                    COUNT(classified.journal_id)
+                        FILTER (WHERE classified.is_aligned IS NOT NULL)::INT AS confirmed_count,
+                    COUNT(classified.journal_id)
+                        FILTER (WHERE classified.is_aligned IS TRUE)::INT AS aligned_count,
+                    COUNT(classified.journal_id)
+                        FILTER (WHERE classified.is_aligned IS FALSE)::INT AS not_aligned_count,
+                    COUNT(classified.journal_id)
+                        FILTER (WHERE classified.is_aligned IS NULL)::INT AS pending_count,
+                    ROUND(
+                        COUNT(classified.journal_id)
+                            FILTER (WHERE classified.is_aligned IS TRUE)::NUMERIC
+                        / NULLIF(
+                            COUNT(classified.journal_id)
+                                FILTER (WHERE classified.is_aligned IS NOT NULL),
+                            0
+                        )
+                        * 100,
+                        1
+                    ) AS alignment_rate,
+                    MIN(classified.outcome_trade_date) AS first_outcome_trade_date,
+                    MAX(classified.outcome_trade_date) AS last_outcome_trade_date,
+                    MAX(classified.checked_at) AS checked_at
+                FROM horizons
+                LEFT JOIN classified
+                  ON classified.horizon = horizons.horizon
+                GROUP BY horizons.horizon
+            ),
+            direction_summary AS (
+                SELECT
+                    classified.horizon,
+                    classified.direction,
+                    COUNT(classified.journal_id)
+                        FILTER (WHERE classified.is_aligned IS NOT NULL)::INT AS confirmed_count,
+                    COUNT(classified.journal_id)
+                        FILTER (WHERE classified.is_aligned IS TRUE)::INT AS aligned_count,
+                    COUNT(classified.journal_id)
+                        FILTER (WHERE classified.is_aligned IS FALSE)::INT AS not_aligned_count,
+                    COUNT(classified.journal_id)
+                        FILTER (WHERE classified.is_aligned IS NULL)::INT AS pending_count,
+                    ROUND(
+                        COUNT(classified.journal_id)
+                            FILTER (WHERE classified.is_aligned IS TRUE)::NUMERIC
+                        / NULLIF(
+                            COUNT(classified.journal_id)
+                                FILTER (WHERE classified.is_aligned IS NOT NULL),
+                            0
+                        )
+                        * 100,
+                        1
+                    ) AS alignment_rate
+                FROM classified
+                GROUP BY classified.horizon, classified.direction
+            ),
+            direction_breakdown AS (
+                SELECT
+                    direction_summary.horizon,
+                    JSONB_AGG(
+                        JSONB_BUILD_OBJECT(
+                            'direction', direction_summary.direction,
+                            'confirmed_count', direction_summary.confirmed_count,
+                            'aligned_count', direction_summary.aligned_count,
+                            'not_aligned_count', direction_summary.not_aligned_count,
+                            'pending_count', direction_summary.pending_count,
+                            'alignment_rate', direction_summary.alignment_rate
+                        )
+                        ORDER BY CASE direction_summary.direction
+                            WHEN 'positive' THEN 1
+                            WHEN 'negative' THEN 2
+                            ELSE 99
+                        END
+                    ) AS direction_breakdown
+                FROM direction_summary
+                GROUP BY direction_summary.horizon
             )
             SELECT
-                horizons.horizon,
-                COUNT(classified.journal_id)
-                    FILTER (WHERE classified.is_aligned IS NOT NULL)::INT AS confirmed_count,
-                COUNT(classified.journal_id)
-                    FILTER (WHERE classified.is_aligned IS TRUE)::INT AS aligned_count,
-                COUNT(classified.journal_id)
-                    FILTER (WHERE classified.is_aligned IS FALSE)::INT AS not_aligned_count,
-                COUNT(classified.journal_id)
-                    FILTER (WHERE classified.is_aligned IS NULL)::INT AS pending_count,
-                ROUND(
-                    COUNT(classified.journal_id)
-                        FILTER (WHERE classified.is_aligned IS TRUE)::NUMERIC
-                    / NULLIF(
-                        COUNT(classified.journal_id)
-                            FILTER (WHERE classified.is_aligned IS NOT NULL),
-                        0
-                    )
-                    * 100,
-                    1
-                ) AS alignment_rate,
-                MIN(classified.outcome_trade_date) AS first_outcome_trade_date,
-                MAX(classified.outcome_trade_date) AS last_outcome_trade_date,
-                MAX(classified.checked_at) AS checked_at
-            FROM horizons
-            LEFT JOIN classified
-              ON classified.horizon = horizons.horizon
-            GROUP BY horizons.horizon
-            ORDER BY CASE horizons.horizon
+                horizon_summary.*,
+                COALESCE(direction_breakdown.direction_breakdown, '[]'::JSONB) AS direction_breakdown
+            FROM horizon_summary
+            LEFT JOIN direction_breakdown
+              ON direction_breakdown.horizon = horizon_summary.horizon
+            ORDER BY CASE horizon_summary.horizon
                 WHEN '7td' THEN 1
                 WHEN '30td' THEN 2
                 ELSE 99

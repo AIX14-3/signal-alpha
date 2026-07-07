@@ -73,3 +73,6 @@ class BacktestRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("checked_at IS NULL", sql)
         self.assertIn("aligned_count", sql)
         self.assertIn("pending_count", sql)
+        self.assertIn("direction_breakdown", sql)
+        self.assertIn("signal_value AS direction", sql)
+        self.assertIn("GROUP BY classified.horizon, classified.direction", sql)

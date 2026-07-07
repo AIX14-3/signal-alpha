@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from fastapi import APIRouter, Depends
@@ -11,6 +12,7 @@ router = APIRouter(prefix="/api/methodology", tags=["methodology"])
 
 _MIN_SAMPLE_SIZE = 20
 _HORIZON_LABELS = {"5td": "5거래일", "7td": "7거래일", "30td": "30거래일"}
+_DIRECTION_LABELS = {"positive": "긍정 방향성", "negative": "부정 방향성"}
 
 
 @router.get("/posthoc-alignment")
@@ -61,10 +63,50 @@ def _alignment_item(row: dict[str, Any]) -> dict[str, Any]:
         "not_aligned_count": int(row.get("not_aligned_count") or 0),
         "pending_count": pending_count,
         "sample_status": _sample_status(confirmed_count, pending_count),
+        "direction_breakdown": _direction_breakdown_items(row.get("direction_breakdown")),
         "first_outcome_trade_date": _timestamp(row.get("first_outcome_trade_date")),
         "last_outcome_trade_date": _timestamp(row.get("last_outcome_trade_date")),
         "checked_at": _timestamp(row.get("checked_at")),
     }
+
+
+def _direction_breakdown_items(value: Any) -> list[dict[str, Any]]:
+    raw_items = _json_items(value)
+    items: list[dict[str, Any]] = []
+    for raw_item in raw_items:
+        if not isinstance(raw_item, dict):
+            continue
+        direction = str(raw_item.get("direction") or "")
+        label = _DIRECTION_LABELS.get(direction)
+        if label is None:
+            continue
+        confirmed_count = int(raw_item.get("confirmed_count") or 0)
+        pending_count = int(raw_item.get("pending_count") or 0)
+        items.append(
+            {
+                "direction": direction,
+                "label": label,
+                "alignment_rate": _number(raw_item.get("alignment_rate")),
+                "confirmed_count": confirmed_count,
+                "aligned_count": int(raw_item.get("aligned_count") or 0),
+                "not_aligned_count": int(raw_item.get("not_aligned_count") or 0),
+                "pending_count": pending_count,
+                "sample_status": _sample_status(confirmed_count, pending_count),
+            }
+        )
+    return items
+
+
+def _json_items(value: Any) -> list[Any]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return []
+        return parsed if isinstance(parsed, list) else []
+    return value if isinstance(value, list) else []
 
 
 def _sample_status(confirmed_count: int, pending_count: int) -> str:
