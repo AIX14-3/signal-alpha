@@ -16,7 +16,7 @@ function assertIncludes(source, expected, context) {
   );
 }
 
-test("source detail page keeps source validation, lock handling, and evidence sections wired", () => {
+test("source detail page keeps source validation and evidence sections wired", () => {
   const source = read("src/app/report/[ticker]/[source]/page.tsx");
 
   [
@@ -24,8 +24,6 @@ test("source detail page keeps source validation, lock handling, and evidence se
     "useParams<{ ticker: string; source: string }>()",
     'const VALID: SourceKey[] = ["price", "dart", "hiring", "datalab", "patent", "report"]',
     "getSourceDetail(ticker, source)",
-    "err instanceof ApiError && (err.status === 401 || err.status === 402)",
-    'setState("locked")',
     "SOURCE_META[source]",
     "directionLabel(detail.direction)",
     "detail.valuation",
@@ -34,6 +32,11 @@ test("source detail page keeps source validation, lock handling, and evidence se
     "detail.notice",
     'href={`/report/${encodeURIComponent(ticker)}`}',
   ].forEach((expected) => assertIncludes(source, expected, "source detail page"));
+
+  // 비회원 블라인드 제거 — 소스 상세는 전체 공개라 잠금 상태 처리가 없어야 한다.
+  ['setState("locked")', "err.status === 401 || err.status === 402"].forEach((removed) =>
+    assert.ok(!source.includes(removed), `source detail page should NOT include ${JSON.stringify(removed)}`),
+  );
 });
 
 test("social callback page keeps oauth state checks and login/link redirects wired", () => {

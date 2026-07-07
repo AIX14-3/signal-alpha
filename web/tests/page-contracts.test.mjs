@@ -31,7 +31,7 @@ test("pricing page keeps payment flow and login guard wired", () => {
   ].forEach((expected) => assertIncludes(source, expected, "pricing page"));
 });
 
-test("report page keeps ticker loading, subscription lock redirect, and watchlist wired", () => {
+test("report page keeps ticker loading and watchlist wired (full public report)", () => {
   const source = read("src/app/report/[ticker]/page.tsx");
 
   [
@@ -39,7 +39,6 @@ test("report page keeps ticker loading, subscription lock redirect, and watchlis
     "useParams<{ ticker: string }>()",
     "useReportStore",
     "load(ticker)",
-    'router.push(isMember ? "/pricing" : loginHref)',
     "WatchlistButton",
     "SOURCE_ORDER",
     "PREDICTION_RATE_ORDER",

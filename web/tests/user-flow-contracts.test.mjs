@@ -46,17 +46,27 @@ test("pricing page exposes stable subscription flow anchors", () => {
   ].forEach((expected) => assertIncludes(source, expected, "pricing page"));
 });
 
-test("report page exposes stable locked report and source flow anchors", () => {
+test("report page renders the full report with no non-member blind gating", () => {
   const source = read("src/app/report/[ticker]/page.tsx");
 
+  // 전체 공개 — 종합 점수·요약·방법론 링크가 항상 렌더된다.
+  [
+    'data-page="report"',
+    "종합 점수",
+    "report.summary",
+    'data-flow="methodology-link"',
+  ].forEach((expected) => assertIncludes(source, expected, "report page"));
+
+  // 비회원 블라인드 게이팅 잔재가 없어야 한다(잠금 CTA·access 분기 제거 확인).
   [
     'data-flow="unlock-report-pricing"',
     'data-flow="unlock-report-login"',
     'data-flow="unlock-source"',
-    "data-source={sourceKey}",
     'data-flow="unlock-prediction-rate"',
-    "router.push(isMember ? \"/pricing\" : loginHref)",
-  ].forEach((expected) => assertIncludes(source, expected, "report page"));
+    "report.access",
+  ].forEach((removed) =>
+    assert.ok(!source.includes(removed), `report page should NOT include ${JSON.stringify(removed)}`),
+  );
 });
 
 test("mypage exposes stable tab panels and subscription action anchors", () => {
@@ -115,7 +125,7 @@ test("journal chart panel is wired to the chart API with base reference", () => 
   ].forEach((expected) => assertIncludes(source, expected, "journal chart"));
 });
 
-test("report page exposes journal save entry point for unlocked reports", () => {
+test("report page exposes journal save entry point for subscribed reports", () => {
   const source = read("src/app/report/[ticker]/page.tsx");
 
   [

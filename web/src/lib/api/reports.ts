@@ -11,7 +11,6 @@ export type ReportSource = {
   score?: number | null;
   data_status?: string;
   summary?: string | null;
-  locked: boolean;
 };
 
 // 메타러너 소스별 예측률 — 주가 BASE ⊕ 각 공공데이터로 만든 0–100 'AI 예측 점수'.
@@ -21,12 +20,6 @@ export type PredictionRate = {
   score?: number | null; // 0–100 (score_100)
   direction?: string | null; // positive | negative | neutral | unknown
   data_status?: string;
-  locked: boolean;
-};
-
-export type ReportAccess = {
-  unlocked: boolean;
-  is_member: boolean;
 };
 
 // 메타러너 return 채널 (#525 WS-C) — 결정론 집계 점수(score)와 별개의 학습형 수익률 신호.
@@ -55,7 +48,6 @@ export type Report = {
   ml_return?: MlReturn | null;
   sources: ReportSource[];
   prediction_rates?: PredictionRate[];
-  access: ReportAccess;
   notice: string;
 };
 

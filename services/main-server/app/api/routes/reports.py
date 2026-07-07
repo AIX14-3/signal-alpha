@@ -6,11 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.api.routes.auth import (
-    NOTICE,
-    _subscription_active,
-    get_current_user_optional,
-)
+from app.api.routes.auth import NOTICE
 from app.core.database import get_database_pool
 from signal_alpha_data_access.backend import SignalRepository
 
@@ -21,7 +17,6 @@ router = APIRouter(prefix="/api/reports", tags=["reports"])
 # 방향(투자의견 컨센서스)·밸류에이션(목표주가)·발행 리포트 목록을 상세로 노출한다. 집계
 # SOURCE_ORDER(DART/PRICE/REPORT/HIRING/PATENT/DATALAB)와 정렬한다.
 ALL_SOURCES = ("price", "dart", "hiring", "datalab", "patent", "report")
-PUBLIC_SOURCES = {"dart", "datalab"}  # 비회원 공개
 # 대체데이터는 소스별 독립 점수(C안 Phase 2)라 score_breakdown 에 HIRING/DATALAB 가
 # top-level 평탄 키로 들어온다(과거 ALTERNATIVE 중첩 폐기).
 _SOURCE_TO_BREAKDOWN = {
@@ -52,13 +47,11 @@ _PREDICTION_RATE_RUN_KEY = {
     "patent": "SRC_PATENT",
     "report": "SRC_REPORT",
 }
-_BLIND_NOTICE = "전체 리포트는 구독 시 열람할 수 있습니다. 비구독자는 DART·네이버 데이터만 확인할 수 있습니다."
 
 
 @router.get("/{stock_code}")
 async def get_report(
     stock_code: str,
-    current_user: dict[str, Any] | None = Depends(get_current_user_optional),
     pool: Any = Depends(get_database_pool),
 ) -> dict[str, Any]:
     async with pool.acquire() as connection:
@@ -66,18 +59,13 @@ async def get_report(
         if row is None:
             raise _api_error(404, "REPORT_NOT_FOUND", "발행된 리포트가 없습니다.")
         row = dict(row)
-        is_member = current_user is not None
-        unlocked = False
-        if is_member:
-            unlocked = await _is_unlocked(connection, int(current_user["id"]))
-    return _report_response(row, unlocked=unlocked, is_member=is_member)
+    return _report_response(row)
 
 
 @router.get("/{stock_code}/sources/{source}")
 async def get_source_detail(
     stock_code: str,
     source: str,
-    current_user: dict[str, Any] | None = Depends(get_current_user_optional),
     pool: Any = Depends(get_database_pool),
 ) -> dict[str, Any]:
     source = source.lower()
@@ -89,24 +77,10 @@ async def get_source_detail(
         if row is None:
             raise _api_error(404, "REPORT_NOT_FOUND", "발행된 리포트가 없습니다.")
         row = dict(row)
-        is_member = current_user is not None
-        unlocked = is_member and await _is_unlocked(connection, int(current_user["id"]))
-
-        # 접근 통제: 공개 소스(dart/datalab)는 누구나. 그 외는 구독자만 열람.
-        if source not in PUBLIC_SOURCES:
-            if not is_member:
-                raise _api_error(401, "MEMBERSHIP_REQUIRED", "로그인 후 열람할 수 있습니다.")
-            if not unlocked:
-                raise _api_error(
-                    402,
-                    "SUBSCRIPTION_REQUIRED",
-                    "구독 시 전체 소스 상세를 열람할 수 있습니다.",
-                )
-
         detail = await SignalRepository(connection).get_detail_by_id(int(row["id"]))
 
     breakdown = _json_object(row.get("score_breakdown"))
-    block = _source_block(source, breakdown, locked=False)
+    block = _source_block(source, breakdown)
     events = _json_array(dict(detail).get("signal_events")) if detail is not None else []
     event_type = _SOURCE_TO_EVENT_TYPE[source]
     items = [_evidence(e) for e in events if str(e.get("source_type", "")).upper() == event_type]
@@ -146,31 +120,14 @@ async def get_source_detail(
 # ----- helpers -----
 
 
-async def _is_unlocked(connection: Any, user_id: int) -> bool:
-    """전체 리포트 열람은 활성 구독자만 가능하다."""
-    return await _subscription_active(connection, user_id)
-
-
-def _report_response(
-    row: dict[str, Any],
-    *,
-    unlocked: bool,
-    is_member: bool,
-) -> dict[str, Any]:
+def _report_response(row: dict[str, Any]) -> dict[str, Any]:
     breakdown = _json_object(row.get("score_breakdown"))
-    sources = [
-        _source_block(s, breakdown, locked=(not unlocked and s not in PUBLIC_SOURCES))
-        for s in ALL_SOURCES
-    ]
+    sources = [_source_block(s, breakdown) for s in ALL_SOURCES]
     # 소스별 예측률(주가 BASE ⊕ 각 공공데이터) — 통합(헤드라인) 외에 사용자에게 따로 노출.
     predictions = _json_object(row.get("source_predictions"))
     prediction_rates = [
-        _prediction_rate_block(
-            s, predictions, locked=(not unlocked and s not in PUBLIC_SOURCES)
-        )
-        for s in _PREDICTION_RATE_SOURCES
+        _prediction_rate_block(s, predictions) for s in _PREDICTION_RATE_SOURCES
     ]
-    access: dict[str, Any] = {"unlocked": unlocked, "is_member": is_member}
 
     return {
         "stock": _stock(row),
@@ -180,23 +137,20 @@ def _report_response(
             "signal_date": _iso(row.get("signal_date")),
             "updated_at": _iso(row.get("published_at") or row.get("created_at")),
         },
-        "direction": row.get("signal") if unlocked else None,
-        "score": _number(row.get("final_score")) if unlocked else None,
-        "alignment_rate": _alignment(row.get("confidence")) if unlocked else None,
-        "source_agreement": row.get("source_agreement") if unlocked else None,
-        "warning_level": row.get("warning_level") if unlocked else None,
-        "data_status": "ok" if unlocked else "partial",
-        "summary": row.get("summary") if unlocked else None,
+        "direction": row.get("signal"),
+        "score": _number(row.get("final_score")),
+        "alignment_rate": _alignment(row.get("confidence")),
+        "source_agreement": row.get("source_agreement"),
+        "warning_level": row.get("warning_level"),
+        "data_status": "ok",
+        "summary": row.get("summary"),
         "sources": sources,
         "prediction_rates": prediction_rates,
-        "access": access,
-        "notice": NOTICE if unlocked else _BLIND_NOTICE,
+        "notice": NOTICE,
     }
 
 
-def _source_block(source: str, breakdown: dict[str, Any], *, locked: bool) -> dict[str, Any]:
-    if locked:
-        return {"source": source, "locked": True}
+def _source_block(source: str, breakdown: dict[str, Any]) -> dict[str, Any]:
     detail = breakdown.get(_SOURCE_TO_BREAKDOWN[source])
     if not isinstance(detail, dict):
         detail = {}
@@ -208,7 +162,6 @@ def _source_block(source: str, breakdown: dict[str, Any], *, locked: bool) -> di
         # 주가(PRICE)/공시(DART)는 워커가 기계식 요약만 남기는 경우가 있어, 그 패턴일 때만 사람이
         # 읽기 쉬운 문장으로 풀어 쓴다(LLM 요약 등 이미 자연어면 원문 그대로 둠).
         "summary": _humanize_summary(source, detail),
-        "locked": False,
     }
 
 
@@ -484,25 +437,19 @@ def _report_valuation(breakdown: dict[str, Any]) -> dict[str, Any] | None:
     return valuation if isinstance(valuation, dict) else None
 
 
-def _prediction_rate_block(
-    source: str, predictions: dict[str, Any], *, locked: bool
-) -> dict[str, Any]:
+def _prediction_rate_block(source: str, predictions: dict[str, Any]) -> dict[str, Any]:
     """소스별 예측률 1건 — 주가 BASE ⊕ 해당 공공데이터의 0-100 'AI 예측 점수' + 방향.
 
-    비회원에게 공개 소스(dart/datalab) 외에는 잠금 표시(``locked``). 해당 소스 예측이 없으면
-    (아티팩트/데이터 결측) ``missing`` 으로 노출한다.
+    해당 소스 예측이 없으면(아티팩트/데이터 결측) ``missing`` 으로 노출한다.
     """
-    if locked:
-        return {"source": source, "locked": True}
     entry = predictions.get(_PREDICTION_RATE_RUN_KEY[source])
     if not isinstance(entry, dict):
-        return {"source": source, "score": None, "direction": "unknown", "data_status": "missing", "locked": False}
+        return {"source": source, "score": None, "direction": "unknown", "data_status": "missing"}
     return {
         "source": source,
         "score": _number(entry.get("score_100")),
         "direction": entry.get("direction", "unknown"),
         "data_status": "ok" if entry.get("score_100") is not None else "missing",
-        "locked": False,
     }
 
 
