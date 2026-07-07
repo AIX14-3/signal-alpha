@@ -17,6 +17,7 @@ resources:
   - journal-outcomes-cronjob.yaml
   - community-rankings-cronjob.yaml
   - trade-fills-sync-cronjob.yaml
+  - trade-signal-overlay-cronjob.yaml
   - main-server.yaml
   - web.yaml
   - ingress.yaml

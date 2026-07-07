@@ -32,6 +32,9 @@ from signal_alpha_data_access.repositories.user_broker_credentials import (
 from signal_alpha_data_access.repositories.user_sessions import UserSessionRepository
 from signal_alpha_data_access.repositories.user_trade_fills import UserTradeFillsRepository
 from signal_alpha_data_access.repositories.user_trade_plans import UserTradePlanRepository
+from signal_alpha_data_access.repositories.user_trade_signal_overlays import (
+    UserTradeSignalOverlayRepository,
+)
 from signal_alpha_data_access.repositories.user_signals import UserSignalRepository
 from signal_alpha_data_access.repositories.users_billing import UserBillingRepository
 
@@ -50,5 +53,6 @@ __all__ = [
     "UserSignalRepository",
     "UserTradeFillsRepository",
     "UserTradePlanRepository",
+    "UserTradeSignalOverlayRepository",
     "parse_schedule_row",
 ]

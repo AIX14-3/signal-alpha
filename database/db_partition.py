@@ -78,6 +78,9 @@ BACKEND_TABLES: frozenset[str] = frozenset(
         "user_trade_fills",
         # 매매 부검 — 유저 매매 계획(선택 입력, Plan vs Actual 기준선). backend CRUD.
         "user_trade_plans",
+        # 매매 부검 — PIT 관측신호 오버레이(내부자 공시 등). 워커가 수집 DB에서 읽어
+        # 멱등 적재(이중풀), backend 는 부검 조회 SELECT. signal_date=known_at(PIT).
+        "user_trade_signal_overlays",
     }
 )
 
