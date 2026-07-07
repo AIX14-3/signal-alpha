@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
-import { ApiError, getSourceDetail, type SourceDetail, type SourceKey } from "@/lib/apiClient";
+import { getSourceDetail, type SourceDetail, type SourceKey } from "@/lib/apiClient";
 import { directionLabel, safeHttpUrl, SOURCE_META, won } from "@/lib/format";
 
 const VALID: SourceKey[] = ["price", "dart", "hiring", "datalab", "patent", "report"];
@@ -39,7 +39,7 @@ export default function SourceDetailPage() {
   const source = params.source as SourceKey;
 
   const [detail, setDetail] = useState<SourceDetail | null>(null);
-  const [state, setState] = useState<"loading" | "ready" | "locked" | "error">("loading");
+  const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
@@ -58,13 +58,8 @@ export default function SourceDetailPage() {
       })
       .catch((err: unknown) => {
         if (!active) return;
-        if (err instanceof ApiError && (err.status === 401 || err.status === 402)) {
-          setState("locked");
-          setMessage(err.message);
-        } else {
-          setState("error");
-          setMessage(err instanceof Error ? err.message : "불러오지 못했습니다.");
-        }
+        setState("error");
+        setMessage(err instanceof Error ? err.message : "불러오지 못했습니다.");
       });
     return () => {
       active = false;
@@ -79,16 +74,6 @@ export default function SourceDetailPage() {
       <h1 className="my-2 text-[28px] font-extrabold">{meta.icon} {meta.label} 상세</h1>
 
       {state === "loading" && <p className="py-10 text-center text-muted">불러오는 중…</p>}
-
-      {state === "locked" && (
-        <div className="card mt-4 p-8 text-center">
-          <div className="text-[28px]">🔒</div>
-          <p className="mt-2 text-navy-soft">{message}</p>
-          <Link href={`/report/${encodeURIComponent(ticker)}`} className="brand-grad mt-4 inline-block rounded-full px-6 py-3 font-bold text-white">
-            리포트에서 열람하기
-          </Link>
-        </div>
-      )}
 
       {state === "error" && <p className="py-10 text-center text-red">{message}</p>}
 
