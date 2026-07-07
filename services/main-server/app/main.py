@@ -16,6 +16,7 @@ from app.api.routes.health import router as health_router
 from app.api.routes.journals import router as journals_router
 from app.api.routes.methodology import router as methodology_router
 from app.api.routes.payments import router as payments_router
+from app.api.routes.postmortem import router as postmortem_router
 from app.api.routes.reports import router as reports_router
 from app.api.routes.signals import router as signals_router
 from app.api.routes.subscriptions import subscriptions_router
@@ -86,6 +87,7 @@ def create_app() -> FastAPI:
     app.include_router(guard_admin_router)
     app.include_router(reports_router)
     app.include_router(journals_router)
+    app.include_router(postmortem_router)
     app.include_router(methodology_router)
     app.include_router(community_router)
     app.include_router(subscriptions_router)
