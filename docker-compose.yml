@@ -101,6 +101,10 @@ services:
       REPORT_LLM_PROVIDER: ${REPORT_LLM_PROVIDER:-gemini}
       REPORT_LLM_MODEL: ${REPORT_LLM_MODEL:-gemini-2.5-flash}
       REPORT_LLM_TIMEOUT_SECONDS: ${REPORT_LLM_TIMEOUT_SECONDS:-30}
+      # 시장 레짐 태깅(opt-in, 비판정 근거 레이어) — 기본 OFF 로 프로덕션 동작 불변.
+      # LLM 은 레짐 태그만 산출(방향/점수 없음); 숫자는 결정론 소유. config 가 getenv 로 읽어 전달 필수.
+      REGIME_LLM_ENABLED: ${REGIME_LLM_ENABLED:-false}
+      REGIME_LLM_MODEL: ${REGIME_LLM_MODEL:-gemini-2.5-flash}
       # 끝단 RISK 종합(SYNTHESIZE) LLM. 켜면 발행분 summary/bull/bear 를 자연어로 정제,
       # 끄거나 키 없으면 결정론 템플릿 폴백. config 가 os.getenv 로 읽으므로 여기서 전달 필수.
       # (GEMINI_API_KEY 는 위에서 이미 전달됨)

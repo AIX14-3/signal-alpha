@@ -174,6 +174,7 @@ def assemble_features(
     patent_rows: Sequence[Mapping[str, Any]] = (),
     lookback_days: int = DEFAULT_LOOKBACK_DAYS,
     sector_demand: dict | None = None,
+    regime_rows: Sequence[Mapping[str, Any]] | None = None,
 ) -> dict[str, dict[str, float | None]]:
     """``asof`` 시점의 소스별 정형 피처를 PIT-안전하게 어셈블한다.
 
@@ -208,7 +209,7 @@ def assemble_features(
     # 주가는 스케일-프리 비율 피처를 직접 산출(절대가 indicator 비사용). PIT 게이트는 trade_date.
     price = price_features(pit_rows(price_rows, asof, date_key=KNOWN_AT["price"]))
 
-    return {
+    features: dict[str, dict[str, float | None]] = {
         "datalab": _numeric(asdict(datalab)),
         "hiring": _numeric(asdict(hiring)),
         "report": _numeric(report),
@@ -216,3 +217,11 @@ def assemble_features(
         "patent": _numeric(asdict(patent)),
         "price": price,
     }
+    # 레짐 피처는 **additive·off-by-default**: regime_rows 를 넘긴 호출자에게만 "regime"
+    # 블록을 추가한다(기존 호출자는 regime_rows=None → 출력 byte-identical). 결정론 PIT
+    # 프록시(섹터수익률 분산 등)만 산출 — LLM 태그(channel A)는 여기로 읽어오지 않는다.
+    if regime_rows is not None:
+        from app.agents.regime.features import regime_features
+
+        features["regime"] = regime_features(asof, sector_return_rows=regime_rows)
+    return features

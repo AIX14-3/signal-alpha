@@ -70,6 +70,11 @@ class Settings:
         self.dart_llm_provider = getenv("DART_LLM_PROVIDER", "gemini").strip().lower()
         self.dart_llm_model = getenv("DART_LLM_MODEL", "")
         self.dart_llm_timeout_seconds = float(getenv("DART_LLM_TIMEOUT_SECONDS", "20"))
+        # Market-regime tagging (opt-in, non-verdict evidence layer). Default OFF →
+        # zero production behaviour change. LLM emits an evidence *tag* only; numbers
+        # stay owned by the deterministic layer (mirror dart_use_llm idiom exactly).
+        self.regime_use_llm = _env_bool("REGIME_LLM_ENABLED", default=False)
+        self.regime_llm_model = getenv("REGIME_LLM_MODEL", "")
         # Report RAG agent LLM 종합 — provider/key는 아래 openai/gemini 공유 설정 재사용.
         self.report_use_llm = _env_bool("REPORT_USE_LLM", default=False)
         self.report_llm_provider = getenv("REPORT_LLM_PROVIDER", "gemini").strip().lower()
