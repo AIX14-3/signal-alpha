@@ -52,9 +52,12 @@ class FakeConnection:
             "latest_collected_at": datetime(2026, 7, 7, 9, 0, tzinfo=UTC),
             "recent_articles": 5,
         }
+        # summary 집계에 전달된 recent_hours 를 기록해 클램프 검증에 사용.
+        self.last_recent_hours = None
 
     async def fetchrow(self, sql, *args):
         if "FROM api.stock_news" in sql and "total_articles" in sql:
+            self.last_recent_hours = args[0]
             return self.news_summary_row
         if "FROM users" in sql and "WHERE id = $1" in sql:
             return self.users_by_id.get(args[0])
@@ -203,6 +206,19 @@ class WatchlistRoutesTest(unittest.TestCase):
         self.assertEqual(body["recent_articles"], 5)
         self.assertTrue(body["latest_collected_at"].startswith("2026-07-07"))
         self.assertIn("notice", body)
+        # 기본 윈도우 24h 가 집계에 전달되고 응답에 echo 된다.
+        self.assertEqual(body["recent_hours"], 24)
+        self.assertEqual(self.connection.last_recent_hours, 24)
+
+    def test_news_summary_clamps_recent_hours(self):
+        too_large = self.client.get("/api/news/summary?recent_hours=99999")
+        self.assertEqual(too_large.status_code, 200)
+        self.assertEqual(too_large.json()["recent_hours"], 720)
+        self.assertEqual(self.connection.last_recent_hours, 720)
+
+        too_small = self.client.get("/api/news/summary?recent_hours=0")
+        self.assertEqual(too_small.json()["recent_hours"], 1)
+        self.assertEqual(self.connection.last_recent_hours, 1)
 
     def test_watchlist_requires_authentication(self):
         response = self.client.get("/api/watchlists")
