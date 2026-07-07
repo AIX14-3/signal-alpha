@@ -20,6 +20,10 @@ stocks_router = APIRouter(prefix="/api/stocks", tags=["stocks"])
 watchlists_router = APIRouter(prefix="/api/watchlists", tags=["watchlists"])
 news_router = APIRouter(prefix="/api/news", tags=["news"])
 
+# 뉴스 집계 최근 윈도우 한도: 1시간 ~ 30일. 과도한 값으로 인한 오남용 방어.
+NEWS_SUMMARY_RECENT_HOURS_MIN = 1
+NEWS_SUMMARY_RECENT_HOURS_MAX = 720
+
 
 class WatchlistCreateRequest(BaseModel):
     stock_code: str
@@ -70,12 +74,20 @@ async def list_stock_news(
 
 @news_router.get("/summary")
 async def news_summary(
+    recent_hours: int = 24,
     pool: Any = Depends(get_database_pool),
 ) -> dict[str, Any]:
-    """전역 뉴스 집계(공개) — 토스식 '뉴스 N건을 분석한 시그널' 헤더 데이터 공급원."""
+    """전역 뉴스 집계(공개) — 토스식 '뉴스 N건을 분석한 시그널' 헤더 데이터 공급원.
+
+    recent_hours 로 recent_articles 집계 창을 조절한다(기본 24h, 1h~30d 클램프).
+    """
+    window = min(
+        max(recent_hours, NEWS_SUMMARY_RECENT_HOURS_MIN),
+        NEWS_SUMMARY_RECENT_HOURS_MAX,
+    )
     async with pool.acquire() as connection:
-        data = await StockNewsRepository(connection).summary()
-    return _news_summary_response(data)
+        data = await StockNewsRepository(connection).summary(recent_hours=window)
+    return {**_news_summary_response(data), "recent_hours": window}
 
 
 @news_router.get("/recent")
