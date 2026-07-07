@@ -265,7 +265,17 @@ class ReportProcessTaskHandler:
                 await self._mark_failed(raw_document_id, "PDF 다운로드 실패")
                 return {"status": "download_failed"}
 
-        parsed = await _run_blocking(process_from_s3, s3_key, storage, settings=self._settings)
+        try:
+            parsed = await _run_blocking(process_from_s3, s3_key, storage, settings=self._settings)
+        except Exception as exc:  # noqa: BLE001 — fitz/파서 실패를 큐 전체 실패로 번지지 않게 격리
+            logger.warning(
+                "report parse failed raw_document_id=%s s3_key=%s: %s",
+                raw_document_id,
+                s3_key,
+                exc,
+            )
+            await self._mark_failed(raw_document_id, "parse_failed")
+            return {"status": "parse_failed"}
 
         await self._connection.execute(
             """

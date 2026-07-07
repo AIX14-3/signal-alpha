@@ -503,6 +503,80 @@ erDiagram
 
 `payments`(결제/환불 이력), `report_issuances`(회원별 리포트 발행 이력), `collection_schedules`(소스별 수집 주기·활성 시간대·수동 트리거 제어, `20260629_0900` + `20260701_1600`), `signal_journal_outcomes`(저널 작성 후 7/30 거래일 주가 변동 확정 — 워커 outcome 러너가 BACKEND_DATABASE_URL 로 기록, `20260702_1400`)가 백엔드 DB에 추가됐다. 사용자-소유 테이블의 `user_id` FK는 **하드 삭제** 지원을 위해 `ON DELETE CASCADE`다(`20260626_0244`).
 
+## Zone I — 커뮤니티 게시판 [BACKEND] (`20260707_1500_community_board.sql`)
+
+유저가 저널을 공개 공유하는 소셜 레이어. 읽기 공개·쓰기 로그인. 저자(`users`)·저널(`signal_journals`)은 같은 backend DB 라 물리 FK. 저널은 라이브 참조(원본 삭제 시 SET NULL). 공개 응답은 화이트리스트 컬럼만(손익·PII 제외).
+
+```mermaid
+erDiagram
+    community_posts {
+        BIGINT id PK
+        BIGINT author_user_id FK "users CASCADE"
+        BIGINT journal_id FK "nullable, signal_journals SET NULL(라이브참조)"
+        VARCHAR title
+        TEXT body
+        BOOLEAN show_pnl "수익률% 공개 토글(기본 false)"
+        INTEGER view_count
+        VARCHAR status "visible|hidden(신고 자동숨김)"
+        TIMESTAMPTZ deleted_at "soft delete"
+    }
+
+    community_comments {
+        BIGINT id PK
+        BIGINT post_id FK "community_posts CASCADE"
+        BIGINT parent_comment_id FK "nullable, 1단계 대댓글, self CASCADE"
+        BIGINT author_user_id FK "users CASCADE"
+        TEXT body
+        VARCHAR status "visible|hidden"
+        TIMESTAMPTZ deleted_at
+    }
+
+    community_reactions {
+        BIGINT id PK
+        BIGINT user_id FK "users CASCADE"
+        VARCHAR target_type "post|comment"
+        BIGINT target_id "폴리모픽(FK 아님)"
+        VARCHAR type "like|bookmark, UK(user,target_type,target_id,type)"
+    }
+
+    community_post_views {
+        BIGINT id PK
+        BIGINT post_id FK "community_posts CASCADE"
+        VARCHAR viewer_key "UK(post_id,viewer_key,viewed_on)"
+        DATE viewed_on
+    }
+
+    community_reports {
+        BIGINT id PK
+        BIGINT reporter_user_id FK "users CASCADE"
+        VARCHAR target_type "post|comment"
+        BIGINT target_id "폴리모픽, UK(reporter,target_type,target_id)"
+        VARCHAR reason
+    }
+
+    community_post_rankings {
+        BIGINT post_id PK "PK(post_id,window_kind), community_posts CASCADE"
+        VARCHAR window_kind PK "weekly(롤링7일)|all"
+        NUMERIC score "가중합(워커 배치 upsert)"
+        INTEGER likes
+        INTEGER comments
+        INTEGER views
+        TIMESTAMPTZ computed_at
+    }
+
+    users ||--o{ community_posts : "author_user_id"
+    signal_journals ||--o{ community_posts : "journal_id"
+    community_posts ||--o{ community_comments : "post_id"
+    community_comments ||--o{ community_comments : "parent_comment_id"
+    users ||--o{ community_comments : "author_user_id"
+    users ||--o{ community_reactions : "user_id"
+    community_posts ||--o{ community_post_views : "post_id"
+    users ||--o{ community_reports : "reporter_user_id"
+    community_posts ||--o{ community_post_rankings : "post_id"
+```
+
+`community_reactions`·`community_reports` 의 `target_id`는 post/comment 폴리모픽이라 물리 FK가 아니다(앱단 정합). 랭킹은 워커 배치가 `BACKEND_DATABASE_URL` 로 upsert(`signal_journal_outcomes` 와 같은 워커→백엔드 계약).
+
 ## Zone E — Analysis [PUBLISHED + COLLECTION 혼재]
 
 대표/방식별 분석 결과는 **PUBLISHED**(`0002`: `analysis_results`, `agent_results`, `final_signals`), 점수·ML·백테스트 계열은 **COLLECTION**(`0003`)이다.

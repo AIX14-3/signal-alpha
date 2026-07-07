@@ -154,6 +154,19 @@ Agent·ML의 분석 결과와 최종 시그널.
 (`raw_documents` → `report_raw_details` 이후 `source_documents`/`signal_events`/`signal_metrics`
 + 분석 테이블)만 사용한다. (`report_chunks`는 현재 Report 런타임 저장/조회 경로가 아니다.)
 
+## Zone I — 커뮤니티 게시판 (20260707_1500_community_board.sql, target=backend)
+
+유저가 자기 저널(투자 판단 기록)을 공개 공유하는 소셜 레이어. 저널 본체는 비공개 유지, 공개는 유저가 올린 것만(프라이버시 by design). 읽기 전체 공개·쓰기 로그인. 저자/저널은 라이브 참조, 공개 응답은 화이트리스트 컬럼만(손익·PII 제외).
+
+| 테이블 | 역할 |
+| --- | --- |
+| `community_posts` | 게시글. 저자(`author_user_id`)·저널 라이브 참조(`journal_id`, 원본 삭제 시 SET NULL)·제목·본문·`show_pnl`(수익률% 공개 토글)·`view_count`·`status`(visible/hidden). soft delete |
+| `community_comments` | 댓글/1단계 대댓글(`parent_comment_id`). 로그인 작성, soft delete·`status` |
+| `community_reactions` | 좋아요·북마크. 폴리모픽 타깃(post/comment), `(user_id, target_type, target_id, type)` 유니크(자가/중복 방지) |
+| `community_post_views` | 조회 중복방지. `(post_id, viewer_key, viewed_on)` 유니크 — 삽입 성공 시에만 view_count 증가 |
+| `community_reports` | 신고. `(reporter_user_id, target_type, target_id)` 유니크(중복신고 방지). 서로 다른 신고자 임계 도달 시 대상 `status='hidden'` |
+| `community_post_rankings` | 인기 랭킹 스냅샷. 워커 배치가 가중합 점수 멱등 upsert. `window_kind`(weekly 롤링7일/all), `(post_id, window_kind)` PK |
+
 ## 시스템 테이블
 
 - `schema_migrations(filename PK, checksum, applied_at)` — `database/migrate.py`가 자동 생성·관리하는 적용 원장. 마이그레이션 파일로 만들지 않으며 이 표에도 포함하지 않는다.
