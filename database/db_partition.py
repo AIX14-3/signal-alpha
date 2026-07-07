@@ -73,6 +73,9 @@ BACKEND_TABLES: frozenset[str] = frozenset(
         # 매매 부검 — 유저 증권사 API 자격증명(암호문 저장). 등록/해제는 backend,
         # 동기화 시 복호는 워커(signal_worker SELECT/UPDATE). users 와 공존.
         "user_broker_credentials",
+        # 매매 부검 — 유저 실매매 체결(공통 정규화). 워커 동기화 러너가 INSERT,
+        # backend 가 부검 조회 SELECT + 유저 데이터 삭제 DELETE. stocks(PUBLISHED) 매핑.
+        "user_trade_fills",
     }
 )
 

@@ -108,9 +108,34 @@ class UserBrokerCredentialRepository:
         )
 
     async def mark_synced(self, *, credential_id: int) -> None:
-        """동기화 성공 — last_synced_at 갱신 + active 복귀. 워커 경로."""
+        """동기화 성공 — last_synced_at 갱신 + active 복귀 + 동기화 요청 소거. 워커 경로."""
         await self._connection.execute(
-            "UPDATE user_broker_credentials "
-            "SET last_synced_at = now(), status = 'active', last_error = NULL WHERE id = $1",
+            "UPDATE user_broker_credentials SET last_synced_at = now(), status = 'active', "
+            "last_error = NULL, sync_requested_at = NULL WHERE id = $1",
             credential_id,
+        )
+
+    async def request_sync(self, *, user_id: int) -> int:
+        """유저의 활성 자격증명에 동기화 요청 플래그. 워커 러너가 우선 처리한다. 대상 수 반환."""
+        result = await self._connection.execute(
+            "UPDATE user_broker_credentials SET sync_requested_at = now() "
+            "WHERE user_id = $1 AND status = 'active'",
+            user_id,
+        )
+        if isinstance(result, str):
+            tail = result.rsplit(" ", 1)[-1]
+            return int(tail) if tail.isdigit() else 0
+        return 0
+
+    async def list_sync_targets(self, *, stale_before: Any) -> list[Any]:
+        """동기화 대상 — 요청됐거나(온디맨드) 최초/오래된(주기 증분) 활성 자격증명 id 목록.
+
+        요청분(sync_requested_at NOT NULL)을 먼저 처리한다.
+        """
+        return await self._connection.fetch(
+            "SELECT id, user_id, broker, account_ref FROM user_broker_credentials "
+            "WHERE status = 'active' AND ("
+            "  sync_requested_at IS NOT NULL OR last_synced_at IS NULL OR last_synced_at < $1"
+            ") ORDER BY sync_requested_at DESC NULLS LAST, id",
+            stale_before,
         )
