@@ -80,6 +80,10 @@ test("methodology page explains posthoc alignment without recommendation framing
     "표본 부족",
     "미래 결과를 보장하지 않습니다",
     "사용자 판단 보조",
+    "저널 기준",
+    "전체 발행 신호 기준",
+    "방향성별 breakdown",
+    "마지막 검증 반영",
     "PosthocAlignmentSummary",
   ].forEach((expected) => assertIncludes(source, expected, "methodology page"));
 
