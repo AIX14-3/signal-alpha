@@ -26,6 +26,9 @@ from signal_alpha_data_access.repositories.collection_schedules import (
 )
 from signal_alpha_data_access.repositories.community import CommunityRepository
 from signal_alpha_data_access.repositories.signals import SignalRepository
+from signal_alpha_data_access.repositories.user_broker_credentials import (
+    UserBrokerCredentialRepository,
+)
 from signal_alpha_data_access.repositories.user_sessions import UserSessionRepository
 from signal_alpha_data_access.repositories.user_signals import UserSignalRepository
 from signal_alpha_data_access.repositories.users_billing import UserBillingRepository
@@ -40,6 +43,7 @@ __all__ = [
     "StockNewsRepository",
     "StockRepository",
     "UserBillingRepository",
+    "UserBrokerCredentialRepository",
     "UserSessionRepository",
     "UserSignalRepository",
     "parse_schedule_row",

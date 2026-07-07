@@ -70,6 +70,9 @@ BACKEND_TABLES: frozenset[str] = frozenset(
         # 적재하고 main-server 가 api.stock_news 로 읽는다(guard_news_events 와 같은
         # 워커→백엔드 계약). display-only 라 시그널/점수 파이프라인과 무관.
         "stock_news",
+        # 매매 부검 — 유저 증권사 API 자격증명(암호문 저장). 등록/해제는 backend,
+        # 동기화 시 복호는 워커(signal_worker SELECT/UPDATE). users 와 공존.
+        "user_broker_credentials",
     }
 )
 
