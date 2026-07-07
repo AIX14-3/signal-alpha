@@ -63,6 +63,33 @@ class StockRepository:
         )
 
 
+class StockNewsRepository:
+    """종목별 뉴스 읽기 (api.stock_news). backend 전용. 적재(INSERT)는 worker 뉴스 데몬."""
+
+    def __init__(self, connection: Any) -> None:
+        self._connection = connection
+
+    async def list_by_ticker(self, ticker: str, limit: int = 20) -> list[Any]:
+        return await self._connection.fetch(
+            """
+            SELECT stock_code, title, summary, url, press, source, published_at, collected_at
+            FROM api.stock_news
+            WHERE stock_code = $1
+            ORDER BY published_at DESC NULLS LAST, collected_at DESC
+            LIMIT $2
+            """,
+            ticker.strip(),
+            limit,
+        )
+
+    async def count_by_ticker(self, ticker: str) -> int:
+        value = await self._connection.fetchval(
+            "SELECT COUNT(*) FROM api.stock_news WHERE stock_code = $1",
+            ticker.strip(),
+        )
+        return int(value or 0)
+
+
 class ProcessingQueueRepository:
     """분석 파이프라인 상태 읽기 (api.analysis_pipeline_status). backend 전용.
 

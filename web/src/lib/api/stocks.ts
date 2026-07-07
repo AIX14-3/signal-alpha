@@ -31,3 +31,23 @@ export async function addWatchlist(stockCode: string): Promise<WatchlistItem> {
 export async function removeWatchlist(stockCode: string): Promise<{ status: string }> {
   return apiFetch(`/api/watchlists/${encodeURIComponent(stockCode)}`, { method: "DELETE" });
 }
+
+/* ===== 종목 뉴스(공개) ===== */
+export type StockNewsItem = {
+  title: string | null;
+  summary: string | null;
+  url: string | null;
+  press: string | null;
+  source: string | null;
+  published_at: string | null;
+};
+
+// 종목별 최신 뉴스 목록 + 건수. 워커 뉴스 데몬이 적재하며, 미수집 종목은 count=0.
+export async function listStockNews(
+  stockCode: string,
+  limit = 20,
+): Promise<{ count: number; items: StockNewsItem[] }> {
+  return apiFetch(`/api/stocks/${encodeURIComponent(stockCode)}/news?limit=${limit}`, {
+    auth: "none",
+  });
+}

@@ -66,6 +66,10 @@ BACKEND_TABLES: frozenset[str] = frozenset(
         "community_post_views",
         "community_reports",
         "community_post_rankings",
+        # 종목별 뉴스(토스식 뉴스 목록/건수) — 워커 뉴스 데몬이 BACKEND_DATABASE_URL 로
+        # 적재하고 main-server 가 api.stock_news 로 읽는다(guard_news_events 와 같은
+        # 워커→백엔드 계약). display-only 라 시그널/점수 파이프라인과 무관.
+        "stock_news",
     }
 )
 

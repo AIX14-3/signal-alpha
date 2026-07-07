@@ -103,6 +103,16 @@ class Settings:
         self.naver_client_secret = getenv("NAVER_CLIENT_SECRET", "")
         self.naver_datalab_timeout_seconds = int(getenv("NAVER_DATALAB_TIMEOUT_SECONDS", "15"))
 
+        # ── 종목별 뉴스 데몬 (Naver News Search → backend DB stock_news, display-only) ──
+        # guard 와 동일하게 BACKEND_DATABASE_URL 풀로 적재. 기본 off.
+        self.news_enabled = _env_bool("NEWS_ENABLED", default=False)
+        self.news_lookback_days = int(getenv("NEWS_LOOKBACK_DAYS", "14"))
+        self.news_max_items = int(getenv("NEWS_MAX_ITEMS", "20"))
+        self.news_poll_interval_sec = float(getenv("NEWS_POLL_INTERVAL_SEC", "900"))
+        self.news_batch_size = int(getenv("NEWS_BATCH_SIZE", "20"))
+        self.news_refresh_hours = float(getenv("NEWS_REFRESH_HOURS", "6"))
+        self.news_fetch_timeout_seconds = float(getenv("NEWS_FETCH_TIMEOUT_SECONDS", "15"))
+
         # ── Hiring 크롤러 resilience (공용 fetch 헬퍼: sites/http.py) ──
         # 일시적 timeout·5xx·커넥션오류를 지수 백오프로 재시도한다(4xx는 비재시도).
         self.hiring_timeout_seconds = float(getenv("HIRING_TIMEOUT_SECONDS", "10"))
