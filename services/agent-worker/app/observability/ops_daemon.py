@@ -20,7 +20,11 @@ from typing import Any
 import httpx
 
 from app.core.config import Settings
-from app.observability.alerting import build_run_alert_embed, send_discord_alert
+from app.observability.alerting import (
+    build_queue_health_embed,
+    build_run_alert_embed,
+    send_discord_alert,
+)
 from app.observability.stats import RunStats
 
 logger = logging.getLogger("hiring_ops_daemon")
@@ -64,6 +68,67 @@ def _new_finished_runs(rows: list[Any], *, since_id: int) -> list[Any]:
     """since_id 초과의 '완료된'(running 아님) run 만, id 오름차순으로 반환."""
     fresh = [r for r in rows if r["id"] > since_id and r["status"] != "running"]
     return sorted(fresh, key=lambda r: r["id"])
+
+
+def _queue_stall_reason(
+    *, backlog: int, failed_recent: int, prev_backlog: int, settings: Settings
+) -> str | None:
+    """파이프라인 큐 정지/적체 사유(없으면 None) — 순수 함수.
+
+    - 백로그(pending+retrying)가 임계 초과 **이면서 직전 틱 대비 미감소** → 드레인 정지 의심.
+      (초과만으로 알리지 않는 이유: 대량 배치 직후 일시 적체는 정상 — 안 줄어들 때만 문제.)
+    - 최근 윈도우 실패 수가 임계 초과 → 실패 급증.
+    """
+    reasons: list[str] = []
+    thr = settings.ops_queue_backlog_alert_threshold
+    if thr > 0 and backlog >= thr and backlog >= prev_backlog:
+        reasons.append(f"백로그 {backlog}건(임계 {thr}) 초과 + 미감소(드레인 정지 의심)")
+    fthr = settings.ops_queue_failed_recent_alert_threshold
+    if fthr > 0 and failed_recent >= fthr:
+        reasons.append(
+            f"최근 {settings.ops_queue_failed_window_minutes}분 실패 {failed_recent}건(임계 {fthr}) 초과"
+        )
+    return "; ".join(reasons) if reasons else None
+
+
+async def _alert_queue_health(
+    obs: Any, settings: Settings, http: httpx.AsyncClient, seen: dict[str, int]
+) -> None:
+    """processing_queue 전역 상태로 정지/적체를 판정해 1회 알림(seen 상태로 de-dup).
+
+    hiring 수집 run 한정 알림을 파이프라인 전역으로 넓히는 부분. 백로그가 임계 초과 + 미감소(정지)면
+    한 번 알리고, 해소되면 상태를 풀어 재알림을 허용한다. 구조적 self-heal 은 /health/live·스케줄러
+    하트비트가 담당하고 이 알림은 사람 인지용 보조.
+    """
+    if (
+        settings.ops_queue_backlog_alert_threshold <= 0
+        and settings.ops_queue_failed_recent_alert_threshold <= 0
+    ):
+        return
+    rows = await obs.queue_stats()
+    totals: dict[str, int] = {}
+    for row in rows:
+        totals[row["status"]] = totals.get(row["status"], 0) + int(row["count"])
+    backlog = totals.get("pending", 0) + totals.get("retrying", 0)
+    failed_recent = await obs.recent_failed_count(
+        window_minutes=settings.ops_queue_failed_window_minutes
+    )
+    prev_backlog = seen.get("__queue_backlog__", 0)
+    reason = _queue_stall_reason(
+        backlog=backlog, failed_recent=failed_recent, prev_backlog=prev_backlog, settings=settings
+    )
+    already_alerted = seen.get("__queue_alerted__", 0)
+    if reason and not already_alerted:
+        embed = build_queue_health_embed(
+            reason=reason, backlog=backlog, failed_recent=failed_recent, totals=totals
+        )
+        await send_discord_alert(http, settings.discord_webhook_url, embed)
+        logger.warning("🚨 큐 정지/적체 경보: %s", reason)
+        seen["__queue_alerted__"] = 1
+    elif not reason and already_alerted:
+        seen["__queue_alerted__"] = 0
+        logger.info("큐 정지/적체 해소 — 알림 상태 리셋")
+    seen["__queue_backlog__"] = backlog
 
 
 async def run_ops_cycle(
@@ -125,6 +190,9 @@ async def run_ops_cycle(
                 logger.warning("🚨 %s run %s 경보: %s", ctype, row["id"], reason)
 
             seen[ctype] = max(seen[ctype], max_id)
+
+        # 3) 파이프라인 큐 정지/적체 알림(hiring 한정 → 전역).
+        await _alert_queue_health(obs, settings, http, seen)
 
 
 async def run_ops_daemon(pool: Any, settings: Settings) -> None:

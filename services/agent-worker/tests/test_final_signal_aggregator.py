@@ -160,10 +160,10 @@ class AggregateSignalTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        # 헤드라인은 통합 SRC 예측 — SRC 미계산(src=None)이면 중립(50)으로 발행.
-        self.assertEqual(result["signal"], "neutral")
-        self.assertEqual(result["final_score"], 50.0)
-        # 결정론 블렌드는 표시·경보 메타로만 남는다(헤드라인 아님).
+        # SRC 미계산(src=None) → 헤드라인은 평평한 50 이 아니라 결정론 블렌드로 폴백(neutral-50 박멸).
+        self.assertEqual(result["signal"], "mixed")
+        self.assertEqual(result["final_score"], 62.5)
+        # deterministic_* 는 동일 블렌드값(헤드라인과 일치).
         self.assertEqual(result["deterministic_signal"], "mixed")
         self.assertEqual(result["deterministic_score"], 62.5)
         self.assertEqual(result["warning_level"], "CAUTION")
@@ -194,9 +194,9 @@ class AggregateSignalTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        # 헤드라인은 중립(SRC 미계산) — 결정론 블렌드(positive/68)는 메타로만.
-        self.assertEqual(result["signal"], "neutral")
-        self.assertEqual(result["final_score"], 50.0)
+        # SRC 미계산 → 결정론 블렌드(positive/68)로 폴백(neutral-50 박멸).
+        self.assertEqual(result["signal"], "positive")
+        self.assertEqual(result["final_score"], 68.0)
         self.assertEqual(result["deterministic_signal"], "positive")
         self.assertEqual(result["deterministic_score"], 68.0)
         self.assertEqual(result["source_agreement"], "LOW")
@@ -252,9 +252,9 @@ class AggregateSignalTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        # 헤드라인은 중립(SRC 미계산); 결정론 블렌드(positive/68)·score_breakdown 은 보존.
-        self.assertEqual(result["signal"], "neutral")
-        self.assertEqual(result["final_score"], 50.0)
+        # SRC 미계산 → 결정론 블렌드(positive/68)로 폴백; score_breakdown 보존.
+        self.assertEqual(result["signal"], "positive")
+        self.assertEqual(result["final_score"], 68.0)
         self.assertEqual(result["deterministic_signal"], "positive")
         self.assertEqual(result["deterministic_score"], 68.0)
         self.assertEqual(result["source_agreement"], "HIGH")
@@ -389,8 +389,9 @@ class AggregateSignalTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(final_call[2][7], "positive")  # signal
         self.assertEqual(final_call[2][5], return_to_score_100(0.03))  # final_score
 
-    async def test_headline_neutral_when_src_date_mismatch(self):
-        # SRC 가 다른 날짜 것뿐이면(오늘 미계산) 중립으로 발행 — 다음 드레인에 갱신.
+    async def test_headline_falls_back_to_deterministic_when_src_date_mismatch(self):
+        # SRC 가 다른 날짜 것뿐이면(오늘 미계산) 평평한 50 이 아니라 결정론 블렌드로 폴백한다 —
+        # SRC 가 채워지면 다음 드레인에 학습 결합으로 갱신된다.
         src = {"asof_date": date(2026, 6, 18), "final_score": 0.03, "direction": "positive"}
         connection = FakeConnection(
             rows=[dart_agent_row(direction="positive", source_score=0.5, method_score=75.0)],
@@ -407,8 +408,94 @@ class AggregateSignalTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
             }
         )
 
+        self.assertEqual(result["signal"], "positive")
+        self.assertEqual(result["final_score"], 75.0)
+        final_call = next(call for call in connection.calls if "INSERT INTO final_signals" in call[1])
+        meta = json.loads(final_call[2][10])["_meta"]
+        self.assertEqual(meta["headline_method"], "deterministic_blend")
+
+    async def test_headline_neutral_empty_only_when_no_scoring_source(self):
+        # scoring 소스(DART/HIRING/PATENT/DATALAB)가 하나도 없으면(REPORT 만) 그때만 중립 50.
+        report_row = dart_agent_row(
+            direction="positive", source_score=1.0, method_score=100.0, source="REPORT"
+        )
+        report_row["analysis_run_key"] = "REPORT_EVENT_801"
+        report_row["analysis_mode"] = "full"
+        connection = FakeConnection(rows=[report_row])
+        handler = AggregateSignalTaskHandler(connection)
+
+        result = await handler(
+            {
+                "id": 30,
+                "stock_id": 1,
+                "source_analysis_result_ids": [101],
+                "task_context": {"stock_code": "005930", "signal_date": "2026-06-19"},
+            }
+        )
+
         self.assertEqual(result["signal"], "neutral")
         self.assertEqual(result["final_score"], 50.0)
+        final_call = next(call for call in connection.calls if "INSERT INTO final_signals" in call[1])
+        self.assertEqual(json.loads(final_call[2][10])["_meta"]["headline_method"], "neutral_empty")
+
+    async def test_score_meta_labels_headline_and_scoring_method(self):
+        # _meta 가 산출방식을 정직하게 라벨: SRC 있으면 학습 method, 없으면 deterministic_blend.
+        src = {
+            "asof_date": date(2026, 6, 19),
+            "final_score": 0.03,
+            "direction": "positive",
+            "method": "linear_stacking",
+        }
+        connection = FakeConnection(
+            rows=[dart_agent_row(direction="positive", source_score=0.4, method_score=70.0)],
+            src=src,
+        )
+        handler = AggregateSignalTaskHandler(connection)
+
+        await handler(
+            {
+                "id": 30,
+                "stock_id": 1,
+                "source_analysis_result_ids": [100],
+                "task_context": {"stock_code": "005930", "signal_date": "2026-06-19"},
+            }
+        )
+
+        final_call = next(call for call in connection.calls if "INSERT INTO final_signals" in call[1])
+        meta = json.loads(final_call[2][10])["_meta"]
+        self.assertEqual(meta["headline_method"], "src_meta")
+        self.assertEqual(meta["scoring_method"], "linear_stacking")
+        self.assertIn("blend_basis", meta)
+
+    async def test_dart_feature_only_marked_non_contributing(self):
+        # DART 가 no_signal(feature-only)이면 contributes_to_score=False — 방향 드라이버 오인 방지.
+        connection = FakeConnection(
+            rows=[
+                dart_agent_row(
+                    source="DART", direction="neutral", source_score=0.0,
+                    method_score=50.0, data_status="no_signal",
+                ),
+                dart_agent_row(
+                    analysis_result_id=120, agent_result_id=220, source="HIRING",
+                    direction="positive", source_score=0.3, method_score=65.0,
+                ),
+            ]
+        )
+        handler = AggregateSignalTaskHandler(connection)
+
+        await handler(
+            {
+                "id": 31,
+                "stock_id": 1,
+                "task_context": {"stock_code": "005930", "signal_date": "2026-06-19"},
+            }
+        )
+
+        final_call = next(call for call in connection.calls if "INSERT INTO final_signals" in call[1])
+        breakdown = json.loads(final_call[2][10])
+        self.assertFalse(breakdown["DART"]["contributes_to_score"])
+        self.assertTrue(breakdown["HIRING"]["contributes_to_score"])
+        self.assertFalse(breakdown["PRICE"]["contributes_to_score"])  # missing source
 
     async def test_queue_handlers_registers_aggregate_signal(self):
         handlers = build_task_handlers(FakeConnection())

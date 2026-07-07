@@ -69,6 +69,33 @@ def build_run_alert_embed(
     }
 
 
+def build_queue_health_embed(
+    *,
+    reason: str,
+    backlog: int,
+    failed_recent: int,
+    totals: dict[str, int],
+) -> dict[str, Any]:
+    """파이프라인 큐 정지/적체 경보용 Discord Embed(순수 함수).
+
+    hiring 수집 run 이 아니라 processing_queue 전역 상태(백로그·최근 실패·status별 합계)를 찍는다.
+    """
+    return {
+        "title": "🚨 파이프라인 큐 정지/적체 경보",
+        "description": f"**사유:** {reason}",
+        "color": _COLOR_FAILED,
+        "fields": [
+            {"name": "백로그(pending+retrying)", "value": str(backlog), "inline": True},
+            {"name": "최근 실패", "value": str(failed_recent), "inline": True},
+            {"name": "​", "value": "​", "inline": True},
+            {"name": "pending", "value": str(totals.get("pending", 0)), "inline": True},
+            {"name": "retrying", "value": str(totals.get("retrying", 0)), "inline": True},
+            {"name": "running", "value": str(totals.get("running", 0)), "inline": True},
+        ],
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 async def send_discord_alert(
     http: httpx.AsyncClient,
     webhook_url: str,

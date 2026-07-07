@@ -78,14 +78,15 @@ spec:
               value: "true"
             - name: PRICE_COLLECTOR_ENABLED
               value: "false"
-          readinessProbe:
+          readinessProbe:                          # 트래픽 수용 가능성 = DB 도달성
             httpGet: { path: /health, port: 8011 }
             initialDelaySeconds: 10
             periodSeconds: 10
-          livenessProbe:
-            httpGet: { path: /health, port: 8011 }
-            initialDelaySeconds: 20
+          livenessProbe:                           # 프로세스 생존 = 드레인 데몬 전진(라이브락 자가치유)
+            httpGet: { path: /health/live, port: 8011 }
+            initialDelaySeconds: 30
             periodSeconds: 20
+            failureThreshold: 3                     # 3연속(≈60s) 정체여야 재시작 — 일시 지연 오탐 방지
           volumeMounts:
             - name: report-storage
               mountPath: /data/report-storage   # REPORT_LOCAL_STORAGE_DIR 와 일치

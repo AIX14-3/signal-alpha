@@ -173,15 +173,18 @@ class AggregateSignalTaskHandler:
 
         warning = "; ".join(aggregate["risk_flags"]) or None
 
-        # 발행 헤드라인 = 통합 SRC 예측(메타러너 return 채널). RETURN_COMBINE 이 meta_signals
-        # (run_key="SRC")에 적재한 통합 예측 수익률을 0-100 점수로 변환해 헤드라인(signal/final_score)
-        # 으로 쓴다. 결정론 SCORING_SOURCES 블렌드(_aggregate 의 signal/final_score)는 더 이상
-        # 헤드라인이 아니며 score_breakdown/warning 등 표시·경보 메타로만 남는다. SRC 가 아직 없으면
-        # (아티팩트 전무 또는 RETURN_COMBINE 미완) 중립(50)으로 발행하고, 다음 드레인에 SRC 가
-        # 채워지면 AGGREGATE 재실행이 헤드라인을 갱신한다(eventual consistency — meta_signals 는
+        # 발행 헤드라인 = 통합 SRC 예측(메타러너 return 채널) 우선, 없으면 결정론 블렌드 폴백.
+        # RETURN_COMBINE 이 meta_signals(run_key="SRC")에 적재한 통합 예측 수익률을 0-100 점수로
+        # 변환해 헤드라인으로 쓴다. SRC 가 아직 없거나 stale 이면(아티팩트 전무·RETURN_COMBINE
+        # 미완/실패) **평평한 50 대신** 이미 계산된 결정론 SCORING_SOURCES 블렌드를 헤드라인으로
+        # 폴백한다(_headline). scoring 소스조차 없을 때만 중립(50). SRC 가 나중에 채워지면 AGGREGATE
+        # 재실행이 헤드라인을 학습 결합으로 갱신한다(eventual consistency — meta_signals 는
         # is_current 게이트가 없어 항상 읽힌다).
         src_row = await self._meta_repository.latest_for_stock(stock_id=stock_id, run_key=SRC_RUN_KEY)
-        headline_signal, headline_score = _src_headline(src_row, signal_date)
+        headline_signal, headline_score, headline_method = _headline(src_row, signal_date, aggregate)
+        # 점수 산출방식 정직 라벨(표시 전용) — _score_breakdown_with_meta 가 _meta 로 노출한다.
+        aggregate["headline_method"] = headline_method
+        aggregate["scoring_method"] = _scoring_method(src_row, headline_method)
 
         analysis_result = await self._analysis_repository.upsert_analysis_result(
             stock_id=stock_id,
@@ -357,6 +360,16 @@ def _score_breakdown_with_meta(aggregate: dict[str, Any]) -> dict[str, Any]:
         breakdown["_memory_reference"] = aggregate["memory_reference"]
     if aggregate.get("orchestration"):
         breakdown["_orchestration"] = aggregate["orchestration"]
+    # 점수 산출방식 정직 라벨(표시 전용, 숫자 불변). headline_method = 헤드라인 출처
+    # (src_meta=학습 결합 / deterministic_blend=참고용 소스 평균 / neutral_empty=근거 부족),
+    # scoring_method = 학습 채널일 때 메타러너 method(linear_stacking/equal_fallback).
+    # blend_basis = 헤드라인↔소스 기여 렌더 근거. UI/LLM 이 "학습 결합" vs "참고용 평균"을
+    # 정직하게 라벨링할 수 있게 한다.
+    breakdown["_meta"] = {
+        "headline_method": aggregate.get("headline_method"),
+        "scoring_method": aggregate.get("scoring_method"),
+        "blend_basis": aggregate.get("blend_basis"),
+    }
     return breakdown
 
 
@@ -523,6 +536,12 @@ def _aggregate(results: list[NormalizedSourceResult]) -> dict[str, Any]:
     return {
         "signal": signal,
         "final_score": _to_100(aggregate_score),
+        # 점수에 실제 기여한 scoring 소스 수. SRC 통합예측이 없을 때 헤드라인을 결정론 블렌드로
+        # 폴백할지(≥1) 최종 중립으로 둘지(0)를 _headline 이 판단하는 근거.
+        "scoring_count": len(scoring),
+        # 헤드라인↔소스 기여 렌더 근거(설명가능성). scoring 소스별 부호 점수·등가중 지분과 블렌드
+        # 원점수. 별도 설명 모듈 없이 "점수가 X인 이유"를 persisted data 로 렌더(신규 계산 없음).
+        "blend_basis": _blend_basis(scoring, aggregate_score),
         "source_agreement": source_agreement,
         "consensus_score": consensus_score,
         # Detect inputs (deterministic re-query trigger) — meta only, not persisted.
@@ -538,6 +557,23 @@ def _aggregate(results: list[NormalizedSourceResult]) -> dict[str, Any]:
         "positive_evidence": _evidence_items(available, "positive"),
         "caution_evidence": _caution_items(available, failed, missing_sources),
         "risk_flags": risk_flags,
+    }
+
+
+def _blend_basis(scoring: list[NormalizedSourceResult], aggregate_score: float) -> dict[str, Any]:
+    """결정론 블렌드의 소스별 기여(부호 점수·등가중 지분)와 블렌드 원점수.
+
+    ``scoring`` 은 점수에 실제 들어간 소스(SCORING_SOURCES ∩ 비 no_signal/failed). 등가중 평균이라
+    지분은 1/N 균일. UI/LLM 이 "HIRING +0.30·PATENT +0.10 → 평균 +0.20" 식으로 헤드라인 근거를
+    렌더할 수 있게 한다.
+    """
+    share = round(1.0 / len(scoring), 4) if scoring else 0.0
+    return {
+        "sources": [
+            {"source": result.source, "signed_score": result.score, "share": share}
+            for result in scoring
+        ],
+        "blend_score": round(aggregate_score, 3),
     }
 
 
@@ -571,6 +607,9 @@ def _score_breakdown(results: list[NormalizedSourceResult]) -> dict[str, dict[st
                 "analysis_result_id": None,
                 "agent_result_id": None,
                 "risk_flags": ["missing_source"],
+                # 이 소스가 헤드라인 점수 산정에 실제 반영되는지. 결측/근거전용(no_signal)·PRICE·
+                # REPORT·DART(feature-only)는 False → UI/LLM 이 방향 드라이버로 오인하지 않게 한다.
+                "contributes_to_score": False,
             }
             continue
         breakdown[source] = {
@@ -583,6 +622,12 @@ def _score_breakdown(results: list[NormalizedSourceResult]) -> dict[str, dict[st
             "agent_result_id": result.agent_result_id,
             "risk_flags": result.risk_flags,
             "summary": result.summary,
+            # 헤드라인 점수 산정 반영 여부(위 주석 참조). SCORING_SOURCES 이면서 no_signal/failed 이
+            # 아닐 때만 True. DART 는 feature-only(score=0·no_signal)라 항상 False = "근거(점수 미반영)".
+            "contributes_to_score": (
+                source in SCORING_SOURCES
+                and result.data_status not in {"no_signal", "failed"}
+            ),
             # last-known 재사용 나이(일) — 0=당일. 리포트·LLM 서술이 "최종 업데이트 N일 전" 표기에 쓴다.
             "data_age_days": result.data_age_days,
             **({"valuation": result.valuation} if result.valuation is not None else {}),
@@ -848,21 +893,40 @@ def _to_100(score: float) -> float:
     return round(max(0.0, min(100.0, (score + 1.0) * 50.0)), 2)
 
 
-def _src_headline(src_row: Any, signal_date: date) -> tuple[str, float]:
-    """통합 SRC 예측(meta_signals run_key='SRC')을 발행 헤드라인(signal, 0-100 score)으로 변환.
+def _headline(src_row: Any, signal_date: date, aggregate: dict[str, Any]) -> tuple[str, float, str]:
+    """발행 헤드라인(signal, 0-100 score, method)을 3단 폴백으로 결정한다.
 
-    SRC ``final_score`` 는 예측 '수익률'(작은 부호값)이라 tanh 로 0-100 'AI 예측 점수'에 매핑한다
-    (50=중립, 상승↑/하락↓). 해당 ``signal_date`` 의 SRC 가 없으면(아직 미계산) 중립(neutral, 50.0)
-    으로 둔다 — 다음 드레인에 SRC 가 채워지면 AGGREGATE 재실행이 갱신한다.
+    1. **src_meta** — 해당 ``signal_date`` 의 통합 SRC 예측(메타러너 return 채널)이 있으면 그 예측
+       수익률을 tanh 로 0-100 점수에 매핑(50=중립, 상승↑/하락↓). 학습 결합 결과.
+    2. **deterministic_blend** — SRC 가 없거나(아티팩트 전무·RETURN_COMBINE 미완/실패) stale 이지만
+       점수에 기여한 scoring 소스가 ≥1 이면, **평평한 50 대신** 이미 계산된 결정론 블렌드
+       (``aggregate['signal']``/``['final_score']``)를 헤드라인으로 쓴다. → 학습 artifact 없이도,
+       RETURN_COMBINE 재실행이 오지 않아도 실제 방향/점수가 발행된다(neutral-50 박멸).
+    3. **neutral_empty** — scoring 소스조차 없으면(근거 부족) 그때만 중립(50).
+
+    SRC 가 나중에 채워지면 AGGREGATE 재실행이 헤드라인을 (1)로 갱신한다(eventual consistency).
     """
-    if not src_row:
-        return "neutral", 50.0
-    row = dict(src_row)
-    asof = row.get("asof_date")
-    final_score = row.get("final_score")
-    if asof is None or final_score is None or _to_date(asof) != signal_date:
-        return "neutral", 50.0
-    return _src_signal(row.get("direction")), return_to_score_100(_number(final_score))
+    if src_row:
+        row = dict(src_row)
+        asof = row.get("asof_date")
+        final_score = row.get("final_score")
+        if asof is not None and final_score is not None and _to_date(asof) == signal_date:
+            return (
+                _src_signal(row.get("direction")),
+                return_to_score_100(_number(final_score)),
+                "src_meta",
+            )
+    if aggregate.get("scoring_count", 0) > 0:
+        return aggregate["signal"], aggregate["final_score"], "deterministic_blend"
+    return "neutral", 50.0, "neutral_empty"
+
+
+def _scoring_method(src_row: Any, headline_method: str) -> str:
+    """점수 산출방식 라벨. 학습 채널(src_meta)이면 메타러너 method(linear_stacking/equal_fallback),
+    아니면 headline_method(deterministic_blend/neutral_empty)와 동일."""
+    if headline_method == "src_meta" and src_row:
+        return str(dict(src_row).get("method") or "unknown")
+    return headline_method
 
 
 def _src_signal(direction: Any) -> str:

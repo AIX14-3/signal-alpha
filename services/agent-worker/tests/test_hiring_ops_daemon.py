@@ -28,6 +28,11 @@ class _FakeSettings:
     hiring_alert_failure_rate_threshold = 0.5
     hiring_ops_interval_sec = 0.0
     discord_webhook_url = "https://discord.test/hook"
+    # 파이프라인 큐 정지/적체 알림 임계(전역). 이 테스트들은 큐 상태가 비어(백로그 0) 큐 알림은
+    # 발화하지 않으므로 hiring run 알림 검증에 영향 없다.
+    ops_queue_backlog_alert_threshold = 500
+    ops_queue_failed_recent_alert_threshold = 200
+    ops_queue_failed_window_minutes = 360
 
 
 def _row(run_id, status, *, collected=10, inserted=10, skipped=0, failed=0):
@@ -92,6 +97,10 @@ class RunOpsCycleTest(unittest.IsolatedAsyncioTestCase):
         self.PQR.return_value.sweep_stale_active_tasks = mock.AsyncMock(return_value={})
         self.DLR.return_value.reconcile_failed = mock.AsyncMock(return_value=0)
         self.OBS.return_value.recent_collector_runs = mock.AsyncMock(return_value=rows)
+        # 파이프라인 큐 정지/적체 점검(_alert_queue_health)이 읽는 메서드 — 빈 큐(백로그 0)로
+        # 두어 큐 알림은 발화하지 않게 한다(hiring run 알림 검증만 남긴다).
+        self.OBS.return_value.queue_stats = mock.AsyncMock(return_value=[])
+        self.OBS.return_value.recent_failed_count = mock.AsyncMock(return_value=0)
 
     async def test_self_healing_called_every_tick(self):
         self._patches([_row(1, "success")])

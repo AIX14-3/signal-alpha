@@ -193,9 +193,10 @@ class AggregatorRequeryEnqueueTest(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        # (a) numbers untouched: SRC absent → neutral 50.
-        self.assertEqual(result["signal"], "neutral")
-        self.assertEqual(result["final_score"], 50.0)
+        # (a) numbers untouched by re-query. SRC absent → deterministic blend fallback
+        # (DART +1.0, HIRING -0.6 → mixed, avg 0.2 = 60), not flat 50.
+        self.assertEqual(result["signal"], "mixed")
+        self.assertEqual(result["final_score"], 60.0)
         # (b) re-query fired once for the diverging alt source.
         self.assertIsNotNone(result["requery_task_id"])
         requery_enqueues = [

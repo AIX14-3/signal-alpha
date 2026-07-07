@@ -26,7 +26,8 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "2"
 spec:
-  replicas: 1
+  replicas: 1                  # ⚠️ 1 고정 — rate limit/로그인 잠금이 프로세스 인메모리라 확장 시
+                               #    무력화(레플리카마다 별도 카운터). replicas>1 전에 Redis 공유 저장소 필요.
   selector:
     matchLabels:
       app.kubernetes.io/name: main-server
