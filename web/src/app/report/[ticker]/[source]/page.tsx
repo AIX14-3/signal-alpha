@@ -8,6 +8,31 @@ import { directionLabel, safeHttpUrl, SOURCE_META, won } from "@/lib/format";
 
 const VALID: SourceKey[] = ["price", "dart", "hiring", "datalab", "patent", "report"];
 
+// 장기 출원 추이 — 연도별 출원 건수 막대 차트(외부 라이브러리 없이 CSS 막대, 테마 토큰 사용).
+function FilingTrendChart({ data }: { data: { year: number; count: number }[] }) {
+  const max = Math.max(...data.map((d) => d.count), 1);
+  return (
+    <div
+      className="mt-4 flex items-end gap-2"
+      style={{ height: 140 }}
+      role="img"
+      aria-label="연도별 특허 출원 건수 추이"
+    >
+      {data.map((d) => (
+        <div key={d.year} className="flex flex-1 flex-col items-center justify-end gap-1">
+          <div className="text-[11px] text-muted">{d.count}</div>
+          <div
+            className="w-full rounded-t bg-sky-deep"
+            style={{ height: `${Math.max(4, (d.count / max) * 100)}%` }}
+            title={`${d.year}년 ${d.count}건`}
+          />
+          <div className="text-[11px] text-muted">{d.year}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function SourceDetailPage() {
   const params = useParams<{ ticker: string; source: string }>();
   const ticker = params.ticker;
@@ -92,6 +117,47 @@ export default function SourceDetailPage() {
             </div>
           )}
 
+          {source === "patent" && detail.patent && detail.patent.filing_trend.length > 0 && (
+            <div className="card mt-4 p-6">
+              <div className="text-[13px] font-semibold text-muted">장기 출원 추이 (연도별 출원 건수)</div>
+              <p className="mt-1 text-[12px] text-muted">
+                특허는 출원 후 약 18개월 뒤 공개됩니다. 아래는 <b>출원</b> 연도별 건수(장기 R&D 흐름)입니다.
+              </p>
+              <FilingTrendChart data={detail.patent.filing_trend} />
+            </div>
+          )}
+
+          {source === "patent" && detail.patent && detail.patent.recent_publications.length > 0 && (
+            <div className="card mt-4 overflow-hidden">
+              <div className="px-4 pt-4 text-[13px] font-semibold text-muted">최근 공개된 특허</div>
+              <p className="px-4 pb-2 pt-1 text-[12px] text-muted">
+                최근 <b>공개</b>돼 시장에 노출된 특허입니다(공개일 최신순). 출원은 그보다 앞섭니다.
+              </p>
+              <div className="overflow-x-auto">
+                <table className="w-full text-[13.5px]">
+                  <thead>
+                    <tr className="text-muted">
+                      <th className="px-4 py-3 text-left font-semibold">특허명</th>
+                      <th className="px-4 py-3 text-left font-semibold">공개일</th>
+                      <th className="px-4 py-3 text-left font-semibold">출원일</th>
+                      <th className="px-4 py-3 text-left font-semibold">기술분류</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {detail.patent.recent_publications.map((p, i) => (
+                      <tr key={p.application_no ?? i} className="border-t border-line">
+                        <td className="px-4 py-3">{p.title ?? p.application_no ?? "특허"}</td>
+                        <td className="px-4 py-3 text-muted">{p.publication_date?.slice(0, 10) ?? "—"}</td>
+                        <td className="px-4 py-3 text-muted">{p.application_date?.slice(0, 10) ?? "—"}</td>
+                        <td className="px-4 py-3 text-muted">{p.tech_category ?? "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
           {detail.narrative_points && detail.narrative_points.length > 0 && (
             <div className="card mt-4 p-6">
               <div className="text-[13px] font-semibold text-muted">분석 근거</div>
@@ -103,7 +169,8 @@ export default function SourceDetailPage() {
             </div>
           )}
 
-          {(detail.items.length > 0 || !(detail.narrative_points && detail.narrative_points.length > 0)) && (
+          {!(source === "patent" && detail.patent && detail.patent.recent_publications.length > 0) &&
+            (detail.items.length > 0 || !(detail.narrative_points && detail.narrative_points.length > 0)) && (
             <div className="card mt-4 overflow-hidden">
               <table className="w-full text-[13.5px]">
                 <thead>

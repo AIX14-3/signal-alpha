@@ -35,6 +35,21 @@ class ReportMeta:
 
 
 @dataclass(frozen=True)
+class PatentMeta:
+    """PATENT 소스의 화면용 구조화 데이터(점수/방향에는 영향 없음, 표시 전용).
+
+    특허는 출원 후 ~18개월 뒤 공개되므로 두 날짜 축을 함께 보여준다:
+      - ``recent_publications``: **최근 공개된** 특허 목록(공개일 최신순, 표시용 상위 N건).
+        각 원소 = {application_no, title, application_date, publication_date, tech_category}.
+      - ``filing_trend``: **장기 출원 추이**(출원 연도별 건수). 각 원소 = {year, count}.
+    persistence 가 agent_results.method_detail.patent 로 실어 score_breakdown.PATENT
+    까지 흐른다(새 컬럼/마이그 없음). REPORT 의 valuation 선례와 동형.
+    """
+    recent_publications: list[dict] = field(default_factory=list)
+    filing_trend: list[dict] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class SourceResult:
     """Per-source analysis result ``build_source_signal`` consumes.
 
@@ -59,6 +74,10 @@ class SourceResult:
     # cross-source aggregation/breakdown layer, never set here).
     data_status: Literal["ok", "partial", "failed", "no_signal"] = "ok"
     report_meta: ReportMeta | None = None
+    # PATENT 표시 전용 구조화 데이터(최근 공개 특허 목록 + 장기 출원 추이). None for
+    # every other source. score/direction 에는 영향 없음(표시 전용) — persistence 가
+    # method_detail.patent 로 실어 score_breakdown.PATENT 까지 흐른다.
+    patent_meta: "PatentMeta | None" = None
     # LLM provenance: model name when an LLM contributed to this source's result
     # (e.g. DataLab polarity classification). None for pure-rule output. Flows to
     # agent_results.llm_model in persistence.

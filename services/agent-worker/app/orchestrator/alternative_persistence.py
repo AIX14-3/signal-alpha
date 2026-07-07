@@ -151,6 +151,13 @@ def _method_detail(source_result: SourceResult) -> dict[str, Any]:
         detail["cause"] = source_result.cause
         detail["cause_rationale"] = source_result.cause_rationale
         detail["cause_source"] = source_result.cause_source
+    # PATENT 표시 전용 구조화 데이터(최근 공개 특허 + 장기 출원 추이). agent_results JSONB
+    # 에만 실어 score_breakdown.PATENT 로 흐른다 — 새 컬럼/마이그 없음(cause·valuation 동형).
+    if source_result.patent_meta is not None:
+        detail["patent"] = {
+            "recent_publications": source_result.patent_meta.recent_publications,
+            "filing_trend": source_result.patent_meta.filing_trend,
+        }
     # Agent provenance — DART/REPORT lanes already persist these in method_detail
     # (dart/tasks.py), so mirror them here. Written only when the round-trip
     # carried them, keeping legacy (analyzer-direct) detail shapes unchanged.

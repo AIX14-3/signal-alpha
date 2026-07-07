@@ -19,6 +19,12 @@ metadata:
     networking.gke.io/managed-certificates: signal-alpha-cert
     # 인증서 발급 전에도 http 접속 허용. 발급(Active) 후 "false" 로 바꾸면 https 강제.
     kubernetes.io/ingress.allow-http: "true"
+    # glbc(GKE 인그레스 컨트롤러)가 이 Ingress 를 소유하게 하는 레거시 class 지정.
+    # ⚠️ 이 클러스터엔 `gce` IngressClass 리소스가 없어서(`kubectl get ingressclass`=none)
+    #    아래 spec.ingressClassName: gce *만으로는* glbc 가 Ingress 를 무시한다 → LB 프로비저닝 0
+    #    (backends/NEG/forwarding-rule/주소 미생성, 이벤트 없음). 이 어노테이션이 있어야 glbc 가 소유.
+    #    2026-07-07 실배포에서 도메인 답보의 직접 원인이 이 어노테이션 누락이었음.
+    kubernetes.io/ingress.class: "gce"
 spec:
   ingressClassName: gce          # 글로벌 고정 IP·ManagedCertificate annotation 은 gce(외부 HTTP LB) 에서만 동작
   rules:

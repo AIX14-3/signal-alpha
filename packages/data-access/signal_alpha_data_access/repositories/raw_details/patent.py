@@ -71,6 +71,7 @@ class _PatentRawMixin:
                     p.patent_title,
                     p.applicant_name,
                     p.application_date,
+                    p.publication_date,
                     p.tech_category,
                     p.is_new_category,
                     p.extra_payload,
@@ -82,8 +83,10 @@ class _PatentRawMixin:
                 FROM patent_raw_details p
                 INNER JOIN raw_documents r ON r.id = p.raw_document_id
                 WHERE p.stock_id = $1
-                  AND ($2::date IS NULL OR p.application_date >= $2)
-                ORDER BY p.application_date DESC, p.raw_document_id DESC
+                  AND ($2::date IS NULL
+                       OR COALESCE(p.publication_date, p.application_date) >= $2)
+                ORDER BY COALESCE(p.publication_date, p.application_date) DESC,
+                         p.raw_document_id DESC
                 """,
                 stock_id,
                 since_date,
@@ -92,8 +95,9 @@ class _PatentRawMixin:
             if not _is_undefined_column(error):
                 raise
             logger.warning(
-                "patent_raw_details lacks llm_features/llm_status (stale prod "
-                "schema); falling back without LLM columns for stock_id=%s",
+                "patent_raw_details lacks llm_features/llm_status/publication_date "
+                "(stale prod schema); falling back with NULL placeholders for "
+                "stock_id=%s",
                 stock_id,
             )
             return await self._connection.fetch(
@@ -105,6 +109,7 @@ class _PatentRawMixin:
                     p.patent_title,
                     p.applicant_name,
                     p.application_date,
+                    NULL::date AS publication_date,
                     p.tech_category,
                     p.is_new_category,
                     p.extra_payload,
@@ -122,6 +127,30 @@ class _PatentRawMixin:
                 stock_id,
                 since_date,
             )
+
+    async def patent_filing_trend_by_stock(
+        self,
+        *,
+        stock_id: int,
+    ) -> list[Any]:
+        """연도별 특허 **출원(filing)** 건수 — 장기 R&D 추이용.
+
+        최근성 창(공개일 기준)과 무관하게 종목의 전체 이력을 출원 연도로 집계한다.
+        "최근 공개된 특허"(신호)와 "장기 출원 추이"(맥락)는 서로 다른 날짜 축이므로
+        분리한다: 신호는 publication_date, 추이는 application_date. 오래된→최신 순.
+        """
+        return await self._connection.fetch(
+            """
+            SELECT
+                EXTRACT(YEAR FROM application_date)::int AS year,
+                COUNT(*)::int AS count
+            FROM patent_raw_details
+            WHERE stock_id = $1
+            GROUP BY year
+            ORDER BY year
+            """,
+            stock_id,
+        )
 
     async def list_unenriched_patent_details(
         self,
