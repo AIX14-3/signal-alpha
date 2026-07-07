@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -14,10 +15,17 @@ from pydantic import BaseModel, Field
 
 from app.api.routes.auth import _subscription_active, get_current_user
 from app.core.database import get_database_pool
+from app.postmortem.analysis import (
+    Fill,
+    analyze_patterns,
+    analyze_plan_vs_actual,
+    build_round_trips,
+)
 from signal_alpha_data_access.backend import (
     StockRepository,
     UserBrokerCredentialRepository,
     UserTradeFillsRepository,
+    UserTradePlanRepository,
 )
 from signal_alpha_data_access.crypto import CredentialCryptoError
 
@@ -181,3 +189,159 @@ async def _require_subscription(connection: Any, user_id: int) -> None:
 
 def _api_error(status_code: int, code: str, message: str) -> HTTPException:
     return HTTPException(status_code=status_code, detail={"code": code, "message": message})
+
+
+# ---------------------------------------------------------------------------
+# PR-3a: 매매 계획(선택) + 단건/패턴 부검 (Plan vs Actual · 처분효과, 순수 계산)
+# ---------------------------------------------------------------------------
+
+# 패턴 부검 최소 표본(청산 라운드트립). 미만이면 억제한다(spec §7 소표본 경계).
+_MIN_PATTERN_SAMPLE = 5
+
+
+class PlanUpsertRequest(BaseModel):
+    stock_code: str = Field(min_length=1)
+    thesis: str = ""
+    target_price: float | None = None
+    stop_price: float | None = None
+    sell_condition: str | None = None
+
+
+@router.post("/plans")
+async def upsert_plan(
+    payload: PlanUpsertRequest,
+    current_user: dict[str, Any] = Depends(get_current_user),
+    pool: Any = Depends(get_database_pool),
+) -> dict[str, Any]:
+    ticker = payload.stock_code.strip()
+    async with pool.acquire() as connection:
+        await _require_subscription(connection, int(current_user["id"]))
+        stock = await StockRepository(connection).get_by_ticker(ticker)
+        row = await UserTradePlanRepository(connection).upsert_plan(
+            user_id=int(current_user["id"]),
+            stock_id=int(stock["id"]) if stock else None,
+            ticker=ticker,
+            thesis=payload.thesis,
+            target_price=payload.target_price,
+            stop_price=payload.stop_price,
+            sell_condition=payload.sell_condition,
+        )
+    return _plan_response(dict(row))
+
+
+@router.get("/plans")
+async def list_plans(
+    current_user: dict[str, Any] = Depends(get_current_user),
+    pool: Any = Depends(get_database_pool),
+) -> dict[str, Any]:
+    async with pool.acquire() as connection:
+        await _require_subscription(connection, int(current_user["id"]))
+        rows = await UserTradePlanRepository(connection).list_plans(
+            user_id=int(current_user["id"])
+        )
+    items = [_plan_response(dict(row)) for row in rows]
+    return {"count": len(items), "items": items}
+
+
+@router.delete("/plans/{stock_code}")
+async def delete_plan(
+    stock_code: str,
+    current_user: dict[str, Any] = Depends(get_current_user),
+    pool: Any = Depends(get_database_pool),
+) -> dict[str, Any]:
+    async with pool.acquire() as connection:
+        await _require_subscription(connection, int(current_user["id"]))
+        deleted = await UserTradePlanRepository(connection).delete_plan(
+            user_id=int(current_user["id"]), ticker=stock_code.strip()
+        )
+    if not deleted:
+        raise _api_error(404, "PLAN_NOT_FOUND", "계획을 찾을 수 없습니다.")
+    return {"status": "deleted"}
+
+
+@router.get("/trades/{stock_code}")
+async def trade_postmortem(
+    stock_code: str,
+    current_user: dict[str, Any] = Depends(get_current_user),
+    pool: Any = Depends(get_database_pool),
+) -> dict[str, Any]:
+    ticker = stock_code.strip()
+    async with pool.acquire() as connection:
+        await _require_subscription(connection, int(current_user["id"]))
+        stock = await StockRepository(connection).get_by_ticker(ticker)
+        if stock is None:
+            raise _api_error(404, "STOCK_NOT_FOUND", "종목을 찾을 수 없습니다.")
+        fill_rows = await UserTradeFillsRepository(connection).list_fills(
+            user_id=int(current_user["id"]), stock_id=int(stock["id"]), limit=1000
+        )
+        plan_row = await UserTradePlanRepository(connection).get_plan(
+            user_id=int(current_user["id"]), ticker=ticker
+        )
+    plan = dict(plan_row) if plan_row is not None else None
+    trips = build_round_trips(ticker, [_fill_from_row(dict(r)) for r in fill_rows])
+    return {
+        "stock_code": ticker,
+        "stock_name": stock.get("name"),
+        "has_plan": plan is not None,
+        "round_trips": [_roundtrip_response(t, analyze_plan_vs_actual(t, plan)) for t in trips],
+    }
+
+
+@router.get("/patterns")
+async def pattern_postmortem(
+    current_user: dict[str, Any] = Depends(get_current_user),
+    pool: Any = Depends(get_database_pool),
+) -> dict[str, Any]:
+    async with pool.acquire() as connection:
+        await _require_subscription(connection, int(current_user["id"]))
+        fill_rows = await UserTradeFillsRepository(connection).list_fills(
+            user_id=int(current_user["id"]), limit=1000
+        )
+    by_ticker: dict[str, list[Fill]] = {}
+    for raw in fill_rows:
+        row = dict(raw)
+        by_ticker.setdefault(row["ticker"], []).append(_fill_from_row(row))
+    trips = [t for ticker, fills in by_ticker.items() for t in build_round_trips(ticker, fills)]
+    patterns = analyze_patterns(trips)
+    if patterns.get("sample", 0) < _MIN_PATTERN_SAMPLE:
+        # 소표본은 훈수 대신 억제 — 몇 건 더 필요한지 안내.
+        return {"sample": patterns.get("sample", 0), "suppressed": True, "min_sample": _MIN_PATTERN_SAMPLE}
+    return {"suppressed": False, **patterns}
+
+
+def _fill_from_row(row: dict[str, Any]) -> Fill:
+    return Fill(
+        side=row["side"],
+        filled_at=row["filled_at"],
+        quantity=Decimal(str(row["quantity"])),
+        price=Decimal(str(row["price"])),
+        fee=Decimal(str(row["fee"])) if row.get("fee") is not None else None,
+    )
+
+
+def _roundtrip_response(trip: Any, plan_vs_actual: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "opened_at": _iso(trip.opened_at),
+        "closed_at": _iso(trip.closed_at),
+        "is_open": trip.is_open,
+        "quantity": _num_str(trip.quantity),
+        "avg_buy_price": _num_str(trip.avg_buy_price),
+        "avg_sell_price": _num_str(trip.avg_sell_price),
+        "realized_pnl_pct": trip.realized_pnl_pct,
+        "holding_days": trip.holding_days,
+        "plan_vs_actual": plan_vs_actual,
+    }
+
+
+def _plan_response(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "stock_code": row["ticker"],
+        "stock_id": row.get("stock_id"),
+        "thesis": row.get("thesis") or "",
+        "target_price": _num_str(row.get("target_price")),
+        "stop_price": _num_str(row.get("stop_price")),
+        "sell_condition": row.get("sell_condition"),
+        "planned_at": _iso(row.get("planned_at")),
+        "updated_at": _iso(row.get("updated_at")),
+    }
