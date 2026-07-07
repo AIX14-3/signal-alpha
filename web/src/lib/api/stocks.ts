@@ -51,3 +51,16 @@ export async function listStockNews(
     auth: "none",
   });
 }
+
+// 전역 뉴스 집계(공개) — 홈 "뉴스 N건을 분석한 시그널" 헤더용. total_articles=총 분석 기사수.
+export type NewsSummary = {
+  total_articles: number;
+  stock_count: number;
+  recent_articles: number;
+  latest_collected_at: string | null;
+  notice: string;
+};
+
+export async function getNewsSummary(): Promise<NewsSummary> {
+  return apiFetch(`/api/news/summary`, { auth: "none" });
+}
