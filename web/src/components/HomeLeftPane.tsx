@@ -73,7 +73,7 @@ export function HomeLeftPane() {
   );
 }
 
-/** 검색어와 가장 잘 맞는 종목을 골라 우 pane 선택으로 연결(SearchHero pickBest 패턴). */
+/** 검색어와 가장 잘 맞는 종목을 골라 우 pane 선택으로 연결(코드 정확일치 > 종목명 정확일치 > 첫 결과). */
 function StockSearch() {
   const select = useHomeStore((s) => s.select);
   const [query, setQuery] = useState("");
