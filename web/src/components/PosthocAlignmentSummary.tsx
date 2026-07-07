@@ -77,6 +77,9 @@ export function PosthocAlignmentSummary() {
           <p className="mt-2 text-[13px] leading-6 text-navy-soft">
             확정 {item.confirmed_count.toLocaleString("ko-KR")}건 · 대기 {item.pending_count.toLocaleString("ko-KR")}건
           </p>
+          <p className="mt-1 text-[12.5px] leading-5 text-navy-soft">
+            정합 {item.aligned_count.toLocaleString("ko-KR")}건 · 비정합 {item.not_aligned_count.toLocaleString("ko-KR")}건
+          </p>
           <p className="mt-1 text-[12.5px] leading-5 text-muted">{dateRange(item)}</p>
         </div>
       ))}

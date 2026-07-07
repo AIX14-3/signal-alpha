@@ -43,6 +43,8 @@ test("report page keeps ticker loading, subscription lock redirect, and watchlis
     "WatchlistButton",
     "SOURCE_ORDER",
     "PREDICTION_RATE_ORDER",
+    'data-flow="methodology-link"',
+    'href="/methodology"',
   ].forEach((expected) => assertIncludes(source, expected, "report page"));
 });
 
@@ -82,5 +84,9 @@ test("methodology page explains posthoc alignment without recommendation framing
   ].forEach((expected) => assertIncludes(source, expected, "methodology page"));
 
   assertIncludes(read("src/components/PosthocAlignmentSummary.tsx"), "getPosthocAlignment", "methodology summary");
+  assertIncludes(read("src/components/PosthocAlignmentSummary.tsx"), "item.aligned_count", "methodology summary");
+  assertIncludes(read("src/components/PosthocAlignmentSummary.tsx"), "item.not_aligned_count", "methodology summary");
+  assertIncludes(read("src/components/PosthocAlignmentSummary.tsx"), "정합", "methodology summary");
+  assertIncludes(read("src/components/PosthocAlignmentSummary.tsx"), "비정합", "methodology summary");
   assertIncludes(shell, 'href: "/methodology"', "app shell navigation");
 });
