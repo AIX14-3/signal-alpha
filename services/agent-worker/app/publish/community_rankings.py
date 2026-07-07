@@ -133,9 +133,7 @@ async def record_community_rankings(
             views = int(row["views"])
             score = Decimal(compute_score(likes, comments, views, weights))
             try:
-                await conn.execute(
-                    _UPSERT_SQL, post_id, window_kind, score, likes, comments, views
-                )
+                await conn.execute(_UPSERT_SQL, post_id, window_kind, score, likes, comments, views)
                 stats.upserts += 1
             except Exception as exc:  # noqa: BLE001 - 게시글 1건 실패가 전체를 막지 않음
                 stats.failed += 1
