@@ -2168,6 +2168,7 @@ CREATE TABLE public.patent_raw_details (
     patent_title text NOT NULL,
     applicant_name character varying(200),
     application_date date NOT NULL,
+    publication_date date,
     tech_category character varying(50),
     is_new_category boolean DEFAULT false NOT NULL,
     extra_payload jsonb NOT NULL,
@@ -5552,6 +5553,20 @@ CREATE INDEX idx_patent_new_category ON public.patent_raw_details USING btree (s
 --
 
 CREATE INDEX idx_patent_stock_date ON public.patent_raw_details USING btree (stock_id, application_date DESC);
+
+
+--
+-- Name: idx_patent_stock_pubdate; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_patent_stock_pubdate ON public.patent_raw_details USING btree (stock_id, publication_date DESC);
+
+
+--
+-- Name: COLUMN patent_raw_details.publication_date; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.patent_raw_details.publication_date IS '특허 공개일(출원 후 ~18개월). 시장에 정보가 노출되는 이벤트 시점. NULL 가능(미상). 출처: KIPRIS OpeningDate / Google Patents publication_date';
 
 
 --

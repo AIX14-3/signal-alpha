@@ -138,6 +138,8 @@ async def get_source_detail(
         "narrative_points": narrative_points,
         # REPORT 는 밸류에이션 fact(목표주가/방법론 등)를 추가 노출. 그 외 소스는 None.
         "valuation": _report_valuation(breakdown) if source == "report" else None,
+        # PATENT 는 최근 공개된 특허 목록 + 장기 출원 추이를 추가 노출. 그 외 소스는 None.
+        "patent": _patent_detail(breakdown) if source == "patent" else None,
         "items": items,
         "notice": NOTICE,
     }
@@ -482,6 +484,26 @@ def _report_valuation(breakdown: dict[str, Any]) -> dict[str, Any] | None:
         return None
     valuation = report.get("valuation")
     return valuation if isinstance(valuation, dict) else None
+
+
+def _patent_detail(breakdown: dict[str, Any]) -> dict[str, Any] | None:
+    """score_breakdown.PATENT.patent(최근 공개 특허 목록 + 장기 출원 추이)를 노출. 없으면 None.
+
+    특허는 출원 후 ~18개월 뒤 공개되므로 두 날짜 축을 함께 보여준다:
+    recent_publications=최근 *공개된* 특허(공개일 최신순), filing_trend=연도별 출원 건수.
+    """
+    patent = breakdown.get("PATENT")
+    if not isinstance(patent, dict):
+        return None
+    block = patent.get("patent")
+    if not isinstance(block, dict):
+        return None
+    recent = block.get("recent_publications")
+    trend = block.get("filing_trend")
+    return {
+        "recent_publications": recent if isinstance(recent, list) else [],
+        "filing_trend": trend if isinstance(trend, list) else [],
+    }
 
 
 def _prediction_rate_block(

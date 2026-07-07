@@ -19,8 +19,10 @@ from app.orchestrator.alternative.tasks import _from_output
 from app.schemas.evidence import RawEvidence
 
 AS_OF = date(2026, 6, 1)
-LOOKBACK = 365
-# midpoint = AS_OF - 182d ≈ 2025-12-01: application_date after that is "recent".
+LOOKBACK = 365  # evidence 메타의 명목값(분석기는 실제로 config 기본값을 사용).
+# 분석기는 PatentRuleConfig.from_env() 기본 lookback_days(=900, 공개지연 stopgap)를
+# 쓰고 위 메타값은 무시한다. 900일 창의 midpoint = AS_OF - 450d ≈ 2025-03-08:
+# 이벤트일(공개일 폴백 출원일)이 그 이후면 "recent", 이전이면 "prior".
 
 
 def _patent_row(day, *, tech="G06", new=False, significance=None, title="특허"):
@@ -66,13 +68,15 @@ def _notable_rows():
 
 
 def _weak_rows():
-    # 2 recent vs 2 prior (flat momentum), no new category, no significance → small
-    # positive activity-only score below the gate threshold, direction neutral.
+    # 900일 창(midpoint ≈ 2025-03-08) 기준 2 recent(이후) vs 2 prior(이전·창 내) →
+    # 평탄 momentum + 신규분류 없음 + significance 없음 → activity-only 점수가 게이트
+    # (0.2) 아래, direction neutral. (옛 365일 전제 데이터는 900일 창에서 4건이 모두
+    # recent 가 되어 "활동 개시"로 게이트를 넘겼다.)
     return [
         _patent_row("2026-05-01"),
         _patent_row("2026-04-01"),
-        _patent_row("2025-07-01"),
-        _patent_row("2025-06-01"),
+        _patent_row("2024-06-01"),
+        _patent_row("2024-05-01"),
     ]
 
 

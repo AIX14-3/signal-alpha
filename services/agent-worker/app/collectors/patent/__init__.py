@@ -24,6 +24,11 @@ SOURCE_TYPE = "PATENT"
 SOURCE_NAME = "KIPRIS"
 TASK_TYPE = "NORMALIZE_PATENT"
 
+# 크로스소스 dedup 우선순위(높을수록 우선). 같은 canonical 특허가 두 소스에 겹치면
+# source_hash UNIQUE 로 1행만 남는데, 사용자 정책 = **KIPRIS 우선**이라 나중에 온
+# KIPRIS 가 기존 GOOGLE_PATENTS 행을 덮어쓴다(_promote_source_if_outranked).
+_SOURCE_PRIORITY: dict[str, int] = {"KIPRIS": 2, "GOOGLE_PATENTS": 1}
+
 
 class PatentApiError(RuntimeError):
     pass
@@ -112,11 +117,13 @@ class PatentCollector:
         inserted = counts["inserted"]
         skipped = counts["skipped"]
         requeued = counts["requeued"]
+        updated = counts["updated"]
         failed = counts["failed"]
 
-        # requeued(F1 재인큐 복구)는 usable·non-failed 결과다. collector_runs 에는 requeued
-        # 컬럼이 없어 DB 의 skipped_count 에 합산하고, 반환 dict 에만 별도로 노출한다.
-        status = _run_status(inserted, skipped + requeued, failed)
+        # requeued(F1 재인큐 복구)·updated(KIPRIS 우선 승격)는 usable·non-failed 결과다.
+        # collector_runs 에는 두 컬럼이 없어 DB 의 skipped_count 에 합산하고, 반환 dict
+        # 에만 별도로 노출한다.
+        status = _run_status(inserted, skipped + requeued + updated, failed)
         async with self._pool.acquire() as conn:
             await _finish_run(
                 conn,
@@ -124,7 +131,7 @@ class PatentCollector:
                 status=status,
                 collected_count=len(collected),
                 inserted_count=inserted,
-                skipped_count=skipped + requeued,
+                skipped_count=skipped + requeued + updated,
                 failed_count=failed,
             )
         return {
@@ -133,6 +140,7 @@ class PatentCollector:
             "inserted_count": inserted,
             "skipped_count": skipped,
             "requeued_count": requeued,
+            "updated_count": updated,
             "failed_count": failed,
             "status": status,
         }
@@ -173,9 +181,8 @@ class PatentCollector:
             known_categories=known_categories,
             source_name=source_name,
         )
-        status = _run_status(
-            counts["inserted"], counts["skipped"] + counts["requeued"], counts["failed"]
-        )
+        non_new = counts["skipped"] + counts["requeued"] + counts["updated"]
+        status = _run_status(counts["inserted"], non_new, counts["failed"])
         async with self._pool.acquire() as conn:
             await _finish_run(
                 conn,
@@ -183,7 +190,7 @@ class PatentCollector:
                 status=status,
                 collected_count=len(collected),
                 inserted_count=counts["inserted"],
-                skipped_count=counts["skipped"] + counts["requeued"],
+                skipped_count=non_new,
                 failed_count=counts["failed"],
             )
         return {
@@ -192,6 +199,7 @@ class PatentCollector:
             "inserted_count": counts["inserted"],
             "skipped_count": counts["skipped"],
             "requeued_count": counts["requeued"],
+            "updated_count": counts["updated"],
             "failed_count": counts["failed"],
             "status": status,
         }
@@ -208,7 +216,7 @@ class PatentCollector:
         """Save each record and tally outcomes. Shared by :meth:`run` (KIPRIS) and
         :meth:`ingest_records` (external backfills) so the persistence contract
         lives in one place."""
-        inserted = skipped = requeued = failed = 0
+        inserted = skipped = requeued = updated = failed = 0
         for record in collected:
             try:
                 saved = await self._save_record(
@@ -225,6 +233,9 @@ class PatentCollector:
                         known_categories.add(tech_cat)
                 elif saved == "requeued":
                     requeued += 1
+                elif saved == "updated":
+                    # KIPRIS 우선 승격(기존 저순위 소스 행을 이번 레코드로 덮어씀).
+                    updated += 1
                 else:
                     skipped += 1
             except Exception:
@@ -233,6 +244,7 @@ class PatentCollector:
             "inserted": inserted,
             "skipped": skipped,
             "requeued": requeued,
+            "updated": updated,
             "failed": failed,
         }
 
@@ -264,6 +276,9 @@ class PatentCollector:
         source_hash = make_source_hash(SOURCE_TYPE, canonicalize_application_no(record.application_no))
         external_id = record.application_no
         application_date = _parse_date(record.application_date, application_no=record.application_no)
+        # 공개일(출원 후 ~18개월). KIPRIS=OpeningDate, BigQuery=publication_date 가
+        # record.open_date 로 실려 온다. 미상이면 NULL(분석기가 application_date 로 폴백).
+        publication_date = _parse_optional_date(record.open_date)
         tech_cat = _tech_category(record.ipc_code)
         is_new_category = (tech_cat is not None) and (tech_cat not in known_categories)
 
@@ -295,10 +310,10 @@ class PatentCollector:
                         """
                         INSERT INTO patent_raw_details (
                             raw_document_id, stock_id, application_no, patent_title,
-                            applicant_name, application_date, tech_category,
-                            is_new_category, extra_payload
+                            applicant_name, application_date, publication_date,
+                            tech_category, is_new_category, extra_payload
                         )
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                         """,
                         raw_id,
                         stock_id,
@@ -306,6 +321,7 @@ class PatentCollector:
                         record.invention_title or record.application_no,
                         record.applicant_name,
                         application_date,
+                        publication_date,
                         tech_cat,
                         is_new_category,
                         json.dumps(record.raw, ensure_ascii=False),
@@ -333,12 +349,90 @@ class PatentCollector:
                 return "inserted"
             except asyncpg.exceptions.UniqueViolationError:
                 pass
-        # 중복(이미 수집된 raw). 정규화 task 가 활성/성공 상태로 존재하면 진짜 skip,
-        # 하나도 없으면(실패·유실·미생성) F1 안전망으로 재인큐한다.
+        # 중복(이미 수집된 같은 canonical 특허). KIPRIS 우선 정책: 기존 행이 우선순위
+        # 낮은 소스(GOOGLE_PATENTS)면 이번(더 높은 우선순위) 레코드로 승격(덮어쓰기)한다.
+        promoted = await self._promote_source_if_outranked(
+            source_hash=source_hash,
+            incoming_source=source_name,
+            record=record,
+            application_date=application_date,
+            publication_date=publication_date,
+            tech_category=tech_cat,
+            is_new_category=is_new_category,
+        )
+        if promoted:
+            return "updated"
+        # 승격 대상 아님(동일·상위 소스가 이미 있음) → 정규화 task 가 활성/성공이면
+        # 진짜 skip, 하나도 없으면(실패·유실·미생성) F1 안전망으로 재인큐한다.
         requeued = await self._requeue_if_unprocessed(
             stock_id=stock_id, run_id=run_id, source_hash=source_hash
         )
         return "requeued" if requeued else "skipped"
+
+    async def _promote_source_if_outranked(
+        self,
+        *,
+        source_hash: str,
+        incoming_source: str,
+        record: KiprisPatentRecord,
+        application_date: date,
+        publication_date: date | None,
+        tech_category: str | None,
+        is_new_category: bool,
+    ) -> bool:
+        """기존 raw 행이 이번 소스보다 우선순위가 낮으면 이번 레코드로 덮어쓴다.
+
+        cross-source dedup 은 ``source_hash`` UNIQUE 로 canonical 특허당 1행만 남긴다
+        (first-writer-wins). 사용자 정책 = **KIPRIS 우선**: BigQuery(GOOGLE_PATENTS)가
+        먼저 적재한 행을 나중에 온 KIPRIS 가 덮어써 authoritative 소스로 승격한다.
+        raw_documents.source_name + 식별/일시 필드와 patent_raw_details 상세를 함께
+        갱신한다(공개일 포함). 우선순위가 같거나 낮으면(예: 이미 KIPRIS) 아무것도 안 함.
+
+        Returns True 면 승격 발생(호출부가 "updated" 로 집계).
+        """
+        incoming_rank = _SOURCE_PRIORITY.get(incoming_source, 0)
+        async with self._pool.acquire() as conn:
+            existing = await conn.fetchrow(
+                "SELECT id, source_name FROM raw_documents WHERE source_hash = $1",
+                source_hash,
+            )
+            if existing is None:
+                return False
+            existing_rank = _SOURCE_PRIORITY.get(existing["source_name"], 0)
+            if incoming_rank <= existing_rank:
+                return False  # 동일·상위 소스가 이미 있음 → 덮어쓰지 않음
+            raw_id = existing["id"]
+            async with conn.transaction():
+                await conn.execute(
+                    """
+                    UPDATE raw_documents
+                    SET source_name = $2, external_id = $3, title = $4, published_at = $5
+                    WHERE id = $1
+                    """,
+                    raw_id,
+                    incoming_source,
+                    record.application_no,
+                    record.invention_title or record.application_no,
+                    application_date,
+                )
+                await conn.execute(
+                    """
+                    UPDATE patent_raw_details
+                    SET patent_title = $2, applicant_name = $3, application_date = $4,
+                        publication_date = $5, tech_category = $6, is_new_category = $7,
+                        extra_payload = $8
+                    WHERE raw_document_id = $1
+                    """,
+                    raw_id,
+                    record.invention_title or record.application_no,
+                    record.applicant_name,
+                    application_date,
+                    publication_date,
+                    tech_category,
+                    is_new_category,
+                    json.dumps(record.raw, ensure_ascii=False),
+                )
+        return True
 
     async def _requeue_if_unprocessed(
         self,
@@ -447,6 +541,29 @@ def _parse_date(value: str | None, *, application_no: str | None = None) -> date
             value,
         )
         return date.today()
+
+
+def _parse_optional_date(value: str | None) -> date | None:
+    """Parse an optional YYYYMMDD/ISO date, returning None when absent/unparseable.
+
+    Used for publication_date(공개일): unlike application_date it must NOT fall back
+    to today() — a missing/garbled 공개일 is stored as NULL so the analyzer can
+    COALESCE to application_date instead of inventing a fake publication date.
+    """
+    if not value:
+        return None
+    value = value.strip()
+    if not value:
+        return None
+    if len(value) == 8 and value.isdigit():
+        try:
+            return datetime.strptime(value, "%Y%m%d").date()
+        except ValueError:
+            return None
+    try:
+        return datetime.fromisoformat(value).date()
+    except ValueError:
+        return None
 
 
 async def _create_run(conn: Any) -> int:

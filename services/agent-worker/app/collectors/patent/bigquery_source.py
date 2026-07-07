@@ -102,26 +102,8 @@ def fmt_yyyymmdd(value: Any) -> str | None:
     return f"{y}{m}{d}"
 
 
-def bq_rows(*, start_year: int, end_year: int, patterns: list[str], project: str) -> list[dict]:
-    """Fetch one row per (matching) publication across all target patterns in a
-    single scan. Attribution to a specific stock happens later in Python."""
-    try:
-        from google.cloud import bigquery  # type: ignore
-    except ImportError:
-        raise SystemExit(
-            "google-cloud-bigquery is not installed — run via "
-            "`uv run --with google-cloud-bigquery python scripts/backfill_patents_bigquery.py ...`"
-        )
-    try:
-        client = bigquery.Client(project=project)
-    except Exception as exc:  # DefaultCredentialsError 등
-        raise SystemExit(
-            f"BigQuery client init failed ({exc}).\n"
-            "Run `gcloud auth application-default login` (project patent-bq-reader) first."
-        )
-
-    sql = f"""
-    SELECT
+# 두 수집 모드가 공유하는 SELECT 투영(어느 날짜로 거르든 결과 행 모양은 동일).
+_ROW_PROJECTION = """
       application_number,
       filing_date,
       publication_number,
@@ -131,6 +113,47 @@ def bq_rows(*, start_year: int, end_year: int, patterns: list[str], project: str
          LIMIT 1) AS title,
       (SELECT i.code FROM UNNEST(ipc) i LIMIT 1) AS ipc_code,
       ARRAY(SELECT a.name FROM UNNEST(assignee_harmonized) a) AS assignees
+"""
+
+
+def _bq_client(project: str):
+    try:
+        from google.cloud import bigquery  # type: ignore
+    except ImportError:
+        raise SystemExit(
+            "google-cloud-bigquery is not installed — run via "
+            "`uv run --with google-cloud-bigquery python scripts/backfill_patents_bigquery.py ...`"
+        )
+    try:
+        return bigquery, bigquery.Client(project=project)
+    except Exception as exc:  # DefaultCredentialsError 등
+        raise SystemExit(
+            f"BigQuery client init failed ({exc}).\n"
+            "Run `gcloud auth application-default login` (project patent-bq-reader) first."
+        )
+
+
+def _rows_from(result) -> list[dict]:
+    return [
+        {
+            "application_number": str(r["application_number"]),
+            "filing_date": r["filing_date"],
+            "publication_number": r["publication_number"],
+            "publication_date": r["publication_date"],
+            "title": r["title"],
+            "ipc_code": r["ipc_code"],
+            "assignees": list(r["assignees"] or []),
+        }
+        for r in result
+    ]
+
+
+def bq_rows(*, start_year: int, end_year: int, patterns: list[str], project: str) -> list[dict]:
+    """과거 대량 백필: **출원연도(filing_date)** 범위로 한 번에 스캔. 종목 귀속은
+    나중에 파이썬에서. (장기 출원 추이용 이력 적재 경로)"""
+    bigquery, client = _bq_client(project)
+    sql = f"""
+    SELECT{_ROW_PROJECTION}
     FROM `{BQ_TABLE}`
     WHERE country_code = 'KR'
       AND filing_date BETWEEN @start AND @end
@@ -146,19 +169,37 @@ def bq_rows(*, start_year: int, end_year: int, patterns: list[str], project: str
             bigquery.ScalarQueryParameter("end", "INT64", end_year * 10000 + 1231),
         ]
     )
-    rows = client.query(sql, job_config=job_config).result()
-    return [
-        {
-            "application_number": str(r["application_number"]),
-            "filing_date": r["filing_date"],
-            "publication_number": r["publication_number"],
-            "publication_date": r["publication_date"],
-            "title": r["title"],
-            "ipc_code": r["ipc_code"],
-            "assignees": list(r["assignees"] or []),
-        }
-        for r in rows
-    ]
+    return _rows_from(client.query(sql, job_config=job_config).result())
+
+
+def bq_rows_recent_publications(
+    *, start: int, end: int, patterns: list[str], project: str
+) -> list[dict]:
+    """매일 최근 **공개분(publication_date)** 만 저비용으로 스캔.
+
+    특허는 출원 후 ~18개월 뒤 공개되므로, "오늘 새로 시장에 노출된 특허"는
+    publication_date 가 최근인 행이다(출원일은 1.5년 전). 좁은 공개일 창(예: 최근
+    90일)만 조회해 스캔 비용을 낮추고, 이미 적재된 행은 source_hash dedup 으로
+    건너뛴다. ``start``/``end`` 는 YYYYMMDD 정수(공개일 창)."""
+    bigquery, client = _bq_client(project)
+    sql = f"""
+    SELECT{_ROW_PROJECTION}
+    FROM `{BQ_TABLE}`
+    WHERE country_code = 'KR'
+      AND publication_date BETWEEN @start AND @end
+      AND EXISTS (
+        SELECT 1 FROM UNNEST(assignee_harmonized) a, UNNEST(@patterns) p
+        WHERE UPPER(a.name) LIKE p
+      )
+    """.strip()
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ArrayQueryParameter("patterns", "STRING", [p.upper() for p in patterns]),
+            bigquery.ScalarQueryParameter("start", "INT64", start),
+            bigquery.ScalarQueryParameter("end", "INT64", end),
+        ]
+    )
+    return _rows_from(client.query(sql, job_config=job_config).result())
 
 
 def build_records(rows: list[dict], ticker: str) -> list[Any]:

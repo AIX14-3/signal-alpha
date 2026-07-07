@@ -1,0 +1,81 @@
+name: AltData Collect (BigQuery daily)
+
+# 특허 '최근 공개분' 매일 수집 — Google Patents(BigQuery)를 **공개일(publication_date)**
+# 창으로 좁게 조회한다. 특허는 출원 후 ~18개월 뒤 공개되므로 "오늘 새로 시장에 노출된
+# 특허"는 공개일이 최근인 행이다(출원일은 1.5년 전). 과거 대량 이력은 별도 주1회
+# altdata-collect-bigquery.yml(출원연도 범위)이 담당한다.
+#   scripts/collect_patents_bigquery_daily.py → bq_rows_recent_publications()
+#   → PatentCollector.ingest_records() (raw_documents + patent_raw_details + queue).
+#   KIPRIS 와 겹치면 source_hash dedup → KIPRIS 우선 승격(_promote_source_if_outranked).
+# 런북: docs/runbooks/patent-dual-source.md
+#
+# ⚠️ 필요한 리포 Secrets: GCP_SA_KEY(미등록 시 auth 실패·continue-on-error 격리),
+#   GOOGLE_CLOUD_PROJECT, DATABASE_URL(실적재 시). 상세는 주간 워크플로 주석 참조.
+
+on:
+  schedule:
+    - cron: "30 20 * * *" # 매일 05:30 KST (KIPRIS 06:30 · process 07:00 이전)
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "DB 미적재(조회·리포트만). 시크릿 등록 후 첫 검증은 true 권장"
+        type: boolean
+        required: false
+        default: true
+      window_days:
+        description: "공개일 창(오늘 기준 과거 N일, 비우면 스크립트 기본 90)"
+        required: false
+        default: ""
+      tickers:
+        description: "쉼표구분 종목(비우면 전 종목)"
+        required: false
+        default: ""
+
+concurrency:
+  group: altdata-collect-bigquery-daily
+  cancel-in-progress: false
+
+jobs:
+  collect-daily:
+    name: Collect recent-publication patent (BigQuery)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install Python (from .python-version)
+        run: uv python install
+
+      - name: Sync dependencies
+        run: uv sync --all-packages --group dev
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      # KIPRIS/DART 등 다른 경로와 격리(continue-on-error). 스케줄 실행은 실적재,
+      # 수동(dispatch)은 dry_run 기본 true 로 안전 검증.
+      - name: Collect — recent-publication patent (Google Patents / BigQuery)
+        if: always()
+        continue-on-error: true
+        working-directory: services/agent-worker
+        env:
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+          INPUT_WINDOW_DAYS: ${{ inputs.window_days }}
+          INPUT_TICKERS: ${{ inputs.tickers }}
+        run: |
+          args=()
+          [ "$INPUT_DRY_RUN" = "true" ] && args+=(--dry-run)
+          [ -n "$INPUT_WINDOW_DAYS" ] && args+=(--window-days "$INPUT_WINDOW_DAYS")
+          [ -n "$INPUT_TICKERS" ] && args+=(--tickers "$INPUT_TICKERS")
+          echo "daily args: ${args[*]:-<defaults>}"
+          uv run --with google-cloud-bigquery python scripts/collect_patents_bigquery_daily.py "${args[@]}"
