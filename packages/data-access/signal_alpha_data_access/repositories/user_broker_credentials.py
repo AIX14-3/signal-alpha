@@ -132,13 +132,16 @@ class UserBrokerCredentialRepository:
 
         요청분(sync_requested_at NOT NULL)을 먼저 처리한다.
         """
-        # TODO(구독 게이팅): 구독 해지 후에도 active 자격증명이 계속 동기화된다. 워커가
-        # billing(signal_subscriptions)을 직접 읽는 건 권한/결합 문제라, 해지 시 backend 가
-        # 자격증명을 비활성화하는 이벤트 방식이 옳다(후속). 여기선 status='active'만 본다.
+        # 구독 해지 후에는 동기화하지 않는다 — 활성 구독 유저의 active 자격증명만 대상
+        # (signal_worker 는 signal_subscriptions SELECT 권한 보유, 20260708_0900). 활성 구독 =
+        # status='active' AND (expires_at IS NULL OR expires_at > now()) — _subscription_active 와 동일.
         return await self._connection.fetch(
-            "SELECT id, user_id, broker, account_ref FROM user_broker_credentials "
-            "WHERE status = 'active' AND ("
-            "  sync_requested_at IS NOT NULL OR last_synced_at IS NULL OR last_synced_at < $1"
-            ") ORDER BY sync_requested_at DESC NULLS LAST, id",
+            "SELECT c.id, c.user_id, c.broker, c.account_ref FROM user_broker_credentials c "
+            "WHERE c.status = 'active' AND ("
+            "  c.sync_requested_at IS NOT NULL OR c.last_synced_at IS NULL OR c.last_synced_at < $1"
+            ") AND EXISTS ("
+            "  SELECT 1 FROM signal_subscriptions s WHERE s.user_id = c.user_id "
+            "    AND s.status = 'active' AND (s.expires_at IS NULL OR s.expires_at > now())"
+            ") ORDER BY c.sync_requested_at DESC NULLS LAST, c.id",
             stale_before,
         )
