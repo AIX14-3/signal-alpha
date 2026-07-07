@@ -2168,6 +2168,7 @@ CREATE TABLE public.patent_raw_details (
     patent_title text NOT NULL,
     applicant_name character varying(200),
     application_date date NOT NULL,
+    publication_date date,
     tech_category character varying(50),
     is_new_category boolean DEFAULT false NOT NULL,
     extra_payload jsonb NOT NULL,
@@ -5552,6 +5553,13 @@ CREATE INDEX idx_patent_new_category ON public.patent_raw_details USING btree (s
 --
 
 CREATE INDEX idx_patent_stock_date ON public.patent_raw_details USING btree (stock_id, application_date DESC);
+
+
+--
+-- Name: idx_patent_stock_pubdate; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_patent_stock_pubdate ON public.patent_raw_details USING btree (stock_id, publication_date DESC);
 
 
 --

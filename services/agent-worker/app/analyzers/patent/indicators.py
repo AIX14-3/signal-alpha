@@ -20,6 +20,8 @@ class PatentIndicators:
     new_category_count: int
     new_category_ratio: float
     distinct_tech_categories: int
+    # 최신 이벤트(공개일 폴백 출원일)와 그로부터 경과일. 이름은 하위호환으로 유지하되
+    # 값은 공개일 기준(_event_date). stale 판정이 "최근 공개가 얼마나 오래됐나"를 의미.
     latest_application_date: str | None
     days_since_latest: int | None
     # LLM-enrichment aggregates (C3). None/0 when no patent in the window has been
@@ -61,7 +63,9 @@ def compute_indicators(
     significances: list[float] = []
 
     for row in rows:
-        applied = _parse_date(row.get("application_date"))
+        # 이벤트(정보 노출) 시점 = 공개일. 특허는 출원 후 ~18개월 뒤 공개되므로
+        # 최근성/모멘텀은 공개일 기준으로 버킷팅한다(공개일 미상이면 출원일 폴백).
+        applied = _event_date(row)
         if applied is not None:
             if applied > midpoint:
                 recent_count += 1
@@ -103,6 +107,11 @@ def _half(lookback_days: int):
     from datetime import timedelta
 
     return timedelta(days=max(1, lookback_days) // 2)
+
+
+def _event_date(row: dict) -> date | None:
+    """정보 노출 시점 = 공개일(publication_date). 미상이면 출원일(application_date) 폴백."""
+    return _parse_date(row.get("publication_date")) or _parse_date(row.get("application_date"))
 
 
 def _parse_date(value) -> date | None:
