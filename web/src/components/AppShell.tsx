@@ -10,6 +10,7 @@ import { useAuthStore } from "@/stores/authStore";
 const NAV = [
   { href: "/", label: "홈" },
   { href: "/community", label: "커뮤니티" },
+  { href: "/postmortem", label: "매매 부검" },
   { href: "/methodology", label: "방법론" },
   { href: "/pricing", label: "요금제" },
   { href: "/mypage", label: "마이" },

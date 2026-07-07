@@ -9,6 +9,7 @@ export * from "./api/stocks";
 export * from "./api/reports";
 export * from "./api/journal";
 export * from "./api/community";
+export * from "./api/postmortem";
 export * from "./api/methodology";
 export * from "./api/billing";
 export * from "./api/admin";
