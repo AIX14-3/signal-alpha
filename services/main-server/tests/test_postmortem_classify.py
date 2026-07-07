@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from app.postmortem.analysis import RoundTrip
@@ -29,6 +29,14 @@ def test_signals_in_window_filters_by_holding_period():
     got = signals_in_window(sigs, datetime(2026, 6, 3), datetime(2026, 6, 20))
     # 6/3~6/20 창 → 6/5, 6/15 만
     assert {s["signal_date"].day for s in got} == {5, 15}
+
+
+def test_signals_in_window_uses_kst_date_for_aware_boundaries():
+    # 개시 = 2026-06-01 23:00 UTC = 2026-06-02 08:00 KST → 창 시작은 KST 6/2.
+    opened = datetime(2026, 6, 1, 23, 0, tzinfo=timezone.utc)
+    got = signals_in_window([_sig(1), _sig(2)], opened, None)
+    # 6/1 공시는 KST 거래일(6/2) 이전이라 제외, 6/2 만 포함.
+    assert {s["signal_date"].day for s in got} == {2}
 
 
 def test_observable_signal_when_insider_sell_in_window():

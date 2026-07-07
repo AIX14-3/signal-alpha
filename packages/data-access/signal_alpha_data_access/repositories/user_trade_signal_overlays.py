@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-_OVERLAY_COLUMNS = "id, stock_id, ticker, signal_date, kind, detail, created_at"
+_OVERLAY_COLUMNS = "id, stock_id, ticker, signal_date, kind, source_ref, detail, created_at"
 
 
 class UserTradeSignalOverlayRepository:
@@ -27,15 +27,19 @@ class UserTradeSignalOverlayRepository:
         ticker: str,
         signal_date: Any,
         kind: str,
+        source_ref: str,
         detail: str,
     ) -> None:
-        """멱등 적재 — (user, stock, date, kind) 자연키. detail(jsonb 문자열)은 갱신."""
+        """멱등 적재 — (user, stock, date, kind, source_ref) 자연키. detail(jsonb)은 갱신.
+
+        source_ref(공시 rcept_no:line_seq)로 같은 날 여러 내부자 공시를 각각 보존한다.
+        """
         await self._connection.execute(
             """
             INSERT INTO user_trade_signal_overlays
-                (user_id, stock_id, ticker, signal_date, kind, detail)
-            VALUES ($1, $2, $3, $4, $5, $6::jsonb)
-            ON CONFLICT (user_id, stock_id, signal_date, kind) DO UPDATE SET
+                (user_id, stock_id, ticker, signal_date, kind, source_ref, detail)
+            VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+            ON CONFLICT (user_id, stock_id, signal_date, kind, source_ref) DO UPDATE SET
                 detail = EXCLUDED.detail
             """,
             user_id,
@@ -43,6 +47,7 @@ class UserTradeSignalOverlayRepository:
             ticker,
             signal_date,
             kind,
+            source_ref,
             detail,
         )
 

@@ -13,7 +13,6 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import timedelta
 from typing import Any
 
 from signal_alpha_data_access.repositories.user_trade_signal_overlays import (
@@ -22,12 +21,11 @@ from signal_alpha_data_access.repositories.user_trade_signal_overlays import (
 
 logger = logging.getLogger(__name__)
 
-# 진입 이전 관측 신호도 포함하는 lookback.
-_PRE_ENTRY_LOOKBACK_DAYS = 30
-
 # PIT: report_date(공시 접수일) 이하 = 관측 가능 시점. 순증감 있는 건만(0 제외).
+# 조회 구간 = 유저 보유 구간(거래 시작~종료). 라우트의 signals_in_window 가 라운드트립별로
+# 다시 필터하므로 여기서 앞뒤로 넓혀도 소비되지 않는다 — fetch 를 사용 구간에 정렬한다.
 _DART_SQL = """
-SELECT report_date, holder_type, holder_name, shares_delta, ratio_delta
+SELECT rcept_no, line_seq, report_date, holder_type, holder_name, shares_delta, ratio_delta
 FROM dart_ownership_events
 WHERE stock_id = $1
   AND report_date >= $2
@@ -56,11 +54,14 @@ async def refresh_signal_overlays(backend_conn: Any, source_conn: Any) -> Overla
 
     for row in await repo.traded_stock_ranges():
         try:
-            start = row["start_date"] - timedelta(days=_PRE_ENTRY_LOOKBACK_DAYS)
-            events = await source_conn.fetch(_DART_SQL, row["stock_id"], start, row["end_date"])
+            events = await source_conn.fetch(
+                _DART_SQL, row["stock_id"], row["start_date"], row["end_date"]
+            )
             for event in events:
                 delta = event["shares_delta"]
                 kind = "insider_sell" if delta < 0 else "insider_buy"
+                # 공시 단위 식별자 — 같은 날 여러 내부자 공시를 각각 보존한다.
+                source_ref = f"{event['rcept_no']}:{event['line_seq']}"
                 detail = json.dumps(
                     {
                         "holder_type": event["holder_type"],
@@ -78,6 +79,7 @@ async def refresh_signal_overlays(backend_conn: Any, source_conn: Any) -> Overla
                     ticker=row["ticker"],
                     signal_date=event["report_date"],
                     kind=kind,
+                    source_ref=source_ref,
                     detail=detail,
                 )
                 stats.signals += 1

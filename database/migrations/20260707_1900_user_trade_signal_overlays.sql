@@ -20,10 +20,13 @@ CREATE TABLE public.user_trade_signal_overlays (
     -- 관측 가능 시점(PIT). dart_ownership.report_date(공시 접수일)=known_at.
     signal_date date NOT NULL,
     kind        varchar(20) NOT NULL,
+    -- 공시 단위 식별자(rcept_no:line_seq). 같은 날 서로 다른 내부자 공시가 한 행으로
+    -- collapse 되지 않도록 자연키에 포함한다(count 과소집계·detail 덮어씀 방지).
+    source_ref  varchar(40) NOT NULL DEFAULT '',
     detail      jsonb NOT NULL DEFAULT '{}',
     created_at  timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT chk_overlay_kind CHECK (kind IN ('insider_sell', 'insider_buy')),
-    CONSTRAINT uq_trade_overlay UNIQUE (user_id, stock_id, signal_date, kind)
+    CONSTRAINT uq_trade_overlay UNIQUE (user_id, stock_id, signal_date, kind, source_ref)
 );
 
 CREATE INDEX idx_overlay_user_stock

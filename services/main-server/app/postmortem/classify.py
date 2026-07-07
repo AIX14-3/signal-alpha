@@ -12,6 +12,11 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
+
+# dart report_date(공시 접수일)는 한국 기준. 체결(timestamptz)도 KST 거래일 기준으로 맞춰야
+# 보유 구간 경계가 report_date 와 같은 달력으로 비교된다(UTC .date() 로 하루 어긋남 방지).
+_KST = ZoneInfo("Asia/Seoul")
 
 # 계획 손절 이탈이 없어도 이만큼 손실이면 부검 대상(무계획 손실도 판정).
 _LOSS_THRESHOLD_PCT = -10.0
@@ -60,6 +65,9 @@ def _as_date(value: Any) -> date | None:
     if value is None:
         return None
     if isinstance(value, datetime):
+        # tz-aware(체결 timestamptz)는 KST 거래일로, naive 는 그대로.
+        if value.tzinfo is not None:
+            return value.astimezone(_KST).date()
         return value.date()
     if isinstance(value, date):
         return value

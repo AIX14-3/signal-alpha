@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict XoHrQqQ6uXOD7qfwiN7g1zqtGwvFRjrVfT2GhukvLPphCWRX2rytQXkhSZSMO1x
+\restrict rdK4Y2vi0OLNfmFJdVTh8XZCymReE1XmK3H4iOjtPGEgsWfX5J1175WVzXF1zeW
 
 -- Dumped from database version 16.14 (Debian 16.14-1.pgdg12+1)
 -- Dumped by pg_dump version 16.14 (Debian 16.14-1.pgdg12+1)
@@ -3352,6 +3352,7 @@ CREATE TABLE public.user_trade_signal_overlays (
     ticker character varying(20) NOT NULL,
     signal_date date NOT NULL,
     kind character varying(20) NOT NULL,
+    source_ref character varying(40) DEFAULT ''::character varying NOT NULL,
     detail jsonb DEFAULT '{}'::jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT chk_overlay_kind CHECK (((kind)::text = ANY ((ARRAY['insider_sell'::character varying, 'insider_buy'::character varying])::text[])))
@@ -5102,7 +5103,7 @@ ALTER TABLE ONLY public.user_trade_fills
 --
 
 ALTER TABLE ONLY public.user_trade_signal_overlays
-    ADD CONSTRAINT uq_trade_overlay UNIQUE (user_id, stock_id, signal_date, kind);
+    ADD CONSTRAINT uq_trade_overlay UNIQUE (user_id, stock_id, signal_date, kind, source_ref);
 
 
 --
@@ -7210,5 +7211,5 @@ ALTER TABLE ONLY public.watchlists
 -- PostgreSQL database dump complete
 --
 
-\unrestrict XoHrQqQ6uXOD7qfwiN7g1zqtGwvFRjrVfT2GhukvLPphCWRX2rytQXkhSZSMO1x
+\unrestrict rdK4Y2vi0OLNfmFJdVTh8XZCymReE1XmK3H4iOjtPGEgsWfX5J1175WVzXF1zeW
 

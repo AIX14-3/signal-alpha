@@ -31,12 +31,14 @@ def test_upsert_uses_natural_key_and_jsonb_cast():
     asyncio.run(
         UserTradeSignalOverlayRepository(conn).upsert_overlay(
             user_id=7, stock_id=10, ticker="005930", signal_date=date(2026, 6, 10),
-            kind="insider_sell", detail='{"x":1}',
+            kind="insider_sell", source_ref="20260610000001:1", detail='{"x":1}',
         )
     )
     sql = conn.executed[0][0]
-    assert "ON CONFLICT (user_id, stock_id, signal_date, kind) DO UPDATE" in sql
-    assert "$6::jsonb" in sql
+    # source_ref 포함 자연키 — 같은 날 여러 공시가 collapse 되지 않는다.
+    assert "ON CONFLICT (user_id, stock_id, signal_date, kind, source_ref) DO UPDATE" in sql
+    assert "$7::jsonb" in sql
+    assert conn.executed[0][1][5] == "20260610000001:1"  # source_ref 위치 인자
 
 
 def test_list_by_stock_scopes_user_and_stock():
