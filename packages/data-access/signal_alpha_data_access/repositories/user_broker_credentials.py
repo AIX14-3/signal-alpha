@@ -132,6 +132,9 @@ class UserBrokerCredentialRepository:
 
         요청분(sync_requested_at NOT NULL)을 먼저 처리한다.
         """
+        # TODO(구독 게이팅): 구독 해지 후에도 active 자격증명이 계속 동기화된다. 워커가
+        # billing(signal_subscriptions)을 직접 읽는 건 권한/결합 문제라, 해지 시 backend 가
+        # 자격증명을 비활성화하는 이벤트 방식이 옳다(후속). 여기선 status='active'만 본다.
         return await self._connection.fetch(
             "SELECT id, user_id, broker, account_ref FROM user_broker_credentials "
             "WHERE status = 'active' AND ("

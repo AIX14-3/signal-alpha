@@ -134,8 +134,12 @@ async def sync_due_credentials(
         except Exception as exc:  # noqa: BLE001 - 자격증명 1건 실패 격리
             summary["failed_credentials"] += 1
             summary["errors"].append(f"credential={credential_id}: {exc}")
+            # last_error 는 유저에게 응답되므로 원문(브로커 URL·HTTP/DB 에러) 대신 coarse 사유만
+            # 저장한다. 상세는 서버 로그로만.
             await cred_repo.mark_status(
-                credential_id=credential_id, status="error", last_error=str(exc)[:500]
+                credential_id=credential_id,
+                status="error",
+                last_error="동기화에 실패했습니다. 키 또는 계좌 설정을 확인해 주세요.",
             )
             logger.warning("credential sync failed (id=%s): %s", credential_id, exc)
 

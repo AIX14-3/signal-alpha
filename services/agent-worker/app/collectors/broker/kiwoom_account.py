@@ -53,6 +53,8 @@ def normalize_kiwoom_rows(payload: dict[str, Any]) -> list[NormalizedFill]:
         )
         if not ticker or side is None or not fill_id or qty is None or price is None:
             continue
+        if filled_at is None:  # 날짜/시간 파싱 실패 — 그 체결만 skip(토스와 대칭, None 전파 방지)
+            continue
         if qty <= 0:
             continue
         fills.append(

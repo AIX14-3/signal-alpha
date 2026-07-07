@@ -8,7 +8,6 @@ import {
   type BrokerConnectBody,
   type BrokerCredential,
   type PatternSummary,
-  type TradeFill,
   type TradePlan,
   type TradePlanBody,
   type TradePostmortem,
@@ -18,7 +17,6 @@ import {
   getPatterns,
   getTradePostmortem,
   listBrokers,
-  listFills,
   listTradePlans,
   requestSync,
   upsertTradePlan,
@@ -27,7 +25,6 @@ import {
 type PostmortemState = {
   brokers: BrokerCredential[];
   plans: TradePlan[];
-  fills: TradeFill[];
   patterns: PatternSummary | null;
   trade: TradePostmortem | null;
   loading: boolean;
@@ -51,7 +48,6 @@ function message(error: unknown): string {
 export const usePostmortemStore = create<PostmortemState>((set, get) => ({
   brokers: [],
   plans: [],
-  fills: [],
   patterns: null,
   trade: null,
   loading: false,
@@ -61,33 +57,32 @@ export const usePostmortemStore = create<PostmortemState>((set, get) => ({
   loadOverview: async () => {
     set({ loading: true, error: null });
     try {
-      const [brokers, plans, fills, patterns] = await Promise.all([
+      const [brokers, plans, patterns] = await Promise.all([
         listBrokers(),
         listTradePlans(),
-        listFills(),
         getPatterns(),
       ]);
-      set({
-        brokers: brokers.items,
-        plans: plans.items,
-        fills: fills.items,
-        patterns,
-        loading: false,
-      });
+      set({ brokers: brokers.items, plans: plans.items, patterns, loading: false });
     } catch (error) {
       set({ loading: false, error: message(error) });
     }
   },
 
   connect: async (body) => {
+    // 폼(BrokerConnectForm)이 자체 try/catch 로 에러를 표시하므로 여기선 throw 를 전파한다.
     await connectBroker(body);
     const brokers = await listBrokers();
     set({ brokers: brokers.items });
   },
 
   disconnect: async (credentialId) => {
-    await disconnectBroker(credentialId);
-    set({ brokers: get().brokers.filter((b) => b.id !== credentialId) });
+    // onClick 에서 void 로 호출 — 실패 시 unhandled rejection 대신 error 로 표면화.
+    try {
+      await disconnectBroker(credentialId);
+      set({ brokers: get().brokers.filter((b) => b.id !== credentialId) });
+    } catch (error) {
+      set({ error: message(error) });
+    }
   },
 
   sync: async () => {
@@ -103,14 +98,20 @@ export const usePostmortemStore = create<PostmortemState>((set, get) => ({
   },
 
   savePlan: async (body) => {
+    // 폼(PlanSection)이 성공 시 입력을 비운다 — 실패는 throw 로 알려 필드를 보존한다.
     await upsertTradePlan(body);
     const plans = await listTradePlans();
     set({ plans: plans.items });
   },
 
   removePlan: async (stockCode) => {
-    await deleteTradePlan(stockCode);
-    set({ plans: get().plans.filter((p) => p.stock_code !== stockCode) });
+    // onClick 에서 void 로 호출 — 실패 시 error 로 표면화.
+    try {
+      await deleteTradePlan(stockCode);
+      set({ plans: get().plans.filter((p) => p.stock_code !== stockCode) });
+    } catch (error) {
+      set({ error: message(error) });
+    }
   },
 
   loadTrade: async (stockCode) => {
