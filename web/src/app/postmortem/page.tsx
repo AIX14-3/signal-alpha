@@ -62,9 +62,89 @@ export default function PostmortemPage() {
       {store.error ? <p className="text-[13.5px] text-red">{store.error}</p> : null}
 
       <BrokerSection />
+      <PlanSection />
       <TradeLookupSection />
       <PatternSection />
     </main>
+  );
+}
+
+// ---- 매수 계획(선택) ----------------------------------------------------
+function PlanSection() {
+  const { plans, savePlan, removePlan } = usePostmortemStore();
+  const [code, setCode] = useState("");
+  const [thesis, setThesis] = useState("");
+  const [target, setTarget] = useState("");
+  const [stop, setStop] = useState("");
+  const [sell, setSell] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const num = (v: string): number | null => {
+    const n = Number(v);
+    return v.trim() && !Number.isNaN(n) ? n : null;
+  };
+
+  return (
+    <section data-panel="postmortem-plans">
+      <h2 className="text-[16px] font-bold text-navy">매수 계획 기록 (선택)</h2>
+      <p className="mt-1 text-[13px] text-muted">
+        매수 시 목표가·손절가를 적어두면, 나중에 실제 매매를 내 규칙과 대조해 부검합니다.
+      </p>
+
+      {plans.length > 0 ? (
+        <ul className="mt-3 space-y-2">
+          {plans.map((p) => (
+            <li key={p.id} className="card flex items-center justify-between px-4 py-3 text-[13px]">
+              <span className="text-navy-soft">
+                <span className="font-semibold text-navy">{p.stock_code}</span>
+                {p.target_price ? ` · 목표 ${p.target_price}` : ""}
+                {p.stop_price ? ` · 손절 ${p.stop_price}` : ""}
+              </span>
+              <button type="button" onClick={() => void removePlan(p.stock_code)} className="text-[12.5px] text-muted hover:text-red">
+                삭제
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
+      <form
+        className="card mt-3 space-y-2 px-5 py-4"
+        data-flow="postmortem-plan-save"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          if (!code.trim()) return;
+          setBusy(true);
+          try {
+            await savePlan({
+              stock_code: code.trim(),
+              thesis,
+              target_price: num(target),
+              stop_price: num(stop),
+              sell_condition: sell.trim() || null,
+            });
+            setCode("");
+            setThesis("");
+            setTarget("");
+            setStop("");
+            setSell("");
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        <input className="card w-full px-4 py-2.5 text-[13.5px] outline-none focus:border-sky" placeholder="종목코드 (예: 005930)" value={code} onChange={(e) => setCode(e.target.value)} />
+        <input className="card w-full px-4 py-2.5 text-[13.5px] outline-none focus:border-sky" placeholder="매수 근거(thesis)" value={thesis} onChange={(e) => setThesis(e.target.value)} />
+        <div className="flex gap-2">
+          <input className="card w-full px-4 py-2.5 text-[13.5px] outline-none focus:border-sky" placeholder="목표가" inputMode="numeric" value={target} onChange={(e) => setTarget(e.target.value)} />
+          <input className="card w-full px-4 py-2.5 text-[13.5px] outline-none focus:border-sky" placeholder="손절가" inputMode="numeric" value={stop} onChange={(e) => setStop(e.target.value)} />
+        </div>
+        <input className="card w-full px-4 py-2.5 text-[13.5px] outline-none focus:border-sky" placeholder="매도 조건 (예: 실적 발표 후)" value={sell} onChange={(e) => setSell(e.target.value)} />
+        <button type="submit" disabled={busy || !code.trim()} className="brand-grad rounded-full px-5 py-2 text-[13px] font-bold text-white disabled:opacity-60">
+          {busy ? "저장 중…" : "계획 저장"}
+        </button>
+      </form>
+    </section>
   );
 }
 
