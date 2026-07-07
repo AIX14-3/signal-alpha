@@ -129,3 +129,21 @@ def test_mark_status_and_synced_emit_updates():
     sqls = " ".join(sql for sql, _ in conn.executed)
     assert "SET status = $2, last_error = $3" in sqls
     assert "last_synced_at = now()" in sqls
+    # mark_synced 는 동기화 요청 플래그도 소거한다.
+    assert "sync_requested_at = NULL" in sqls
+
+
+def test_list_sync_targets_gates_on_active_subscription():
+    import datetime
+
+    conn = _FakeConn()
+    asyncio.run(
+        UserBrokerCredentialRepository(conn).list_sync_targets(
+            stale_before=datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)
+        )
+    )
+    sql = conn.fetch_sql
+    # 구독 해지 후 동기화 방지 — 활성 구독 EXISTS 게이트(M2).
+    assert "EXISTS (" in sql and "FROM signal_subscriptions s" in sql
+    assert "s.status = 'active'" in sql
+    assert "s.expires_at IS NULL OR s.expires_at > now()" in sql
