@@ -5,6 +5,7 @@ import {
   getPosthocAlignment,
   type PosthocAlignmentGroup,
   type PosthocAlignmentItem,
+  type PosthocAlignmentResponse,
 } from "@/lib/apiClient";
 
 const FALLBACK_ITEMS: PosthocAlignmentItem[] = [
@@ -70,6 +71,18 @@ const SCOPE_DESCRIPTION: Record<PosthocAlignmentGroup["scope"], string> = {
   signal_based: "전체 발행 신호 기준의 5거래일 확정 결과를 비교합니다.",
 };
 
+const FALLBACK_METHODOLOGY: PosthocAlignmentResponse["methodology"] = {
+  basis: "저널에 저장된 발행 당시 데이터 방향성과 이후 확정된 관측 결과를 분리해 비교합니다.",
+  included: "positive/negative 방향성이 저장되고 7거래일 또는 30거래일 outcome이 확정된 케이스",
+  excluded: "neutral/mixed 방향, 확정 대기, 데이터 부족, 표본 부족 케이스",
+  signal_based_basis: "전체 발행 신호 기준은 별도 검증 기록에 남은 5거래일 확정 결과만 집계합니다.",
+};
+
+const FALLBACK_NOTICE =
+  "사후정합성은 과거 데이터 방향성의 검증 기록이며 미래 결과를 보장하지 않습니다. 특정 종목 행동 권유가 아니라 사용자 판단 보조를 위한 근거입니다.";
+
+const FALLBACK_ALL_ITEMS = FALLBACK_GROUPS.flatMap((group) => group.items);
+
 function displayValue(item: PosthocAlignmentItem): string {
   if (item.alignment_rate != null && item.sample_status === "집계 가능") {
     return `${item.alignment_rate.toFixed(1)}%`;
@@ -91,7 +104,10 @@ function summaryStatus(items: PosthocAlignmentItem[]): string {
 
 export function PosthocAlignmentSummary() {
   const [groups, setGroups] = useState<PosthocAlignmentGroup[]>(FALLBACK_GROUPS);
-  const [status, setStatus] = useState(summaryStatus(FALLBACK_ITEMS));
+  const [status, setStatus] = useState(summaryStatus(FALLBACK_ALL_ITEMS));
+  const [methodology, setMethodology] =
+    useState<PosthocAlignmentResponse["methodology"]>(FALLBACK_METHODOLOGY);
+  const [notice, setNotice] = useState(FALLBACK_NOTICE);
 
   useEffect(() => {
     getPosthocAlignment()
@@ -100,10 +116,14 @@ export function PosthocAlignmentSummary() {
         const nextItems = nextGroups.flatMap((group) => group.items);
         setGroups(nextGroups);
         setStatus(summaryStatus(nextItems));
+        setMethodology(data.methodology);
+        setNotice(data.notice);
       })
       .catch(() => {
         setGroups(FALLBACK_GROUPS);
-        setStatus(summaryStatus(FALLBACK_ITEMS));
+        setStatus(summaryStatus(FALLBACK_ALL_ITEMS));
+        setMethodology(FALLBACK_METHODOLOGY);
+        setNotice(FALLBACK_NOTICE);
       });
   }, []);
 
@@ -140,6 +160,30 @@ export function PosthocAlignmentSummary() {
         <p className="mt-2 text-[13px] leading-6 text-navy-soft">
           비율보다 확정 건수와 표본 한계를 먼저 확인합니다.
         </p>
+      </div>
+      <div className="card p-5" data-flow="posthoc-methodology-detail">
+        <div className="text-[13px] font-semibold text-muted">검증 기준</div>
+        <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+          <div>
+            <div className="text-[12.5px] font-bold text-navy">기준</div>
+            <p className="mt-1 text-[13px] leading-6 text-navy-soft">{methodology.basis}</p>
+          </div>
+          <div>
+            <div className="text-[12.5px] font-bold text-navy">포함 기준</div>
+            <p className="mt-1 text-[13px] leading-6 text-navy-soft">{methodology.included}</p>
+          </div>
+          <div>
+            <div className="text-[12.5px] font-bold text-navy">제외 기준</div>
+            <p className="mt-1 text-[13px] leading-6 text-navy-soft">{methodology.excluded}</p>
+          </div>
+          {methodology.signal_based_basis ? (
+            <div>
+              <div className="text-[12.5px] font-bold text-navy">전체 발행 신호 기준</div>
+              <p className="mt-1 text-[13px] leading-6 text-navy-soft">{methodology.signal_based_basis}</p>
+            </div>
+          ) : null}
+        </div>
+        <p className="mt-4 border-t border-line pt-3 text-[12.5px] leading-6 text-muted">{notice}</p>
       </div>
     </section>
   );
