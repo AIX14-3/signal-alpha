@@ -31,7 +31,10 @@ export function HomeRightPane() {
     );
   }
 
-  const name = report?.stock.stock_name ?? selectedCode;
+  // FR-4 stale 가드: reportStore 는 공유·가드 없음 → 응답이 현재 선택과 일치할 때만 유효.
+  // (빠른 연속 선택 시 늦게 도착한 이전 종목 리포트가 뒤덮는 것 방지)
+  const freshReport = report && report.stock.stock_code === selectedCode ? report : null;
+  const name = freshReport?.stock.stock_name ?? selectedCode;
 
   return (
     <section className="flex min-h-0 flex-col gap-5">
@@ -52,8 +55,8 @@ export function HomeRightPane() {
         </div>
       </div>
 
-      {/* FR-7 왜 이 신호일까 */}
-      <WhySignal report={report} loading={reportLoading} code={selectedCode} />
+      {/* FR-7 왜 이 신호일까 — freshReport 로 stale 방지 */}
+      <WhySignal report={freshReport} loading={reportLoading || (!!report && !freshReport)} code={selectedCode} />
 
       {/* FR-6 종목 뉴스 목록 */}
       <div className="card overflow-hidden">
