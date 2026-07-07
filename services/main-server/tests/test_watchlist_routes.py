@@ -52,6 +52,28 @@ class FakeConnection:
             "latest_collected_at": datetime(2026, 7, 7, 9, 0, tzinfo=UTC),
             "recent_articles": 5,
         }
+        self.recent_news_rows = [
+            {
+                "stock_code": "005930",
+                "stock_name": "삼성전자",
+                "title": "삼성전자 뉴스",
+                "summary": "요약",
+                "url": "https://n.example/1",
+                "press": "언론사",
+                "source": "NAVER_NEWS",
+                "published_at": datetime(2026, 7, 7, 8, 0, tzinfo=UTC),
+            },
+            {
+                "stock_code": "000660",
+                "stock_name": None,  # 미매핑 종목 — 이름 없이 보존
+                "title": "하이닉스 뉴스",
+                "summary": None,
+                "url": None,
+                "press": None,
+                "source": "NAVER_NEWS",
+                "published_at": None,
+            },
+        ]
 
     async def fetchrow(self, sql, *args):
         if "FROM api.stock_news" in sql and "total_articles" in sql:
@@ -102,6 +124,8 @@ class FakeConnection:
         raise AssertionError(f"Unexpected fetchrow SQL: {sql}")
 
     async def fetch(self, sql, *args):
+        if "FROM api.stock_news" in sql and "LEFT JOIN api.stocks" in sql:
+            return self.recent_news_rows[: args[0]]
         if "ticker ILIKE" in sql:
             query = args[0].strip("%")
             return [
@@ -203,6 +227,18 @@ class WatchlistRoutesTest(unittest.TestCase):
         self.assertEqual(body["recent_articles"], 5)
         self.assertTrue(body["latest_collected_at"].startswith("2026-07-07"))
         self.assertIn("notice", body)
+
+    def test_recent_news_returns_global_feed_publicly(self):
+        # 공개 엔드포인트 — 토큰 없이 200, 종목명 포함 전역 피드. 미매핑 종목은 name=null 보존.
+        response = self.client.get("/api/news/recent?limit=10")
+
+        self.assertEqual(response.status_code, 200)
+        items = response.json()["items"]
+        self.assertEqual(items[0]["stock_code"], "005930")
+        self.assertEqual(items[0]["stock_name"], "삼성전자")
+        self.assertEqual(items[0]["title"], "삼성전자 뉴스")
+        self.assertIsNone(items[1]["stock_name"])
+        self.assertIsNone(items[1]["published_at"])
 
     def test_watchlist_requires_authentication(self):
         response = self.client.get("/api/watchlists")
