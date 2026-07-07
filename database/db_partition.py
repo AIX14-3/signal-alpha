@@ -76,6 +76,8 @@ BACKEND_TABLES: frozenset[str] = frozenset(
         # 매매 부검 — 유저 실매매 체결(공통 정규화). 워커 동기화 러너가 INSERT,
         # backend 가 부검 조회 SELECT + 유저 데이터 삭제 DELETE. stocks(PUBLISHED) 매핑.
         "user_trade_fills",
+        # 매매 부검 — 유저 매매 계획(선택 입력, Plan vs Actual 기준선). backend CRUD.
+        "user_trade_plans",
     }
 )
 
