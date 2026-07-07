@@ -1,0 +1,42 @@
+# 커뮤니티 인기 랭킹 배치 — 매시 정각 CronJob(run_community_rankings.py).
+# backend DB(community_*)만 접근: 게시글/댓글/반응/조회 집계 → community_post_rankings
+# (post_id, window_kind) 멱등 upsert. weekly=롤링 7일, all=전체. 테이블 한정 grant
+# 계약(20260707_1500). BACKEND_DATABASE_URL 미설정이면 러너가 no-op 종료.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: community-rankings
+  namespace: signal-alpha
+  labels:
+    app.kubernetes.io/part-of: signal-alpha
+    app.kubernetes.io/name: community-rankings
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  schedule: "0 * * * *"
+  timeZone: "Asia/Seoul"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/part-of: signal-alpha
+            app.kubernetes.io/name: community-rankings
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: community-rankings
+              image: signal-alpha-agent-worker
+              command: ["python", "run_community_rankings.py"]
+              envFrom:
+                - configMapRef: { name: signal-alpha-config }
+                - secretRef: { name: signal-alpha-secrets }
+              env:
+                - name: SERVICE_NAME
+                  value: community-rankings
+                - name: BACKEND_DATABASE_URL  # 백엔드 DB (community_* 읽기 + 랭킹 쓰기)
+                  valueFrom: { secretKeyRef: { name: signal-alpha-secrets, key: BACKEND_DATABASE_URL } }
