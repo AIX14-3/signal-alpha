@@ -1,6 +1,6 @@
 # Signal Alpha Web Frontend 스펙 (신규 기획)
 
-> 기준일: 2026-06-24 (전면 재설계 — 포트원 본인인증/소셜연동/리포트 열람 쿼터/단일 구독)
+> 기준일: 2026-06-24 (전면 재설계 — 포트원 본인인증/소셜연동/단일 구독). 리포트 전체 공개(2026-07-07 비회원 블라인드·쿼터 제거).
 > 대상: `web/` (Next.js 15 App Router + React 19 + Zustand 5 + Tailwind v4 + Recharts 3)
 > 목적: 신규 기획에 맞춘 사용자-facing 웹의 화면·상태·API 소비 계약을 고정한다. 엔드포인트/응답 shape 정본은 백엔드 스펙이며 이 문서는 이를 1:1 참조한다.
 > 연관 문서: [main-server-api-spec.md](./main-server-api-spec.md), [web-frontend-design.md](./web-frontend-design.md), [db-schema-spec.md](./db-schema-spec.md)
@@ -9,9 +9,9 @@
 
 ## 1. 범위와 원칙
 
-Frontend가 담당한다: 종목 검색→리포트 흐름, 포트원 본인인증 가입/로그인, 소셜 연동/해제, 관심종목(무제한), 리포트 열람·쿼터 표시·비회원 블라인드, 소스 상세 5종, 저널, 구독 결제/취소, 관리자.
+Frontend가 담당한다: 종목 검색→리포트 흐름(전체 공개), 포트원 본인인증 가입/로그인, 소셜 연동/해제, 관심종목(무제한), 소스 상세 5종, 저널, 구독 결제/취소, 관리자.
 
-Frontend가 하지 않는다: 데이터 수집/분석/스코어링, 비즈니스 규칙 최종 판정(쿼터/권한은 백엔드가 최종 검증, 프론트는 표시·유도만).
+Frontend가 하지 않는다: 데이터 수집/분석/스코어링, 비즈니스 규칙 최종 판정(권한은 백엔드가 최종 검증, 프론트는 표시·유도만).
 
 모든 문구는 투자 추천처럼 보이면 안 된다. 방향성 라벨: `positive`→"상방 데이터 우세", `negative`→"하방 데이터 우세", `neutral`→"중립", `mixed`→"혼조", `unknown`→"데이터 없음". 모든 리포트에 `notice` 노출. [[main-server-api-spec]] 원칙 준수.
 
@@ -20,8 +20,8 @@ Frontend가 하지 않는다: 데이터 수집/분석/스코어링, 비즈니스
 | 라우트 | 화면 | 인증 |
 |---|---|---|
 | `/` | 메인/검색 | 공개 |
-| `/report/[ticker]` | 리포트(5소스 + 종합) | 공개(비회원 블라인드) |
-| `/report/[ticker]/[source]` | 소스 상세 5종 | 공개(dart/datalab만)·회원 전체 |
+| `/report/[ticker]` | 리포트(5소스 + 종합) | 공개(전체) |
+| `/report/[ticker]/[source]` | 소스 상세 5종 | 공개(전체) |
 | `/login` | 로그인(본인인증) | 공개 |
 | `/signup` | 회원가입(본인인증) | 공개 |
 | `/mypage` | 마이페이지(탭) | 회원 |
@@ -50,10 +50,8 @@ Frontend가 하지 않는다: 데이터 수집/분석/스코어링, 비즈니스
 | `listSocial()` / `linkSocial(provider, {code,redirect_uri})` / `socialLogin(provider,...)` / `unlinkSocial(provider)` | `/api/auth/social/*` |
 | `searchStocks(query)` / `listStocks()` | GET `/api/stocks/search` / `/api/stocks` |
 | `getWatchlist()` / `addWatchlist(stock_code)` / `removeWatchlist(stock_code)` | `/api/watchlists*` |
-| `getReport(stock_code)` | GET `/api/reports/{stock_code}` |
-| `issueReport(stock_code)` | POST `/api/reports/{stock_code}/issue` |
-| `getQuota()` | GET `/api/reports/quota` |
-| `getSourceDetail(stock_code, source)` | GET `/api/reports/{stock_code}/sources/{source}` |
+| `getReport(stock_code)` | GET `/api/reports/{stock_code}` (전체 공개) |
+| `getSourceDetail(stock_code, source)` | GET `/api/reports/{stock_code}/sources/{source}` (전체 공개) |
 | `listJournals(params)` / `createJournal(body)` / `get/patch/deleteJournal(id)` | `/api/journals*` |
 | `getPlans()` / `getMySubscription()` | `/api/subscriptions/*` |
 | `checkout()` / `confirmPayment({imp_uid, merchant_uid})` / `cancelPayment()` | `/api/payments/*` |
@@ -61,17 +59,15 @@ Frontend가 하지 않는다: 데이터 수집/분석/스코어링, 비즈니스
 
 ### 핵심 타입 (발췌)
 ```ts
-type ReportSource = { source: 'price'|'dart'|'hiring'|'datalab'|'report'; direction: string|null; score: number|null; data_status?: string; summary: string|null; locked: boolean };
+type ReportSource = { source: 'price'|'dart'|'hiring'|'datalab'|'report'; direction: string|null; score: number|null; data_status?: string; summary: string|null };
 type Report = {
   stock: Stock;
   report_version?: { final_signal_id: number; run_key: string; signal_date: string; updated_at: string };
   direction: string|null; score: number|null; alignment_rate: number|null;
   source_agreement?: string; warning_level?: string; data_status?: string; summary: string|null;
   sources: ReportSource[];
-  access: { unlocked: boolean; is_member: boolean; issued_via?: 'free'|'subscription'; free_remaining?: number };
   notice: string;
-};
-type Quota = { free_quota: number; free_used: number; free_remaining: number; subscription_active: boolean };
+}; // 전체 공개 — access/locked 필드 없음(비회원 블라인드 제거)
 type SocialLink = { provider: 'naver'|'google'|'kakao'; linked: boolean; linked_at?: string };
 ```
 
@@ -87,8 +83,7 @@ type SocialLink = { provider: 'naver'|'google'|'kakao'; linked: boolean; linked_
 | `authStore` | `user`, `status`(idle/loading/authenticated/anonymous), `loginWithImpUid`, `signup`, `logout`, `hydrate` |
 | `socialStore` | `links[]`, `load`, `link(provider)`, `unlink(provider)` |
 | `watchlistStore` | `items`, `count`(무제한, limit 없음), `load`, `add`, `remove` |
-| `reportStore` | `report`, `loading`, `load(stock)`, `issue(stock)`(언락) |
-| `quotaStore` | `free_remaining`, `subscription_active`, `load` |
+| `reportStore` | `report`, `loading`, `error`, `load(stock)` (전체 공개 — 언락/쿼터 없음) |
 | `paymentStore` | `checkout`, `confirm`, `cancel`, `status` |
 | `journalStore` | `items`, `load`, `create`, `update`, `remove` |
 | `adminStore` | `session`, `login`, `logout`, `users`, `stats`, `setSubscription` |
@@ -117,7 +112,7 @@ type SocialLink = { provider: 'naver'|'google'|'kakao'; linked: boolean; linked_
 
 ## 6. 메인/검색 (`/`)
 
-검색 히어로(애니메이션 배경 `bg-fx`) → 입력 → `searchStocks` 자동완성 → 선택 시 `/report/{stock_code}` 이동. 비로그인도 가능(리포트에서 블라인드).
+검색 히어로(애니메이션 배경 `bg-fx`) → 입력 → `searchStocks` 자동완성 → 선택 시 `/report/{stock_code}` 이동. 비로그인도 리포트 전체를 볼 수 있다.
 
 ---
 
@@ -125,12 +120,8 @@ type SocialLink = { provider: 'naver'|'google'|'kakao'; linked: boolean; linked_
 
 - `getReport(ticker)` 로 현재 버전 로드. 5개 소스 카드(주식정보/DART/채용공고/네이버 키워드/증권사 리포트) 각 LLM 요약 + 종합 게이지(`score`/`direction`/`alignment_rate`).
 - 각 카드 클릭 → `/report/[ticker]/[source]`.
-- **열람/쿼터 UI**:
-  - 회원·미언락: "리포트 발행(열람)" 버튼 → `issueReport`. 성공 시 전체 표시 + `free_remaining` 배지.
-  - `402 REPORT_QUOTA_EXCEEDED` → 구독 유도 모달(`/pricing`).
-  - 구독자: 무제한, 쿼터 배지 숨김 또는 "구독 중".
-  - 새 버전 안내: `report_version.updated_at` 변동 시 "업데이트된 리포트가 있습니다" → 재발행(차감).
-- **비회원 블라인드**: `access.unlocked=false` → DART·네이버 카드만 노출, 나머지(주식정보/채용/증권사리포트)와 종합점수는 잠금 오버레이 + 로그인/가입 CTA.
+- **전체 공개**: 비로그인·비구독 포함 누구나 종합 점수·방향·요약과 전체 소스 카드를 본다. 잠금 오버레이·발행(언락)·쿼터 배지 없음.
+- 구독 상태 표시("구독 중" 배지)와 **저널 저장** 진입은 리포트 응답이 아니라 `user.subscription_active`(authStore)로 판정한다(저널은 구독 전용 기능이라 구독자에게만 저장 UI 노출).
 
 ---
 
@@ -142,7 +133,7 @@ type SocialLink = { provider: 'naver'|'google'|'kakao'; linked: boolean; linked_
 - hiring: 공고수·증감 추이.
 - datalab: 검색지수·급등 표시.
 - report: 증권사/목표가/투자의견.
-- 접근: 비회원은 dart/datalab만(나머지 `401 MEMBERSHIP_REQUIRED` → 잠금 화면). 회원 미언락은 dart/datalab 외 블라인드.
+- 접근: **전체 공개** — 모든 소스 상세를 로그인 없이 연다(잠금 화면·`MEMBERSHIP_REQUIRED` 없음).
 
 ---
 
@@ -195,10 +186,8 @@ type SocialLink = { provider: 'naver'|'google'|'kakao'; linked: boolean; linked_
 
 ## 13. 공통 컴포넌트
 
-- **잠금 오버레이**(`<LockedOverlay/>`): 비회원/미언락 소스·종합점수 위 블러 + CTA.
-- **쿼터 배지**(`<QuotaBadge/>`): "무료 N회 남음" / "구독 중".
-- **쿼터 소진 모달**: `402` 시 구독 유도.
 - **notice 토스트/푸터**: 모든 리포트 응답 `notice` 노출.
+  (리포트 전체 공개로 잠금 오버레이·쿼터 배지·쿼터 소진 모달은 제거됨.)
 - 디자인 토큰·패턴은 [web-frontend-design.md](./web-frontend-design.md).
 
 ---
@@ -206,7 +195,7 @@ type SocialLink = { provider: 'naver'|'google'|'kakao'; linked: boolean; linked_
 ## 14. 프론트 정합화 과제 (현 코드 → 목표)
 
 - **교체**: `authStore`/`AuthForm`/`/login`/`/signup` 의 이메일·비번 → 포트원 본인인증. `watchlistStore` 의 `limit` 제거(무제한). `apiClient.ts` 의 `/api/signals*` 소비 → `/api/reports/*`.
-- **신규**: `reportStore`/`quotaStore`/`socialStore`/`paymentStore`/`journalStore`/`adminStore`. 소스 상세 라우트 `[source]`, 마이페이지 탭(탈퇴/소셜/구독), 잠금 오버레이·쿼터 배지 컴포넌트, 포트원 SDK(인증/결제) 로딩.
+- **신규**: `reportStore`/`socialStore`/`paymentStore`/`journalStore`/`adminStore`. 소스 상세 라우트 `[source]`, 마이페이지 탭(탈퇴/소셜/구독), 포트원 SDK(인증/결제) 로딩. (리포트 전체 공개 — 잠금 오버레이·쿼터 배지·quotaStore 없음.)
 - **표준화**: `direction` 소문자 enum 기준 라벨 변환, `SOURCE_LABEL` 5종, 모든 리포트 `notice` 노출.
 
 ---
@@ -216,7 +205,7 @@ type SocialLink = { provider: 'naver'|'google'|'kakao'; linked: boolean; linked_
 | 페이지 | 호출 엔드포인트 |
 |---|---|
 | `/` | `GET /api/stocks/search` |
-| `/report/[ticker]` | `GET /api/reports/{code}`, `POST /api/reports/{code}/issue`, `GET /api/reports/quota` |
+| `/report/[ticker]` | `GET /api/reports/{code}` (전체 공개) |
 | `/report/[ticker]/[source]` | `GET /api/reports/{code}/sources/{source}` |
 | `/login` `/signup` | `POST /api/auth/login` `signup`, 포트원 본인인증 |
 | `/mypage` | `GET/PATCH/DELETE /api/users/me`, `/api/watchlists*`, `/api/subscriptions/me`, `/api/payments/cancel`, `/api/journals*`, `/api/auth/social*` |
