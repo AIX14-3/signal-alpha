@@ -156,6 +156,14 @@ services:
       GUARD_SEVERITY_THRESHOLD: ${GUARD_SEVERITY_THRESHOLD:-70}
       GUARD_AUTO_MAX_SCOPE: ${GUARD_AUTO_MAX_SCOPE:-report_generation}
       GUARD_AUTO_COOLDOWN_SEC: ${GUARD_AUTO_COOLDOWN_SEC:-3600}
+      # 종목별 뉴스 데몬(Naver News → backend DB stock_news). guard 처럼 backend 풀로 적재.
+      NEWS_ENABLED: ${NEWS_ENABLED:-false}
+      NEWS_LOOKBACK_DAYS: ${NEWS_LOOKBACK_DAYS:-14}
+      NEWS_MAX_ITEMS: ${NEWS_MAX_ITEMS:-20}
+      NEWS_POLL_INTERVAL_SEC: ${NEWS_POLL_INTERVAL_SEC:-900}
+      NEWS_BATCH_SIZE: ${NEWS_BATCH_SIZE:-20}
+      NEWS_REFRESH_HOURS: ${NEWS_REFRESH_HOURS:-6}
+      NEWS_FETCH_TIMEOUT_SECONDS: ${NEWS_FETCH_TIMEOUT_SECONDS:-15}
       # 단일 통합 개발 기동에서만 true 로 켠다(run_collector_instance.py 가 기본 가격 수집 유닛).
       PRICE_COLLECTOR_ENABLED: ${PRICE_COLLECTOR_ENABLED:-false}
       KIWOOM_APP_KEY: ${KIWOOM_APP_KEY:-}

@@ -24,6 +24,8 @@ async def lifespan_with_database(app: FastAPI) -> AsyncIterator[None]:
     app.state.queue_drain_status = None
     app.state.guard_task = None
     app.state.guard_status = None
+    app.state.news_task = None
+    app.state.news_status = None
 
     if settings.database_url:
         from signal_alpha_data_access import DatabaseSettings, create_pool
@@ -118,12 +120,38 @@ async def lifespan_with_database(app: FastAPI) -> AsyncIterator[None]:
                 name="guard-daemon",
             )
 
+    # 종목별 뉴스 수집 데몬 — stock_news 는 backend DB 소유(guard 와 동일 계약)이므로
+    # backend 풀로만 돈다. BACKEND_DATABASE_URL 미설정이면 기동하지 않음.
+    if settings.news_enabled:
+        if app.state.backend_database_pool is None:
+            logger.warning(
+                "NEWS_ENABLED but BACKEND_DATABASE_URL is not set; news daemon will not start"
+            )
+        else:
+            from app.news.daemon import NewsRuntimeStatus, supervise_news_daemon
+
+            app.state.news_status = NewsRuntimeStatus()
+            app.state.news_task = asyncio.create_task(
+                supervise_news_daemon(
+                    app.state.backend_database_pool,
+                    settings,
+                    runtime_status=app.state.news_status,
+                ),
+                name="news-daemon",
+            )
+
     try:
         yield
     finally:
         # 순서 고정: 데몬 cancel → 완료 대기 → pool.close
         # (역순이면 데몬이 닫힌 풀을 쓰다 InterfaceError)
-        for attr in ("price_collector_task", "ops_daemon_task", "queue_drain_task", "guard_task"):
+        for attr in (
+            "price_collector_task",
+            "ops_daemon_task",
+            "queue_drain_task",
+            "guard_task",
+            "news_task",
+        ):
             task = getattr(app.state, attr, None)
             if task is not None:
                 task.cancel()

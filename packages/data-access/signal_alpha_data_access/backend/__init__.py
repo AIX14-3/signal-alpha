@@ -15,6 +15,7 @@ normalization, scoring, dart_* 등)에 의존하지 않는다. main-server 코�
 
 from signal_alpha_data_access.backend.read_contract import (
     ProcessingQueueRepository,
+    StockNewsRepository,
     StockRepository,
 )
 from signal_alpha_data_access.repositories.admin import AdminRepository
@@ -32,6 +33,7 @@ __all__ = [
     "CollectionScheduleRepository",
     "ProcessingQueueRepository",
     "SignalRepository",
+    "StockNewsRepository",
     "StockRepository",
     "UserBillingRepository",
     "UserSessionRepository",

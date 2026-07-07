@@ -7,7 +7,11 @@ from pydantic import BaseModel
 
 from app.api.routes.auth import NOTICE, get_current_user
 from app.core.database import get_database_pool
-from signal_alpha_data_access.backend import StockRepository, UserSignalRepository
+from signal_alpha_data_access.backend import (
+    StockNewsRepository,
+    StockRepository,
+    UserSignalRepository,
+)
 
 
 # 신규 기획: 관심종목은 회원/유료 무관 무제한. 한도 검사를 두지 않는다.
@@ -43,6 +47,24 @@ async def search_stocks(
     async with pool.acquire() as connection:
         rows = await StockRepository(connection).search_active(clean_query, limit=min(limit, 50))
     return {"items": [_stock_response(dict(row)) for row in rows]}
+
+
+@stocks_router.get("/{stock_code}/news")
+async def list_stock_news(
+    stock_code: str,
+    limit: int = 20,
+    pool: Any = Depends(get_database_pool),
+) -> dict[str, Any]:
+    """종목별 최신 뉴스 목록 + 건수(공개). 워커 뉴스 데몬이 api.stock_news 로 적재."""
+    ticker = stock_code.strip()
+    async with pool.acquire() as connection:
+        repository = StockNewsRepository(connection)
+        rows = await repository.list_by_ticker(ticker, limit=min(max(limit, 1), 50))
+        count = await repository.count_by_ticker(ticker)
+    return {
+        "count": count,
+        "items": [_news_response(dict(row)) for row in rows],
+    }
 
 
 @watchlists_router.get("")
@@ -110,6 +132,18 @@ def _stock_response(row: dict[str, Any]) -> dict[str, Any]:
         "stock_name": row["name"],
         "market": row.get("market"),
         "sector": row.get("sector"),
+    }
+
+
+def _news_response(row: dict[str, Any]) -> dict[str, Any]:
+    published_at = row.get("published_at")
+    return {
+        "title": row.get("title"),
+        "summary": row.get("summary"),
+        "url": row.get("url"),
+        "press": row.get("press"),
+        "source": row.get("source"),
+        "published_at": published_at.isoformat() if published_at else None,
     }
 
 
