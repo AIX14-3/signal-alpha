@@ -46,10 +46,16 @@ class FakeConnection:
         }
         self.watchlists = []
         self.next_watchlist_id = 1
+        # 전역 뉴스 집계용 canned 결과. 마지막 window_hours 인자를 기록해 클램프 검증.
+        self.news_summary_row = {"total": 5, "recent": 3, "recent_stock_count": 2}
+        self.last_summary_window = None
 
     async def fetchrow(self, sql, *args):
         if "FROM users" in sql and "WHERE id = $1" in sql:
             return self.users_by_id.get(args[0])
+        if "FROM api.stock_news" in sql and "COUNT(*)" in sql:
+            self.last_summary_window = args[0]
+            return self.news_summary_row
         if "FROM api.stocks" in sql and "WHERE ticker = $1" in sql:
             return self.stocks_by_ticker.get(args[0])
         if "FROM watchlists" in sql and "INNER JOIN api.stocks" in sql:
@@ -183,6 +189,27 @@ class WatchlistRoutesTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         codes = {item["stock_code"] for item in response.json()["items"]}
         self.assertEqual(codes, {"005930", "000660"})
+
+    def test_news_summary_is_public_and_returns_counts(self):
+        response = self.client.get("/api/news/summary")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["total"], 5)
+        self.assertEqual(body["recent"], 3)
+        self.assertEqual(body["recent_stock_count"], 2)
+        self.assertEqual(body["window_hours"], 24)
+        self.assertEqual(self.connection.last_summary_window, 24)
+
+    def test_news_summary_clamps_window_hours(self):
+        too_large = self.client.get("/api/news/summary?window_hours=99999")
+        self.assertEqual(too_large.status_code, 200)
+        self.assertEqual(too_large.json()["window_hours"], 720)
+        self.assertEqual(self.connection.last_summary_window, 720)
+
+        too_small = self.client.get("/api/news/summary?window_hours=0")
+        self.assertEqual(too_small.json()["window_hours"], 1)
+        self.assertEqual(self.connection.last_summary_window, 1)
 
     def test_watchlist_requires_authentication(self):
         response = self.client.get("/api/watchlists")

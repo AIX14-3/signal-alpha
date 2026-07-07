@@ -18,6 +18,11 @@ from signal_alpha_data_access.backend import (
 
 stocks_router = APIRouter(prefix="/api/stocks", tags=["stocks"])
 watchlists_router = APIRouter(prefix="/api/watchlists", tags=["watchlists"])
+news_router = APIRouter(prefix="/api/news", tags=["news"])
+
+# 집계 창 한도: 1시간 ~ 30일. 과도한 window 로 인한 스캔 낭비/오남용 방어.
+NEWS_SUMMARY_WINDOW_MIN_HOURS = 1
+NEWS_SUMMARY_WINDOW_MAX_HOURS = 720
 
 
 class WatchlistCreateRequest(BaseModel):
@@ -65,6 +70,25 @@ async def list_stock_news(
         "count": count,
         "items": [_news_response(dict(row)) for row in rows],
     }
+
+
+@news_router.get("/summary")
+async def news_summary(
+    window_hours: int = 24,
+    pool: Any = Depends(get_database_pool),
+) -> dict[str, Any]:
+    """전역 뉴스 집계(공개) — 토스식 "뉴스 N건을 분석한 시그널" 헤더 공급원.
+
+    recent = window_hours 내 published_at 건수(헤드라인), total = 전체 적재 건수,
+    recent_stock_count = 그 창에서 뉴스가 있는 종목 수.
+    """
+    window = min(
+        max(window_hours, NEWS_SUMMARY_WINDOW_MIN_HOURS),
+        NEWS_SUMMARY_WINDOW_MAX_HOURS,
+    )
+    async with pool.acquire() as connection:
+        summary = await StockNewsRepository(connection).summary(window_hours=window)
+    return {**summary, "window_hours": window}
 
 
 @watchlists_router.get("")

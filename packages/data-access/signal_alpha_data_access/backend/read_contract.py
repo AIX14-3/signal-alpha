@@ -89,6 +89,34 @@ class StockNewsRepository:
         )
         return int(value or 0)
 
+    async def summary(self, *, window_hours: int = 24) -> dict[str, int]:
+        """전역 뉴스 집계 — 토스식 "뉴스 N건" 헤더 공급원.
+
+        total = 전체 적재 건수, recent = window_hours 내 published_at 건수,
+        recent_stock_count = 그 창에서 뉴스가 있는 종목 수. 단일 스캔 집계.
+        """
+        row = await self._connection.fetchrow(
+            """
+            SELECT
+                COUNT(*) AS total,
+                COUNT(*) FILTER (
+                    WHERE published_at >= now() - make_interval(hours => $1::int)
+                ) AS recent,
+                COUNT(DISTINCT stock_id) FILTER (
+                    WHERE published_at >= now() - make_interval(hours => $1::int)
+                ) AS recent_stock_count
+            FROM api.stock_news
+            """,
+            window_hours,
+        )
+        if row is None:
+            return {"total": 0, "recent": 0, "recent_stock_count": 0}
+        return {
+            "total": int(row["total"] or 0),
+            "recent": int(row["recent"] or 0),
+            "recent_stock_count": int(row["recent_stock_count"] or 0),
+        }
+
 
 class ProcessingQueueRepository:
     """분석 파이프라인 상태 읽기 (api.analysis_pipeline_status). backend 전용.

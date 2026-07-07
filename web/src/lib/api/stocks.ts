@@ -51,3 +51,15 @@ export async function listStockNews(
     auth: "none",
   });
 }
+
+// 전역 뉴스 집계. 토스식 "뉴스 N건을 분석한 시그널" 헤더 소스. recent=창 내 건수(헤드라인).
+export type NewsSummary = {
+  total: number;
+  recent: number;
+  recent_stock_count: number;
+  window_hours: number;
+};
+
+export async function getNewsSummary(windowHours = 24): Promise<NewsSummary> {
+  return apiFetch(`/api/news/summary?window_hours=${windowHours}`, { auth: "none" });
+}
