@@ -89,6 +89,27 @@ class StockNewsRepository:
         )
         return int(value or 0)
 
+    async def summary(self, *, recent_hours: int = 24) -> dict[str, Any]:
+        """전역 뉴스 집계 — 총 기사수·뉴스 보유 종목수·최근 N시간 기사수·최신 수집시각.
+
+        토스식 '뉴스 N건을 분석한 시그널' 헤더용(공개). 종목 무관 전체 집계라 파라미터는
+        최근 윈도우(시간)만 받는다.
+        """
+        row = await self._connection.fetchrow(
+            """
+            SELECT
+                COUNT(*) AS total_articles,
+                COUNT(DISTINCT stock_code) AS stock_count,
+                MAX(collected_at) AS latest_collected_at,
+                COUNT(*) FILTER (
+                    WHERE collected_at >= now() - make_interval(hours => $1)
+                ) AS recent_articles
+            FROM api.stock_news
+            """,
+            recent_hours,
+        )
+        return dict(row) if row is not None else {}
+
 
 class ProcessingQueueRepository:
     """분석 파이프라인 상태 읽기 (api.analysis_pipeline_status). backend 전용.

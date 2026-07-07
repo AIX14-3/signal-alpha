@@ -18,6 +18,7 @@ from signal_alpha_data_access.backend import (
 
 stocks_router = APIRouter(prefix="/api/stocks", tags=["stocks"])
 watchlists_router = APIRouter(prefix="/api/watchlists", tags=["watchlists"])
+news_router = APIRouter(prefix="/api/news", tags=["news"])
 
 
 class WatchlistCreateRequest(BaseModel):
@@ -65,6 +66,16 @@ async def list_stock_news(
         "count": count,
         "items": [_news_response(dict(row)) for row in rows],
     }
+
+
+@news_router.get("/summary")
+async def news_summary(
+    pool: Any = Depends(get_database_pool),
+) -> dict[str, Any]:
+    """전역 뉴스 집계(공개) — 토스식 '뉴스 N건을 분석한 시그널' 헤더 데이터 공급원."""
+    async with pool.acquire() as connection:
+        data = await StockNewsRepository(connection).summary()
+    return _news_summary_response(data)
 
 
 @watchlists_router.get("")
@@ -144,6 +155,17 @@ def _news_response(row: dict[str, Any]) -> dict[str, Any]:
         "press": row.get("press"),
         "source": row.get("source"),
         "published_at": published_at.isoformat() if published_at else None,
+    }
+
+
+def _news_summary_response(data: dict[str, Any]) -> dict[str, Any]:
+    latest = data.get("latest_collected_at")
+    return {
+        "total_articles": int(data.get("total_articles") or 0),
+        "stock_count": int(data.get("stock_count") or 0),
+        "recent_articles": int(data.get("recent_articles") or 0),
+        "latest_collected_at": latest.isoformat() if hasattr(latest, "isoformat") else latest,
+        "notice": NOTICE,
     }
 
 

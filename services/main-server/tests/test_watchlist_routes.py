@@ -46,8 +46,16 @@ class FakeConnection:
         }
         self.watchlists = []
         self.next_watchlist_id = 1
+        self.news_summary_row = {
+            "total_articles": 42,
+            "stock_count": 7,
+            "latest_collected_at": datetime(2026, 7, 7, 9, 0, tzinfo=UTC),
+            "recent_articles": 5,
+        }
 
     async def fetchrow(self, sql, *args):
+        if "FROM api.stock_news" in sql and "total_articles" in sql:
+            return self.news_summary_row
         if "FROM users" in sql and "WHERE id = $1" in sql:
             return self.users_by_id.get(args[0])
         if "FROM api.stocks" in sql and "WHERE ticker = $1" in sql:
@@ -183,6 +191,18 @@ class WatchlistRoutesTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         codes = {item["stock_code"] for item in response.json()["items"]}
         self.assertEqual(codes, {"005930", "000660"})
+
+    def test_news_summary_returns_global_counts_publicly(self):
+        # 공개 엔드포인트 — 토큰 없이 200, 전역 집계 필드 반환.
+        response = self.client.get("/api/news/summary")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["total_articles"], 42)
+        self.assertEqual(body["stock_count"], 7)
+        self.assertEqual(body["recent_articles"], 5)
+        self.assertTrue(body["latest_collected_at"].startswith("2026-07-07"))
+        self.assertIn("notice", body)
 
     def test_watchlist_requires_authentication(self):
         response = self.client.get("/api/watchlists")
