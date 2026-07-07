@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import json
 from decimal import Decimal
 from typing import Any
 
@@ -21,11 +22,13 @@ from app.postmortem.analysis import (
     analyze_plan_vs_actual,
     build_round_trips,
 )
+from app.postmortem.classify import classify_roundtrip, signals_in_window
 from signal_alpha_data_access.backend import (
     StockRepository,
     UserBrokerCredentialRepository,
     UserTradeFillsRepository,
     UserTradePlanRepository,
+    UserTradeSignalOverlayRepository,
 )
 from signal_alpha_data_access.crypto import CredentialCryptoError
 
@@ -277,13 +280,23 @@ async def trade_postmortem(
         plan_row = await UserTradePlanRepository(connection).get_plan(
             user_id=int(current_user["id"]), ticker=ticker
         )
+        overlay_rows = await UserTradeSignalOverlayRepository(connection).list_by_stock(
+            user_id=int(current_user["id"]), stock_id=int(stock["id"])
+        )
     plan = dict(plan_row) if plan_row is not None else None
+    signals = [dict(r) for r in overlay_rows]
     trips = build_round_trips(ticker, [_fill_from_row(dict(r)) for r in fill_rows])
+    round_trips = []
+    for trip in trips:
+        pva = analyze_plan_vs_actual(trip, plan)
+        window = signals_in_window(signals, trip.opened_at, trip.closed_at)
+        classification = classify_roundtrip(trip, pva, window)
+        round_trips.append(_roundtrip_response(trip, pva, classification, window))
     return {
         "stock_code": ticker,
         "stock_name": stock.get("name"),
         "has_plan": plan is not None,
-        "round_trips": [_roundtrip_response(t, analyze_plan_vs_actual(t, plan)) for t in trips],
+        "round_trips": round_trips,
     }
 
 
@@ -319,7 +332,12 @@ def _fill_from_row(row: dict[str, Any]) -> Fill:
     )
 
 
-def _roundtrip_response(trip: Any, plan_vs_actual: dict[str, Any]) -> dict[str, Any]:
+def _roundtrip_response(
+    trip: Any,
+    plan_vs_actual: dict[str, Any],
+    classification: dict[str, Any],
+    observed_signals: list[dict[str, Any]],
+) -> dict[str, Any]:
     return {
         "opened_at": _iso(trip.opened_at),
         "closed_at": _iso(trip.closed_at),
@@ -330,6 +348,23 @@ def _roundtrip_response(trip: Any, plan_vs_actual: dict[str, Any]) -> dict[str, 
         "realized_pnl_pct": trip.realized_pnl_pct,
         "holding_days": trip.holding_days,
         "plan_vs_actual": plan_vs_actual,
+        # 3분류 판정 + 그때 관측 가능했던 신호(PIT). 사후 고점/저점 아님.
+        "classification": classification,
+        "observed_signals": [_signal_response(s) for s in observed_signals],
+    }
+
+
+def _signal_response(row: dict[str, Any]) -> dict[str, Any]:
+    detail = row.get("detail")
+    if isinstance(detail, str):
+        try:
+            detail = json.loads(detail)
+        except (ValueError, TypeError):
+            detail = None
+    return {
+        "signal_date": _iso(row.get("signal_date")),
+        "kind": row.get("kind"),
+        "detail": detail,
     }
 
 

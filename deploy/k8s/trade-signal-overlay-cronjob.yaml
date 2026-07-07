@@ -1,0 +1,43 @@
+# 매매 부검 PIT 신호 오버레이 — 매일 07:30 KST CronJob(run_trade_signal_overlay.py).
+# 수집 DB(dart_ownership) 읽기 + backend(user_trade_signal_overlays) 쓰기 이중풀. DART 수집
+# 이후에 돌아야 최신 공시가 반영된다. BACKEND_DATABASE_URL 미설정이면 러너가 no-op.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: trade-signal-overlay
+  namespace: signal-alpha
+  labels:
+    app.kubernetes.io/part-of: signal-alpha
+    app.kubernetes.io/name: trade-signal-overlay
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  schedule: "30 7 * * *"
+  timeZone: "Asia/Seoul"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/part-of: signal-alpha
+            app.kubernetes.io/name: trade-signal-overlay
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: trade-signal-overlay
+              image: signal-alpha-agent-worker
+              command: ["python", "run_trade_signal_overlay.py"]
+              envFrom:
+                - configMapRef: { name: signal-alpha-config }
+                - secretRef: { name: signal-alpha-secrets }
+              env:
+                - name: SERVICE_NAME
+                  value: trade-signal-overlay
+                - name: DATABASE_URL          # 수집 DB (dart_ownership 읽기)
+                  valueFrom: { secretKeyRef: { name: signal-alpha-secrets, key: WORKER_DATABASE_URL } }
+                - name: BACKEND_DATABASE_URL  # 백엔드 DB (오버레이 쓰기)
+                  valueFrom: { secretKeyRef: { name: signal-alpha-secrets, key: BACKEND_DATABASE_URL } }
