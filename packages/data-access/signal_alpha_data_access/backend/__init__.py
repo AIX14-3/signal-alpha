@@ -23,6 +23,7 @@ from signal_alpha_data_access.repositories.collection_schedules import (
     CollectionScheduleRepository,
     parse_schedule_row,
 )
+from signal_alpha_data_access.repositories.community import CommunityRepository
 from signal_alpha_data_access.repositories.signals import SignalRepository
 from signal_alpha_data_access.repositories.user_sessions import UserSessionRepository
 from signal_alpha_data_access.repositories.user_signals import UserSignalRepository
@@ -31,6 +32,7 @@ from signal_alpha_data_access.repositories.users_billing import UserBillingRepos
 __all__ = [
     "AdminRepository",
     "CollectionScheduleRepository",
+    "CommunityRepository",
     "ProcessingQueueRepository",
     "SignalRepository",
     "StockNewsRepository",
