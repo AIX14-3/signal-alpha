@@ -3,7 +3,7 @@
 import { useHomeStore } from "@/stores/homeStore";
 
 // FR-5 전역 뉴스 헤더 배너 — 페이지 최상단. recent_articles(최근 24h).
-// NFR-2: track-record 문구만("분석한 시그널"), 예측/수익보장 표현 금지.
+// NFR-2: track-record 문구만("분석한 시그널"), 예측·수익 과장 표현 금지.
 export function NewsSummaryBanner() {
   const summary = useHomeStore((s) => s.summary);
   const loading = useHomeStore((s) => s.loading);
