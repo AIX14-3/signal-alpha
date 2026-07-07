@@ -90,6 +90,7 @@ const FALLBACK_NOTICE =
   "사후정합성은 과거 데이터 방향성의 검증 기록이며 미래 결과를 보장하지 않습니다. 특정 종목 행동 권유가 아니라 사용자 판단 보조를 위한 근거입니다.";
 
 const FALLBACK_ALL_ITEMS = FALLBACK_GROUPS.flatMap((group) => group.items);
+type VerificationConnectionState = "loading" | "ready" | "failed";
 
 function displayValue(item: PosthocAlignmentItem): string {
   if (item.alignment_rate != null && item.sample_status === "집계 가능") {
@@ -107,6 +108,34 @@ function breakdownLabel(direction: string, label: string): string {
   return label || DIRECTION_LABELS[direction] || direction;
 }
 
+function latestCheckedAt(groups: PosthocAlignmentGroup[]): string | null {
+  const timestamps = groups
+    .flatMap((group) => group.items)
+    .map((item) => item.checked_at)
+    .filter((value): value is string => Boolean(value))
+    .map((value) => new Date(value).getTime())
+    .filter((value) => Number.isFinite(value));
+
+  if (!timestamps.length) return null;
+  return new Date(Math.max(...timestamps)).toISOString();
+}
+
+function formatVerificationTimestamp(value: string | null): string {
+  if (!value) return "확정 결과 대기";
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "확정 결과 대기";
+  return new Intl.DateTimeFormat("ko-KR", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "Asia/Seoul",
+  }).format(date);
+}
+
+function verificationStatusText(state: VerificationConnectionState, checkedAt: string | null): string {
+  if (state !== "ready") return "검증 데이터 연결 대기";
+  return formatVerificationTimestamp(checkedAt);
+}
+
 function summaryStatus(items: PosthocAlignmentItem[]): string {
   if (items.some((item) => item.sample_status === "표본 부족")) return "표본 부족";
   if (items.some((item) => item.sample_status === "확정 대기")) return "확정 대기";
@@ -120,6 +149,8 @@ export function PosthocAlignmentSummary() {
   const [methodology, setMethodology] =
     useState<PosthocAlignmentResponse["methodology"]>(FALLBACK_METHODOLOGY);
   const [notice, setNotice] = useState(FALLBACK_NOTICE);
+  const [verificationState, setVerificationState] = useState<VerificationConnectionState>("loading");
+  const [latestVerificationAt, setLatestVerificationAt] = useState<string | null>(latestCheckedAt(FALLBACK_GROUPS));
 
   useEffect(() => {
     getPosthocAlignment()
@@ -130,12 +161,16 @@ export function PosthocAlignmentSummary() {
         setStatus(summaryStatus(nextItems));
         setMethodology(data.methodology);
         setNotice(data.notice);
+        setLatestVerificationAt(latestCheckedAt(nextGroups));
+        setVerificationState("ready");
       })
       .catch(() => {
         setGroups(FALLBACK_GROUPS);
         setStatus(summaryStatus(FALLBACK_ALL_ITEMS));
         setMethodology(FALLBACK_METHODOLOGY);
         setNotice(FALLBACK_NOTICE);
+        setLatestVerificationAt(null);
+        setVerificationState("failed");
       });
   }, []);
 
@@ -188,6 +223,15 @@ export function PosthocAlignmentSummary() {
         <div className="mt-2 text-[24px] font-extrabold text-navy">{status}</div>
         <p className="mt-2 text-[13px] leading-6 text-navy-soft">
           비율보다 확정 건수와 표본 한계를 먼저 확인합니다.
+        </p>
+      </div>
+      <div className="card p-5" data-flow="posthoc-verification-status">
+        <div className="text-[13px] font-semibold text-muted">마지막 검증 반영</div>
+        <div className="mt-2 text-[20px] font-extrabold text-navy">
+          {verificationStatusText(verificationState, latestVerificationAt)}
+        </div>
+        <p className="mt-2 text-[13px] leading-6 text-navy-soft">
+          확정 결과가 반영된 가장 최근 시점을 기준으로 표시합니다.
         </p>
       </div>
       <div className="card p-5" data-flow="posthoc-methodology-detail">
