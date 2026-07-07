@@ -30,14 +30,18 @@ async function readAdminSource() {
   return parts.join("\n");
 }
 
-test("home page wires the search hero and report links", async () => {
+test("home page wires the 2-pane panes and report links", async () => {
   const page = await readFile(new URL("../src/app/page.tsx", import.meta.url), "utf8");
-  const hero = await readFile(new URL("../src/components/SearchHero.tsx", import.meta.url), "utf8");
+  const leftPane = await readFile(new URL("../src/components/HomeLeftPane.tsx", import.meta.url), "utf8");
+  const rightPane = await readFile(new URL("../src/components/HomeRightPane.tsx", import.meta.url), "utf8");
   const layout = await readFile(new URL("../src/app/layout.tsx", import.meta.url), "utf8");
   const apiClient = await readFile(new URL("../src/lib/apiClient.ts", import.meta.url), "utf8");
 
-  assert.match(page, /SearchHero/);
-  assert.match(hero, /\/report\//);
+  // 홈은 좌/우 pane 을 조립하고, 검색은 좌 pane, 전체 리포트 링크는 우 pane 에 있다.
+  assert.match(page, /HomeLeftPane/);
+  assert.match(page, /HomeRightPane/);
+  assert.match(leftPane, /searchStocks/);
+  assert.match(rightPane, /\/report\//);
   assert.match(layout, /AppShell/);
   assert.match(apiClient, /MAIN_API_BASE_URL/);
 });
