@@ -2,17 +2,15 @@
 
 import Link from "next/link";
 import { useEffect } from "react";
-import { WatchlistButton } from "@/components/WatchlistButton";
-import { type ReportSource } from "@/lib/apiClient";
 import { directionLabel, safeHttpUrl, SOURCE_META, SOURCE_ORDER } from "@/lib/format";
 import { useHomeStore } from "@/stores/homeStore";
 import { useReportStore } from "@/stores/reportStore";
 
-// 우 pane = 선택 종목 상세. FR-7 "왜 이 신호"(리포트 summary+소스별) + FR-6 뉴스 목록 + FR-8 관심.
+// 우 pane(대시보드 스탯 레일) = 선택 종목 요약. 레퍼런스 우측 컬럼 오마주:
+// 스탯 타일(PAYMENTS) · 소스 신호 라인 · 소스별 진행바(Balance/Orders) · 전체 리포트/뉴스(SUPER FILES).
 export function HomeRightPane() {
   const selectedCode = useHomeStore((s) => s.selectedCode);
   const stockNews = useHomeStore((s) => s.stockNews);
-  const stockNewsLoading = useHomeStore((s) => s.stockNewsLoading);
 
   const report = useReportStore((s) => s.report);
   const reportLoading = useReportStore((s) => s.loading);
@@ -25,148 +23,177 @@ export function HomeRightPane() {
 
   if (!selectedCode) {
     return (
-      <section className="card grid min-h-[400px] place-items-center p-8 text-center text-muted">
+      <aside className="glass-card grid min-h-[400px] place-items-center p-8 text-center text-[13px] text-muted">
         왼쪽에서 종목이나 뉴스를 선택하세요.
-      </section>
+      </aside>
     );
   }
 
-  // FR-4 stale 가드: reportStore 는 공유·가드 없음 → 응답이 현재 선택과 일치할 때만 유효.
-  // (빠른 연속 선택 시 늦게 도착한 이전 종목 리포트가 뒤덮는 것 방지)
-  const freshReport = report && report.stock.stock_code === selectedCode ? report : null;
-  const name = freshReport?.stock.stock_name ?? selectedCode;
+  // FR-4 stale 가드: 응답이 현재 선택과 일치할 때만 유효(늦게 도착한 이전 종목 리포트가 뒤덮는 것 방지).
+  const fresh = report && report.stock.stock_code === selectedCode ? report : null;
+  const name = fresh?.stock.stock_name ?? selectedCode;
+  const dir = directionLabel(fresh?.direction);
+  const byKey = new Map((fresh?.sources ?? []).map((s) => [s.source, s] as const));
+  const scores = SOURCE_ORDER.map((k) => byKey.get(k)?.score ?? null);
 
   return (
-    <section className="flex min-h-0 flex-col gap-5">
-      {/* 헤더: 종목명 + 관심 + 전체 리포트 링크(Q5) */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <div className="text-[12.5px] text-muted">{selectedCode}</div>
-          <h2 className="text-[24px] font-extrabold leading-tight">{name}</h2>
+    <aside className="flex min-h-0 flex-col gap-4">
+      {/* 종목 헤더 */}
+      <div>
+        <div className="text-[12px] text-muted">{selectedCode}</div>
+        <h2 className="text-[20px] font-extrabold leading-tight">{name}</h2>
+      </div>
+
+      {/* 스탯 타일 2장 (PAYMENTS 오마주) */}
+      <div className="grid grid-cols-2 gap-3">
+        <div className="brand-grad rounded-[14px] p-4 text-white">
+          <div className="text-[11.5px] opacity-90">종합 점수</div>
+          <div className="mt-1 text-[26px] font-extrabold leading-none">{fresh?.score ?? "–"}</div>
+          <div className="mt-1 text-[10.5px] opacity-80">0–100</div>
         </div>
-        <div className="flex items-center gap-2">
-          <WatchlistButton stockCode={selectedCode} />
+        <div className="glass-card p-4">
+          <div className="text-[11.5px] text-muted">데이터 방향</div>
+          <div className="mt-3">
+            <span className={`pill ${dir.tone}`} style={{ padding: "5px 13px" }}>
+              {dir.label}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* 소스별 신호 라인 — 실데이터(소스별 0–100 점수) */}
+      <SourceSparkline scores={scores} loading={reportLoading && !fresh} />
+
+      {/* 왜 이 신호일까 요약 */}
+      <div className="glass-card p-4">
+        <div className="text-[13px] font-bold text-navy">왜 이 신호일까</div>
+        <p className="mt-2 text-[13px] leading-relaxed text-navy-soft">
+          {fresh?.summary ?? (reportLoading ? "분석을 불러오는 중…" : "통합 요약이 아직 없습니다.")}
+        </p>
+      </div>
+
+      {/* 소스별 신호 진행바 (Balance/Orders 오마주) — 각 행은 소스 상세로 링크 */}
+      <div className="glass-card p-4">
+        <div className="mb-3 text-[13px] font-bold text-navy">소스별 신호</div>
+        <div className="space-y-2.5">
+          {SOURCE_ORDER.map((k) => {
+            const src = byKey.get(k);
+            const sc = src?.score ?? null;
+            const meta = SOURCE_META[k];
+            return (
+              <Link
+                key={k}
+                href={`/report/${encodeURIComponent(selectedCode)}/${k}`}
+                className="block rounded-[8px] p-1.5 transition hover:bg-surface-2"
+              >
+                <div className="flex items-center justify-between text-[12px]">
+                  <span className="text-navy-soft">
+                    {meta.icon} {meta.label}
+                  </span>
+                  <span className="font-semibold text-muted">{sc ?? "–"}</span>
+                </div>
+                <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-surface-2">
+                  <div className="brand-grad h-full rounded-full" style={{ width: `${sc ?? 0}%` }} />
+                </div>
+              </Link>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* 전체 리포트 + 종목 뉴스 (SUPER FILES 오마주) */}
+      <div className="glass-card p-4">
+        <div className="mb-2 flex items-center justify-between">
+          <div className="text-[13px] font-bold text-navy">
+            {name} 뉴스{stockNews ? ` ${stockNews.count}건` : ""}
+          </div>
           <Link
             href={`/report/${encodeURIComponent(selectedCode)}`}
-            className="rounded-full brand-grad px-4 py-2 text-[13.5px] font-bold text-white hover:opacity-90"
+            className="text-[12px] font-semibold text-sky-deep hover:underline"
           >
             전체 리포트 →
           </Link>
         </div>
+        <ul className="space-y-1">
+          {(stockNews?.items ?? []).slice(0, 4).map((n, i) => {
+            const href = safeHttpUrl(n.url);
+            const row = (
+              <div className="flex items-center gap-2 rounded-[10px] px-2 py-1.5 hover:bg-surface-2">
+                <span className="text-[13px]">📄</span>
+                <span className="min-w-0 flex-1 truncate text-[12.5px] text-navy-soft">{n.title}</span>
+                {n.press && <span className="shrink-0 text-[11px] text-muted">{n.press}</span>}
+              </div>
+            );
+            return (
+              <li key={i}>
+                {href ? (
+                  <a href={href} target="_blank" rel="noopener noreferrer">
+                    {row}
+                  </a>
+                ) : (
+                  row
+                )}
+              </li>
+            );
+          })}
+          {(!stockNews || stockNews.count === 0) && (
+            <li className="px-2 py-3 text-[12px] text-muted">이 종목의 뉴스가 아직 없습니다.</li>
+          )}
+        </ul>
       </div>
-
-      {/* FR-7 왜 이 신호일까 — freshReport 로 stale 방지 */}
-      <WhySignal report={freshReport} loading={reportLoading || (!!report && !freshReport)} code={selectedCode} />
-
-      {/* FR-6 종목 뉴스 목록 */}
-      <div className="card overflow-hidden">
-        <div className="border-b border-line px-4 py-3 text-[13px] font-bold text-navy">
-          {name} 뉴스{stockNews ? ` ${stockNews.count}건` : ""}
-        </div>
-        {stockNewsLoading ? (
-          <ul className="animate-pulse space-y-3 p-4">
-            {[0, 1, 2].map((i) => (
-              <li key={i} className="h-10 rounded-[8px] bg-surface-2" />
-            ))}
-          </ul>
-        ) : !stockNews || stockNews.count === 0 ? (
-          // Q2: 뉴스 0건이어도 위 "왜 이 신호"는 유지, 여기만 안내.
-          <p className="p-6 text-center text-[13px] text-muted">
-            아직 이 종목의 뉴스가 없습니다.
-          </p>
-        ) : (
-          <ul className="divide-y divide-line">
-            {stockNews.items.map((n, i) => {
-              const href = safeHttpUrl(n.url);
-              const inner = (
-                <>
-                  <div className="flex items-center gap-2 text-[12px] text-muted">
-                    {n.press && <span>{n.press}</span>}
-                    {n.published_at && (
-                      <span className="ml-auto shrink-0">{n.published_at.slice(0, 16).replace("T", " ")}</span>
-                    )}
-                  </div>
-                  <div className="mt-1 text-[13.5px] text-navy-soft">{n.title}</div>
-                </>
-              );
-              return (
-                <li key={i} className="px-4 py-3">
-                  {href ? (
-                    <a href={href} target="_blank" rel="noopener noreferrer" className="block hover:opacity-80">
-                      {inner}
-                    </a>
-                  ) : (
-                    inner
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </div>
-    </section>
+    </aside>
   );
 }
 
-function WhySignal({
-  report,
-  loading,
-  code,
-}: {
-  report: ReturnType<typeof useReportStore.getState>["report"];
-  loading: boolean;
-  code: string;
-}) {
-  if (loading && !report) {
-    return <div className="card h-[160px] animate-pulse bg-surface-2" />;
-  }
-  if (!report) {
-    return (
-      <div className="card p-5 text-[13.5px] text-muted">리포트를 준비 중입니다.</div>
+// 소스별 0–100 점수를 잇는 미니 라인(실데이터). 유효 점수 2개 미만이면 안내만 표시.
+function SourceSparkline({ scores, loading }: { scores: (number | null)[]; loading: boolean }) {
+  const valid = scores.filter((v): v is number => v != null);
+  const W = 300;
+  const H = 54;
+  const n = scores.length;
+
+  let content;
+  if (loading) {
+    content = <div className="h-[54px] animate-pulse rounded-[8px] bg-surface-2" />;
+  } else if (valid.length < 2) {
+    content = <p className="py-4 text-center text-[12px] text-muted">신호 점수가 아직 충분하지 않습니다.</p>;
+  } else {
+    // null 은 직전 값으로 이어붙여 선이 끊기지 않게 한다(결측 소스 표시는 아래 진행바에서).
+    let last = valid[0];
+    const pts = scores.map((v, i) => {
+      const val = v ?? last;
+      last = val;
+      const x = n === 1 ? 0 : (i / (n - 1)) * W;
+      const y = H - (val / 100) * (H - 6) - 3;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    });
+    content = (
+      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="h-[54px] w-full" aria-hidden="true">
+        <defs>
+          <linearGradient id="sparkgrad" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0" stopColor="#0ea5e9" />
+            <stop offset="1" stopColor="#10b981" />
+          </linearGradient>
+        </defs>
+        <polyline
+          fill="none"
+          stroke="url(#sparkgrad)"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          points={pts.join(" ")}
+        />
+      </svg>
     );
   }
-  const dir = directionLabel(report.direction);
-  const byKey = new Map(report.sources.map((s) => [s.source, s] as const));
 
   return (
-    <div className="card p-5">
-      <div className="flex items-center gap-2">
-        <h3 className="text-[16px] font-bold">왜 이 신호일까</h3>
-        <span className={`pill ${dir.tone}`} style={{ padding: "3px 10px" }}>{dir.label}</span>
-        {report.score != null && (
-          <span className="ml-auto text-[13px] text-muted">종합 {report.score}</span>
-        )}
+    <div className="glass-card p-4">
+      <div className="mb-1 flex items-center justify-between">
+        <span className="text-[13px] font-bold text-navy">소스별 신호 점수</span>
+        <span className="text-[11px] text-muted">0–100</span>
       </div>
-      <p className="mt-3 text-[14px] leading-relaxed text-navy-soft">
-        {report.summary ?? "통합 요약이 아직 없습니다."}
-      </p>
-
-      {/* 소스별 근거 서술 (report page 미러, 상세는 전체 리포트로) */}
-      <div className="mt-4 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-        {SOURCE_ORDER.map((key) => {
-          const src: ReportSource | undefined = byKey.get(key);
-          const meta = SOURCE_META[key];
-          if (!src) return null;
-          const sdir = directionLabel(src.direction);
-          return (
-            <Link
-              key={key}
-              href={`/report/${encodeURIComponent(code)}/${key}`}
-              className="rounded-[10px] border border-line p-3 transition hover:bg-surface-2"
-            >
-              <div className="flex items-center gap-1.5 text-[13px] font-bold">
-                {meta.icon} {meta.label}
-                <span className={`pill ${sdir.tone} ml-auto`} style={{ padding: "2px 8px", fontSize: 11 }}>
-                  {sdir.label}
-                </span>
-              </div>
-              <p className="mt-1.5 line-clamp-2 text-[12.5px] text-navy-soft">
-                {src.summary ?? "데이터 요약 준비 중"}
-              </p>
-            </Link>
-          );
-        })}
-      </div>
+      {content}
     </div>
   );
 }

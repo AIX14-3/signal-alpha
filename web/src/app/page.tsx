@@ -16,9 +16,10 @@ export default function HomePage() {
   return (
     <>
       <BackgroundFX />
+      <div className="dash-blobs" aria-hidden="true" />
       <NewsSummaryBanner />
-      {/* FR-1 2-pane — 데스크톱 좌 리스트/우 상세, 모바일 세로 스택(Q3). */}
-      <div className="relative z-10 grid grid-cols-1 gap-6 pb-16 lg:grid-cols-[minmax(320px,380px)_1fr]">
+      {/* 대시보드(레퍼런스 오마주) — 글래스 패널: 좌 KPI+뉴스 테이블 / 우 선택 종목 스탯 레일. */}
+      <div className="glass relative z-10 mb-16 grid grid-cols-1 gap-5 p-4 sm:p-5 lg:grid-cols-[1fr_360px] lg:gap-6 lg:p-6">
         <HomeLeftPane />
         <HomeRightPane />
       </div>

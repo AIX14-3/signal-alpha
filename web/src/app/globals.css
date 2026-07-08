@@ -148,6 +148,50 @@ a {
   }
 }
 
+/* ---------- 홈 대시보드(레퍼런스 오마주): 글래스 패널 + 데코 그라디언트 블롭 ---------- */
+.dash-blobs {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.dash-blobs::before,
+.dash-blobs::after {
+  content: "";
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(72px);
+  opacity: 0.42;
+}
+.dash-blobs::before {
+  width: 460px;
+  height: 460px;
+  left: -120px;
+  top: 34%;
+  background: radial-gradient(circle at 35% 35%, #e879f9, #7c3aed 62%, transparent 72%);
+}
+.dash-blobs::after {
+  width: 420px;
+  height: 420px;
+  right: -110px;
+  top: 6%;
+  background: radial-gradient(circle at 60% 40%, #a78bfa, #f5d0fe 55%, transparent 72%);
+}
+.glass {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(20px) saturate(1.15);
+  -webkit-backdrop-filter: blur(20px) saturate(1.15);
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  border-radius: 24px;
+  box-shadow: 0 24px 70px rgba(60, 20, 120, 0.12);
+}
+.glass-card {
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid var(--color-line);
+  border-radius: 16px;
+}
+
 input,
 button,
 textarea,
