@@ -60,6 +60,20 @@ export async function listStockNews(
   });
 }
 
+// 여러 종목 뉴스 다이제스트 배치(공개) — 홈 '실시간 분석 종목' 리스트 접힌 행 미리보기.
+// 미생성 종목은 맵에서 빠진다(프론트가 코드로 매핑). 빈 입력은 네트워크 없이 빈 맵.
+export async function listNewsDigests(
+  codes: string[],
+): Promise<Record<string, StockNewsDigest>> {
+  const clean = Array.from(new Set(codes.map((c) => c.trim()).filter(Boolean)));
+  if (clean.length === 0) return {};
+  const data = await apiFetch<{ digests: Record<string, StockNewsDigest> }>(
+    `/api/news/digests?codes=${encodeURIComponent(clean.join(","))}`,
+    { auth: "none" },
+  );
+  return data.digests ?? {};
+}
+
 // 전역 뉴스 집계(공개) — 홈 "뉴스 N건을 분석한 시그널" 헤더용. total_articles=총 분석 기사수.
 export type NewsSummary = {
   total_articles: number;

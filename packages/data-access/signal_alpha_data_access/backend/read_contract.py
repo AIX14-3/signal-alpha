@@ -100,6 +100,24 @@ class StockNewsRepository:
             ticker.strip(),
         )
 
+    async def list_digests_by_tickers(self, tickers: list[str]) -> list[Any]:
+        """여러 종목 다이제스트 배치 조회 — 홈 '실시간 분석 종목' 리스트 접힌 행 미리보기용(공개).
+
+        get_digest_by_ticker 의 배치판(stock_code = ANY). 미생성 종목은 결과에서 빠지고
+        프론트가 stock_code 로 매핑한다. 빈 입력은 빈 리스트(불필요 쿼리 방지).
+        """
+        cleaned = [t.strip() for t in tickers if t and t.strip()]
+        if not cleaned:
+            return []
+        return await self._connection.fetch(
+            """
+            SELECT stock_code, digest_text, model, article_count, generated_at
+            FROM api.stock_news_digest
+            WHERE stock_code = ANY($1::text[])
+            """,
+            cleaned,
+        )
+
     async def list_recent(self, *, limit: int = 30) -> list[Any]:
         """전역 최신 뉴스(종목 무관) + 종목명 조인. 홈 2-pane 좌측 '뉴스 피드'용(공개).
 
