@@ -311,6 +311,12 @@ class AnalyzeHandlerConn:
                     "fact_needs_review": False,
                 }
             ]
+        # 리비전 기준선 = 직전(더 이른 발행일) 목표주가 80,000 → 최신 90,000 대비 +12.5% 상향.
+        if "FROM report_valuation_facts" in sql:
+            return [{"target_price": 80000, "publish_date": date(2026, 5, 1)}]
+        # 현재가 80,000 → upside +12.5%.
+        if "FROM ohlcv_data" in sql:
+            return [{"close": 80000}]
         return []
 
     async def fetchrow(self, sql, *args):
@@ -360,7 +366,8 @@ class ReportAnalyzeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["analysis_result_id"], 901)
         self.assertEqual(result["agent_result_id"], 902)
         self.assertEqual(result["aggregate_task_id"], 701)
-        # 결정론 밸류에이션 신호: 투자의견(signal_direction="positive") 컨센서스 → positive, score 1.0.
+        # 결정론 밸류에이션 신호 = 목표주가 리비전(80k→90k, +12.5%) + upside(현재가 80k 대비 +12.5%)
+        # → score 0.595, positive. (투자의견은 점수 아닌 근거로만.)
         self.assertEqual(result["direction"], "positive")
         self.assertEqual(result["analysis_source"], "rules")
         self.assertFalse(result["needs_review"])
@@ -369,7 +376,7 @@ class ReportAnalyzeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(analysis_call[2][2], date(2026, 6, 24))
         self.assertEqual(analysis_call[2][3], "REPORT_EVENT_801")
         self.assertEqual(analysis_call[2][4], [801])
-        self.assertEqual(analysis_call[2][5], 100.0)  # _score_to_100(1.0) = 만장 긍정
+        self.assertEqual(analysis_call[2][5], 79.75)  # _score_to_100(0.595) — 리비전+upside
         self.assertEqual(analysis_call[2][8], "full")
 
         agent_call = conn._insert("agent_results")
@@ -384,6 +391,10 @@ class ReportAnalyzeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(method_detail["report_quant"]["valuation"]["target_price"], 90000)
         self.assertEqual(method_detail["report_quant"]["valuation"]["implied_multiple"], 15.0)
         self.assertEqual(method_detail["report_quant"]["valuation"]["needs_review"], False)
+        # 결정론 점수 근거(리비전/괴리)와 의견 컨센서스(근거 전용)가 method_detail 에 실린다.
+        self.assertEqual(method_detail["valuation_signal"]["revision_pct"], 0.125)
+        self.assertEqual(method_detail["valuation_signal"]["upside_pct"], 0.125)
+        self.assertEqual(method_detail["opinion_consensus"]["direction"], "positive")
 
         # 주가 변동성 ML 채널 제거(C안): 분석 → AGGREGATE 직결. aggregate_ctx 는 task_context 최상위,
         # source_analysis_result_ids 는 enqueue 의 별도 컬럼으로 전달된다(레거시 단일 프로듀서 경로).

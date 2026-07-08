@@ -15,6 +15,7 @@ from app.collectors.dart.disclosure import DartCollector, DartDisclosureClient
 from app.collectors.dart.employee_api import DartEmployeeCollector
 from app.collectors.dart.financials_api import DartFinancialsCollector
 from app.collectors.dart.ownership_api import DartOwnershipCollector
+from app.collectors.dart.ownership_detail import MARKET_TRADE_TYPES
 from app.orchestrator.dart.employee_sync import DartEmployeeSyncService
 from app.orchestrator.dart.financials_sync import DartFinancialsSyncService
 from app.orchestrator.dart.ownership_sync import DartOwnershipSyncService
@@ -934,6 +935,12 @@ def _ownership_summary(row: Mapping[str, Any]) -> str:
 
 
 def _ownership_direction(row: Mapping[str, Any]) -> str:
+    # 정밀 필터: 세부변동내역 enrich 된 거래유형이 시장매매(장내매수/매도)가 아니면 확신 신호가
+    # 아니므로 중립 처리한다(증여·상속·스톡옵션·신규선임·혼재 = 노이즈 배제). trade_type 이 None 이면
+    # 미enrich 또는 majorstock → 기존 shares_delta 부호 거동을 유지한다(B-lite).
+    trade_type = row.get("trade_type")
+    if trade_type is not None and trade_type not in MARKET_TRADE_TYPES:
+        return "neutral"
     for key in ("ratio_delta", "shares_delta"):
         value = row.get(key)
         if value is None:
@@ -961,6 +968,7 @@ def _ownership_metrics(row: Mapping[str, Any]) -> list[dict[str, Any]]:
         ("ratio", "dart_ownership_ratio", "pct"),
         ("shares_delta", "dart_ownership_shares_delta", "shares"),
         ("ratio_delta", "dart_ownership_ratio_delta", "pct"),
+        ("unit_price", "dart_ownership_unit_price", "KRW"),
     )
     return [
         {

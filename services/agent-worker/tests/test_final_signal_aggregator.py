@@ -209,7 +209,7 @@ class AggregateSignalTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(breakdown["DART"]["data_status"], "missing")
         self.assertEqual(breakdown["REPORT"]["data_status"], "missing")
 
-    async def test_report_valuation_is_preserved_without_affecting_score(self):
+    async def test_report_now_affects_score_and_valuation_is_preserved(self):
         valuation = {
             "target_price": 90000,
             "forward_eps_est": 6000,
@@ -252,17 +252,19 @@ class AggregateSignalTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        # SRC 미계산 → 결정론 블렌드(positive/68)로 폴백; score_breakdown 보존.
+        # REPORT 가 이제 SCORING_SOURCES 에 편입됨: DART(0.36)+REPORT(1.0) 평균 0.68 → 84.
+        # (SRC 미계산 → 결정론 블렌드가 헤드라인). valuation 근거는 그대로 보존.
         self.assertEqual(result["signal"], "positive")
-        self.assertEqual(result["final_score"], 68.0)
+        self.assertEqual(result["final_score"], 84.0)
         self.assertEqual(result["deterministic_signal"], "positive")
-        self.assertEqual(result["deterministic_score"], 68.0)
+        self.assertEqual(result["deterministic_score"], 84.0)
         self.assertEqual(result["source_agreement"], "HIGH")
         final_call = next(call for call in connection.calls if "INSERT INTO final_signals" in call[1])
         breakdown = json.loads(final_call[2][10])
         self.assertEqual(breakdown["DART"]["score"], 0.36)
         self.assertEqual(breakdown["REPORT"]["analysis_result_id"], 101)
         self.assertEqual(breakdown["REPORT"]["score"], 1.0)
+        self.assertTrue(breakdown["REPORT"]["contributes_to_score"])  # 이제 점수 기여
         self.assertEqual(breakdown["REPORT"]["valuation"], valuation)
         self.assertEqual(breakdown["PRICE"]["data_status"], "missing")
         self.assertEqual(breakdown["HIRING"]["data_status"], "missing")
@@ -415,13 +417,14 @@ class AggregateSignalTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(meta["headline_method"], "deterministic_blend")
 
     async def test_headline_neutral_empty_only_when_no_scoring_source(self):
-        # scoring 소스(DART/HIRING/PATENT/DATALAB)가 하나도 없으면(REPORT 만) 그때만 중립 50.
-        report_row = dart_agent_row(
-            direction="positive", source_score=1.0, method_score=100.0, source="REPORT"
+        # scoring 소스가 하나도 없으면(근거 전용 PRICE 만) 그때만 중립 50. PRICE 는 SCORING_SOURCES
+        # 밖이라 점수에 안 들어간다(REPORT 는 이제 편입돼 이 케이스에 못 쓴다).
+        price_row = dart_agent_row(
+            direction="positive", source_score=1.0, method_score=100.0, source="PRICE"
         )
-        report_row["analysis_run_key"] = "REPORT_EVENT_801"
-        report_row["analysis_mode"] = "full"
-        connection = FakeConnection(rows=[report_row])
+        price_row["analysis_run_key"] = "PRICE"
+        price_row["analysis_mode"] = "full"
+        connection = FakeConnection(rows=[price_row])
         handler = AggregateSignalTaskHandler(connection)
 
         result = await handler(

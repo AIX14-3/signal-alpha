@@ -18,6 +18,9 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any
 
+from app.analyzers.config import DartRuleConfig
+from app.analyzers.scoring import graded
+
 
 @dataclass(frozen=True)
 class DartAnalysisResult:
@@ -59,6 +62,9 @@ def build_dart_analysis_result(events: list[dict[str, Any]]) -> DartAnalysisResu
     needs_review_count = 0
     official_count = 0
     latest_event: date | None = None
+    # B-lite: 임팩트 가중 순극성용 — 방향(positive/negative) 이벤트만 분자에 넣는다.
+    positive_weight = 0.0
+    negative_weight = 0.0
 
     for event in events:
         direction = str(event.get("signal_direction") or "unknown")
@@ -72,6 +78,10 @@ def build_dart_analysis_result(events: list[dict[str, Any]]) -> DartAnalysisResu
 
         weight = _impact_weight(impact_level)
         impact_weighted_sum += weight
+        if direction == "positive":
+            positive_weight += weight
+        elif direction == "negative":
+            negative_weight += weight
         if weight >= _impact_weight("medium"):
             high_impact_count += 1
         if event_type == "correction":
@@ -107,6 +117,25 @@ def build_dart_analysis_result(events: list[dict[str, Any]]) -> DartAnalysisResu
     unique_risk_flags = _dedupe(risk_flags)
     needs_review = bool(unique_risk_flags)
 
+    # B-lite 결정론 점수: 임팩트 가중 순극성 = (Σ긍정_w − Σ부정_w) / Σ방향_w → graded(tanh).
+    # 방향(positive/negative) 이벤트가 하나도 없으면 기존 features-only 폴백(unknown/0/no_signal).
+    directional_weight = positive_weight + negative_weight
+    if directional_weight > 0:
+        net = (positive_weight - negative_weight) / directional_weight
+        _config = DartRuleConfig.from_env()
+        score = round(graded(net, scale=_config.polarity_scale, weight=_config.polarity_weight), 3)
+        if score >= _config.positive_threshold:
+            signal_direction = "positive"
+        elif score <= _config.negative_threshold:
+            signal_direction = "negative"
+        else:
+            signal_direction = "neutral"
+        data_status = "ok"
+    else:
+        score = 0.0
+        signal_direction = "unknown"
+        data_status = "no_signal"
+
     derived_features = {
         "total_events": len(events),
         "distinct_event_types": len(event_type_counts),
@@ -118,18 +147,24 @@ def build_dart_analysis_result(events: list[dict[str, Any]]) -> DartAnalysisResu
         "latest_event_date": latest_event.isoformat() if latest_event else None,
     }
 
-    return DartAnalysisResult(
-        direction="unknown",  # Phase 0: 판정 없음 — 근거/커버리지로만 노출.
-        score=0.0,
-        summary=(
+    summary = (
+        f"DART 공시 {len(events)}건 — 방향 {dict(direction_counts)} "
+        f"(임팩트 가중 순극성 점수 {score:+.2f})."
+        if data_status == "ok"
+        else (
             f"DART 공시 {len(events)}건 피처 산출"
             f"(유형 {dict(event_type_counts)}, 방향 {dict(direction_counts)}). "
-            f"점수에는 반영하지 않고 근거로만 사용."
-        ),
+            f"방향성 이벤트 없음 — 점수 미반영, 근거로만."
+        )
+    )
+    return DartAnalysisResult(
+        direction=signal_direction,  # B-lite: 행위형 공시 극성 + 내부자 shares_delta 부호 순극성.
+        score=score,
+        summary=summary,
         risk_flags=unique_risk_flags,
         method_detail={
             "source": "DART",
-            "data_status": "no_signal",  # AGGREGATE 점수 평균에서 제외(커버리지로만 노출).
+            "data_status": data_status,  # 방향 이벤트 있으면 ok(블렌드 산입), 없으면 no_signal.
             "event_count": len(events),
             "direction_counts": dict(direction_counts),
             "event_type_counts": dict(event_type_counts),

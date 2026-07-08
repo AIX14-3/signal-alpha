@@ -159,7 +159,9 @@ def _dart_policy(schedule: dict[str, Any]) -> dict[str, int | str | bool]:
     return {
         "limit": _coerce_int(schedule.get("dart_limit"), 10, minimum=1, maximum=1000),
         "priority": DEFAULT_PRIORITY,
-        "include_ownership": _coerce_bool(schedule.get("dart_include_ownership"), False),
+        # B-lite: 내부자 지분(매수/매도) 신호를 DART 점수에 반영하려면 지분 수집이 필요.
+        # 종목당 무료 API 2회(majorstock+elestock)뿐이라 기본 on. 스케줄 config 로 개별 override 가능.
+        "include_ownership": _coerce_bool(schedule.get("dart_include_ownership"), True),
         "include_financials": _coerce_bool(schedule.get("dart_include_financials"), False),
         "include_employee": _coerce_bool(schedule.get("dart_include_employee"), False),
     }

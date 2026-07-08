@@ -13,6 +13,9 @@ class FakeCollector:
         self.calls.append(stock_code)
         return [dict(event) for event in self.events]
 
+    async def fetch_trade_detail(self, *, rcept_no):
+        return "onmarket_buy", None
+
 
 class FakeRepository:
     def __init__(self):
@@ -22,6 +25,12 @@ class FakeRepository:
         self.batches.append(entries)
         # 실 리포지토리처럼 필수키(holder_name) 누락 행은 폐기한 수를 반환.
         return sum(1 for entry in entries if entry.get("holder_name"))
+
+    async def list_unenriched_ownership(self, *, stock_id, limit):
+        return []  # enrich 대상 없음(이 테스트는 수집/카운트 검증)
+
+    async def update_trade_detail(self, *, corp_code, rcept_no, trade_type, unit_price):
+        pass
 
 
 def _event(**overrides):

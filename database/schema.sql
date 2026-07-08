@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict Mdk3msgGeB8HFGRqCkaPmd3qSwfyos8wqAw9DoOeOIqJnIphmbD85seQQzqeGqD
+\restrict ryuiOmqpigFZpPKVMTsp1VVefGCZF8o2ajyuhMq0ZDJV1BMsjfnbuCgYaUKeiYe
 
 -- Dumped from database version 16.14 (Debian 16.14-1.pgdg12+1)
 -- Dumped by pg_dump version 16.14 (Debian 16.14-1.pgdg12+1)
@@ -1262,7 +1262,10 @@ CREATE TABLE public.dart_ownership_events (
     report_reason character varying(100),
     fetched_at timestamp with time zone DEFAULT now() NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    trade_type character varying(20),
+    unit_price numeric(20,4),
+    CONSTRAINT chk_dart_ownership_trade_type CHECK (((trade_type IS NULL) OR ((trade_type)::text = ANY ((ARRAY['onmarket_buy'::character varying, 'onmarket_sell'::character varying, 'gift'::character varying, 'gift_received'::character varying, 'inheritance'::character varying, 'stock_option'::character varying, 'appointment'::character varying, 'offmarket'::character varying, 'mixed'::character varying, 'other'::character varying])::text[]))))
 );
 
 
@@ -7286,5 +7289,5 @@ ALTER TABLE ONLY public.watchlists
 -- PostgreSQL database dump complete
 --
 
-\unrestrict Mdk3msgGeB8HFGRqCkaPmd3qSwfyos8wqAw9DoOeOIqJnIphmbD85seQQzqeGqD
+\unrestrict ryuiOmqpigFZpPKVMTsp1VVefGCZF8o2ajyuhMq0ZDJV1BMsjfnbuCgYaUKeiYe
 
