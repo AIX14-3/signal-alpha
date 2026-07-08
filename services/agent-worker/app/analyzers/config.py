@@ -246,6 +246,29 @@ class ReportRuleConfig:
 
 
 @dataclass(frozen=True)
+class DartRuleConfig:
+    """Scoring parameters for the DART analyzer (title-polarity + insider net-flow).
+
+    방향은 이벤트의 ``signal_direction``(행위형 공시 극성 + 내부자 shares_delta 부호)에서 오고,
+    점수는 임팩트 가중 순극성 비율을 graded(tanh)로 매핑한다. 미검증 신호이므로 방향 정렬 표시용.
+    """
+
+    polarity_weight: float = 0.7  # 순극성이 만들 수 있는 최대 |score|
+    polarity_scale: float = 0.5  # tanh knee: 순극성 비율 0.5 → 0.76*weight
+    positive_threshold: float = 0.2
+    negative_threshold: float = -0.2
+
+    @classmethod
+    def from_env(cls) -> "DartRuleConfig":
+        return cls(
+            polarity_weight=_float("DART_POLARITY_WEIGHT", cls.polarity_weight),
+            polarity_scale=_float("DART_POLARITY_SCALE", cls.polarity_scale),
+            positive_threshold=_float("DART_POSITIVE_THRESHOLD", cls.positive_threshold),
+            negative_threshold=_float("DART_NEGATIVE_THRESHOLD", cls.negative_threshold),
+        )
+
+
+@dataclass(frozen=True)
 class AggregatorConfig:
     """Weights and thresholds for merging source signals into one signal.
 

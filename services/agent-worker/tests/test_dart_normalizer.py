@@ -22,6 +22,39 @@ class DartNormalizerTest(unittest.TestCase):
         self.assertEqual(classification.signal_direction, "mixed")
         self.assertEqual(classification.impact_level, "high")
 
+    # ------- B-lite: 행위형 공시 극성 (제목=사실) -------
+
+    def test_treasury_buyback_is_positive(self):
+        c = classify_dart_report("주요사항보고서(자기주식취득결정)")
+        self.assertEqual(c.event_type, "treasury_buyback")
+        self.assertEqual(c.signal_direction, "positive")
+
+    def test_capital_increase_is_negative(self):
+        c = classify_dart_report("유상증자결정")
+        self.assertEqual(c.event_type, "capital_increase")
+        self.assertEqual(c.signal_direction, "negative")
+
+    def test_dividend_is_positive(self):
+        c = classify_dart_report("현금ㆍ현물배당결정")
+        self.assertEqual(c.signal_direction, "positive")
+
+    def test_action_polarity_beats_material_event_wrapper(self):
+        # 주요사항보고서로 감싸여도 행위(자사주매입)가 먼저 매칭돼 mixed 가 아니라 positive.
+        c = classify_dart_report("주요사항보고서(자기주식취득결정)")
+        self.assertNotEqual(c.event_type, "material_event")
+        self.assertEqual(c.signal_direction, "positive")
+
+    def test_treasury_disposal_provisional_negative(self):
+        c = classify_dart_report("주요사항보고서(자기주식처분결정)")
+        self.assertEqual(c.event_type, "treasury_disposal")
+        self.assertEqual(c.signal_direction, "negative")
+
+    def test_insider_ownership_title_stays_neutral(self):
+        # 지분보고서는 제목만으론 매수/매도 불명 → 중립(방향은 dart_ownership_change 이벤트로 유입).
+        c = classify_dart_report("임원ㆍ주요주주특정증권등소유상황보고서")
+        self.assertEqual(c.event_type, "insider_ownership")
+        self.assertEqual(c.signal_direction, "neutral")
+
     def test_classifies_correction_as_low_review_event(self):
         classification = classify_dart_report("[기재정정]분기보고서")
 
