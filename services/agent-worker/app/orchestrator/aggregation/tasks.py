@@ -8,6 +8,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
+from app.analyzers.config import AggregatorConfig
 from app.orchestrator.aggregation.detect import detect_disagreement
 from app.orchestrator.aggregation.judge import build_memory_reference, judge_with_memory
 from app.orchestrator.aggregation.requery import MAX_REQUERY_ROUNDS
@@ -138,8 +139,9 @@ class AggregateSignalTaskHandler:
         signal_date = _signal_date(rows, task_context)
         # 소스별 독립 집계: 대체데이터(HIRING/PATENT/DATALAB)를 묶지 않고 각자 peer 로 점수화한다.
         # _coalesce_by_source 는 같은 소스의 다중 행(예: DART 다중 이벤트 run_key)만 1 peer 로 합친다.
-        coarse = _coalesce_by_source(normalized)
-        aggregate = _aggregate(coarse)
+        aggregator_config = AggregatorConfig.from_env()
+        coarse = _coalesce_by_source(normalized, aggregator_config)
+        aggregate = _aggregate(coarse, aggregator_config)
         source_signal_event_ids = _source_signal_event_ids(normalized)
 
         # --- orchestrator: detect → conditional re-query → judge (Wave-3) --------
@@ -442,7 +444,10 @@ def _fine_source_from(row: dict[str, Any], detail: dict[str, Any]) -> str | None
     return None
 
 
-def _coalesce_by_source(results: list[NormalizedSourceResult]) -> list[NormalizedSourceResult]:
+def _coalesce_by_source(
+    results: list[NormalizedSourceResult],
+    config: AggregatorConfig | None = None,
+) -> list[NormalizedSourceResult]:
     """Reduce the fan-in to exactly one peer per coarse source for scoring.
 
     A coarse source can legitimately have several rows for one (stock, date): the
@@ -462,11 +467,15 @@ def _coalesce_by_source(results: list[NormalizedSourceResult]) -> list[Normalize
     coalesced: list[NormalizedSourceResult] = []
     for source in order:
         group = groups[source]
-        coalesced.append(group[0] if len(group) == 1 else _blend_group(source, group))
+        coalesced.append(group[0] if len(group) == 1 else _blend_group(source, group, config))
     return coalesced
 
 
-def _blend_group(source: str, group: list[NormalizedSourceResult]) -> NormalizedSourceResult:
+def _blend_group(
+    source: str,
+    group: list[NormalizedSourceResult],
+    config: AggregatorConfig | None = None,
+) -> NormalizedSourceResult:
     score = round(sum(r.score for r in group) / len(group), 3)
     risk_flags: list[str] = []
     event_ids: list[int] = []
@@ -478,7 +487,7 @@ def _blend_group(source: str, group: list[NormalizedSourceResult]) -> Normalized
         source=source,
         analysis_result_id=group[0].analysis_result_id,
         agent_result_id=group[0].agent_result_id,
-        direction=_resolve_signal(group, score),
+        direction=_resolve_signal(group, score, config),
         score=score,
         score_100=_to_100(score),
         data_status=_blend_status([r.data_status for r in group]),
@@ -502,7 +511,11 @@ def _blend_status(statuses: list[str]) -> str:
     return "failed"
 
 
-def _aggregate(results: list[NormalizedSourceResult]) -> dict[str, Any]:
+def _aggregate(
+    results: list[NormalizedSourceResult],
+    config: AggregatorConfig | None = None,
+) -> dict[str, Any]:
+    config = config or AggregatorConfig.from_env()
     available = [result for result in results if result.data_status != "failed"]
     # A "no_signal" source ran but carries no direction — it must not dilute the
     # blended score toward 0, so it is available (shown, counted for coverage) but
@@ -515,7 +528,7 @@ def _aggregate(results: list[NormalizedSourceResult]) -> dict[str, Any]:
     failed = [result for result in results if result.data_status == "failed"]
     missing_sources = [source for source in SOURCE_ORDER if not any(result.source == source for result in results)]
     aggregate_score = round(sum(result.score for result in scoring) / len(scoring), 3) if scoring else 0.0
-    signal = _resolve_signal(available, aggregate_score)
+    signal = _resolve_signal(available, aggregate_score, config)
     agreement_rate = _agreement_rate(available)
     source_agreement = _source_agreement(available, agreement_rate)
     consensus_score = 50.0 if len(available) == 1 else round(agreement_rate * 100, 2)
@@ -583,7 +596,12 @@ def _blend_basis(scoring: list[NormalizedSourceResult], aggregate_score: float) 
     }
 
 
-def _resolve_signal(results: list[NormalizedSourceResult], aggregate_score: float) -> str:
+def _resolve_signal(
+    results: list[NormalizedSourceResult],
+    aggregate_score: float,
+    config: AggregatorConfig | None = None,
+) -> str:
+    config = config or AggregatorConfig.from_env()
     if results and all(result.direction == "neutral" for result in results):
         return "neutral"
     has_mixed = any(result.direction == "mixed" for result in results)
@@ -591,9 +609,9 @@ def _resolve_signal(results: list[NormalizedSourceResult], aggregate_score: floa
     has_negative = any(result.direction == "negative" for result in results)
     if has_mixed or (has_positive and has_negative):
         return "mixed"
-    if aggregate_score >= 0.2:
+    if aggregate_score >= config.positive_threshold:
         return "positive"
-    if aggregate_score <= -0.2:
+    if aggregate_score <= config.negative_threshold:
         return "negative"
     return "neutral"
 

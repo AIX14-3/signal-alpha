@@ -6,6 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "packages" / "data-access"))
 
+from app.analyzers.config import AggregatorConfig
 from app.orchestrator.aggregation.tasks import AggregateSignalTaskHandler
 from app.orchestrator.queue.handlers import build_task_handlers
 from app.orchestrator.queue.task_types import AGGREGATE_SIGNAL
@@ -467,6 +468,45 @@ class AggregateSignalTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         handlers = build_task_handlers(FakeConnection())
 
         self.assertIn(AGGREGATE_SIGNAL, handlers)
+
+
+class AggregatorThresholdConfigTest(unittest.TestCase):
+    """헤드라인 방향 컷오프(positive/negative_threshold)가 하드코딩이 아니라
+    AggregatorConfig 로 배선돼 실제로 오버라이드되는지 검증한다.
+
+    _resolve_signal 에 빈 결과 리스트를 넘기면 방향 집계 분기를 건너뛰고
+    순수하게 aggregate_score vs 임계값만 판정하므로, 컷오프 배선을 격리해 확인할 수 있다.
+    """
+
+    def test_default_thresholds_classify_direction(self):
+        from app.orchestrator.aggregation.tasks import _resolve_signal
+
+        config = AggregatorConfig(weights={})  # 기본 ±0.2
+        self.assertEqual(_resolve_signal([], 0.3, config), "positive")
+        self.assertEqual(_resolve_signal([], -0.3, config), "negative")
+        self.assertEqual(_resolve_signal([], 0.1, config), "neutral")
+
+    def test_custom_thresholds_override_direction(self):
+        from app.orchestrator.aggregation.tasks import _resolve_signal
+
+        # 컷오프를 ±0.5 로 좁히면 기본값(±0.2)에서 positive 였던 0.3 이 neutral 로 바뀐다.
+        strict = AggregatorConfig(weights={}, positive_threshold=0.5, negative_threshold=-0.5)
+        self.assertEqual(_resolve_signal([], 0.3, strict), "neutral")
+        self.assertEqual(_resolve_signal([], -0.3, strict), "neutral")
+        self.assertEqual(_resolve_signal([], 0.6, strict), "positive")
+        self.assertEqual(_resolve_signal([], -0.6, strict), "negative")
+
+    def test_from_env_reads_threshold_override(self):
+        import os
+        from unittest import mock
+
+        with mock.patch.dict(
+            os.environ,
+            {"ALT_POSITIVE_THRESHOLD": "0.5", "ALT_NEGATIVE_THRESHOLD": "-0.5"},
+        ):
+            config = AggregatorConfig.from_env()
+        self.assertEqual(config.positive_threshold, 0.5)
+        self.assertEqual(config.negative_threshold, -0.5)
 
 
 if __name__ == "__main__":
