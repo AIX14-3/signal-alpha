@@ -21,6 +21,11 @@ _CHART_LOOKBACK_DAYS = 30
 ALLOWED_USER_VIEWS = {"watch", "research_more", "not_relevant"}
 FORBIDDEN_USER_VIEWS = {"buy", "sell", "hold", "entry", "exit", "target_price"}
 
+# 회고(복기) 경량 구조 — 결과 확인 후 "계획 대비 결과"를 중립적으로 분류한다. 성과 판정이 아니라
+# 학습을 위한 기록(HARNESS 사후확신/look-ahead 금지). 목적 명명 신규 컬럼 retro_outcome_class
+# (과거 decision_type 은 018 정책으로 제거됨 — 이름을 되살리지 않는다).
+ALLOWED_RETRO_OUTCOMES = {"as_planned", "unexpected_good", "unexpected_bad"}
+
 router = APIRouter(prefix="/api/journals", tags=["journals"])
 
 
@@ -38,6 +43,9 @@ class JournalUpdateRequest(BaseModel):
     tags: list[str] | None = None
     # 회고(결과 확인 후 복기) — outcome 이 1건 이상 확정된 저널에만 작성 가능.
     retrospective_memo: str | None = None
+    # 경량 구조 회고 — 계획 대비 결과 분류(as_planned/unexpected_good/unexpected_bad).
+    # 회고와 동일 게이트(outcome 확정)를 적용한다.
+    retro_outcome_class: str | None = None
 
 
 @router.get("")
@@ -258,7 +266,11 @@ async def update_journal(
         )
         if existing is None:
             raise _api_error(404, "JOURNAL_NOT_FOUND", "저널을 찾을 수 없습니다.")
-        if payload.retrospective_memo is not None and not _json_array(existing.get("outcomes")):
+        # 회고 계열 필드(메모·결과분류)는 변동 확정 후에만 기록할 수 있다.
+        sets_retrospective = (
+            payload.retrospective_memo is not None or payload.retro_outcome_class is not None
+        )
+        if sets_retrospective and not _json_array(existing.get("outcomes")):
             raise _api_error(
                 400,
                 "RETROSPECTIVE_NOT_READY",
@@ -270,9 +282,13 @@ async def update_journal(
             user_view=_validate_user_view(payload.user_view or existing["user_view"]),
             user_memo=payload.memo if payload.memo is not None else existing.get("user_memo"),
             tags=_clean_tags(payload.tags if payload.tags is not None else _json_array(existing.get("tags"))),
-            retrospective_memo=payload.retrospective_memo
+            # 빈 문자열은 미작성(NULL)으로 정규화 — "" 저장으로 인한 표현 불일치 방지.
+            retrospective_memo=_blank_to_none(payload.retrospective_memo)
             if payload.retrospective_memo is not None
             else existing.get("retrospective_memo"),
+            retro_outcome_class=_validate_retro_outcome(payload.retro_outcome_class)
+            if payload.retro_outcome_class is not None
+            else existing.get("retro_outcome_class"),
         )
     if row is None:
         raise _api_error(404, "JOURNAL_NOT_FOUND", "저널을 찾을 수 없습니다.")
@@ -313,6 +329,8 @@ def _journal_response(row: dict[str, Any]) -> dict[str, Any]:
         "user_view": row["user_view"],
         "memo": row.get("user_memo"),
         "retrospective_memo": row.get("retrospective_memo"),
+        # 경량 구조 회고 — 계획 대비 결과 분류(비공개 저널 내부 전용).
+        "retro_outcome_class": row.get("retro_outcome_class"),
         "tags": _json_array(row.get("tags")),
         "signal_score_at_time": _number(row.get("signal_score_at_time")),
         "signal_value_at_time": row.get("signal_value_at_time"),
@@ -356,6 +374,28 @@ def _validate_user_view(value: str) -> str:
             400,
             "INVALID_USER_VIEW",
             "저널 판단 값은 watch, research_more, not_relevant 중 하나여야 합니다.",
+        )
+    return clean_value
+
+
+def _blank_to_none(value: str | None) -> str | None:
+    # 빈/공백 문자열은 미작성(NULL)으로 정규화.
+    if value is None:
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def _validate_retro_outcome(value: str) -> str | None:
+    # 빈 문자열은 분류 해제(NULL)로 취급한다.
+    clean_value = value.strip()
+    if not clean_value:
+        return None
+    if clean_value not in ALLOWED_RETRO_OUTCOMES:
+        raise _api_error(
+            400,
+            "INVALID_RETRO_OUTCOME",
+            "결과 분류는 as_planned, unexpected_good, unexpected_bad 중 하나여야 합니다.",
         )
     return clean_value
 

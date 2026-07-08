@@ -111,6 +111,7 @@ class FakeConnection:
                 "signal_value_at_time": args[7],
                 "source_agreement_at_time": args[8],
                 "retrospective_memo": None,
+                "retro_outcome_class": None,
                 "outcomes": "[]",
                 "created_at": datetime(2026, 6, 22, tzinfo=UTC),
                 "updated_at": datetime(2026, 6, 22, tzinfo=UTC),
@@ -147,6 +148,7 @@ class FakeConnection:
             journal["user_memo"] = args[3]
             journal["tags"] = args[4]
             journal["retrospective_memo"] = args[5]
+            journal["retro_outcome_class"] = args[6]
             journal["updated_at"] = datetime(2026, 6, 23, tzinfo=UTC)
             return journal
         raise AssertionError(f"Unexpected fetchrow SQL: {sql}")
@@ -385,6 +387,63 @@ class JournalRoutesTest(unittest.TestCase):
         self.assertEqual(saved.json()["retrospective_memo"], "예상보다 흐름이 빨랐다.")
         # 회고만 보냈을 때 기존 판단/메모는 유지된다.
         self.assertEqual(saved.json()["user_view"], "research_more")
+
+    def test_structured_retrospective_requires_confirmed_outcome(self):
+        # 경량 구조 회고(결과 분류)도 회고와 동일하게 변동 확정 게이트를 받는다.
+        self.create_journal()
+
+        blocked = self.client.patch(
+            "/api/journals/20",
+            json={"retro_outcome_class": "as_planned"},
+            headers=self.auth_headers(),
+        )
+        self.assertEqual(blocked.status_code, 400)
+        self.assertEqual(blocked.json()["detail"]["code"], "RETROSPECTIVE_NOT_READY")
+
+    def test_structured_retrospective_saved_when_confirmed(self):
+        self.create_journal()
+        self.connection.journals[0]["outcomes"] = json.dumps(
+            [{"horizon": "7td", "change_pct": 5.0}]
+        )
+        saved = self.client.patch(
+            "/api/journals/20",
+            json={
+                "retro_outcome_class": "unexpected_good",
+                "retrospective_memo": "다음엔 실적 시즌 가중.",
+            },
+            headers=self.auth_headers(),
+        )
+        self.assertEqual(saved.status_code, 200)
+        body = saved.json()
+        self.assertEqual(body["retro_outcome_class"], "unexpected_good")
+        self.assertEqual(body["retrospective_memo"], "다음엔 실적 시즌 가중.")
+
+    def test_blank_retrospective_normalized_to_null(self):
+        # 빈 문자열 회고 메모는 NULL 로 정규화된다("" 저장 방지).
+        self.create_journal()
+        self.connection.journals[0]["outcomes"] = json.dumps(
+            [{"horizon": "7td", "change_pct": 5.0}]
+        )
+        saved = self.client.patch(
+            "/api/journals/20",
+            json={"retro_outcome_class": "as_planned", "retrospective_memo": "   "},
+            headers=self.auth_headers(),
+        )
+        self.assertEqual(saved.status_code, 200)
+        self.assertIsNone(saved.json()["retrospective_memo"])
+
+    def test_invalid_retro_outcome_rejected(self):
+        self.create_journal()
+        self.connection.journals[0]["outcomes"] = json.dumps(
+            [{"horizon": "7td", "change_pct": 5.0}]
+        )
+        rejected = self.client.patch(
+            "/api/journals/20",
+            json={"retro_outcome_class": "moon_shot"},
+            headers=self.auth_headers(),
+        )
+        self.assertEqual(rejected.status_code, 400)
+        self.assertEqual(rejected.json()["detail"]["code"], "INVALID_RETRO_OUTCOME")
 
     def test_journal_timeline_returns_series_with_markers(self):
         self.create_journal()
