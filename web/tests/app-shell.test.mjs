@@ -98,6 +98,8 @@ test("community detail exposes bookmark and active reaction state", async () => 
   assert.match(commentList, /nextCursor/);
   assert.match(commentList, /loadMore/);
   assert.match(commentList, /listComments\(postId, \{ limit: PAGE, cursor/);
+  assert.match(page, /onCountChange/);
+  assert.match(commentList, /onCountChange/);
 });
 
 test("admin UI exposes split schedule rows and schedule run history", async () => {
@@ -145,6 +147,14 @@ test("admin UI exposes split schedule rows and schedule run history", async () =
   assert.match(apiClient, /export async function adminReplayDeadLetters/);
   assert.match(apiClient, /export type AdminCommunityModerationItem/);
   assert.match(apiClient, /export async function adminListCommunityModeration/);
+  assert.match(
+    apiClient,
+    /adminListCommunityModeration\(\s*params: \{ target_type\?: AdminCommunityModerationTarget; limit\?: number; cursor\?: string \| null \}/s,
+  );
+  assert.match(
+    apiClient,
+    /Promise<\{ items: AdminCommunityModerationItem\[\]; target_type: AdminCommunityModerationTarget; next_cursor: string \| null \}>/s,
+  );
   assert.match(apiClient, /export async function adminRestoreCommunityPost/);
   assert.match(apiClient, /export async function adminDeleteCommunityPost/);
   assert.match(apiClient, /export async function adminRestoreCommunityComment/);
@@ -152,6 +162,9 @@ test("admin UI exposes split schedule rows and schedule run history", async () =
   assert.match(page, /QueueOpsCard/);
   assert.match(page, /CommunityModerationCard/);
   assert.match(page, /adminListCommunityModeration/);
+  assert.match(page, /nextCursor/);
+  assert.match(page, /loadMore/);
+  assert.match(page, /adminListCommunityModeration\(\{ target_type: "all", limit: PAGE, cursor/);
   assert.match(page, /adminRestoreCommunityPost/);
   assert.match(page, /adminDeleteCommunityPost/);
   assert.match(page, /adminRestoreCommunityComment/);

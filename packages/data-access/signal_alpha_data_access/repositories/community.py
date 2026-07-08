@@ -143,7 +143,14 @@ class CommunityRepository:
         )
 
     # ---- 관리자 모더레이션 -------------------------------------------------
-    async def list_hidden_posts(self, *, limit: int) -> list[Any]:
+    async def list_hidden_posts(
+        self,
+        *,
+        limit: int,
+        cursor_sort_at: Any | None = None,
+        cursor_target_rank: int | None = None,
+        cursor_id: int | None = None,
+    ) -> list[Any]:
         """관리자 검토 큐용 숨김 게시글. 공개 응답과 같은 데이터 미니멀리즘을 유지한다."""
         return await self._connection.fetch(
             f"""
@@ -164,13 +171,36 @@ class CommunityRepository:
                 WHERE target_type = 'post' AND target_id = p.id
             ) reports ON TRUE
             WHERE p.deleted_at IS NULL AND p.status = 'hidden'
+              AND (
+                  $1::timestamptz IS NULL
+                  OR COALESCE(reports.latest_reported_at, p.updated_at, p.created_at) < $1
+                  OR (
+                      COALESCE(reports.latest_reported_at, p.updated_at, p.created_at) = $1
+                      AND 1 < $2::int
+                  )
+                  OR (
+                      COALESCE(reports.latest_reported_at, p.updated_at, p.created_at) = $1
+                      AND 1 = $2::int
+                      AND p.id < $3::bigint
+                  )
+              )
             ORDER BY COALESCE(reports.latest_reported_at, p.updated_at, p.created_at) DESC, p.id DESC
-            LIMIT $1
+            LIMIT $4
             """,
+            cursor_sort_at,
+            cursor_target_rank,
+            cursor_id,
             limit,
         )
 
-    async def list_hidden_comments(self, *, limit: int) -> list[Any]:
+    async def list_hidden_comments(
+        self,
+        *,
+        limit: int,
+        cursor_sort_at: Any | None = None,
+        cursor_target_rank: int | None = None,
+        cursor_id: int | None = None,
+    ) -> list[Any]:
         """관리자 검토 큐용 숨김 댓글."""
         return await self._connection.fetch(
             """
@@ -199,9 +229,25 @@ class CommunityRepository:
              WHERE c.deleted_at IS NULL
                AND c.status = 'hidden'
                AND p.deleted_at IS NULL
+               AND (
+                   $1::timestamptz IS NULL
+                   OR COALESCE(reports.latest_reported_at, c.updated_at, c.created_at) < $1
+                   OR (
+                       COALESCE(reports.latest_reported_at, c.updated_at, c.created_at) = $1
+                       AND 0 < $2::int
+                   )
+                   OR (
+                       COALESCE(reports.latest_reported_at, c.updated_at, c.created_at) = $1
+                       AND 0 = $2::int
+                       AND c.id < $3::bigint
+                   )
+               )
              ORDER BY COALESCE(reports.latest_reported_at, c.updated_at, c.created_at) DESC, c.id DESC
-             LIMIT $1
+             LIMIT $4
             """,
+            cursor_sort_at,
+            cursor_target_rank,
+            cursor_id,
             limit,
         )
 

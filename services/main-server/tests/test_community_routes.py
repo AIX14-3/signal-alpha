@@ -308,22 +308,42 @@ class FakeConnection:
                 ]
             return ranked[:limit]
         if "FROM community_posts" in sql and "p.status = 'hidden'" in sql:
-            limit = args[0]
+            if len(args) == 1:
+                cursor_sort_at = cursor_target_rank = cursor_id = None
+                limit = args[0]
+            else:
+                cursor_sort_at, cursor_target_rank, cursor_id, limit = args
             rows = [
                 self._moderation_post_row(post)
                 for post in self.posts
                 if post["deleted_at"] is None and post["status"] == "hidden"
             ]
             rows.sort(key=lambda row: (row.get("latest_reported_at") or row["updated_at"], row["id"]), reverse=True)
+            if cursor_sort_at is not None:
+                rows = [
+                    row for row in rows
+                    if ((row.get("latest_reported_at") or row["updated_at"]), 1, row["id"])
+                    < (cursor_sort_at, cursor_target_rank, cursor_id)
+                ]
             return rows[:limit]
         if "FROM community_comments c" in sql and "c.status = 'hidden'" in sql:
-            limit = args[0]
+            if len(args) == 1:
+                cursor_sort_at = cursor_target_rank = cursor_id = None
+                limit = args[0]
+            else:
+                cursor_sort_at, cursor_target_rank, cursor_id, limit = args
             rows = [
                 self._moderation_comment_row(c)
                 for c in self.comments
                 if c["deleted_at"] is None and c["status"] == "hidden"
             ]
             rows.sort(key=lambda row: (row.get("latest_reported_at") or row["updated_at"], row["id"]), reverse=True)
+            if cursor_sort_at is not None:
+                rows = [
+                    row for row in rows
+                    if ((row.get("latest_reported_at") or row["updated_at"]), 0, row["id"])
+                    < (cursor_sort_at, cursor_target_rank, cursor_id)
+                ]
             return rows[:limit]
         if "FROM community_posts" in sql:  # feed
             cursor_id, limit = args
@@ -470,6 +490,17 @@ class CommunityRoutesTest(unittest.TestCase):
         self.assertEqual(created.json()["author"]["member_code"], "AAAA2345")
         feed = self.client.get("/api/community/posts").json()["items"]
         self.assertEqual(feed[0]["id"], created.json()["id"])
+
+    def test_feed_next_cursor_is_null_when_page_is_exact_limit(self):
+        first_post_id = self.create_post(self.token1, title="feed 1").json()["id"]
+        second_post_id = self.create_post(self.token1, title="feed 2").json()["id"]
+
+        response = self.client.get("/api/community/posts?limit=2")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual([item["id"] for item in body["items"]], [second_post_id, first_post_id])
+        self.assertIsNone(body["next_cursor"])
 
     def test_popular_uses_score_id_cursor_pagination(self):
         p1 = self.create_post(self.token1, title="랭킹 1").json()["id"]
@@ -675,6 +706,30 @@ class CommunityRoutesTest(unittest.TestCase):
         self.assertEqual(comment_item["id"], comment["id"])
         self.assertEqual(comment_item["post_id"], post_id)
         self.assertEqual(comment_item["report_reasons"], ["abuse"])
+
+    def test_admin_moderation_uses_cursor_pagination(self):
+        post_ids = []
+        for idx in range(3):
+            post_id = self.create_post(self.token1, title=f"hidden post {idx}").json()["id"]
+            self.connection._find_post(post_id)["status"] = "hidden"
+            post_ids.append(post_id)
+        self.install_admin()
+
+        first = self.client.get("/api/admin/community/moderation?limit=2")
+
+        self.assertEqual(first.status_code, 200)
+        first_body = first.json()
+        self.assertEqual([item["id"] for item in first_body["items"]], [post_ids[2], post_ids[1]])
+        self.assertIsNotNone(first_body["next_cursor"])
+
+        second = self.client.get(
+            f"/api/admin/community/moderation?limit=2&cursor={first_body['next_cursor']}"
+        )
+
+        self.assertEqual(second.status_code, 200)
+        second_body = second.json()
+        self.assertEqual([item["id"] for item in second_body["items"]], [post_ids[0]])
+        self.assertIsNone(second_body["next_cursor"])
 
     def test_admin_moderation_restores_and_deletes_hidden_targets(self):
         post_id = self.create_post(self.token1, title="hidden post").json()["id"]

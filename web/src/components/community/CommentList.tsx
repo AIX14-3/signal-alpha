@@ -18,7 +18,13 @@ const PAGE = 20;
 
 // 게시글 댓글 트리(1단계 대댓글까지). 목록 조회·작성·대댓글·삭제(본인)·신고·좋아요.
 // 본인 판별은 author.member_code === user.member_code(응답에 user id 없음).
-export function CommentList({ postId }: { postId: number }) {
+export function CommentList({
+  postId,
+  onCountChange,
+}: {
+  postId: number;
+  onCountChange?: (delta: number) => void;
+}) {
   const user = useAuthStore((s) => s.user);
   const showToast = useToastStore((s) => s.show);
   const [comments, setComments] = useState<CommunityComment[]>([]);
@@ -56,6 +62,7 @@ export function CommentList({ postId }: { postId: number }) {
       await createComment(postId, { body: text, parent_comment_id: parentId });
       setReplyTo(null);
       await reload();
+      onCountChange?.(1);
       return true;
     } catch (error) {
       showToast(
@@ -71,6 +78,7 @@ export function CommentList({ postId }: { postId: number }) {
     try {
       await deleteComment(id);
       await reload();
+      onCountChange?.(-1);
       showToast("댓글을 삭제했습니다.", "success");
     } catch (error) {
       showToast(

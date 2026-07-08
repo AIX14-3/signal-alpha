@@ -42,6 +42,10 @@ export default function CommunityPostPage() {
     }
   }, [postId]);
 
+  const handleCommentCountChange = useCallback((delta: number) => {
+    setPost((p) => (p ? { ...p, comment_count: Math.max(0, p.comment_count + delta) } : p));
+  }, []);
+
   useEffect(() => {
     // 로그인 시 조회수 1회 기록되므로 auth hydrate 완료 후 로드(비로그인도 열람 가능).
     if (Number.isNaN(postId)) return;
@@ -182,7 +186,7 @@ export default function CommunityPostPage() {
         </article>
       )}
 
-      <CommentList postId={post.id} />
+      <CommentList postId={post.id} onCountChange={handleCommentCountChange} />
     </div>
   );
 }

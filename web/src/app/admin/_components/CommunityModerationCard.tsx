@@ -11,14 +11,19 @@ import {
 } from "@/lib/apiClient";
 import { fmtDateTime } from "../_lib/datetime";
 
+const PAGE = 20;
+
 export function CommunityModerationCard({ onError }: { onError: (msg: string | null) => void }) {
   const [items, setItems] = useState<AdminCommunityModerationItem[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const data = await adminListCommunityModeration({ target_type: "all", limit: 20 });
+      const data = await adminListCommunityModeration({ target_type: "all", limit: PAGE, cursor: null });
       setItems(data.items);
+      setNextCursor(data.next_cursor);
     } catch (err) {
       onError((err as Error).message);
     }
@@ -38,6 +43,21 @@ export function CommunityModerationCard({ onError }: { onError: (msg: string | n
       onError((err as Error).message);
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function loadMore() {
+    if (nextCursor == null || loadingMore) return;
+    setLoadingMore(true);
+    onError(null);
+    try {
+      const data = await adminListCommunityModeration({ target_type: "all", limit: PAGE, cursor: nextCursor });
+      setItems((prev) => [...prev, ...data.items]);
+      setNextCursor(data.next_cursor);
+    } catch (err) {
+      onError((err as Error).message);
+    } finally {
+      setLoadingMore(false);
     }
   }
 
@@ -141,6 +161,16 @@ export function CommunityModerationCard({ onError }: { onError: (msg: string | n
           </tbody>
         </table>
       </div>
+      {nextCursor != null && (
+        <button
+          type="button"
+          onClick={() => void loadMore()}
+          disabled={busy || loadingMore}
+          className="mt-4 rounded-full border border-line px-4 py-2 text-[13px] font-semibold text-navy-soft disabled:opacity-50"
+        >
+          {loadingMore ? "불러오는 중..." : "더 보기"}
+        </button>
+      )}
     </section>
   );
 }

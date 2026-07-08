@@ -253,11 +253,12 @@ export async function adminGetQueueOverview(): Promise<AdminQueueOverview> {
 }
 
 export async function adminListCommunityModeration(
-  params: { target_type?: AdminCommunityModerationTarget; limit?: number } = {},
-): Promise<{ items: AdminCommunityModerationItem[]; target_type: AdminCommunityModerationTarget }> {
+  params: { target_type?: AdminCommunityModerationTarget; limit?: number; cursor?: string | null } = {},
+): Promise<{ items: AdminCommunityModerationItem[]; target_type: AdminCommunityModerationTarget; next_cursor: string | null }> {
   const search = new URLSearchParams();
   if (params.target_type) search.set("target_type", params.target_type);
   if (params.limit) search.set("limit", String(params.limit));
+  if (params.cursor != null) search.set("cursor", params.cursor);
   const qs = search.toString();
   return apiFetch(`/api/admin/community/moderation${qs ? `?${qs}` : ""}`, { auth: "admin" });
 }

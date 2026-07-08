@@ -227,10 +227,14 @@ async def list_feed(
     clamped = min(max(limit, 1), _FEED_MAX)
     async with pool.acquire() as connection:
         repo = CommunityRepository(connection)
-        rows = [dict(row) for row in await repo.list_feed(cursor_id=cursor, limit=clamped)]
-        await _attach_my_reactions(repo, rows, current_user, "post")
-    items = [_post_response(row) for row in rows]
-    next_cursor = items[-1]["id"] if len(items) == clamped else None
+        rows = [
+            dict(row)
+            for row in await repo.list_feed(cursor_id=cursor, limit=clamped + 1)
+        ]
+        page_rows = rows[:clamped]
+        await _attach_my_reactions(repo, page_rows, current_user, "post")
+    items = [_post_response(row) for row in page_rows]
+    next_cursor = items[-1]["id"] if len(rows) > clamped else None
     return {"items": items, "next_cursor": next_cursor, "notice": NOTICE}
 
 
