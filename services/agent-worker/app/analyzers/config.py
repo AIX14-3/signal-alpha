@@ -215,6 +215,37 @@ class HiringRuleConfig:
 
 
 @dataclass(frozen=True)
+class ReportRuleConfig:
+    """Scoring parameters for the Report (broker-report valuation) analyzer.
+
+    방향 신호는 애널리스트 투자의견(매수 편향)이 아니라 **목표주가**에서 뽑는다:
+    - revision: 최신 목표주가 vs 직전 목표주가 상향/하향(편향 없는 순수 방향 신호, 주 신호).
+    - upside: 목표주가 vs 현재가 괴리(유효하나 매수 편향이 남아, 낮은 가중 + 큰 scale 로 완충 —
+      전형적 20~30% upside 만으로는 방향을 못 넘기고 극단값에서만 기여).
+    """
+
+    min_target_price: float = 1.0  # 목표가/현재가 <= 0 방어(0 나눗셈)
+    revision_weight: float = 0.6
+    revision_scale: float = 0.10  # tanh knee: 목표가 +10% 상향 → 0.76*weight
+    upside_weight: float = 0.25
+    upside_scale: float = 0.35  # 큰 scale: 25% upside → ~0.15(중립대), 매수 편향 완충
+    positive_threshold: float = 0.2
+    negative_threshold: float = -0.2
+
+    @classmethod
+    def from_env(cls) -> "ReportRuleConfig":
+        return cls(
+            min_target_price=_float("REPORT_MIN_TARGET_PRICE", cls.min_target_price),
+            revision_weight=_float("REPORT_REVISION_WEIGHT", cls.revision_weight),
+            revision_scale=_float("REPORT_REVISION_SCALE", cls.revision_scale),
+            upside_weight=_float("REPORT_UPSIDE_WEIGHT", cls.upside_weight),
+            upside_scale=_float("REPORT_UPSIDE_SCALE", cls.upside_scale),
+            positive_threshold=_float("REPORT_POSITIVE_THRESHOLD", cls.positive_threshold),
+            negative_threshold=_float("REPORT_NEGATIVE_THRESHOLD", cls.negative_threshold),
+        )
+
+
+@dataclass(frozen=True)
 class AggregatorConfig:
     """Weights and thresholds for merging source signals into one signal.
 

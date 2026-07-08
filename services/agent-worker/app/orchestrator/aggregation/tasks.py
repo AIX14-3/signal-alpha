@@ -28,7 +28,10 @@ SRC_RUN_KEY = "SRC"
 # 대체데이터(HIRING/PATENT/DATALAB)는 서로 다른 신호라 묶지 않고 **각자 독립 소스**로 점수에 넣는다
 # (ALTERNATIVE 로 collapse 안 함). PRICE/REPORT 는 근거 소스로 수용하되 점수 산정에는 넣지 않는다.
 SOURCE_ORDER = ("DART", "PRICE", "REPORT", "HIRING", "PATENT", "DATALAB")
-SCORING_SOURCES = {"DART", "HIRING", "PATENT", "DATALAB"}
+# 점수에 산입되는 소스. REPORT 는 목표주가 리비전/upside(결정론)로 점수를 내므로 편입한다
+# (data_status="ok" 일 때만; 밸류에이션 신호 없으면 no_signal 로 자연 제외). DART 는 여전히
+# feature-only(no_signal)라 집합엔 있으나 점수 평균에선 빠진다. PRICE 는 근거 전용(미편입).
+SCORING_SOURCES = {"DART", "REPORT", "HIRING", "PATENT", "DATALAB"}
 VALID_DIRECTIONS = {"positive", "negative", "neutral", "mixed"}
 SOURCE_ALIASES = {
     "DART": "DART",

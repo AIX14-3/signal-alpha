@@ -21,12 +21,20 @@ from app.orchestrator.queue.task_types import (
 from signal_alpha_data_access.repositories import (
     AnalysisRepository,
     CollectionRepository,
+    MarketDataRepository,
     NormalizationRepository,
     ProcessingQueueRepository,
     RawDetailRepository,
 )
+from app.analyzers.config import ReportRuleConfig
+from app.analyzers.report.rules import (
+    compute_revision_pct,
+    compute_upside_pct,
+    evaluate_report,
+)
 from app.orchestrator.report._report_helpers import (
     _compute_source_hash,
+    _float_or_none,
     _extra_payload,
     _first_non_empty,
     _new_report_collection_result,
@@ -467,6 +475,9 @@ class ReportAnalyzeTaskHandler:
         self._settings = settings
         self._analysis_repository = AnalysisRepository(connection)
         self._queue_repository = ProcessingQueueRepository(connection)
+        # 밸류에이션 점수용: 목표가 이력(리비전 기준선) + 현재가(upside). 같은 수집 DB.
+        self._collection_repository = CollectionRepository(connection)
+        self._market_repository = MarketDataRepository(connection)
 
     async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
         stock_id = int(task["stock_id"])
@@ -493,13 +504,30 @@ class ReportAnalyzeTaskHandler:
         event_ids = [int(event["id"]) for event in events]
         analysis_date = _report_analysis_date(events, task_context)
         run_key = str(task_context.get("run_key") or "REPORT").strip() or "REPORT"
-        # 결정론 밸류에이션 신호: 정규화가 채운 애널리스트 투자의견(signal_direction)의 컨센서스로
-        # 방향/점수를 낸다(현재가 불필요 — 의견 분포만 사용). 의견 데이터가 전혀 없으면 features-only
-        # 폴백(unknown/no_signal). 점수는 SCORING_SOURCES 에 REPORT 가 없어 final_score 에 산입되지
-        # 않고(점수=주가/집계), 방향은 소스 근거로 쓰인다(소스별 라우팅: REPORT→결정론 밸류+LLM 서술).
-        direction, source_score, data_status = _report_consensus_direction(events)
+        # 결정론 밸류에이션 신호: **목표주가**에서 방향/점수를 낸다(매수 편향된 투자의견 대신).
+        #   - revision: 최신 목표가 vs 직전 목표가 상향/하향(편향 없는 순수 방향, 주 신호)
+        #   - upside: 목표가 vs 현재가 괴리(편향 완충 위해 낮은 가중·큰 scale)
+        # 둘 다 산출 불가(직전 목표가·현재가 부재)면 features-only 폴백(unknown/no_signal, 회귀 없음).
+        # 투자의견 컨센서스는 점수가 아니라 근거로만 보존한다. REPORT 를 SCORING_SOURCES 에 편입해
+        # 이 점수가 헤드라인 블렌드에 산입된다(점수=대체데이터+REPORT, 방향은 소스 근거로도 노출).
+        config = ReportRuleConfig.from_env()
+        latest_target = _float_or_none(events[0].get("target_price"))
+        prior_target = await self._prior_target_price(stock_id, events)
+        current_close = await self._current_close(stock_id)
+        revision_pct = compute_revision_pct(
+            latest_target, prior_target, min_target_price=config.min_target_price
+        )
+        upside_pct = compute_upside_pct(
+            latest_target, current_close, min_price=config.min_target_price
+        )
+        assessment = evaluate_report(revision_pct=revision_pct, upside_pct=upside_pct, config=config)
+        opinion_direction, opinion_score, _opinion_status = _report_consensus_direction(events)
+        if assessment.has_signal:
+            direction, source_score, data_status = assessment.direction, assessment.score, "ok"
+        else:
+            direction, source_score, data_status = "unknown", 0.0, "no_signal"
         needs_review = any(bool(event.get("needs_review") or event.get("fact_needs_review")) for event in events)
-        risk_flags = _report_risk_flags(events, needs_review)  # 데이터 품질 플래그
+        risk_flags = _report_risk_flags(events, needs_review) + assessment.risk_flags  # 품질 + 신호 플래그
 
         analysis_result = await self._analysis_repository.upsert_analysis_result(
             stock_id=stock_id,
@@ -517,9 +545,17 @@ class ReportAnalyzeTaskHandler:
             "summary": _report_analysis_summary(events, direction),
             "risk_flags": risk_flags,
             "needs_review": needs_review,
-            "data_status": data_status,  # 의견 컨센서스 있으면 ok, 없으면 no_signal(폴백)
+            "data_status": data_status,  # 목표주가 신호 있으면 ok, 없으면 no_signal(폴백)
             "stock_code": task_context.get("stock_code") or _first_non_empty(events, "ticker"),
             "analysis_source": "rules" if data_status == "ok" else "features",
+            # 결정론 점수 근거(리비전/괴리) — score_breakdown 렌더·감사용.
+            "valuation_signal": {
+                "revision_pct": revision_pct,
+                "upside_pct": upside_pct,
+                "highlights": assessment.highlights,
+            },
+            # 투자의견 컨센서스는 점수가 아닌 근거로만(매수 편향 때문에 점수엔 미채택).
+            "opinion_consensus": {"direction": opinion_direction, "score": opinion_score},
             "report_quant": {
                 "valuation": _report_valuation_payload(events),
             },
@@ -601,6 +637,44 @@ class ReportAnalyzeTaskHandler:
             """,
             signal_event_ids,
         ))
+
+    async def _prior_target_price(
+        self, stock_id: int, events: list[dict[str, Any]]
+    ) -> float | None:
+        """직전(더 이른 발행일) 리포트의 목표주가 = 리비전 기준선. 없으면 None(리비전 미산출).
+
+        조회/파싱 실패는 삼켜 None 으로 강등한다(밸류에이션 신호 부재 = features-only 폴백, 안전).
+        """
+        latest_pub = events[0].get("publish_date") or events[0].get("event_date")
+        latest_d = _to_date(latest_pub) if latest_pub is not None else None
+        if latest_d is None:
+            return None
+        try:
+            facts = await self._collection_repository.list_report_valuation_facts(stock_id=stock_id)
+        except Exception:  # noqa: BLE001 — 이력 조회 실패는 리비전만 포기(발행 불가침)
+            return None
+        for fact in facts:
+            row = dict(fact)
+            target = _float_or_none(row.get("target_price"))
+            if target is None:
+                continue
+            fpub = row.get("publish_date")
+            fd = _to_date(fpub) if fpub is not None else None
+            if fd is not None and fd < latest_d:
+                return target
+        return None
+
+    async def _current_close(self, stock_id: int) -> float | None:
+        """현재가 = 최신 종가(upside 계산용). 없으면 None(upside 미산출).
+
+        조회 실패는 삼켜 None 으로 강등(가격 배관 부재 종목도 안전하게 리비전만으로 동작)."""
+        try:
+            rows = await self._market_repository.list_recent_ohlcv(stock_id=stock_id, limit=1)
+        except Exception:  # noqa: BLE001 — 가격 조회 실패는 upside 만 포기(발행 불가침)
+            return None
+        if not rows:
+            return None
+        return _float_or_none(dict(rows[-1]).get("close"))
 
 
 async def _save_to_db(
