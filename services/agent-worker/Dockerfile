@@ -51,6 +51,8 @@ COPY services/agent-worker/mvp_runtime.py \
      services/agent-worker/run_worker_drain.py \
      services/agent-worker/run_journal_outcomes.py \
      services/agent-worker/run_community_rankings.py \
+     services/agent-worker/run_trade_fills_sync.py \
+     services/agent-worker/run_trade_signal_overlay.py \
      ./
 
 EXPOSE 8011
