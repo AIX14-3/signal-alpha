@@ -145,7 +145,12 @@ function CommentItem({
       </div>
       <p className="mt-1 whitespace-pre-wrap text-[14px]">{comment.body}</p>
       <div className="mt-1.5 flex items-center gap-3">
-        <ReactionButton target="comment" targetId={comment.id} />
+        <ReactionButton
+          target="comment"
+          targetId={comment.id}
+          count={comment.like_count}
+          active={comment.my_reactions.like}
+        />
         {onReply && (
           <button
             type="button"

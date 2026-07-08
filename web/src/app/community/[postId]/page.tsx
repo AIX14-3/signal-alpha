@@ -159,7 +159,18 @@ export default function CommunityPostPage() {
               target="post"
               targetId={post.id}
               count={post.like_count}
+              active={post.my_reactions.like}
               onCount={(likeCount) => setPost((p) => (p ? { ...p, like_count: likeCount } : p))}
+            />
+            <ReactionButton
+              target="post"
+              targetId={post.id}
+              type="bookmark"
+              count={post.bookmark_count}
+              active={post.my_reactions.bookmark}
+              onCount={(bookmarkCount) =>
+                setPost((p) => (p ? { ...p, bookmark_count: bookmarkCount } : p))
+              }
             />
             <span className="text-[13px] text-muted">💬 {post.comment_count}</span>
             {!mine && (

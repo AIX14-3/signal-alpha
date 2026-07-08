@@ -61,6 +61,10 @@ class FakeConnection:
             1 for r in self.reactions
             if r["target_type"] == "post" and r["target_id"] == post["id"] and r["type"] == "like"
         )
+        bookmark_count = sum(
+            1 for r in self.reactions
+            if r["target_type"] == "post" and r["target_id"] == post["id"] and r["type"] == "bookmark"
+        )
         comment_count = sum(
             1 for c in self.comments
             if c["post_id"] == post["id"] and c["deleted_at"] is None and c["status"] == "visible"
@@ -75,6 +79,7 @@ class FakeConnection:
             "stock_name": stock["name"] if stock else None,
             "pnl_pct": (j["outcome_change_pct"] if (j and post["show_pnl"]) else None),
             "like_count": like_count,
+            "bookmark_count": bookmark_count,
             "comment_count": comment_count,
         }
 
@@ -83,8 +88,21 @@ class FakeConnection:
 
     def _comment_row(self, comment):
         author = self.users_by_id[comment["author_user_id"]]
-        return {**comment, "author_member_code": author["member_code"],
-                "author_nickname": author["nickname"]}
+        like_count = sum(
+            1 for r in self.reactions
+            if r["target_type"] == "comment" and r["target_id"] == comment["id"] and r["type"] == "like"
+        )
+        bookmark_count = sum(
+            1 for r in self.reactions
+            if r["target_type"] == "comment" and r["target_id"] == comment["id"] and r["type"] == "bookmark"
+        )
+        return {
+            **comment,
+            "author_member_code": author["member_code"],
+            "author_nickname": author["nickname"],
+            "like_count": like_count,
+            "bookmark_count": bookmark_count,
+        }
 
     def _report_summary(self, target_type, target_id):
         reports = [
@@ -260,6 +278,15 @@ class FakeConnection:
         raise AssertionError(f"Unexpected fetchrow SQL: {sql}")
 
     async def fetch(self, sql, *args):
+        if "FROM community_reactions" in sql and "target_id = ANY" in sql:
+            user_id, target_type, target_ids = args
+            return [
+                {"target_id": r["target_id"], "type": r["type"]}
+                for r in self.reactions
+                if r["user_id"] == user_id
+                and r["target_type"] == target_type
+                and r["target_id"] in target_ids
+            ]
         if "community_post_rankings" in sql:  # popular
             window_kind = args[0]
             ranked = [
@@ -469,10 +496,69 @@ class CommunityRoutesTest(unittest.TestCase):
         post_id = self.create_post(self.token1).json()["id"]
         url = f"/api/community/posts/{post_id}/reactions"
         first = self.client.post(url, json={"type": "like"}, headers=self.headers(self.token2))
-        self.assertEqual(first.json(), {"action": "added", "type": "like", "like_count": 1})
+        self.assertEqual(
+            first.json(),
+            {"action": "added", "active": True, "type": "like", "like_count": 1, "bookmark_count": 0},
+        )
         second = self.client.post(url, json={"type": "like"}, headers=self.headers(self.token2))
         self.assertEqual(second.json()["action"], "removed")
+        self.assertFalse(second.json()["active"])
         self.assertEqual(second.json()["like_count"], 0)
+
+    def test_detail_exposes_my_reactions_and_bookmark_count(self):
+        post_id = self.create_post(self.token1).json()["id"]
+
+        liked = self.client.post(
+            f"/api/community/posts/{post_id}/reactions",
+            json={"type": "like"},
+            headers=self.headers(self.token2),
+        )
+        bookmarked = self.client.post(
+            f"/api/community/posts/{post_id}/reactions",
+            json={"type": "bookmark"},
+            headers=self.headers(self.token2),
+        )
+
+        self.assertEqual(liked.status_code, 200)
+        self.assertTrue(liked.json()["active"])
+        self.assertEqual(liked.json()["bookmark_count"], 0)
+        self.assertEqual(bookmarked.status_code, 200)
+        self.assertTrue(bookmarked.json()["active"])
+        self.assertEqual(bookmarked.json()["bookmark_count"], 1)
+        detail = self.client.get(
+            f"/api/community/posts/{post_id}",
+            headers=self.headers(self.token2),
+        )
+        self.assertEqual(detail.status_code, 200)
+        body = detail.json()
+        self.assertEqual(body["like_count"], 1)
+        self.assertEqual(body["bookmark_count"], 1)
+        self.assertEqual(body["my_reactions"], {"like": True, "bookmark": True})
+
+    def test_comments_expose_my_like_state(self):
+        post_id = self.create_post(self.token1).json()["id"]
+        comment = self.client.post(
+            f"/api/community/posts/{post_id}/comments",
+            json={"body": "good"},
+            headers=self.headers(self.token2),
+        ).json()
+
+        liked = self.client.post(
+            f"/api/community/comments/{comment['id']}/reactions",
+            json={"type": "like"},
+            headers=self.headers(self.token1),
+        )
+        listed = self.client.get(
+            f"/api/community/posts/{post_id}/comments",
+            headers=self.headers(self.token1),
+        )
+
+        self.assertEqual(liked.status_code, 200)
+        self.assertTrue(liked.json()["active"])
+        self.assertEqual(listed.status_code, 200)
+        item = listed.json()["items"][0]
+        self.assertEqual(item["like_count"], 1)
+        self.assertEqual(item["my_reactions"], {"like": True, "bookmark": False})
 
     # ---- 댓글 1단계 대댓글 ----
     def test_comment_reply_depth_enforced(self):

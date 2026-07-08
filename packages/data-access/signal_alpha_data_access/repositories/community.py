@@ -31,6 +31,8 @@ _POST_SELECT = """
     ) ELSE NULL END AS pnl_pct,
     (SELECT count(*) FROM community_reactions r
        WHERE r.target_type = 'post' AND r.target_id = p.id AND r.type = 'like') AS like_count,
+    (SELECT count(*) FROM community_reactions r
+       WHERE r.target_type = 'post' AND r.target_id = p.id AND r.type = 'bookmark') AS bookmark_count,
     (SELECT count(*) FROM community_comments c
        WHERE c.post_id = p.id AND c.deleted_at IS NULL AND c.status = 'visible') AS comment_count
 """
@@ -369,12 +371,38 @@ class CommunityRepository:
                 post_id,
             )
 
+    async def list_user_reactions(
+        self,
+        *,
+        user_id: int,
+        target_type: str,
+        target_ids: list[int],
+    ) -> list[Any]:
+        if not target_ids:
+            return []
+        return await self._connection.fetch(
+            """
+            SELECT target_id, type
+              FROM community_reactions
+             WHERE user_id = $1
+               AND target_type = $2
+               AND target_id = ANY($3::bigint[])
+            """,
+            user_id,
+            target_type,
+            target_ids,
+        )
+
     # ---- 댓글 -------------------------------------------------------------
     async def list_comments(self, *, post_id: int) -> list[Any]:
         return await self._connection.fetch(
             """
             SELECT c.id, c.post_id, c.parent_comment_id, c.body, c.status, c.created_at,
-                   u.member_code AS author_member_code, u.nickname AS author_nickname
+                   u.member_code AS author_member_code, u.nickname AS author_nickname,
+                   (SELECT count(*) FROM community_reactions r
+                      WHERE r.target_type = 'comment' AND r.target_id = c.id AND r.type = 'like') AS like_count,
+                   (SELECT count(*) FROM community_reactions r
+                      WHERE r.target_type = 'comment' AND r.target_id = c.id AND r.type = 'bookmark') AS bookmark_count
               FROM community_comments c
               JOIN users u ON u.id = c.author_user_id
              WHERE c.post_id = $1 AND c.deleted_at IS NULL AND c.status = 'visible'
@@ -419,7 +447,11 @@ class CommunityRepository:
         return await self._connection.fetchrow(
             """
             SELECT c.id, c.post_id, c.parent_comment_id, c.body, c.status, c.created_at,
-                   u.member_code AS author_member_code, u.nickname AS author_nickname
+                   u.member_code AS author_member_code, u.nickname AS author_nickname,
+                   (SELECT count(*) FROM community_reactions r
+                      WHERE r.target_type = 'comment' AND r.target_id = c.id AND r.type = 'like') AS like_count,
+                   (SELECT count(*) FROM community_reactions r
+                      WHERE r.target_type = 'comment' AND r.target_id = c.id AND r.type = 'bookmark') AS bookmark_count
               FROM community_comments c
               JOIN users u ON u.id = c.author_user_id
              WHERE c.id = $1

@@ -69,6 +69,24 @@ test("api client exposes the contracted endpoints", async () => {
   assert.match(communityApi, /next_cursor: string \| null/);
   assert.match(communityApi, /cursor\?: string \| null/);
   assert.doesNotMatch(communityApi, /offset\?: number/);
+  assert.match(communityApi, /bookmark_count: number/);
+  assert.match(communityApi, /my_reactions: \{ like: boolean; bookmark: boolean \}/);
+  assert.match(communityApi, /active: boolean/);
+});
+
+test("community detail exposes bookmark and active reaction state", async () => {
+  const page = await readFile(new URL("../src/app/community/[postId]/page.tsx", import.meta.url), "utf8");
+  const reactionButton = await readFile(new URL("../src/components/community/ReactionButton.tsx", import.meta.url), "utf8");
+  const commentList = await readFile(new URL("../src/components/community/CommentList.tsx", import.meta.url), "utf8");
+
+  assert.match(page, /type="bookmark"/);
+  assert.match(page, /post\.my_reactions\.like/);
+  assert.match(page, /post\.my_reactions\.bookmark/);
+  assert.match(page, /bookmark_count/);
+  assert.match(reactionButton, /data-flow=\{`community-\$\{type\}`\}/);
+  assert.match(reactionButton, /result\.active/);
+  assert.match(reactionButton, /result\.bookmark_count/);
+  assert.match(commentList, /comment\.my_reactions\.like/);
 });
 
 test("admin UI exposes split schedule rows and schedule run history", async () => {
