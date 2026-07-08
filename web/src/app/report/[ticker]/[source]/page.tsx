@@ -1,8 +1,10 @@
 "use client";
 
+import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
+import { SourceIcon } from "@/components/SourceIcon";
 import { getSourceDetail, type SourceDetail, type SourceKey } from "@/lib/apiClient";
 import { directionLabel, safeHttpUrl, SOURCE_META, won } from "@/lib/format";
 
@@ -69,9 +71,22 @@ export default function SourceDetailPage() {
   const meta = SOURCE_META[source] ?? { label: source, icon: "📄", hint: "" };
 
   return (
-    <div className="py-10" data-page="source-detail">
-      <Link href={`/report/${encodeURIComponent(ticker)}`} className="text-[13px] text-sky-deep">← 리포트로</Link>
-      <h1 className="my-2 text-[28px] font-extrabold">{meta.icon} {meta.label} 상세</h1>
+    <div className="relative py-8" data-page="source-detail">
+      <div className="report-aura pointer-events-none fixed inset-0 -z-10" aria-hidden="true" />
+
+      <Link
+        href={`/report/${encodeURIComponent(ticker)}`}
+        className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-navy-soft hover:text-navy"
+      >
+        <ArrowLeft size={15} aria-hidden="true" /> 리포트로
+      </Link>
+
+      <div className="mt-3 flex items-center gap-3">
+        <span className="glass grid h-12 w-12 place-items-center rounded-2xl text-sky-deep" aria-hidden="true">
+          <SourceIcon source={source} size={24} />
+        </span>
+        <h1 className="text-[28px] font-extrabold">{meta.label} 상세</h1>
+      </div>
 
       {state === "loading" && <p className="py-10 text-center text-muted">불러오는 중…</p>}
 
@@ -79,7 +94,7 @@ export default function SourceDetailPage() {
 
       {state === "ready" && detail && (
         <>
-          <div className="card mt-4 p-6">
+          <div className="glass mt-4 p-6">
             <span className={`pill ${directionLabel(detail.direction).tone}`} style={{ padding: "5px 11px" }}>
               {directionLabel(detail.direction).label}
             </span>
@@ -88,7 +103,7 @@ export default function SourceDetailPage() {
           </div>
 
           {source === "report" && detail.valuation && (
-            <div className="card mt-4 p-6">
+            <div className="glass mt-4 p-6">
               <div className="text-[13px] font-semibold text-muted">밸류에이션 (집계)</div>
               <div className="mt-3 grid grid-cols-2 gap-4 sm:grid-cols-4">
                 <div>
@@ -118,7 +133,7 @@ export default function SourceDetailPage() {
           )}
 
           {source === "patent" && detail.patent && detail.patent.filing_trend.length > 0 && (
-            <div className="card mt-4 p-6">
+            <div className="glass mt-4 p-6">
               <div className="text-[13px] font-semibold text-muted">장기 출원 추이 (연도별 출원 건수)</div>
               <p className="mt-1 text-[12px] text-muted">
                 특허는 출원 후 약 18개월 뒤 공개됩니다. 아래는 <b>출원</b> 연도별 건수(장기 R&D 흐름)입니다.
@@ -128,7 +143,7 @@ export default function SourceDetailPage() {
           )}
 
           {source === "patent" && detail.patent && detail.patent.recent_publications.length > 0 && (
-            <div className="card mt-4 overflow-hidden">
+            <div className="glass mt-4 overflow-hidden">
               <div className="px-4 pt-4 text-[13px] font-semibold text-muted">최근 공개된 특허</div>
               <p className="px-4 pb-2 pt-1 text-[12px] text-muted">
                 최근 <b>공개</b>돼 시장에 노출된 특허입니다(공개일 최신순). 출원은 그보다 앞섭니다.
@@ -159,7 +174,7 @@ export default function SourceDetailPage() {
           )}
 
           {detail.narrative_points && detail.narrative_points.length > 0 && (
-            <div className="card mt-4 p-6">
+            <div className="glass mt-4 p-6">
               <div className="text-[13px] font-semibold text-muted">분석 근거</div>
               <ul className="mt-3 list-disc space-y-2 pl-5 text-[13.5px] text-navy-soft">
                 {detail.narrative_points.map((p, i) => (
@@ -171,7 +186,7 @@ export default function SourceDetailPage() {
 
           {!(source === "patent" && detail.patent && detail.patent.recent_publications.length > 0) &&
             (detail.items.length > 0 || !(detail.narrative_points && detail.narrative_points.length > 0)) && (
-            <div className="card mt-4 overflow-hidden">
+            <div className="glass mt-4 overflow-hidden">
               <table className="w-full text-[13.5px]">
                 <thead>
                   <tr className="text-muted">
@@ -201,7 +216,7 @@ export default function SourceDetailPage() {
               </table>
             </div>
           )}
-          <p className="mt-6 rounded-[12px] bg-surface-2 p-4 text-[12.5px] text-muted">{detail.notice}</p>
+          <p className="glass mt-6 p-4 text-[12.5px] text-muted">{detail.notice}</p>
         </>
       )}
     </div>
