@@ -48,6 +48,14 @@ async def resolve_social_identity(
     if provider not in PROVIDERS:
         raise SocialError(f"지원하지 않는 provider: {provider}")
     if is_dev_mode(settings, provider):
+        # ⚠️ dev 모드는 OAuth 토큰 교환을 건너뛰고 provider_user_id 를 클라이언트가 보낸 code 의
+        # 해시로 만든다 — 공격자가 code 를 고르면 임의 연동 계정을 탈취할 수 있다. 프로덕션에서
+        # 소셜 자격이 비어 dev 모드로 조용히 떨어지는 것을 fail-closed 로 막는다(계정 탈취 봉쇄).
+        if getattr(settings, "app_env", "development") == "production":
+            raise SocialError(
+                f"{provider} 소셜 로그인이 프로덕션에서 미설정(dev 모드) — "
+                f"{provider.upper()}_CLIENT_ID/SECRET 설정 필요"
+            )
         digest = hashlib.sha256(f"{provider}:{code}".encode("utf-8")).hexdigest()
         return SocialIdentity(
             provider=provider,

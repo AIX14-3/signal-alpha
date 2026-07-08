@@ -24,6 +24,10 @@ data:
   WORKER_BASE_URL: "http://agent-worker:8011"
   # 큐 드레인 데몬 순회 대기(초).
   QUEUE_DRAIN_INTERVAL_SEC: "5"
+  # 운영 데몬 활성 — self-healing(좀비 sweep·failed 백스탑) + 파이프라인 큐 정지/적체 알림.
+  # 기본 off(데몬 관례)지만 운영 클러스터에선 켜서 조용한 노후화를 감지한다. Discord 알림은
+  # DISCORD_WEBHOOK_URL(Secret)이 있을 때만 발송되고, 없으면 로그로만 남는다(안전 no-op).
+  HIRING_OPS_DAEMON_ENABLED: "true"
   # Kiwoom REST(가격 수집). 운영 키 발급 후 https://api.kiwoom.com 로 교체.
   KIWOOM_API_BASE: "https://mockapi.kiwoom.com"
   KIWOOM_MIN_REQUEST_INTERVAL_SEC: "0.25"

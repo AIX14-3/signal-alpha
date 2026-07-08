@@ -55,6 +55,14 @@ def create_app() -> FastAPI:
         enabled=settings.rate_limit_enabled,
         path_prefixes=_AUTH_RATE_LIMIT_PATHS,
     )
+    if settings.rate_limit_enabled:
+        # ⚠️ FixedWindowLimiter·LoginLockout 은 프로세스 인메모리 상태다(레플리카 간 비공유,
+        # 재시작 시 초기화). 단일 워커(replicas=1)에서만 정확하다 — 수평 확장하려면 Redis 등
+        # 공유 저장소로 교체해야 브루트포스 방어가 유지된다(그 전까지 main-server replicas=1 고정).
+        logger.warning(
+            "RateLimit/LoginLockout use in-process state (single-worker only); "
+            "scaling main-server replicas>1 requires a shared store (Redis)."
+        )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_allow_origins,

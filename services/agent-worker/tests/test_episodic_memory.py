@@ -218,9 +218,10 @@ class AggregatorWithMemoryTest(unittest.IsolatedAsyncioTestCase):
                 "task_context": {"stock_code": "005930", "signal_date": "2026-06-19"},
             }
         )
-        # headline unchanged by memory (SRC absent → neutral 50).
-        self.assertEqual(result["signal"], "neutral")
-        self.assertEqual(result["final_score"], 50.0)
+        # headline unchanged by memory. SRC absent → deterministic blend fallback (DART +0.4 = positive/70),
+        # not flat 50 — memory still must not move it.
+        self.assertEqual(result["signal"], "positive")
+        self.assertEqual(result["final_score"], 70.0)
         # episode written for the published signal.
         self.assertEqual(len(repo.upserts), 1)
         self.assertEqual(repo.upserts[0]["run_key"], "AGGREGATED")

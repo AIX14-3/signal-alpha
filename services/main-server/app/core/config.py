@@ -90,6 +90,11 @@ class Settings:
             "1", "true", "yes"
         )
         self.hsts_enabled = self.app_env == "production"
+        # 신뢰 프록시 홉 수. rate limit·관리자 잠금이 클라이언트 IP 를 정할 때, X-Forwarded-For
+        # 좌측(클라이언트가 위조 가능)을 신뢰하지 않고 **우측에서 이 홉 수만큼 벗겨낸** 실클라이언트를
+        # 쓴다. 기본 0 = XFF 완전 무시(소켓 peer) → 헤더 위조로 rate limit/잠금을 우회할 수 없다.
+        # GKE(GCE ingress 가 XFF 를 재작성/추가)에선 프록시 홉 수(보통 1)로 설정한다.
+        self.trusted_proxy_count = int(getenv("TRUSTED_PROXY_COUNT", "0"))
         # 브루트포스 방어: 인증 엔드포인트 IP 레이트리밋 + 관리자 로그인 연속실패 잠금.
         self.rate_limit_enabled = getenv("RATE_LIMIT_ENABLED", "true").lower() in ("1", "true", "yes")
         self.rate_limit_auth_max = int(getenv("RATE_LIMIT_AUTH_MAX", "60"))

@@ -76,13 +76,40 @@ class LoginLockout:
             self._state.pop(key, None)
 
 
-def client_ip_from_scope(scope: Scope) -> str:
-    """프록시 뒤면 X-Forwarded-For 의 첫 IP, 아니면 소켓 peer."""
+def client_ip_from_scope(scope: Scope, *, trusted_proxies: int | None = None) -> str:
+    """레이트리밋·잠금 키로 쓸 클라이언트 IP.
+
+    ⚠️ X-Forwarded-For 좌측 값은 **클라이언트가 임의로 위조**할 수 있다(요청마다 헤더를 바꾸면
+    매번 새 버킷 → rate limit/브루트포스 잠금 우회). 그래서 신뢰 프록시 홉 수만큼만 XFF 를 벗겨
+    실클라이언트를 정한다:
+
+    - ``trusted_proxies == 0`` (기본): XFF 를 **완전히 무시**하고 소켓 peer 만 신뢰(위조 불가).
+    - ``trusted_proxies == N`` (N>0): XFF 체인의 **우측에서 N 홉**(=우리가 신뢰하는 프록시)을 벗긴
+      바로 앞 값이 실클라이언트. 체인이 N 보다 짧으면 위조/오설정이므로 가장 왼쪽(가장 보수적)을 쓴다.
+
+    ``trusted_proxies`` 미지정 시 설정값(``TRUSTED_PROXY_COUNT``)을 지연 로드한다.
+    """
+    if trusted_proxies is None:
+        from app.core.config import get_settings
+
+        trusted_proxies = get_settings().trusted_proxy_count
+
+    client = scope.get("client")
+    socket_ip = client[0] if client else "unknown"
+    if trusted_proxies <= 0:
+        return socket_ip
+
+    xff = None
     for name, value in scope.get("headers", []):
         if name == b"x-forwarded-for":
-            return value.decode("latin-1").split(",")[0].strip()
-    client = scope.get("client")
-    return client[0] if client else "unknown"
+            xff = value.decode("latin-1")
+            break
+    chain = [part.strip() for part in xff.split(",")] if xff else []
+    chain = [part for part in chain if part]
+    if not chain:
+        return socket_ip
+    idx = len(chain) - 1 - trusted_proxies
+    return chain[idx] if idx >= 0 else chain[0]
 
 
 class RateLimitMiddleware:

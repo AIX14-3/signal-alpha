@@ -161,7 +161,7 @@ class ReturnCombineTaskHandler:
         )
         # 헤드라인 갱신 트리거(H1): meta_signals(run_key='SRC') 가 이제 채워졌으니 AGGREGATE 를 재인큐한다.
         # AGGREGATE 가 PRICE 체인에서 SRC 준비 전에 먼저 실행돼 중립(50) 헤드라인을 발행했더라도, 이 재실행이
-        # `_src_headline` 로 실제 통합 예측을 읽어 final_score 를 갱신한다. dedupe(정규형 ctx)로 1건만,
+        # `_headline` 로 실제 통합 예측을 읽어 final_score 를 갱신한다. dedupe(정규형 ctx)로 1건만,
         # AGGREGATE→SYNTHESIZE→PUBLISH 는 RETURN_COMBINE 을 다시 인큐하지 않으므로 루프가 생기지 않는다.
         stock_code = ctx.get("stock_code") or ctx.get("ticker")
         aggregate_task_id = await enqueue_aggregate(

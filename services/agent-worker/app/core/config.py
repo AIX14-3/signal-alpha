@@ -185,6 +185,20 @@ class Settings:
         self.hiring_alert_collector_types = _env_list(
             "HIRING_ALERT_COLLECTOR_TYPES", default=["HIRING"]
         )
+        # ── 파이프라인 큐 정지 알림(hiring 한정 → 파이프라인 전역) ──
+        # ops 데몬이 매 틱 processing_queue 백로그(pending+retrying)를 본다. 임계 초과 + 직전 틱 대비
+        # 미감소(드레인 정지)면 1회 알림. 구조적 self-heal 은 /health/live·스케줄러 하트비트가 담당하고,
+        # 이 알림은 사람 인지용 보조. 0 이면 비활성.
+        self.ops_queue_backlog_alert_threshold = int(
+            getenv("OPS_QUEUE_BACKLOG_ALERT_THRESHOLD", "500")
+        )
+        # 최근 실패 급증 알림 임계(최근 윈도우 내 failed 수). 0 이면 비활성.
+        self.ops_queue_failed_recent_alert_threshold = int(
+            getenv("OPS_QUEUE_FAILED_RECENT_ALERT_THRESHOLD", "200")
+        )
+        self.ops_queue_failed_window_minutes = int(
+            getenv("OPS_QUEUE_FAILED_WINDOW_MINUTES", "360")
+        )
 
         # ── 큐 드레인 데몬 (워커 영역 완성 #11) ──
         # processing_queue 를 연속 소비해 수집→정규화→분석→집계→게이트→종합→발행(PUBLISH_SIGNALS)
@@ -193,6 +207,12 @@ class Settings:
         self.queue_drain_daemon_enabled = _env_bool("QUEUE_DRAIN_DAEMON_ENABLED", default=False)
         # 큐가 비었을 때(전 task_type idle) 다음 순회까지 대기 초. 작업이 있으면 쉬지 않고 계속 드레인.
         self.queue_drain_interval_sec = float(getenv("QUEUE_DRAIN_INTERVAL_SEC", "5"))
+        # 드레인 데몬 liveness 임계(초). /health/live 는 데몬이 이 시간 넘게 사이클을 마치지 못하면
+        # 503 → k8s 가 pod 재시작(라이브락/행 자가치유). cycles_completed 는 매 사이클 무조건
+        # 증가하므로 last_finished_at 정체 = 정지 신호. 기본 = interval×6(넉넉히, 오탐 방지).
+        self.queue_drain_liveness_max_stale_sec = float(
+            getenv("QUEUE_DRAIN_LIVENESS_MAX_STALE_SEC", str(self.queue_drain_interval_sec * 6))
+        )
 
         # ── 지정학 리스크 Kill-Switch 뉴스 감시 데몬 (guard) ──
         # GDELT 수집 → LLM 판정 → 차단 제안(advisory)/자동 차단(auto). guard_* 테이블은

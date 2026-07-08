@@ -15,7 +15,7 @@ import logging
 import os
 import re
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Protocol
 from zoneinfo import ZoneInfo
@@ -941,6 +941,21 @@ async def run_cycle(
         return f"fired:{len(statuses)}:{overall}"
 
 
+# 스케줄러 liveness 하트비트 파일. 스케줄러는 HTTP 서버가 없어 k8s httpGet 프로브를 못 쓴다 →
+# 매 폴링 반복마다 이 파일 mtime 을 갱신하고, k8s exec 프로브가 파일이 임계보다 오래되면(행/크래시)
+# pod 를 재시작한다(무감지 정지 차단).
+HEARTBEAT_FILE = os.getenv("SCHEDULER_HEARTBEAT_FILE", "/tmp/scheduler.heartbeat")
+
+
+def _touch_heartbeat() -> None:
+    try:
+        Path(HEARTBEAT_FILE).write_text(
+            datetime.now(timezone.utc).isoformat(timespec="seconds"), encoding="utf-8"
+        )
+    except OSError:
+        logger.warning("scheduler heartbeat write failed: %s", HEARTBEAT_FILE)
+
+
 async def main() -> None:
     # import 시점 부작용 금지 — 워커 dry-run 라우트가 이 모듈을 import 하므로
     # bootstrap()/logging 설정은 스크립트 엔트리포인트(main)에서만 실행한다.
@@ -969,6 +984,9 @@ async def main() -> None:
     try:
         async with httpx.AsyncClient() as client:
             while True:
+                # 루프가 살아있음을 증명(하트비트). run_cycle 이 던져도 이 시점은 지났으므로
+                # 반복이 도는 한 하트비트는 신선하고, 행에 빠지면 정체 → exec 프로브가 재시작.
+                _touch_heartbeat()
                 try:
                     await run_cycle(
                         pool,

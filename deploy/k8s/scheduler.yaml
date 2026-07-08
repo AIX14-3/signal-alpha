@@ -37,6 +37,21 @@ spec:
             - name: DATABASE_URL          # 폴백(단일 DB 모드 대비)
               valueFrom: { secretKeyRef: { name: signal-alpha-secrets, key: WORKER_DATABASE_URL } }
             # WORKER_BASE_URL·INTERNAL_API_TOKEN 은 envFrom(config/secret).
+          # HTTP 서버가 없어 httpGet 프로브 불가 → 폴링 루프가 갱신하는 하트비트 파일의 신선도로
+          # 행(hang)/크래시를 감지한다. 파일이 180s(≈6×poll) 넘게 오래되면 exit 1 → k8s 재시작.
+          livenessProbe:
+            exec:
+              command:
+                - python
+                - -c
+                - |
+                  import os, sys, time
+                  p = os.getenv("SCHEDULER_HEARTBEAT_FILE", "/tmp/scheduler.heartbeat")
+                  fresh = os.path.exists(p) and (time.time() - os.path.getmtime(p)) < 180
+                  sys.exit(0 if fresh else 1)
+            initialDelaySeconds: 40
+            periodSeconds: 30
+            failureThreshold: 3
           resources:
             requests: { cpu: "25m", memory: "128Mi" }
             limits: { cpu: "250m", memory: "256Mi" }
