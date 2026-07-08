@@ -68,7 +68,6 @@ test("mypage keeps account guard and tab data sources wired", () => {
 
 test("methodology page explains posthoc alignment without recommendation framing", () => {
   const source = read("src/app/methodology/page.tsx");
-  const shell = read("src/components/AppShell.tsx");
 
   [
     'data-page="methodology"',
@@ -106,5 +105,6 @@ test("methodology page explains posthoc alignment without recommendation framing
   assertIncludes(read("src/components/PosthocAlignmentSummary.tsx"), "부정 방향성", "methodology summary");
   assertIncludes(read("src/components/PosthocAlignmentSummary.tsx"), "전체 발행 신호 기준", "methodology summary");
   assertIncludes(read("src/components/PosthocAlignmentSummary.tsx"), "저널 기준", "methodology summary");
-  assertIncludes(shell, 'href: "/methodology"', "app shell navigation");
+  // 방법론은 상단 메뉴에서 마이 안으로 이동 — 마이페이지가 링크를 배선한다.
+  assertIncludes(read("src/app/mypage/page.tsx"), 'href="/methodology"', "mypage navigation");
 });

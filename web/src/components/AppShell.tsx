@@ -4,15 +4,15 @@ import Link from "next/link";
 import { useEffect } from "react";
 import type { ReactNode } from "react";
 import { GuardGate } from "@/components/GuardGate";
+import { HeaderStockSearch } from "@/components/HeaderStockSearch";
 import { Toaster } from "@/components/Toaster";
 import { useAuthStore } from "@/stores/authStore";
 
+// 상단 메뉴는 홈·커뮤니티·마이(+로그인)만 노출한다.
+// 매매 부검·방법론은 마이 안으로 이동, 요금제는 폐지 — 메뉴 배선만 제거하고 페이지 코드는 유지한다.
 const NAV = [
   { href: "/", label: "홈" },
   { href: "/community", label: "커뮤니티" },
-  { href: "/postmortem", label: "매매 부검" },
-  { href: "/methodology", label: "방법론" },
-  { href: "/pricing", label: "요금제" },
   { href: "/mypage", label: "마이" },
 ];
 
@@ -32,15 +32,22 @@ export function AppShell({ children }: { children: ReactNode }) {
     <div className="relative flex min-h-screen flex-col">
       <div className="bg-static" aria-hidden="true" />
       <nav className="sticky top-0 z-50 border-b border-line bg-bg/70 backdrop-blur-md">
-        <div className="mx-auto flex h-16 max-w-[1080px] items-center justify-between px-6">
-          <Link href="/" className="flex items-center gap-2 text-[18px] font-bold">
+        <div className="mx-auto flex h-16 max-w-[1080px] items-center gap-4 px-6">
+          <Link href="/" className="flex shrink-0 items-center gap-2 text-[18px] font-bold">
             <span className="brand-grad grid h-7 w-7 place-items-center rounded-[8px] text-[15px] font-extrabold text-white">
               α
             </span>
             Signal <span className="font-semibold text-muted">알파</span>
           </Link>
 
-          <div className="flex items-center gap-7">
+          {/* 종목 검색 — 좌 pane 에서 헤더로 승격. 데스크톱 표시(모바일은 좁아 숨김). */}
+          <div className="hidden min-w-0 flex-1 md:block">
+            <div className="mx-auto max-w-[380px]">
+              <HeaderStockSearch />
+            </div>
+          </div>
+
+          <div className="ml-auto flex shrink-0 items-center gap-6">
             {NAV.map((item) => (
               <Link
                 key={item.href}

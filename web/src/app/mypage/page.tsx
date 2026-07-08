@@ -68,6 +68,15 @@ export default function MyPage() {
       <h1 className="text-[32px] font-extrabold">
         마이페이지 <span className="pill flat align-middle text-[13px]" style={{ padding: "3px 9px" }}>{user.member_code}</span>
       </h1>
+      {/* 매매 부검·방법론은 상단 메뉴에서 마이 안으로 이동(배선 이전, 페이지 코드는 유지). */}
+      <div className="mt-4 flex flex-wrap gap-2" data-flow="mypage-tools">
+        <Link href="/postmortem" className="pill flat text-[13.5px]" style={{ padding: "6px 14px" }}>
+          매매 부검
+        </Link>
+        <Link href="/methodology" className="pill flat text-[13.5px]" style={{ padding: "6px 14px" }}>
+          방법론
+        </Link>
+      </div>
       <div className="mt-6 flex flex-wrap gap-2 border-b border-line">
         {TABS.map(([key, label]) => (
           <button
