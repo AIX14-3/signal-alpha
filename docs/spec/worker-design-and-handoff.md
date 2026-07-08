@@ -1,8 +1,14 @@
 # 워커 설계 설명서 + 팀 핸드오프 (#11 워커 영역 완성)
 
-> 팀 공유용. 현재 워커 동작 설계 + "메타러너 예측 라인(주가 BASE 앵커 + 대체데이터 가산)"의 구현·
-> 학습 상태(§5) + 다음 단계를 정리한다. 코드 수준 파이프라인: [worker-pipeline-detailed.md](./worker-pipeline-detailed.md),
-> 토폴로지 그림: [architecture-diagram.md](../architecture-diagram.md). 동작 기준은 항상 코드/테스트. 최종 갱신: 2026-06-28.
+> ⚠️ **2026-07-08 방향 전환**: 헤드라인 점수는 이제 **6-소스 등가중 결정론 통합 점수**
+> (주가·DART·리포트·특허·채용·DataLab, `SCORING_SOURCES`)다. 아래 §5 "메타러너 예측 라인
+> (`SRC_INFER`→`RETURN_COMBINE`→7예측률)"은 **폐기**됐다(`app/ml/*` dormant 보존, 배선 제거). 최신
+> 목표 설계는 [worker-pipeline-detailed.md](./worker-pipeline-detailed.md) "[통합 점수 산출]"·"[전환 계획]" 절
+> 참조. §5 는 이력 기록으로만 남긴다.
+>
+> 팀 공유용. 현재 워커 동작 설계 + 다음 단계를 정리한다. 코드 수준 파이프라인:
+> [worker-pipeline-detailed.md](./worker-pipeline-detailed.md),
+> 토폴로지 그림: [architecture-diagram.md](../architecture-diagram.md). 동작 기준은 항상 코드/테스트. 최종 갱신: 2026-07-08.
 
 ---
 
