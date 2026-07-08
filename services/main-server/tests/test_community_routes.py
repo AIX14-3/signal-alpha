@@ -376,6 +376,18 @@ class CommunityRoutesTest(unittest.TestCase):
         response = self.client.get("/api/community/posts/999")
         self.assertEqual(response.status_code, 404)
 
+    def test_anonymous_detail_view_counts_once_per_session(self):
+        post_id = self.create_post(self.token1).json()["id"]
+
+        first = self.client.get(f"/api/community/posts/{post_id}")
+        self.assertEqual(first.status_code, 200)
+        self.assertIn("sa_community_viewer=", first.headers.get("set-cookie", ""))
+        self.assertEqual(self.connection._find_post(post_id)["view_count"], 1)
+
+        second = self.client.get(f"/api/community/posts/{post_id}")
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(self.connection._find_post(post_id)["view_count"], 1)
+
     def test_delete_requires_owner(self):
         post_id = self.create_post(self.token1).json()["id"]
         response = self.client.delete(f"/api/community/posts/{post_id}", headers=self.headers(self.token2))

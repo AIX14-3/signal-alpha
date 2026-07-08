@@ -9,10 +9,12 @@ spec: docs/spec/journal-board-spec.md
 
 from __future__ import annotations
 
+import hashlib
+import secrets
 from decimal import Decimal
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from app.api.routes.auth import (
@@ -20,6 +22,7 @@ from app.api.routes.auth import (
     get_current_user,
     get_current_user_optional,
 )
+from app.core.config import Settings, get_settings
 from app.core.database import get_database_pool
 from signal_alpha_data_access.backend import CommunityRepository
 
@@ -29,6 +32,8 @@ router = APIRouter(prefix="/api/community", tags=["community"])
 REPORT_HIDE_THRESHOLD = 5
 _FEED_MAX = 50
 _REACTION_TYPES = {"like", "bookmark"}
+_VIEWER_COOKIE = "sa_community_viewer"
+_VIEWER_COOKIE_MAX_AGE_SECONDS = 365 * 86400
 
 
 def _api_error(status_code: int, code: str, message: str) -> HTTPException:
@@ -124,6 +129,34 @@ def _comment_response(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _anonymous_viewer_key(request: Request, response: Response, settings: Settings) -> str:
+    token = request.cookies.get(_VIEWER_COOKIE)
+    if not token:
+        token = secrets.token_urlsafe(24)
+        response.set_cookie(
+            key=_VIEWER_COOKIE,
+            value=token,
+            httponly=True,
+            secure=settings.cookie_secure,
+            samesite=settings.cookie_samesite,
+            path="/",
+            max_age=_VIEWER_COOKIE_MAX_AGE_SECONDS,
+            domain=settings.cookie_domain,
+        )
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _viewer_key(
+    current_user: dict[str, Any] | None,
+    request: Request,
+    response: Response,
+    settings: Settings,
+) -> str:
+    if current_user is not None:
+        return f"u{int(current_user['id'])}"
+    return _anonymous_viewer_key(request, response, settings)
+
+
 # ---- 피드 / 인기 (공개, 비로그인 열람 가능) --------------------------------
 @router.get("/posts")
 async def list_feed(
@@ -189,17 +222,22 @@ async def create_post(
 @router.get("/posts/{post_id}")
 async def get_post(
     post_id: int,
+    request: Request,
+    response: Response,
     current_user: dict[str, Any] | None = Depends(get_current_user_optional),
     pool: Any = Depends(get_database_pool),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
     async with pool.acquire() as connection:
         repo = CommunityRepository(connection)
         row = await repo.get_post(post_id=post_id)
         if row is None:
             raise _api_error(404, "POST_NOT_FOUND", "게시글을 찾을 수 없습니다.")
-        # 조회수 중복방지: 로그인 사용자만 유저 단위로 1일 1회 집계(어뷰징 방지).
-        if current_user is not None:
-            await repo.record_view(post_id=post_id, viewer_key=f"u{int(current_user['id'])}")
+        # 조회수 중복방지: 로그인은 유저, 비로그인은 세션 쿠키 해시 기준으로 1일 1회 집계.
+        await repo.record_view(
+            post_id=post_id,
+            viewer_key=_viewer_key(current_user, request, response, settings),
+        )
     return _post_response(dict(row))
 
 
