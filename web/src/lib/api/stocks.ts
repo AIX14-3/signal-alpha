@@ -76,3 +76,22 @@ export type RecentNewsItem = StockNewsItem & {
 export async function listRecentNews(limit = 30): Promise<{ items: RecentNewsItem[] }> {
   return apiFetch(`/api/news/recent?limit=${limit}`, { auth: "none" });
 }
+
+/* ===== 종목 일봉 종가 시리즈(공개) — 홈 "실시간 분석 종목" 아코디언 차트 ===== */
+export type StockPricePoint = { trade_date: string; close: number | null };
+
+// 발행 러너(sync_stock_prices)가 동기화한 일봉 close 만 담긴다. 미동기화 종목은 series=[].
+export type StockPriceSeries = {
+  stock: { stock_code: string; stock_name: string | null };
+  series: StockPricePoint[];
+  latest_trade_date: string | null;
+  latest_price: number | null;
+  notice: string;
+};
+
+// days 로 조회 창(기본 90일, 서버가 7~365 로 클램프).
+export async function getStockPrices(stockCode: string, days = 90): Promise<StockPriceSeries> {
+  return apiFetch(`/api/stocks/${encodeURIComponent(stockCode)}/prices?days=${days}`, {
+    auth: "none",
+  });
+}

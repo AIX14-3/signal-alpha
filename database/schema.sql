@@ -2819,6 +2819,18 @@ CREATE TABLE public.signal_journal_chart_prices (
 
 
 --
+-- Name: stock_price_daily; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.stock_price_daily (
+    stock_id bigint NOT NULL,
+    trade_date date NOT NULL,
+    close_price numeric(12,2) NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: signal_journal_outcomes; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -4673,6 +4685,14 @@ ALTER TABLE ONLY public.signal_events
 
 ALTER TABLE ONLY public.signal_journal_chart_prices
     ADD CONSTRAINT signal_journal_chart_prices_pkey PRIMARY KEY (stock_id, trade_date);
+
+
+--
+-- Name: stock_price_daily stock_price_daily_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.stock_price_daily
+    ADD CONSTRAINT stock_price_daily_pkey PRIMARY KEY (stock_id, trade_date);
 
 
 --
@@ -7022,6 +7042,14 @@ ALTER TABLE ONLY public.signal_events
 
 ALTER TABLE ONLY public.signal_journal_chart_prices
     ADD CONSTRAINT signal_journal_chart_prices_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
+
+
+--
+-- Name: stock_price_daily stock_price_daily_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.stock_price_daily
+    ADD CONSTRAINT stock_price_daily_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
 
 
 --
