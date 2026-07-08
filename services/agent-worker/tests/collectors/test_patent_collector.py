@@ -70,6 +70,14 @@ class FakeConnection:
     async def fetch(self, sql, *args):
         return []
 
+    async def fetchrow(self, sql, *args):
+        # _promote_source_if_outranked 의 기존 행 조회(source_hash 기준). 기존 행 source
+        # 를 KIPRIS(rank2)로 답하면, KIPRIS 재수집 중복은 incoming_rank<=existing_rank
+        # 라 승격하지 않고 기존 requeue/skip 경로를 탄다(GOOGLE_PATENTS 승격은 별도 검증).
+        if "raw_documents" in sql and "source_hash" in sql:
+            return {"id": self._raw_id, "source_name": "KIPRIS"}
+        return None
+
     def transaction(self):
         return _FakeTransaction(self)
 

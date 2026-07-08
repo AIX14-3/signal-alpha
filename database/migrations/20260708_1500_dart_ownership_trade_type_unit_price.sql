@@ -1,4 +1,4 @@
--- 20260708_0900_dart_ownership_trade_type_unit_price.sql
+-- 20260708_1500_dart_ownership_trade_type_unit_price.sql
 -- target: collection
 -- ============================================================================
 -- dart_ownership_events 에 거래유형(trade_type)·취득처분단가(unit_price) 컬럼 추가

@@ -1,6 +1,6 @@
 import unittest
 import warnings
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 warnings.filterwarnings(
     "ignore",
@@ -46,8 +46,74 @@ class FakeConnection:
         }
         self.watchlists = []
         self.next_watchlist_id = 1
+        self.news_summary_row = {
+            "total_articles": 42,
+            "stock_count": 7,
+            "latest_collected_at": datetime(2026, 7, 7, 9, 0, tzinfo=UTC),
+            "recent_articles": 5,
+        }
+        self.recent_news_rows = [
+            {
+                "stock_code": "005930",
+                "stock_name": "삼성전자",
+                "title": "삼성전자 뉴스",
+                "summary": "요약",
+                "url": "https://n.example/1",
+                "press": "언론사",
+                "source": "NAVER_NEWS",
+                "published_at": datetime(2026, 7, 7, 8, 0, tzinfo=UTC),
+            },
+            {
+                "stock_code": "000660",
+                "stock_name": None,  # 미매핑 종목 — 이름 없이 보존
+                "title": "하이닉스 뉴스",
+                "summary": None,
+                "url": None,
+                "press": None,
+                "source": "NAVER_NEWS",
+                "published_at": None,
+            },
+        ]
+        # 종목별 뉴스 목록(list_by_ticker) + 다이제스트(get_digest_by_ticker).
+        self.stock_news_by_ticker = {
+            "005930": [
+                {
+                    "stock_code": "005930",
+                    "title": "삼성전자 HBM 수주",
+                    "summary": "요약",
+                    "url": "https://n.example/2",
+                    "press": None,
+                    "source": "NAVER_NEWS",
+                    "published_at": datetime(2026, 7, 7, 8, 0, tzinfo=UTC),
+                    "collected_at": datetime(2026, 7, 7, 9, 0, tzinfo=UTC),
+                }
+            ]
+        }
+        self.digest_by_ticker = {
+            "005930": {
+                "stock_code": "005930",
+                "digest_text": "HBM 신규 고객 확보 보도.",
+                "model": "claude-sonnet-5",
+                "article_count": 2,
+                "generated_at": datetime(2026, 7, 7, 9, 5, tzinfo=UTC),
+            }
+        }
+        # summary 집계에 전달된 recent_hours 를 기록해 클램프 검증에 사용.
+        self.last_recent_hours = None
+        # 종목별 일봉 종가 시리즈(stock_price_daily). 000660 은 미동기화(빈 시리즈).
+        self.prices_by_stock = {
+            10: [
+                {"trade_date": date(2026, 7, 6), "close_price": 71000.0},
+                {"trade_date": date(2026, 7, 7), "close_price": 71500.0},
+            ],
+        }
 
     async def fetchrow(self, sql, *args):
+        if "FROM api.stock_news" in sql and "total_articles" in sql:
+            self.last_recent_hours = args[0]
+            return self.news_summary_row
+        if "FROM api.stock_news_digest" in sql:
+            return self.digest_by_ticker.get(args[0])
         if "FROM users" in sql and "WHERE id = $1" in sql:
             return self.users_by_id.get(args[0])
         if "FROM api.stocks" in sql and "WHERE ticker = $1" in sql:
@@ -94,6 +160,13 @@ class FakeConnection:
         raise AssertionError(f"Unexpected fetchrow SQL: {sql}")
 
     async def fetch(self, sql, *args):
+        if "FROM api.stock_news_digest" in sql:
+            wanted = set(args[0])
+            return [row for code, row in self.digest_by_ticker.items() if code in wanted]
+        if "FROM api.stock_news" in sql and "LEFT JOIN api.stocks" in sql:
+            return self.recent_news_rows[: args[0]]
+        if "FROM api.stock_news" in sql and "WHERE stock_code = $1" in sql:
+            return self.stock_news_by_ticker.get(args[0], [])[: args[1]]
         if "ticker ILIKE" in sql:
             query = args[0].strip("%")
             return [
@@ -103,6 +176,9 @@ class FakeConnection:
             ][: args[1]]
         if "FROM api.stocks" in sql and "is_active = TRUE" in sql:
             return list(self.stocks_by_ticker.values())[: args[0]]
+        if "FROM stock_price_daily" in sql:
+            # args = (stock_id, from_date). 벽시계 비의존을 위해 날짜 필터는 생략.
+            return list(self.prices_by_stock.get(args[0], []))
         if "FROM watchlists" in sql:
             rows = []
             for watchlist in self.watchlists:
@@ -118,6 +194,8 @@ class FakeConnection:
         raise AssertionError(f"Unexpected fetch SQL: {sql}")
 
     async def fetchval(self, sql, *args):
+        if "COUNT(*)" in sql and "api.stock_news" in sql:
+            return len(self.stock_news_by_ticker.get(args[0], []))
         if "COUNT(*)" in sql:
             return sum(1 for row in self.watchlists if row["user_id"] == args[0])
         raise AssertionError(f"Unexpected fetchval SQL: {sql}")
@@ -183,6 +261,122 @@ class WatchlistRoutesTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         codes = {item["stock_code"] for item in response.json()["items"]}
         self.assertEqual(codes, {"005930", "000660"})
+
+    def test_stock_news_includes_digest_when_present(self):
+        # 공개 엔드포인트 — 목록/건수 + 종목 다이제스트(있으면).
+        response = self.client.get("/api/stocks/005930/news")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["count"], 1)
+        self.assertEqual(body["items"][0]["title"], "삼성전자 HBM 수주")
+        self.assertIsNotNone(body["digest"])
+        self.assertEqual(body["digest"]["text"], "HBM 신규 고객 확보 보도.")
+        self.assertEqual(body["digest"]["model"], "claude-sonnet-5")
+        self.assertEqual(body["digest"]["article_count"], 2)
+
+    def test_stock_news_digest_null_when_absent(self):
+        # digest 없는 종목 — 계약 유지, digest=null(프론트는 블록 생략).
+        response = self.client.get("/api/stocks/000660/news")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["count"], 0)
+        self.assertIsNone(body["digest"])
+
+    def test_news_digests_batch_returns_present_codes_publicly(self):
+        # 공개 배치 — 있는 종목만 맵에 담고, digest 없는 종목(000660)은 생략.
+        response = self.client.get("/api/news/digests?codes=005930,000660")
+
+        self.assertEqual(response.status_code, 200)
+        digests = response.json()["digests"]
+        self.assertIn("005930", digests)
+        self.assertNotIn("000660", digests)
+        self.assertEqual(digests["005930"]["text"], "HBM 신규 고객 확보 보도.")
+        self.assertEqual(digests["005930"]["model"], "claude-sonnet-5")
+        self.assertEqual(digests["005930"]["article_count"], 2)
+
+    def test_news_digests_batch_empty_codes_returns_empty_map(self):
+        # 공백/빈 codes 는 쿼리 없이 빈 맵(불필요 DB 조회 방지).
+        response = self.client.get("/api/news/digests?codes=%20,%20")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["digests"], {})
+
+    def test_news_digests_batch_dedups_and_caps_without_error(self):
+        # 중복·초과(>50) codes 방어 — 5xx 없이 200, 존재 종목은 여전히 반환.
+        codes = ",".join(["005930", "005930", *[f"9{i:04d}" for i in range(60)]])
+        response = self.client.get(f"/api/news/digests?codes={codes}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("005930", response.json()["digests"])
+
+    def test_news_summary_returns_global_counts_publicly(self):
+        # 공개 엔드포인트 — 토큰 없이 200, 전역 집계 필드 반환.
+        response = self.client.get("/api/news/summary")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["total_articles"], 42)
+        self.assertEqual(body["stock_count"], 7)
+        self.assertEqual(body["recent_articles"], 5)
+        self.assertTrue(body["latest_collected_at"].startswith("2026-07-07"))
+        self.assertIn("notice", body)
+        # 기본 윈도우 24h 가 집계에 전달되고 응답에 echo 된다.
+        self.assertEqual(body["recent_hours"], 24)
+        self.assertEqual(self.connection.last_recent_hours, 24)
+
+    def test_news_summary_clamps_recent_hours(self):
+        too_large = self.client.get("/api/news/summary?recent_hours=99999")
+        self.assertEqual(too_large.status_code, 200)
+        self.assertEqual(too_large.json()["recent_hours"], 720)
+        self.assertEqual(self.connection.last_recent_hours, 720)
+
+        too_small = self.client.get("/api/news/summary?recent_hours=0")
+        self.assertEqual(too_small.json()["recent_hours"], 1)
+        self.assertEqual(self.connection.last_recent_hours, 1)
+
+    def test_recent_news_returns_global_feed_publicly(self):
+        # 공개 엔드포인트 — 토큰 없이 200, 종목명 포함 전역 피드. 미매핑 종목은 name=null 보존.
+        response = self.client.get("/api/news/recent?limit=10")
+
+        self.assertEqual(response.status_code, 200)
+        items = response.json()["items"]
+        self.assertEqual(items[0]["stock_code"], "005930")
+        self.assertEqual(items[0]["stock_name"], "삼성전자")
+        self.assertEqual(items[0]["title"], "삼성전자 뉴스")
+        self.assertIsNone(items[1]["stock_name"])
+        self.assertIsNone(items[1]["published_at"])
+
+    def test_stock_prices_returns_series_publicly(self):
+        # 공개 엔드포인트 — 토큰 없이 200, 일봉 종가 시리즈 + 최신값.
+        response = self.client.get("/api/stocks/005930/prices")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["stock"]["stock_code"], "005930")
+        self.assertEqual(body["stock"]["stock_name"], "삼성전자")
+        self.assertEqual(len(body["series"]), 2)
+        self.assertEqual(body["series"][0]["trade_date"], "2026-07-06")
+        self.assertEqual(body["series"][-1]["close"], 71500.0)
+        self.assertEqual(body["latest_price"], 71500.0)
+        self.assertEqual(body["latest_trade_date"], "2026-07-07")
+
+    def test_stock_prices_empty_series_when_unsynced(self):
+        # 미동기화 종목 — 빈 시리즈 + null 최신값(프론트 "차트 준비 중").
+        response = self.client.get("/api/stocks/000660/prices")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["series"], [])
+        self.assertIsNone(body["latest_price"])
+        self.assertIsNone(body["latest_trade_date"])
+
+    def test_stock_prices_unknown_stock_returns_404(self):
+        response = self.client.get("/api/stocks/999999/prices")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["detail"]["code"], "STOCK_NOT_FOUND")
 
     def test_watchlist_requires_authentication(self):
         response = self.client.get("/api/watchlists")

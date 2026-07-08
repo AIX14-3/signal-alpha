@@ -1,0 +1,44 @@
+# 유저 체결내역 동기화 — 5분마다 CronJob(run_trade_fills_sync.py).
+# 요청됐거나(온디맨드) 오래된(주기 증분) 활성 브로커 자격증명을 순회해 계좌 체결을
+# user_trade_fills(백엔드)에 멱등 적재. BACKEND_DATABASE_URL 미설정이면 러너가 no-op.
+# 자격증명 복호에 BROKER_CRED_KEY(Fernet 마스터키) 필요.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: trade-fills-sync
+  namespace: signal-alpha
+  labels:
+    app.kubernetes.io/part-of: signal-alpha
+    app.kubernetes.io/name: trade-fills-sync
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  schedule: "*/5 * * * *"
+  timeZone: "Asia/Seoul"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/part-of: signal-alpha
+            app.kubernetes.io/name: trade-fills-sync
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: trade-fills-sync
+              image: signal-alpha-agent-worker
+              command: ["python", "run_trade_fills_sync.py"]
+              envFrom:
+                - configMapRef: { name: signal-alpha-config }
+                - secretRef: { name: signal-alpha-secrets }
+              env:
+                - name: SERVICE_NAME
+                  value: trade-fills-sync
+                - name: BACKEND_DATABASE_URL  # 백엔드 DB (자격증명 복호 + 체결 적재)
+                  valueFrom: { secretKeyRef: { name: signal-alpha-secrets, key: BACKEND_DATABASE_URL } }
+                - name: BROKER_CRED_KEY       # Fernet 마스터키 (자격증명 복호)
+                  valueFrom: { secretKeyRef: { name: signal-alpha-secrets, key: BROKER_CRED_KEY } }

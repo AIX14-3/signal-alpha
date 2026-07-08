@@ -1,6 +1,6 @@
 # Signal Alpha Main Server API 스펙 (신규 기획)
 
-> 기준일: 2026-06-24 (전면 재설계 — 포트원 본인인증/소셜연동/리포트 열람 쿼터/단일 구독/관리자)
+> 기준일: 2026-06-24 (전면 재설계 — 포트원 본인인증/소셜연동/단일 구독/관리자). 리포트는 전체 공개(2026-07-07 비회원 블라인드·열람 쿼터 제거).
 > 대상: `services/main-server`
 > 목적: 신규 제품 기획에 맞춘 사용자-facing API 계약을 확정한다. 프론트(생산자=백엔드, 소비자=웹)가 이 문서를 정본으로 참조한다.
 > 연관 문서: [db-schema-spec.md](./db-schema-spec.md), [web-frontend-spec.md](./web-frontend-spec.md), [web-frontend-design.md](./web-frontend-design.md), [final-signal-aggregator-spec.md](./final-signal-aggregator-spec.md), [source-agent-contract.md](./source-agent-contract.md)
@@ -11,7 +11,7 @@
 
 Main Server는 웹/외부 클라이언트가 호출하는 사용자-facing API 경계다.
 
-**담당한다**: 본인인증 기반 회원가입/로그인, 소셜 연동/해제, 회원정보·수정·탈퇴, 관심종목, 리포트 열람(쿼터)·소스 상세, 저널, 결제(구독)·취소, 관리자.
+**담당한다**: 본인인증 기반 회원가입/로그인, 소셜 연동/해제, 회원정보·수정·탈퇴, 관심종목, 리포트 조회·소스 상세(전체 공개), 저널, 결제(구독)·취소, 관리자.
 
 **하지 않는다**: 외부 데이터 수집, 소스 분석, LLM/RAG 호출, agent-worker 내부 큐 처리, 최종 시그널 생성. 리포트 본문(`final_signals`)은 agent-worker가 사전 생성하며 Main Server는 **저장본을 읽어** 제공한다.
 
@@ -39,7 +39,6 @@ Main Server는 웹/외부 클라이언트가 호출하는 사용자-facing API �
 | `source_agreement` | `HIGH` `MEDIUM` `LOW` | |
 | `warning_level` | `NORMAL` `CAUTION` `WARNING` | |
 | `user_view` | `watch` `research_more` `not_relevant` | buy/sell/hold 금지 |
-| `issued_via` | `free` `subscription` | 리포트 열람 출처 |
 
 - `score`: 0–100(API 원본). 프론트가 /10 등 변환.
 - `alignment_rate`: 0–1.
@@ -50,7 +49,7 @@ Main Server는 웹/외부 클라이언트가 호출하는 사용자-facing API �
 Authorization: Bearer {access_token}
 ```
 
-비로그인 허용: `GET /health`, `GET /api/stocks/search`, `GET /api/reports/{stock_code}`(비회원 블라인드), `GET /api/subscriptions/plans`.
+비로그인 허용: `GET /health`, `GET /api/stocks/search`, `GET /api/reports/{stock_code}`(전체 공개), `GET /api/reports/{stock_code}/sources/{source}`(전체 공개), `GET /api/subscriptions/plans`.
 
 ### 2.4 에러 응답 (중앙 레지스트리)
 
@@ -71,10 +70,8 @@ Authorization: Bearer {access_token}
 | `STOCK_NOT_FOUND` | 404 | 종목 없음 |
 | `WATCHLIST_ALREADY_EXISTS` | 409 | 관심종목 중복 |
 | `REPORT_NOT_FOUND` | 404 | 발행된 리포트 없음 |
-| `REPORT_QUOTA_EXCEEDED` | 402 | 무료 열람 3회 소진(구독 유도) |
-| `MEMBERSHIP_REQUIRED` | 401 | 비회원이 잠긴 소스 접근 |
 | `JOURNAL_NOT_FOUND` | 404 | 저널 없음 |
-| `SUBSCRIPTION_REQUIRED` | 402 | 구독 전용 기능(저널 전체, 리포트 비공개 소스 상세) 비구독 접근 |
+| `SUBSCRIPTION_REQUIRED` | 402 | 구독 전용 기능(저널 전체) 비구독 접근 |
 | `RETROSPECTIVE_NOT_READY` | 400 | outcome 미확정 저널에 회고 작성 시도 |
 | `PLAN_NOT_FOUND` | 404 | 구독 상품 없음 |
 | `PAYMENT_VERIFICATION_FAILED` | 400 | 포트원 결제 검증 실패(금액/상태 불일치) |
@@ -227,9 +224,9 @@ Request: `{ "stock_code": "005930" }` → 중복 시 `409 WATCHLIST_ALREADY_EXIS
 
 ### 8.1 리포트 조회 `GET /api/reports/{stock_code}`
 
-비로그인 허용(비회원=블라인드). 로그인 시 잠금 해제 상태에 따라 전체/요약을 반환.
+로그인 여부와 무관하게 **전체 리포트를 공개**한다(비회원 블라인드·열람 쿼터 없음). `access` 객체·소스 `locked` 필드는 존재하지 않는다.
 
-회원·언락(또는 구독) 응답:
+응답:
 ```json
 {
   "stock": { "id": 10, "stock_code": "005930", "stock_name": "삼성전자", "market": "KOSPI", "sector": "반도체" },
@@ -242,61 +239,23 @@ Request: `{ "stock_code": "005930" }` → 중복 시 `409 WATCHLIST_ALREADY_EXIS
   "data_status": "ok",
   "summary": "여러 데이터 소스에서 유사한 방향성이 관찰됩니다.",
   "sources": [
-    { "source": "price",   "direction": "positive", "score": 70, "data_status": "ok",      "summary": "...", "locked": false },
-    { "source": "dart",    "direction": "neutral",  "score": 50, "data_status": "ok",      "summary": "...", "locked": false },
-    { "source": "hiring",  "direction": "positive", "score": 80, "data_status": "ok",      "summary": "...", "locked": false },
-    { "source": "datalab", "direction": "positive", "score": 65, "data_status": "ok",      "summary": "...", "locked": false },
-    { "source": "report",  "direction": "neutral",  "score": null, "data_status": "missing","summary": null,  "locked": false }
+    { "source": "price",   "direction": "positive", "score": 70, "data_status": "ok",      "summary": "..." },
+    { "source": "dart",    "direction": "neutral",  "score": 50, "data_status": "ok",      "summary": "..." },
+    { "source": "hiring",  "direction": "positive", "score": 80, "data_status": "ok",      "summary": "..." },
+    { "source": "datalab", "direction": "positive", "score": 65, "data_status": "ok",      "summary": "..." },
+    { "source": "report",  "direction": "neutral",  "score": null, "data_status": "missing","summary": null }
   ],
-  "access": { "unlocked": true, "issued_via": "free", "is_member": true },
   "notice": "..."
 }
 ```
 
-#### 비회원 블라인드 규칙
-비로그인 호출 시: `dart`·`datalab` 소스만 전체 공개. 그 외(`price`/`hiring`/`report`)와 **종합 `direction`/`score`/`alignment_rate`/`summary`** 는 마스킹.
-```json
-{
-  "stock": { "...": "..." },
-  "direction": null, "score": null, "alignment_rate": null, "summary": null,
-  "sources": [
-    { "source": "dart",    "direction": "neutral",  "score": 50, "summary": "...", "locked": false },
-    { "source": "datalab", "direction": "positive", "score": 65, "summary": "...", "locked": false },
-    { "source": "price",   "locked": true },
-    { "source": "hiring",  "locked": true },
-    { "source": "report",  "locked": true }
-  ],
-  "access": { "unlocked": false, "is_member": false },
-  "notice": "전체 리포트는 로그인 후 무료 3회까지 열람할 수 있습니다."
-}
-```
+> 리포트 본문·종합 점수·소스 요약은 전부 공개다. 로그인·구독은 **저널 저장 등 쓰기 기능**에만 요구된다(리포트 열람 쿼터·발행(언락) 개념 없음).
 
-회원이지만 **현재 버전 미언락**일 때도 같은 블라인드 형태(단, `dart`/`datalab` + 안내) + `access.is_member=true` 로 반환하고, 프론트가 "발행(열람)" 버튼을 노출한다.
-
-### 8.2 열람(언락) `POST /api/reports/{stock_code}/issue` (인증)
-
-현재 버전 리포트를 잠금 해제한다. **즉시 응답**(비동기 job 아님).
-
-동작:
-1. 종목의 현재 버전 `final_signal_id` 조회(없으면 `404 REPORT_NOT_FOUND`).
-2. `report_issuances` 에 `(user_id, final_signal_id)` 존재 → 이미 언락(무차감) → 200.
-3. 미존재 시: 구독 active 면 `issued_via='subscription'` 으로 기록(무료 불변). 비구독이면 무료 잔여 확인 → 0 이면 `402 REPORT_QUOTA_EXCEEDED`(구독 유도), >0 이면 `issued_via='free'` 기록.
-4. 전체 리포트(§8.1 언락 형태) 반환.
-
-Response: §8.1 회원 언락 응답 + `"access": { "unlocked": true, "issued_via": "free", "free_remaining": 2 }`.
-
-> 동일 버전 재열람은 무차감. 실시간 변동으로 **새 버전**이 생기면 새 `final_signal_id` 이므로 다시 1회 차감.
-
-### 8.3 쿼터 조회 `GET /api/reports/quota` (인증)
-```json
-{ "free_quota": 3, "free_used": 1, "free_remaining": 2, "subscription_active": false, "notice": "..." }
-```
-
-### 8.4 소스 상세 `GET /api/reports/{stock_code}/sources/{source}`
+### 8.2 소스 상세 `GET /api/reports/{stock_code}/sources/{source}`
 
 `source ∈ { price, dart, hiring, datalab, report }`. 해당 원천 데이터 상세 + LLM 상세 요약. 클릭 상세 페이지용.
 
-접근 규칙: 비회원은 `dart`·`datalab` 만 200, 나머지는 `401 MEMBERSHIP_REQUIRED`. 회원은 현재 버전 언락(또는 구독) 시 전체, 미언락이면 `dart`/`datalab` 외 `402/blinded`.
+접근 규칙: **전체 공개** — 모든 소스 상세를 로그인 없이 200 으로 반환한다(잠긴 소스·`MEMBERSHIP_REQUIRED`/`402` 없음).
 
 예(`dart`):
 ```json
@@ -313,7 +272,7 @@ Response: §8.1 회원 언락 응답 + `"access": { "unlocked": true, "issued_vi
 ```
 소스별 `items` 스키마는 원천 테이블을 따른다(price=시세/재무 지표, hiring=공고수/증감, datalab=검색지수/급등, report=증권사/목표가/의견). 매핑은 [db-schema-spec.md](./db-schema-spec.md) §6.
 
-### 8.5 레거시 호환
+### 8.3 레거시 호환
 
 `GET /signals/{ticker}` 는 호환 라우트로 유지(원형 `final_signals` 행). 신규 화면은 `GET /api/reports/...` 를 사용한다.
 
@@ -415,7 +374,7 @@ Response: `{ "subscription": { "plan_type": "monthly_9900", "status": "active", 
 
 ### `POST /api/payments/cancel` (인증)
 포트원 결제 취소 API 호출 + 구독 `status='cancelled'`, `cancelled_at`.
-> 구독 종료/취소 후에도 **무료 잔여분(3회 중 미사용분)은 그대로 사용 가능**(`report_issuances.issued_via='free'` 카운트만으로 잔여 도출).
+> 리포트는 전체 공개이므로 구독 종료 후에도 리포트 열람에는 영향이 없다. 저널 등 구독 전용 기능만 비활성화된다.
 
 ---
 
@@ -454,8 +413,9 @@ Response: `{ "subscription": { "plan_type": "monthly_9900", "status": "active", 
 | 파일 | 변경 |
 |---|---|
 | `025_users_phone.sql` | `users.phone` + 활성 사용자 partial unique |
-| `026_report_issuances.sql` | 리포트 열람 쿼터 테이블(`(user_id, final_signal_id)` 멱등, `issued_via`) |
 | `027_subscription_single_product.sql` | 단일 상품 `monthly_9900`, `free` 무제한, `pro`/`premium` 비활성 |
+
+> 리포트 열람 쿼터 테이블(`report_issuances`)은 도입하지 않는다 — 리포트는 전체 공개라 열람 카운트가 없다.
 
 재사용(변경 없음): `portone_verifications`, `social_accounts`, `terms_agreements`, `signal_subscriptions`, `subscription_plans`, `admin_*`, `user_sessions`, `watchlists`, `signal_journals`, `final_signals`, 원천 raw 테이블.
 
@@ -468,7 +428,7 @@ Response: `{ "subscription": { "plan_type": "monthly_9900", "status": "active", 
   - `watchlists.py`: `WATCHLIST_LIMIT=10` 및 한도 검사 제거(무제한). 응답에서 `limit` 제거.
 - **신규**
   - 소셜 연동/토큰 로그인/해제(`/api/auth/social/*`).
-  - 리포트 도메인(`/api/reports/*`): 조회·열람(쿼터)·소스 상세·비회원 블라인드 + `report_issuances` 리포지토리.
+  - 리포트 도메인(`/api/reports/*`): 조회·소스 상세(모두 전체 공개, 게이팅 없음).
   - 결제(`/api/payments/*`): 포트원 결제 검증/취소.
   - `PATCH /api/users/me`, `DELETE /api/users/me`(탈퇴), `member_code`(영문4+숫자4) 생성기, `phone` 저장.
   - 관리자 구독 등록/수정/취소, `POST /api/admin/logout`.
@@ -480,12 +440,12 @@ Response: `{ "subscription": { "plan_type": "monthly_9900", "status": "active", 
 
 ## 15. 구현 우선순위 / 테스트 기준
 
-**우선순위**: ① 본인인증 가입/로그인 + 토큰 → ② 관심종목(무제한) → ③ 리포트 조회/열람/쿼터 + 비회원 블라인드 → ④ 소스 상세 5종 → ⑤ 결제 검증/취소 → ⑥ 소셜 연동/해제 → ⑦ 저널 → ⑧ 관리자.
+**우선순위**: ① 본인인증 가입/로그인 + 토큰 → ② 관심종목(무제한) → ③ 리포트 조회(전체 공개) → ④ 소스 상세 5종(전체 공개) → ⑤ 결제 검증/취소 → ⑥ 소셜 연동/해제 → ⑦ 저널 → ⑧ 관리자.
 
 **테스트 기준**
 - 인증: `imp_uid` 검증 성공 가입, 동일 핸드폰 재가입 차단(활성), 탈퇴 후 재가입 허용, 미가입 로그인 `404`.
 - 관심종목: 한도 없음(11개 이상 추가 가능), 중복 차단.
-- 리포트: 비회원 블라인드(dart/datalab만), 회원 무료 3회 차감, 동일 버전 재열람 무차감, 새 버전 재차감, 소진 시 `402`, 구독자 무제한+무료 불변.
-- 결제: 금액/상태 위변조 거부, 활성 구독 중복 차단, 취소 후 무료 잔여 유지.
+- 리포트: 비로그인 포함 누구나 전체 리포트(종합 + 5소스)·소스 상세 열람(게이팅·쿼터 없음). `access`/`locked` 필드 부재.
+- 결제: 금액/상태 위변조 거부, 활성 구독 중복 차단, 취소 시 구독 전용 기능(저널)만 비활성.
 - 소셜: 로그인 상태에서만 연동, 미연동 토큰 로그인 `404`, 해제 후 차단.
 - 관리자: 하드코딩 로그인, 구독 CRUD, 매출 집계.

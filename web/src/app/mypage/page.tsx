@@ -22,7 +22,12 @@ import {
 import { won } from "@/lib/format";
 import { pay } from "@/lib/portone";
 import { isSocialDevMode, SOCIAL_PROVIDERS, socialAuthCode, startSocialOAuth } from "@/lib/social";
-import { JournalChartPanel, JournalTimelinePanel } from "@/components/JournalChart";
+import {
+  hasRetrospective,
+  JournalChartPanel,
+  JournalTimelinePanel,
+  RetrospectiveBlock,
+} from "@/components/JournalChart";
 import { useAuthStore } from "@/stores/authStore";
 import { useJournalStore } from "@/stores/journalStore";
 import { useSocialStore } from "@/stores/socialStore";
@@ -51,9 +56,7 @@ export default function MyPage() {
   useEffect(() => {
     if (status === "authenticated" && user?.subscription_active) void loadJournals();
   }, [status, user?.subscription_active, loadJournals]);
-  const pendingRetro = journalItems.filter(
-    (j) => j.outcomes.length > 0 && !j.retrospective_memo,
-  ).length;
+  const pendingRetro = journalItems.filter(isRetroPending).length;
 
   useEffect(() => {
     if (status === "anonymous") router.replace("/login");
@@ -68,6 +71,15 @@ export default function MyPage() {
       <h1 className="text-[32px] font-extrabold">
         마이페이지 <span className="pill flat align-middle text-[13px]" style={{ padding: "3px 9px" }}>{user.member_code}</span>
       </h1>
+      {/* 매매 부검·방법론은 상단 메뉴에서 마이 안으로 이동(배선 이전, 페이지 코드는 유지). */}
+      <div className="mt-4 flex flex-wrap gap-2" data-flow="mypage-tools">
+        <Link href="/postmortem" className="pill flat text-[13.5px]" style={{ padding: "6px 14px" }}>
+          매매 부검
+        </Link>
+        <Link href="/methodology" className="pill flat text-[13.5px]" style={{ padding: "6px 14px" }}>
+          방법론
+        </Link>
+      </div>
       <div className="mt-6 flex flex-wrap gap-2 border-b border-line">
         {TABS.map(([key, label]) => (
           <button
@@ -333,6 +345,12 @@ const JOURNAL_VIEWS: [string, string][] = [
 const JOURNAL_VIEW_LABEL: Record<string, string> = Object.fromEntries(JOURNAL_VIEWS);
 const HORIZON_LABEL: Record<string, string> = { "7td": "7거래일", "30td": "30거래일" };
 
+// 복기 대기 — 변동은 확정됐는데 아직 회고가 없는 저널.
+// hasRetrospective 는 JournalChart 에서 단일 정의를 import(카드 표시와 정의 일치).
+function isRetroPending(j: Journal): boolean {
+  return j.outcomes.length > 0 && !hasRetrospective(j);
+}
+
 function JournalTab() {
   const router = useRouter();
   const user = useAuthStore((s) => s.user);
@@ -341,14 +359,21 @@ function JournalTab() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editView, setEditView] = useState("watch");
   const [editMemo, setEditMemo] = useState("");
-  const [editTags, setEditTags] = useState("");
+  // 태그는 칩으로 관리 — editTagList(확정 칩) + tagDraft(입력 중).
+  const [editTagList, setEditTagList] = useState<string[]>([]);
+  const [tagDraft, setTagDraft] = useState("");
   // 저널 → 커뮤니티 공유 폼(게시글 생성). show_pnl 켜면 수익률%만 공개(가격/절대손익은 항상 비공개).
   const [sharingId, setSharingId] = useState<number | null>(null);
   const [shareTitle, setShareTitle] = useState("");
   const [shareBody, setShareBody] = useState("");
   const [sharePnl, setSharePnl] = useState(false);
   const [shareBusy, setShareBusy] = useState(false);
-  // 카드 클릭 시 펼치는 주가 차트(작성 시점 대비 등락) 대상 저널.
+  // 카드 액션 오버플로(⋯) 메뉴가 열린 카드.
+  const [menuId, setMenuId] = useState<number | null>(null);
+  // 복기 대기큐에서 "회고 남기기"로 진입한 카드 + 진입 신호(누를 때마다 증가).
+  const [retroAutoId, setRetroAutoId] = useState<number | null>(null);
+  const [retroSignal, setRetroSignal] = useState(0);
+  // 차트 펼침(작성 시점 대비 등락) 대상 저널.
   const [chartId, setChartId] = useState<number | null>(null);
   // 목록 ↔ 종목 타임라인(한 차트 위 판단 마커) 보기 전환.
   const [view, setView] = useState<"list" | "timeline">("list");
@@ -362,13 +387,23 @@ function JournalTab() {
     if (subscribed) void load();
   }, [subscribed, load]);
 
+  // ⋯ 메뉴가 열려 있으면 ESC 로 닫는다(포커스 위치와 무관하게 동작).
+  useEffect(() => {
+    if (menuId === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenuId(null);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [menuId]);
+
   // 저널은 구독 전용 — 비구독자는 구독 유도.
   if (!subscribed)
     return (
       <div className="card px-6 py-8 text-center" data-panel="journal" data-flow="journal-subscribe">
         <p className="font-bold">저널은 구독 회원 전용 기능입니다.</p>
         <p className="mt-2 text-[13.5px] text-muted">
-          발행한 리포트에 나의 판단을 기록하고, 이후 실제 주가 변동(7·30거래일)을 함께 복기할 수 있습니다.
+          발행한 리포트에 데이터 방향성 메모를 기록하고, 이후 실제 주가 변동(7·30거래일)을 함께 복기할 수 있습니다.
         </p>
         <Link
           href="/pricing"
@@ -382,22 +417,48 @@ function JournalTab() {
   if (loading) return <p className="text-muted" data-panel="journal">불러오는 중…</p>;
   if (error) return <p className="text-red" data-panel="journal">{error}</p>;
   if (items.length === 0)
-    return <p className="text-muted" data-panel="journal">저장한 저널이 없습니다. 리포트에서 저장해 투자 추이를 기록하세요.</p>;
+    return <p className="text-muted" data-panel="journal">저장한 저널이 없습니다. 리포트에서 데이터 방향성과 근거를 기록하세요.</p>;
 
   function startEdit(j: Journal) {
     setEditingId(j.journal_id);
     setEditView(j.user_view);
     setEditMemo(j.memo ?? "");
-    setEditTags(j.tags.join(", "));
+    setEditTagList(j.tags);
+    setTagDraft("");
+  }
+
+  // 입력 중인 태그(들)를 칩으로 확정 — 쉼표 붙여넣기도 분리해 받는다(최대 10개, 중복 제거).
+  // 하나도 추가되지 않으면(중복·상한) 입력값을 지우지 않아 사용자가 이유를 알 수 있게 둔다.
+  function commitTags(raw: string) {
+    const parts = raw.split(",").map((t) => t.trim()).filter(Boolean);
+    if (parts.length === 0) {
+      setTagDraft("");
+      return;
+    }
+    let added = 0;
+    setEditTagList((prev) => {
+      const next = [...prev];
+      for (const p of parts) {
+        if (!next.includes(p) && next.length < 10) {
+          next.push(p);
+          added += 1;
+        }
+      }
+      return next;
+    });
+    if (added > 0) setTagDraft("");
+  }
+
+  function removeTag(tag: string) {
+    setEditTagList((prev) => prev.filter((t) => t !== tag));
   }
 
   async function saveEdit(id: number) {
+    // 입력창에 남은 텍스트도 저장 시 칩으로 반영.
+    const pending = tagDraft.split(",").map((t) => t.trim()).filter(Boolean);
+    const tags = [...new Set([...editTagList, ...pending])].slice(0, 10);
     try {
-      await update(id, {
-        user_view: editView,
-        memo: editMemo,
-        tags: editTags.split(",").map((t) => t.trim()).filter(Boolean),
-      });
+      await update(id, { user_view: editView, memo: editMemo, tags });
       setEditingId(null);
       showToast("저널을 수정했습니다.", "success");
     } catch (e) {
@@ -406,6 +467,8 @@ function JournalTab() {
   }
 
   async function removeJournal(id: number) {
+    // 삭제는 되돌릴 수 없어 확인을 받는다(즉시 삭제 방지).
+    if (!window.confirm("이 저널을 삭제할까요? 삭제하면 되돌릴 수 없습니다.")) return;
     try {
       await remove(id);
       showToast("저널을 삭제했습니다.", "success");
@@ -414,9 +477,21 @@ function JournalTab() {
     }
   }
 
+  // 복기 대기큐 → 해당 카드로 스크롤 + 회고 폼 자동 오픈.
+  // 신호를 매번 증가시켜 같은 카드를 다시 눌러도(취소 후 재진입) 폼이 열리게 한다.
+  function openRetro(id: number) {
+    setRetroAutoId(id);
+    setRetroSignal((n) => n + 1);
+    if (typeof document !== "undefined") {
+      document
+        .getElementById(`journal-card-${id}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }
+
   function startShare(j: Journal) {
     setSharingId(j.journal_id);
-    setShareTitle(`${j.stock_name ?? j.stock_code} — 나의 판단`);
+    setShareTitle(`${j.stock_name ?? j.stock_code} - 데이터 방향성 기록`);
     setShareBody(j.memo ?? "");
     setSharePnl(false);
   }
@@ -450,7 +525,7 @@ function JournalTab() {
   const outcomeChange = (j: Journal) =>
     j.outcomes.length > 0 ? j.outcomes[j.outcomes.length - 1].change_pct : null;
 
-  // 판단 성향 요약 — 기록 집계일 뿐 성과 평가가 아니다(중립 표현 유지).
+  // 데이터 방향성 기록 요약 — 기록 집계일 뿐 성과 평가가 아니다(중립 표현 유지).
   const viewCounts = items.reduce<Record<string, number>>((acc, j) => {
     acc[j.user_view] = (acc[j.user_view] ?? 0) + 1;
     return acc;
@@ -460,9 +535,7 @@ function JournalTab() {
     .filter((v): v is number => v != null);
   const avg7 =
     changes7.length > 0 ? changes7.reduce((a, b) => a + b, 0) / changes7.length : null;
-  const pendingRetroCount = items.filter(
-    (j) => j.outcomes.length > 0 && !j.retrospective_memo,
-  ).length;
+  const pendingRetro = items.filter(isRetroPending);
   const visible = items
     .filter((j) => !filterView || j.user_view === filterView)
     .filter((j) => !filterTag || j.tags.includes(filterTag))
@@ -476,7 +549,7 @@ function JournalTab() {
 
   return (
     <div data-panel="journal">
-      {/* 판단 성향 요약 — 저장한 기록의 중립적 집계 */}
+      {/* 데이터 방향성 기록 요약 — 저장한 기록의 중립적 집계 */}
       <div className="card mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 px-5 py-3 text-[12.5px]" data-flow="journal-summary">
         <span className="font-bold text-navy">저널 {items.length}건</span>
         {JOURNAL_VIEWS.map(([key, label]) =>
@@ -488,7 +561,7 @@ function JournalTab() {
         )}
         {avg7 != null && (
           <span className="text-muted">
-            판단 후 7거래일 평균 변동{" "}
+            기록 후 7거래일 평균 변동{" "}
             <b className={avg7 >= 0 ? "text-red" : "text-sky-deep"}>
               {avg7 >= 0 ? "+" : ""}
               {avg7.toFixed(2)}%
@@ -499,11 +572,27 @@ function JournalTab() {
         <span className="ml-auto text-[11.5px] text-muted">기록 집계이며 성과 평가가 아닙니다</span>
       </div>
 
-      {/* 복기 알림 — 변동이 확정됐는데 회고가 없는 저널 */}
-      {pendingRetroCount > 0 && (
+      {/* 복기 대기큐 — 변동이 확정됐는데 회고가 없는 저널. 항목 클릭 시 해당 카드 회고 폼으로 이동 */}
+      {view === "list" && pendingRetro.length > 0 && (
         <div className="mb-3 rounded-[12px] bg-surface-2 px-5 py-3 text-[13px]" data-flow="journal-retro-banner">
-          복기할 저널 <b className="text-navy">{pendingRetroCount}건</b> — 변동이 확정됐습니다. 카드를 열어
-          회고를 남겨보세요.
+          <div className="mb-1.5">
+            복기할 저널 <b className="text-navy">{pendingRetro.length}건</b> — 변동이 확정됐습니다. 눌러서
+            회고를 남겨보세요.
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {pendingRetro.map((j) => (
+              <button
+                key={j.journal_id}
+                type="button"
+                data-flow="journal-retro-queue-item"
+                onClick={() => openRetro(j.journal_id)}
+                className="pill flat text-[12px] hover:!border-sky hover:!text-sky-deep"
+                style={{ padding: "3px 10px" }}
+              >
+                {j.stock_name ?? j.stock_code} 회고 남기기 →
+              </button>
+            ))}
+          </div>
         </div>
       )}
 
@@ -582,16 +671,19 @@ function JournalTab() {
         </div>
       ) : (
         <div className="space-y-2">
-      {visible.map((j) => (
+      {visible.map((j) => {
+        const menuOpen = menuId === j.journal_id;
+        // 회고 영역은 변동 확정됐거나 이미 회고가 있을 때만 노출(미확정 카드는 깔끔하게).
+        const showRetro = j.outcomes.length > 0 || hasRetrospective(j);
+        return (
         <div
           key={j.journal_id}
-          className="card cursor-pointer px-5 py-4"
-          onClick={() => setChartId(chartId === j.journal_id ? null : j.journal_id)}
+          id={`journal-card-${j.journal_id}`}
+          className="card px-5 py-4"
         >
-          <div className="flex items-center justify-between">
+          <div className="flex items-start justify-between gap-2">
             <Link
               href={`/report/${j.stock_code}`}
-              onClick={(e) => e.stopPropagation()}
               className="font-bold hover:text-sky-deep"
             >
               {j.stock_name ?? j.stock_code} <span className="text-[12px] font-normal text-muted">{j.stock_code}</span>
@@ -600,50 +692,80 @@ function JournalTab() {
               <span className="pill flat" style={{ padding: "3px 9px", fontSize: 12 }}>
                 {JOURNAL_VIEW_LABEL[j.user_view] ?? j.user_view}
               </span>
-              <button
-                type="button"
-                data-flow="journal-edit"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (editingId === j.journal_id) setEditingId(null);
-                  else startEdit(j);
-                }}
-                className="text-[13px] font-semibold text-muted hover:text-sky-deep"
-              >
-                수정
-              </button>
-              <button
-                type="button"
-                data-flow="journal-share"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (sharingId === j.journal_id) setSharingId(null);
-                  else startShare(j);
-                }}
-                className="text-[13px] font-semibold text-muted hover:text-sky-deep"
-              >
-                공유
-              </button>
-              <button
-                type="button"
-                data-flow="journal-delete"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  void removeJournal(j.journal_id);
-                }}
-                className="text-[13px] font-semibold text-muted hover:text-red"
-              >
-                삭제
-              </button>
+              {/* 카드 액션 오버플로 메뉴 — 수정/공유/삭제를 접어 헤더를 정돈 */}
+              <div className="relative">
+                <button
+                  type="button"
+                  data-flow="journal-menu"
+                  aria-haspopup="menu"
+                  aria-expanded={menuOpen}
+                  aria-label="저널 액션"
+                  onClick={() => setMenuId(menuOpen ? null : j.journal_id)}
+                  className="rounded-full px-2 py-0.5 text-[18px] leading-none text-muted hover:bg-surface-2 hover:text-navy"
+                >
+                  ⋯
+                </button>
+                {menuOpen && (
+                  <>
+                    {/* 바깥 클릭으로 닫기(ESC 는 상위 전역 keydown 이 처리) */}
+                    <button
+                      type="button"
+                      aria-hidden
+                      tabIndex={-1}
+                      onClick={() => setMenuId(null)}
+                      className="fixed inset-0 z-10 cursor-default"
+                    />
+                    <div
+                      role="menu"
+                      className="card absolute right-0 z-20 mt-1 w-28 overflow-hidden py-1 shadow-md"
+                    >
+                      <button
+                        type="button"
+                        role="menuitem"
+                        data-flow="journal-edit"
+                        onClick={() => {
+                          setMenuId(null);
+                          if (editingId === j.journal_id) setEditingId(null);
+                          else startEdit(j);
+                        }}
+                        className="block w-full px-4 py-2 text-left text-[13px] font-semibold hover:bg-surface-2"
+                      >
+                        수정
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        data-flow="journal-share"
+                        onClick={() => {
+                          setMenuId(null);
+                          if (sharingId === j.journal_id) setSharingId(null);
+                          else startShare(j);
+                        }}
+                        className="block w-full px-4 py-2 text-left text-[13px] font-semibold hover:bg-surface-2"
+                      >
+                        공유
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        data-flow="journal-delete"
+                        onClick={() => {
+                          setMenuId(null);
+                          void removeJournal(j.journal_id);
+                        }}
+                        className="block w-full px-4 py-2 text-left text-[13px] font-semibold text-red hover:bg-surface-2"
+                      >
+                        삭제
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
           </div>
 
           {sharingId === j.journal_id && (
-            <div
-              className="mt-3 space-y-2 border-t border-line pt-3"
-              data-flow="journal-share-form"
-              onClick={(e) => e.stopPropagation()}
-            >
+            <div className="mt-3 space-y-2 border-t border-line pt-3" data-flow="journal-share-form">
               <input
                 value={shareTitle}
                 onChange={(e) => setShareTitle(e.target.value)}
@@ -687,7 +809,7 @@ function JournalTab() {
           )}
 
           {editingId === j.journal_id ? (
-            <div className="mt-3 space-y-2 border-t border-line pt-3" onClick={(e) => e.stopPropagation()}>
+            <div className="mt-3 space-y-2 border-t border-line pt-3">
               <div className="flex flex-wrap gap-2">
                 {JOURNAL_VIEWS.map(([key, label]) => (
                   <button
@@ -708,12 +830,45 @@ function JournalTab() {
                 className="card w-full px-4 py-2.5 text-[13.5px] outline-none focus:border-sky"
                 placeholder="메모"
               />
-              <input
-                value={editTags}
-                onChange={(e) => setEditTags(e.target.value)}
-                className="card w-full px-4 py-2.5 text-[13px] outline-none focus:border-sky"
-                placeholder="태그 (쉼표로 구분, 최대 10개)"
-              />
+              {/* 태그 칩 입력 — Enter/쉼표로 확정, ×로 삭제, 붙여넣기 분리 지원(최대 10개) */}
+              <div
+                className="card flex flex-wrap items-center gap-1.5 px-3 py-2"
+                data-flow="journal-tag-input"
+              >
+                {editTagList.map((tag) => (
+                  <span
+                    key={tag}
+                    className="pill flat inline-flex items-center gap-1 text-[11.5px]"
+                    style={{ padding: "2px 4px 2px 8px" }}
+                  >
+                    #{tag}
+                    <button
+                      type="button"
+                      aria-label={`태그 ${tag} 삭제`}
+                      onClick={() => removeTag(tag)}
+                      className="rounded-full px-1 text-muted hover:text-red"
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+                <input
+                  value={tagDraft}
+                  onChange={(e) => setTagDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === ",") {
+                      e.preventDefault();
+                      commitTags(tagDraft);
+                    } else if (e.key === "Backspace" && !tagDraft && editTagList.length > 0) {
+                      removeTag(editTagList[editTagList.length - 1]);
+                    }
+                  }}
+                  onBlur={() => commitTags(tagDraft)}
+                  disabled={editTagList.length >= 10}
+                  className="min-w-[110px] flex-1 bg-transparent px-1 py-0.5 text-[13px] outline-none disabled:opacity-50"
+                  placeholder={editTagList.length >= 10 ? "태그는 최대 10개" : "태그 입력 후 Enter"}
+                />
+              </div>
               <div className="flex gap-2">
                 <button
                   type="button"
@@ -739,16 +894,17 @@ function JournalTab() {
                   ))}
                 </div>
               )}
-              {/* 회고 — 결과 확인 후 남긴 복기(있을 때만) */}
-              {j.retrospective_memo && (
-                <p
-                  className="mt-2 rounded-[10px] bg-surface-2 px-3 py-2 text-[12.5px] text-navy-soft"
-                  data-flow="journal-card-retro"
-                >
-                  <b className="text-navy">회고</b> · {j.retrospective_memo}
-                </p>
-              )}
             </>
+          )}
+
+          {/* 회고 — 카드에서 직접(차트 펼침 불필요). 대기큐 진입 시 신호로 편집 오픈 */}
+          {showRetro && (
+            <div data-flow="journal-card-retro">
+              <RetrospectiveBlock
+                journal={j}
+                autoEditSignal={retroAutoId === j.journal_id ? retroSignal : 0}
+              />
+            </div>
           )}
 
           <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-muted">
@@ -781,18 +937,20 @@ function JournalTab() {
             ) : (
               <span>변동 확정 전</span>
             )}
-            <span className="ml-auto text-[11.5px]">
-              {chartId === j.journal_id ? "차트 닫기 ▲" : "클릭하면 주가 차트 ▼"}
-            </span>
+            <button
+              type="button"
+              data-flow="journal-chart-toggle"
+              onClick={() => setChartId(chartId === j.journal_id ? null : j.journal_id)}
+              className="ml-auto text-[11.5px] font-semibold hover:text-sky-deep"
+            >
+              {chartId === j.journal_id ? "차트 닫기 ▲" : "주가 차트 ▼"}
+            </button>
           </div>
 
-          {chartId === j.journal_id && (
-            <div onClick={(e) => e.stopPropagation()}>
-              <JournalChartPanel journal={j} />
-            </div>
-          )}
+          {chartId === j.journal_id && <JournalChartPanel journal={j} />}
         </div>
-      ))}
+        );
+      })}
         </div>
       )}
     </div>

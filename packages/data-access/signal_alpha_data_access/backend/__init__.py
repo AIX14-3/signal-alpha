@@ -26,7 +26,16 @@ from signal_alpha_data_access.repositories.collection_schedules import (
 )
 from signal_alpha_data_access.repositories.community import CommunityRepository
 from signal_alpha_data_access.repositories.signals import SignalRepository
+from signal_alpha_data_access.repositories.stock_prices import StockPriceRepository
+from signal_alpha_data_access.repositories.user_broker_credentials import (
+    UserBrokerCredentialRepository,
+)
 from signal_alpha_data_access.repositories.user_sessions import UserSessionRepository
+from signal_alpha_data_access.repositories.user_trade_fills import UserTradeFillsRepository
+from signal_alpha_data_access.repositories.user_trade_plans import UserTradePlanRepository
+from signal_alpha_data_access.repositories.user_trade_signal_overlays import (
+    UserTradeSignalOverlayRepository,
+)
 from signal_alpha_data_access.repositories.user_signals import UserSignalRepository
 from signal_alpha_data_access.repositories.users_billing import UserBillingRepository
 
@@ -38,9 +47,14 @@ __all__ = [
     "ProcessingQueueRepository",
     "SignalRepository",
     "StockNewsRepository",
+    "StockPriceRepository",
     "StockRepository",
     "UserBillingRepository",
+    "UserBrokerCredentialRepository",
     "UserSessionRepository",
     "UserSignalRepository",
+    "UserTradeFillsRepository",
+    "UserTradePlanRepository",
+    "UserTradeSignalOverlayRepository",
     "parse_schedule_row",
 ]

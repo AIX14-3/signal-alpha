@@ -10,6 +10,7 @@ asyncpg 스타일: 키워드 전용 인자, $n 위치 파라미터, fetchrow/fet
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any
 
 # 공개 피드/상세가 노출하는 저널 화이트리스트 + 저자 핸들 + 집계 카운트.
@@ -30,6 +31,8 @@ _POST_SELECT = """
     ) ELSE NULL END AS pnl_pct,
     (SELECT count(*) FROM community_reactions r
        WHERE r.target_type = 'post' AND r.target_id = p.id AND r.type = 'like') AS like_count,
+    (SELECT count(*) FROM community_reactions r
+       WHERE r.target_type = 'post' AND r.target_id = p.id AND r.type = 'bookmark') AS bookmark_count,
     (SELECT count(*) FROM community_comments c
        WHERE c.post_id = p.id AND c.deleted_at IS NULL AND c.status = 'visible') AS comment_count
 """
@@ -110,21 +113,248 @@ class CommunityRepository:
             limit,
         )
 
-    async def list_popular(self, *, window_kind: str, limit: int, offset: int) -> list[Any]:
-        """인기/주간 인기 — 랭킹 스냅샷(워커 계산) 점수 순."""
+    async def list_popular(
+        self,
+        *,
+        window_kind: str,
+        cursor_score: Decimal | None,
+        cursor_id: int | None,
+        limit: int,
+    ) -> list[Any]:
+        """인기/주간 인기 — 랭킹 스냅샷(워커 계산) 점수/id keyset 순."""
         return await self._connection.fetch(
             f"""
             SELECT {_POST_SELECT}, k.score AS ranking_score
             {_POST_JOINS}
             JOIN community_post_rankings k ON k.post_id = p.id AND k.window_kind = $1
             WHERE p.deleted_at IS NULL AND p.status = 'visible'
+              AND (
+                $2::numeric IS NULL
+                OR k.score < $2
+                OR (k.score = $2 AND p.id < $3)
+              )
             ORDER BY k.score DESC, p.id DESC
-            LIMIT $2 OFFSET $3
+            LIMIT $4
             """,
             window_kind,
+            cursor_score,
+            cursor_id,
             limit,
-            offset,
         )
+
+    # ---- 관리자 모더레이션 -------------------------------------------------
+    async def list_hidden_posts(
+        self,
+        *,
+        limit: int,
+        cursor_sort_at: Any | None = None,
+        cursor_target_rank: int | None = None,
+        cursor_id: int | None = None,
+    ) -> list[Any]:
+        """관리자 검토 큐용 숨김 게시글. 공개 응답과 같은 데이터 미니멀리즘을 유지한다."""
+        return await self._connection.fetch(
+            f"""
+            SELECT {_POST_SELECT},
+                   reports.report_count,
+                   reports.latest_reported_at,
+                   reports.report_reasons
+            {_POST_JOINS}
+            LEFT JOIN LATERAL (
+                SELECT
+                    count(*)::int AS report_count,
+                    max(created_at) AS latest_reported_at,
+                    COALESCE(
+                        array_remove(array_agg(DISTINCT reason), NULL),
+                        ARRAY[]::varchar[]
+                    ) AS report_reasons
+                FROM community_reports
+                WHERE target_type = 'post' AND target_id = p.id
+            ) reports ON TRUE
+            WHERE p.deleted_at IS NULL AND p.status = 'hidden'
+              AND (
+                  $1::timestamptz IS NULL
+                  OR COALESCE(reports.latest_reported_at, p.updated_at, p.created_at) < $1
+                  OR (
+                      COALESCE(reports.latest_reported_at, p.updated_at, p.created_at) = $1
+                      AND 1 < $2::int
+                  )
+                  OR (
+                      COALESCE(reports.latest_reported_at, p.updated_at, p.created_at) = $1
+                      AND 1 = $2::int
+                      AND p.id < $3::bigint
+                  )
+              )
+            ORDER BY COALESCE(reports.latest_reported_at, p.updated_at, p.created_at) DESC, p.id DESC
+            LIMIT $4
+            """,
+            cursor_sort_at,
+            cursor_target_rank,
+            cursor_id,
+            limit,
+        )
+
+    async def list_hidden_comments(
+        self,
+        *,
+        limit: int,
+        cursor_sort_at: Any | None = None,
+        cursor_target_rank: int | None = None,
+        cursor_id: int | None = None,
+    ) -> list[Any]:
+        """관리자 검토 큐용 숨김 댓글."""
+        return await self._connection.fetch(
+            """
+            SELECT c.id, c.post_id, c.parent_comment_id, c.body, c.status,
+                   c.created_at, c.updated_at, c.author_user_id,
+                   u.member_code AS author_member_code,
+                   u.nickname AS author_nickname,
+                   p.title AS post_title,
+                   reports.report_count,
+                   reports.latest_reported_at,
+                   reports.report_reasons
+              FROM community_comments c
+              JOIN users u ON u.id = c.author_user_id
+              JOIN community_posts p ON p.id = c.post_id
+              LEFT JOIN LATERAL (
+                  SELECT
+                      count(*)::int AS report_count,
+                      max(created_at) AS latest_reported_at,
+                      COALESCE(
+                          array_remove(array_agg(DISTINCT reason), NULL),
+                          ARRAY[]::varchar[]
+                      ) AS report_reasons
+                  FROM community_reports
+                  WHERE target_type = 'comment' AND target_id = c.id
+              ) reports ON TRUE
+             WHERE c.deleted_at IS NULL
+               AND c.status = 'hidden'
+               AND p.deleted_at IS NULL
+               AND (
+                   $1::timestamptz IS NULL
+                   OR COALESCE(reports.latest_reported_at, c.updated_at, c.created_at) < $1
+                   OR (
+                       COALESCE(reports.latest_reported_at, c.updated_at, c.created_at) = $1
+                       AND 0 < $2::int
+                   )
+                   OR (
+                       COALESCE(reports.latest_reported_at, c.updated_at, c.created_at) = $1
+                       AND 0 = $2::int
+                       AND c.id < $3::bigint
+                   )
+               )
+             ORDER BY COALESCE(reports.latest_reported_at, c.updated_at, c.created_at) DESC, c.id DESC
+             LIMIT $4
+            """,
+            cursor_sort_at,
+            cursor_target_rank,
+            cursor_id,
+            limit,
+        )
+
+    async def get_hidden_post_for_moderation(self, *, post_id: int) -> Any:
+        return await self._connection.fetchrow(
+            f"""
+            SELECT {_POST_SELECT},
+                   reports.report_count,
+                   reports.latest_reported_at,
+                   reports.report_reasons
+            {_POST_JOINS}
+            LEFT JOIN LATERAL (
+                SELECT
+                    count(*)::int AS report_count,
+                    max(created_at) AS latest_reported_at,
+                    COALESCE(
+                        array_remove(array_agg(DISTINCT reason), NULL),
+                        ARRAY[]::varchar[]
+                    ) AS report_reasons
+                FROM community_reports
+                WHERE target_type = 'post' AND target_id = p.id
+            ) reports ON TRUE
+            WHERE p.id = $1 AND p.deleted_at IS NULL AND p.status = 'hidden'
+            """,
+            post_id,
+        )
+
+    async def get_hidden_comment_for_moderation(self, *, comment_id: int) -> Any:
+        return await self._connection.fetchrow(
+            """
+            SELECT c.id, c.post_id, c.parent_comment_id, c.body, c.status,
+                   c.created_at, c.updated_at, c.author_user_id,
+                   u.member_code AS author_member_code,
+                   u.nickname AS author_nickname,
+                   p.title AS post_title,
+                   reports.report_count,
+                   reports.latest_reported_at,
+                   reports.report_reasons
+              FROM community_comments c
+              JOIN users u ON u.id = c.author_user_id
+              JOIN community_posts p ON p.id = c.post_id
+              LEFT JOIN LATERAL (
+                  SELECT
+                      count(*)::int AS report_count,
+                      max(created_at) AS latest_reported_at,
+                      COALESCE(
+                          array_remove(array_agg(DISTINCT reason), NULL),
+                          ARRAY[]::varchar[]
+                      ) AS report_reasons
+                  FROM community_reports
+                  WHERE target_type = 'comment' AND target_id = c.id
+              ) reports ON TRUE
+             WHERE c.id = $1
+               AND c.deleted_at IS NULL
+               AND c.status = 'hidden'
+               AND p.deleted_at IS NULL
+            """,
+            comment_id,
+        )
+
+    async def restore_hidden_post(self, *, post_id: int) -> bool:
+        restored_id = await self._connection.fetchval(
+            """
+            UPDATE community_posts
+               SET status = 'visible', updated_at = NOW()
+             WHERE id = $1 AND deleted_at IS NULL AND status = 'hidden'
+            RETURNING id
+            """,
+            post_id,
+        )
+        return restored_id is not None
+
+    async def restore_hidden_comment(self, *, comment_id: int) -> bool:
+        restored_id = await self._connection.fetchval(
+            """
+            UPDATE community_comments
+               SET status = 'visible', updated_at = NOW()
+             WHERE id = $1 AND deleted_at IS NULL AND status = 'hidden'
+            RETURNING id
+            """,
+            comment_id,
+        )
+        return restored_id is not None
+
+    async def delete_hidden_post(self, *, post_id: int) -> bool:
+        deleted_id = await self._connection.fetchval(
+            """
+            UPDATE community_posts
+               SET deleted_at = NOW(), updated_at = NOW()
+             WHERE id = $1 AND deleted_at IS NULL AND status = 'hidden'
+            RETURNING id
+            """,
+            post_id,
+        )
+        return deleted_id is not None
+
+    async def delete_hidden_comment(self, *, comment_id: int) -> bool:
+        deleted_id = await self._connection.fetchval(
+            """
+            UPDATE community_comments
+               SET deleted_at = NOW(), updated_at = NOW()
+             WHERE id = $1 AND deleted_at IS NULL AND status = 'hidden'
+            RETURNING id
+            """,
+            comment_id,
+        )
+        return deleted_id is not None
 
     async def update_post(
         self,
@@ -187,18 +417,50 @@ class CommunityRepository:
                 post_id,
             )
 
+    async def list_user_reactions(
+        self,
+        *,
+        user_id: int,
+        target_type: str,
+        target_ids: list[int],
+    ) -> list[Any]:
+        if not target_ids:
+            return []
+        return await self._connection.fetch(
+            """
+            SELECT target_id, type
+              FROM community_reactions
+             WHERE user_id = $1
+               AND target_type = $2
+               AND target_id = ANY($3::bigint[])
+            """,
+            user_id,
+            target_type,
+            target_ids,
+        )
+
     # ---- 댓글 -------------------------------------------------------------
-    async def list_comments(self, *, post_id: int) -> list[Any]:
+    async def list_comments(self, *, post_id: int, cursor_id: int | None, limit: int) -> list[Any]:
         return await self._connection.fetch(
             """
             SELECT c.id, c.post_id, c.parent_comment_id, c.body, c.status, c.created_at,
-                   u.member_code AS author_member_code, u.nickname AS author_nickname
+                   u.member_code AS author_member_code, u.nickname AS author_nickname,
+                   (SELECT count(*) FROM community_reactions r
+                      WHERE r.target_type = 'comment' AND r.target_id = c.id AND r.type = 'like') AS like_count,
+                   (SELECT count(*) FROM community_reactions r
+                      WHERE r.target_type = 'comment' AND r.target_id = c.id AND r.type = 'bookmark') AS bookmark_count
               FROM community_comments c
               JOIN users u ON u.id = c.author_user_id
-             WHERE c.post_id = $1 AND c.deleted_at IS NULL AND c.status = 'visible'
-             ORDER BY c.created_at, c.id
+             WHERE c.post_id = $1
+               AND c.deleted_at IS NULL
+               AND c.status = 'visible'
+               AND ($2::bigint IS NULL OR c.id > $2)
+             ORDER BY c.id
+             LIMIT $3
             """,
             post_id,
+            cursor_id,
+            limit,
         )
 
     async def create_comment(
@@ -237,7 +499,11 @@ class CommunityRepository:
         return await self._connection.fetchrow(
             """
             SELECT c.id, c.post_id, c.parent_comment_id, c.body, c.status, c.created_at,
-                   u.member_code AS author_member_code, u.nickname AS author_nickname
+                   u.member_code AS author_member_code, u.nickname AS author_nickname,
+                   (SELECT count(*) FROM community_reactions r
+                      WHERE r.target_type = 'comment' AND r.target_id = c.id AND r.type = 'like') AS like_count,
+                   (SELECT count(*) FROM community_reactions r
+                      WHERE r.target_type = 'comment' AND r.target_id = c.id AND r.type = 'bookmark') AS bookmark_count
               FROM community_comments c
               JOIN users u ON u.id = c.author_user_id
              WHERE c.id = $1

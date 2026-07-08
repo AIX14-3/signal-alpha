@@ -24,7 +24,13 @@ type JournalState = {
   }) => Promise<Journal>;
   update: (
     id: number,
-    body: { user_view?: string; memo?: string; tags?: string[]; retrospective_memo?: string },
+    body: {
+      user_view?: string;
+      memo?: string;
+      tags?: string[];
+      retrospective_memo?: string;
+      retro_outcome_class?: string;
+    },
   ) => Promise<Journal>;
   remove: (id: number) => Promise<void>;
 };

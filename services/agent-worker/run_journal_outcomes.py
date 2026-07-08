@@ -33,7 +33,11 @@ async def main() -> None:
 
     from signal_alpha_data_access import DatabaseSettings, create_pool
 
-    from app.publish.journal_outcomes import record_journal_outcomes, sync_journal_chart_prices
+    from app.publish.journal_outcomes import (
+        record_journal_outcomes,
+        sync_journal_chart_prices,
+        sync_stock_prices,
+    )
 
     source_pool = await build_pool(max_pool_size=2)
     backend_pool = await create_pool(
@@ -43,15 +47,19 @@ async def main() -> None:
         async with backend_pool.acquire() as backend_conn, source_pool.acquire() as source_conn:
             stats = await record_journal_outcomes(backend_conn, source_conn)
             chart = await sync_journal_chart_prices(backend_conn, source_conn)
+            prices = await sync_stock_prices(backend_conn, source_conn)
         print(
             f"[JOURNAL-OUTCOMES] stored={stats.stored} pending={stats.pending} "
             f"skipped={stats.skipped} failed={stats.failed}"
         )
         print(f"[JOURNAL-CHART] stocks={chart.stocks} rows={chart.rows} failed={chart.failed}")
+        print(f"[STOCK-PRICES] stocks={prices.stocks} rows={prices.rows} failed={prices.failed}")
         if stats.errors:
             print("errors:", stats.errors[:10])
         if chart.errors:
             print("chart errors:", chart.errors[:10])
+        if prices.errors:
+            print("price errors:", prices.errors[:10])
     finally:
         await backend_pool.close()
         await source_pool.close()

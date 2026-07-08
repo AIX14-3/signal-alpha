@@ -54,7 +54,7 @@ def evaluate_indicators(
     ):
         risk_flags.append("stale_data")
         highlights.append(
-            f"최근 출원이 {indicators.days_since_latest}일 전 — {config.stale_days}일 기준 정체"
+            f"최근 공개가 {indicators.days_since_latest}일 전 — {config.stale_days}일 기준 정체"
         )
 
     momentum = _momentum_component(indicators, config, highlights)
@@ -81,18 +81,18 @@ def _momentum_component(
     if ratio is None:
         if indicators.recent_count > 0:
             highlights.append(
-                f"직전 구간 출원 없이 최근 {indicators.recent_count}건 신규 출원 — 활동 개시"
+                f"직전 구간 공개 없이 최근 {indicators.recent_count}건 신규 공개 — 활동 개시"
             )
             return config.momentum_weight
         return 0.0
     score = graded(ratio, scale=config.momentum_scale, weight=config.momentum_weight)
     if score > 0:
         highlights.append(
-            f"최근 출원 {indicators.recent_count}건 vs 직전 {indicators.prior_count}건 — 출원 증가 (점수 {score:+.2f})"
+            f"최근 공개 {indicators.recent_count}건 vs 직전 {indicators.prior_count}건 — 공개 증가 (점수 {score:+.2f})"
         )
     elif score < 0:
         highlights.append(
-            f"최근 출원 {indicators.recent_count}건 vs 직전 {indicators.prior_count}건 — 출원 감소 (점수 {score:+.2f})"
+            f"최근 공개 {indicators.recent_count}건 vs 직전 {indicators.prior_count}건 — 공개 감소 (점수 {score:+.2f})"
         )
     return score
 
@@ -163,7 +163,7 @@ def _activity_component(
         weight=config.activity_weight,
     )
     highlights.append(
-        f"기간 내 특허 출원 {indicators.total}건 / 기술분류 {indicators.distinct_tech_categories}종 "
+        f"기간 내 공개 특허 {indicators.total}건 / 기술분류 {indicators.distinct_tech_categories}종 "
         f"— 지속적 R&D (점수 {score:+.2f})"
     )
     return score

@@ -240,6 +240,7 @@ class UserSignalRepository:
         user_memo: str | None,
         tags: list[str],
         retrospective_memo: str | None = None,
+        retro_outcome_class: str | None = None,
     ) -> Any:
         # UPDATE ... FROM 의 LATERAL 은 갱신 대상 테이블을 참조할 수 없어 CTE 로 감싼다.
         return await self._connection.fetchrow(
@@ -251,6 +252,7 @@ class UserSignalRepository:
                     user_memo = $4,
                     tags = $5::JSONB,
                     retrospective_memo = $6,
+                    retro_outcome_class = $7,
                     updated_at = NOW()
                 WHERE signal_journals.id = $1
                   AND signal_journals.user_id = $2
@@ -276,6 +278,7 @@ class UserSignalRepository:
             user_memo,
             _jsonb(tags),
             retrospective_memo,
+            retro_outcome_class,
         )
 
     async def delete_journal(self, *, user_id: int, journal_id: int) -> None:

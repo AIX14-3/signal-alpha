@@ -45,6 +45,9 @@ BACKEND_TABLES: frozenset[str] = frozenset(
         "signal_journal_outcomes",
         # 저널 차트용 종가 시리즈 — 같은 러너가 저널 있는 종목만 동기화(종목×거래일 1행).
         "signal_journal_chart_prices",
+        # 종목별 일봉 종가 시리즈(공개 홈 차트) — 발행 러너가 분석 종목 전체를 동기화
+        # (signal_journal_chart_prices 와 같은 워커→백엔드 계약, 저널 유무와 무관).
+        "stock_price_daily",
         "user_signal_reads",
         "report_issuances",
         # 수집 스케줄 제어 평면 (어드민/MCP 가 쓰고 워커 스케줄러가 폴링). 백엔드 DB 보유.
@@ -70,6 +73,21 @@ BACKEND_TABLES: frozenset[str] = frozenset(
         # 적재하고 main-server 가 api.stock_news 로 읽는다(guard_news_events 와 같은
         # 워커→백엔드 계약). display-only 라 시그널/점수 파이프라인과 무관.
         "stock_news",
+        # 종목별 뉴스 다이제스트(LLM 종합 한 줄) — 워커 뉴스 데몬이 stock_news 후보를
+        # LLM 으로 요약해 BACKEND_DATABASE_URL 로 UPSERT, main-server 가
+        # api.stock_news_digest 로 읽는다. stock_news 와 같은 display-only 계약.
+        "stock_news_digest",
+        # 매매 부검 — 유저 증권사 API 자격증명(암호문 저장). 등록/해제는 backend,
+        # 동기화 시 복호는 워커(signal_worker SELECT/UPDATE). users 와 공존.
+        "user_broker_credentials",
+        # 매매 부검 — 유저 실매매 체결(공통 정규화). 워커 동기화 러너가 INSERT,
+        # backend 가 부검 조회 SELECT + 유저 데이터 삭제 DELETE. stocks(PUBLISHED) 매핑.
+        "user_trade_fills",
+        # 매매 부검 — 유저 매매 계획(선택 입력, Plan vs Actual 기준선). backend CRUD.
+        "user_trade_plans",
+        # 매매 부검 — PIT 관측신호 오버레이(내부자 공시 등). 워커가 수집 DB에서 읽어
+        # 멱등 적재(이중풀), backend 는 부검 조회 SELECT. signal_date=known_at(PIT).
+        "user_trade_signal_overlays",
     }
 )
 

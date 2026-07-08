@@ -33,12 +33,18 @@ def _float_opt(name: str, default: float | None) -> float | None:
 class PatentRuleConfig:
     """Scoring parameters for the Patent analyzer."""
 
-    lookback_days: int = 365
+    # 특허는 출원 후 ~18개월(≈540일) 뒤에야 공개된다. 방금 공개되어 지금 처음
+    # 보이는 특허도 application_date(출원일) 기준으로는 이미 ~1.5년 전이라, 365일
+    # 창으로는 창 밖으로 떨어져 no_signal 이 된다. 아래 값은 그 공개 지연을 덮도록
+    # 넓힌 **임시(stopgap)** 조치다 — 여전히 출원일 기준이라 recent/prior 버킷의
+    # "최근성" 의미가 부정확하다. 정식 해법은 publication_date(공개일) 기준 전환이며
+    # 그 PR에서 이 값들을 정상 창으로 되돌린다. (env 로 언제든 오버라이드 가능)
+    lookback_days: int = 900  # stopgap: 540(공개지연) + ~1년 관측창
     min_count: int = 3
     momentum_threshold: float = 0.5  # retained for legacy reference
     momentum_scale: float = 0.5  # tanh knee: momentum of 50% → 0.76*weight
     new_category_scale: float = 0.3  # tanh knee: 30% new-category ratio → 0.76*weight
-    stale_days: int = 180
+    stale_days: int = 720  # stopgap: 공개 지연 감안, 정식(공개일) 전환 시 축소
     momentum_weight: float = 0.5
     new_category_weight: float = 0.3
     activity_weight: float = 0.2

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from datetime import date, datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -9,6 +11,7 @@ from app.api.routes.auth import NOTICE, get_current_user
 from app.core.database import get_database_pool
 from signal_alpha_data_access.backend import (
     StockNewsRepository,
+    StockPriceRepository,
     StockRepository,
     UserSignalRepository,
 )
@@ -18,6 +21,19 @@ from signal_alpha_data_access.backend import (
 
 stocks_router = APIRouter(prefix="/api/stocks", tags=["stocks"])
 watchlists_router = APIRouter(prefix="/api/watchlists", tags=["watchlists"])
+news_router = APIRouter(prefix="/api/news", tags=["news"])
+
+# 뉴스 집계 최근 윈도우 한도: 1시간 ~ 30일. 과도한 값으로 인한 오남용 방어.
+NEWS_SUMMARY_RECENT_HOURS_MIN = 1
+NEWS_SUMMARY_RECENT_HOURS_MAX = 720
+
+# 가격 차트 조회 창 한도: 7일 ~ 120일, 기본 90일.
+# 상한(120)은 발행 러너 sync_stock_prices 의 동기화 창(_PRICE_LOOKBACK_DAYS=120)과 맞춘다 —
+# 더 크게 허용하면 아직 발행되지 않은 과거 구간이 조용히 잘린 series 로 나간다.
+PRICE_DAYS_MIN = 7
+PRICE_DAYS_MAX = 120
+PRICE_DAYS_DEFAULT = 90
+_KST = ZoneInfo("Asia/Seoul")
 
 
 class WatchlistCreateRequest(BaseModel):
@@ -55,16 +71,112 @@ async def list_stock_news(
     limit: int = 20,
     pool: Any = Depends(get_database_pool),
 ) -> dict[str, Any]:
-    """종목별 최신 뉴스 목록 + 건수(공개). 워커 뉴스 데몬이 api.stock_news 로 적재."""
+    """종목별 최신 뉴스 목록 + 건수 + 다이제스트(공개). 워커 뉴스 데몬이 적재·요약."""
     ticker = stock_code.strip()
     async with pool.acquire() as connection:
         repository = StockNewsRepository(connection)
         rows = await repository.list_by_ticker(ticker, limit=min(max(limit, 1), 50))
         count = await repository.count_by_ticker(ticker)
+        digest_row = await repository.get_digest_by_ticker(ticker)
     return {
         "count": count,
         "items": [_news_response(dict(row)) for row in rows],
+        # 종목 뉴스 흐름 한 줄(LLM). 없으면 null → 프론트는 블록 생략.
+        "digest": _digest_response(dict(digest_row)) if digest_row is not None else None,
     }
+
+
+@stocks_router.get("/{stock_code}/prices")
+async def list_stock_prices(
+    stock_code: str,
+    days: int = PRICE_DAYS_DEFAULT,
+    pool: Any = Depends(get_database_pool),
+) -> dict[str, Any]:
+    """종목별 일봉 종가 시리즈(공개) — 홈 '실시간 분석 종목' 아코디언 차트.
+
+    발행 러너(sync_stock_prices)가 수집 DB ohlcv_data 에서 backend stock_price_daily 로
+    동기화한 종가만 읽는다(백엔드는 수집 DB 에 접속하지 않음). 미동기화 종목은 series 가
+    비고, 프론트는 "차트 준비 중"을 표시한다.
+    """
+    ticker = stock_code.strip()
+    window = min(max(days, PRICE_DAYS_MIN), PRICE_DAYS_MAX)
+    from_date = datetime.now(_KST).date() - timedelta(days=window)
+    async with pool.acquire() as connection:
+        stock = await StockRepository(connection).get_by_ticker(ticker)
+        if stock is None:
+            raise _api_error(404, "STOCK_NOT_FOUND", "종목을 찾을 수 없습니다.")
+        rows = await StockPriceRepository(connection).list_daily_close(
+            stock_id=int(stock["id"]),
+            from_date=from_date,
+        )
+    series = [
+        {
+            "trade_date": _date_iso(row["trade_date"]),
+            "close": _number(row["close_price"]),
+        }
+        for row in rows
+    ]
+    latest = series[-1] if series else None
+    return {
+        "stock": {"stock_code": stock["ticker"], "stock_name": stock["name"]},
+        "series": series,
+        "latest_trade_date": latest["trade_date"] if latest else None,
+        "latest_price": latest["close"] if latest else None,
+        "notice": NOTICE,
+    }
+
+
+@news_router.get("/summary")
+async def news_summary(
+    recent_hours: int = 24,
+    pool: Any = Depends(get_database_pool),
+) -> dict[str, Any]:
+    """전역 뉴스 집계(공개) — 토스식 '뉴스 N건을 분석한 시그널' 헤더 데이터 공급원.
+
+    recent_hours 로 recent_articles 집계 창을 조절한다(기본 24h, 1h~30d 클램프).
+    """
+    window = min(
+        max(recent_hours, NEWS_SUMMARY_RECENT_HOURS_MIN),
+        NEWS_SUMMARY_RECENT_HOURS_MAX,
+    )
+    async with pool.acquire() as connection:
+        data = await StockNewsRepository(connection).summary(recent_hours=window)
+    return {**_news_summary_response(data), "recent_hours": window}
+
+
+@news_router.get("/recent")
+async def recent_news(
+    limit: int = 30,
+    pool: Any = Depends(get_database_pool),
+) -> dict[str, Any]:
+    """전역 최신 뉴스 목록(공개) — 홈 2-pane 좌측 '뉴스 피드'(종목명 포함)."""
+    async with pool.acquire() as connection:
+        rows = await StockNewsRepository(connection).list_recent(limit=min(max(limit, 1), 50))
+    return {"items": [_recent_news_response(dict(row)) for row in rows]}
+
+
+@news_router.get("/digests")
+async def list_news_digests(
+    codes: str,
+    pool: Any = Depends(get_database_pool),
+) -> dict[str, Any]:
+    """여러 종목의 뉴스 다이제스트 배치 조회(공개) — 홈 '실시간 분석 종목' 리스트 미리보기.
+
+    codes=쉼표구분 티커(상한 50, 초과분 절단). 미생성 종목은 응답 맵에서 생략 →
+    프론트는 stock_code 로 매핑하고 없으면 미리보기 줄을 그리지 않는다. 계약: {digests: {code: {...}}}.
+    """
+    tickers = [code.strip() for code in codes.split(",") if code.strip()][:50]
+    if not tickers:
+        return {"digests": {}}
+    async with pool.acquire() as connection:
+        rows = await StockNewsRepository(connection).list_digests_by_tickers(tickers)
+    digests: dict[str, Any] = {}
+    for row in rows:
+        data = dict(row)
+        code = data.get("stock_code")
+        if code:
+            digests[code] = _digest_response(data)
+    return {"digests": digests}
 
 
 @watchlists_router.get("")
@@ -147,12 +259,57 @@ def _news_response(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _recent_news_response(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "stock_code": row.get("stock_code"),
+        "stock_name": row.get("stock_name"),
+        **_news_response(row),
+    }
+
+
+def _digest_response(row: dict[str, Any]) -> dict[str, Any]:
+    generated_at = row.get("generated_at")
+    return {
+        "text": row.get("digest_text"),
+        "model": row.get("model"),
+        "article_count": int(row.get("article_count") or 0),
+        "generated_at": (
+            generated_at.isoformat() if hasattr(generated_at, "isoformat") else generated_at
+        ),
+    }
+
+
+def _news_summary_response(data: dict[str, Any]) -> dict[str, Any]:
+    latest = data.get("latest_collected_at")
+    return {
+        "total_articles": int(data.get("total_articles") or 0),
+        "stock_count": int(data.get("stock_count") or 0),
+        "recent_articles": int(data.get("recent_articles") or 0),
+        "latest_collected_at": latest.isoformat() if hasattr(latest, "isoformat") else latest,
+        "notice": NOTICE,
+    }
+
+
 def _watchlist_response(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "stock": _stock_response(row),
         "notification_enabled": row.get("notification_enabled", False),
         "created_at": row.get("created_at").isoformat() if row.get("created_at") else None,
     }
+
+
+def _date_iso(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    return str(value)
+
+
+def _number(value: Any) -> float | None:
+    if value is None:
+        return None
+    return float(value)
 
 
 def _api_error(status_code: int, code: str, message: str) -> HTTPException:

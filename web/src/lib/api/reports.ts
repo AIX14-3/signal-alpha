@@ -11,7 +11,6 @@ export type ReportSource = {
   score?: number | null;
   data_status?: string;
   summary?: string | null;
-  locked: boolean;
 };
 
 // 메타러너 소스별 예측률 — 주가 BASE ⊕ 각 공공데이터로 만든 0–100 'AI 예측 점수'.
@@ -21,12 +20,6 @@ export type PredictionRate = {
   score?: number | null; // 0–100 (score_100)
   direction?: string | null; // positive | negative | neutral | unknown
   data_status?: string;
-  locked: boolean;
-};
-
-export type ReportAccess = {
-  unlocked: boolean;
-  is_member: boolean;
 };
 
 // 메타러너 return 채널 (#525 WS-C) — 결정론 집계 점수(score)와 별개의 학습형 수익률 신호.
@@ -55,7 +48,6 @@ export type Report = {
   ml_return?: MlReturn | null;
   sources: ReportSource[];
   prediction_rates?: PredictionRate[];
-  access: ReportAccess;
   notice: string;
 };
 
@@ -84,6 +76,26 @@ export type ReportValuation = {
   needs_review?: boolean | null;
 };
 
+// 특허 표시 전용 구조화 데이터(score_breakdown.PATENT.patent). PATENT 소스에만 존재.
+// 특허는 출원 후 ~18개월 뒤 공개되므로 두 날짜 축을 함께 보여준다.
+export type PatentPublication = {
+  application_no: string | null;
+  title: string | null;
+  application_date: string | null; // 출원일
+  publication_date: string | null; // 공개일(시장 노출 시점)
+  tech_category: string | null;
+};
+
+export type PatentFilingTrendPoint = {
+  year: number;
+  count: number;
+};
+
+export type PatentDetail = {
+  recent_publications: PatentPublication[]; // 최근 *공개된* 특허(공개일 최신순)
+  filing_trend: PatentFilingTrendPoint[]; // 장기 출원 추이(출원 연도별 건수)
+};
+
 export type SourceDetail = {
   stock: { stock_code: string; stock_name: string | null };
   source: SourceKey;
@@ -94,6 +106,7 @@ export type SourceDetail = {
   // 분석 근거 서술 불릿(주식정보처럼 signal_events 가 없는 소스의 근거). 없으면 빈 배열.
   narrative_points?: string[] | null;
   valuation?: ReportValuation | null;
+  patent?: PatentDetail | null;
   items: SourceDetailItem[];
   notice: string;
 };

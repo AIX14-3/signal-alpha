@@ -45,6 +45,16 @@ def test_compose_main_server_env_file_is_optional_for_config_validation():
     assert "required: false" in compose
 
 
+def test_compose_web_reads_local_public_env_file():
+    compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+
+    web_block = compose.split("  web:", 1)[1].split("\nvolumes:", 1)[0]
+
+    assert "path: ./web/.env.local" in web_block
+    assert "required: false" in web_block
+    assert "NEXT_PUBLIC_MAIN_API_BASE_URL:" in web_block
+
+
 def test_env_example_avoids_removed_gemini_defaults():
     env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
 

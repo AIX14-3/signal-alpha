@@ -16,10 +16,11 @@ from app.api.routes.health import router as health_router
 from app.api.routes.journals import router as journals_router
 from app.api.routes.methodology import router as methodology_router
 from app.api.routes.payments import router as payments_router
+from app.api.routes.postmortem import router as postmortem_router
 from app.api.routes.reports import router as reports_router
 from app.api.routes.signals import router as signals_router
 from app.api.routes.subscriptions import subscriptions_router
-from app.api.routes.watchlists import stocks_router, watchlists_router
+from app.api.routes.watchlists import news_router, stocks_router, watchlists_router
 from app.core.config import get_settings
 from app.core.database import lifespan_with_database
 from app.core.rate_limit import RateLimitMiddleware
@@ -88,12 +89,14 @@ def create_app() -> FastAPI:
     app.include_router(users_router)
     app.include_router(stocks_router)
     app.include_router(watchlists_router)
+    app.include_router(news_router)
     app.include_router(dashboard_router)
     app.include_router(signals_router)
     app.include_router(guard_router)
     app.include_router(guard_admin_router)
     app.include_router(reports_router)
     app.include_router(journals_router)
+    app.include_router(postmortem_router)
     app.include_router(methodology_router)
     app.include_router(community_router)
     app.include_router(subscriptions_router)

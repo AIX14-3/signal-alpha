@@ -2,7 +2,7 @@
 
 > 기준일: 2026-06-24
 > 대상: `database/migrations`, `database/seeds`, `packages/data-access`
-> 목적: 신규 제품 기획(포트원 본인인증·리포트 열람 쿼터·단일 구독·무제한 관심종목)에 필요한 DB 스키마를 확정한다. 백엔드/프론트가 이 문서를 데이터 정본으로 참조한다.
+> 목적: 신규 제품 기획(포트원 본인인증·단일 구독·무제한 관심종목·리포트 전체 공개)에 필요한 DB 스키마를 확정한다. 백엔드/프론트가 이 문서를 데이터 정본으로 참조한다.
 > 연관 문서: [main-server-api-spec.md](./main-server-api-spec.md), [web-frontend-spec.md](./web-frontend-spec.md), [web-frontend-design.md](./web-frontend-design.md)
 
 ---
@@ -30,8 +30,9 @@
 | 파일 | 변경 | 핵심 |
 |---|---|---|
 | `025_users_phone.sql` | `users.phone VARCHAR(20)` 추가 + partial unique | 본인인증 핸드폰 = 활성 사용자 유니크. 탈퇴 후 재가입 허용 |
-| `026_report_issuances.sql` | `report_issuances` 테이블 신규 | 리포트 열람(언락) 쿼터 기록. `(user_id, final_signal_id)` 멱등 |
 | `027_subscription_single_product.sql` | 플랜 정리 | 단일 상품 `monthly_9900` upsert, `free` 관심종목 무제한, `pro`/`premium` 비활성 |
+
+> ~~`026_report_issuances.sql`~~ **descoped**: 리포트 열람 쿼터/언락 모델을 도입하지 않기로 확정(2026-07-07, 비회원 블라인드 제거·리포트 전체 공개). 해당 테이블은 만들지 않는다.
 
 ### 3.1 `users.phone`
 
@@ -47,33 +48,16 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_users_phone_active
 - 활성(미탈퇴) 사용자 범위에서만 UNIQUE → 같은 사람의 탈퇴 후 재가입 가능.
 - ⚠️ **정규화 필수(앱 레이어)**: 유니크는 저장 형식이 일관될 때만 유효하다. 백엔드는 저장 전 핸드폰을 단일 형식(숫자만, 예 `01012345678`)으로 정규화해야 한다. 형식이 섞이면(`010-1234-5678` vs `01012345678`) 중복 가입이 우회된다.
 
-### 3.2 `report_issuances` (신규)
+### 3.2 ~~`report_issuances`~~ (descoped)
 
-```sql
-CREATE TABLE report_issuances (
-    id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    stock_id BIGINT NOT NULL REFERENCES stocks(id),
-    final_signal_id BIGINT NOT NULL REFERENCES final_signals(id),
-    run_key VARCHAR(30) NOT NULL,
-    issued_via VARCHAR(20) NOT NULL CHECK (issued_via IN ('free', 'subscription')),
-    issued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CONSTRAINT uq_report_issuance UNIQUE (user_id, final_signal_id)
-);
-```
-
-- **차감 단위** = `final_signal_id`(= 리포트 버전). `final_signals.is_current` 가 바뀌면 새 버전이 새 `id` 로 생기므로, 그 버전을 처음 열람할 때 1건이 더 기록된다.
-- **멱등**: `UNIQUE(user_id, final_signal_id)` → 같은 버전 재열람은 INSERT 가 충돌(무차감).
-- **무료 잔여** = `GREATEST(0, 3 - COUNT(*) FILTER (WHERE issued_via='free'))`. 별도 카운터 컬럼 없이 도출.
-- **구독 우선 차감**: 발행 시점에 구독 active 면 `issued_via='subscription'`(무료 불변), 아니면 `'free'`. → 무료 잔여는 구독 만료 후에도 보존.
-- (선택) 고정값 노출이 꼭 필요하면 `users.free_report_quota INT DEFAULT 3` 를 추가하는 변형안도 가능하나, **현재는 COUNT 도출**을 정본으로 한다.
+리포트 열람 쿼터/언락 모델은 **도입하지 않는다**(2026-07-07 확정). 리포트는 비로그인 포함 전체 공개이므로 열람을 카운트할 테이블이 필요 없다. 구독은 저널 등 쓰기 전용 기능만 게이팅한다.
 
 ### 3.3 구독 플랜 정리 (`subscription_plans`)
 
 | plan_type | 상태 | price_monthly | max_watchlist | 비고 |
 |---|---|---:|---:|---|
-| `free` | active | 0 | 무제한(2147483647) | 비구독 회원 기본. 무료 3회 열람 |
-| `monthly_9900` | active | 9,900 | 무제한 | 단일 구독 상품. 무제한 열람 |
+| `free` | active | 0 | 무제한(2147483647) | 비구독 회원 기본. 리포트 전체 공개(열람 제한 없음) |
+| `monthly_9900` | active | 9,900 | 무제한 | 단일 구독 상품. 저널 등 구독 전용 기능 |
 | `pro` | **inactive** | 9,900 | 20 | 구 모델 비활성(행 보존) |
 | `premium` | **inactive** | 19,900 | 100 | 구 모델 비활성(행 보존) |
 
@@ -124,14 +108,14 @@ CREATE TABLE report_issuances (
 | 증권사리포트(report) | `REPORT` | `report_raw_details` + `raw_documents` | `stock_id` |
 
 - `ALTERNATIVE.patent` 는 5개 연결점에서 **제외**(API 레벨 필터). DB 는 그대로 둔다.
-- **비회원 블라인드**: `dart`/`datalab` 만 공개, 나머지 3소스·종합점수·LLM요약은 API 가 마스킹.
+- **리포트 전체 공개**: 모든 소스·종합점수·LLM요약을 비로그인 포함 누구나 열람(비회원 블라인드 제거, 2026-07-07).
 
 ---
 
 ## 7. 적용 순서·검증
 
 1. `python database/migrate.py status` — 018 까지 적용 확인.
-2. `python database/migrate.py apply --dry-run --seeds` — 025/026/027 대상 확인.
+2. `python database/migrate.py apply --dry-run --seeds` — 025/027 대상 확인(026 descoped).
 3. `python database/migrate.py apply --seeds` — 적용.
-4. 검증 쿼리: `users.phone` 인덱스 존재, `report_issuances` 멱등(같은 `(user,final_signal)` 2회 INSERT → 1행), `subscription_plans` 에서 `is_active=TRUE` 가 `free`/`monthly_9900` 2종.
+4. 검증 쿼리: `users.phone` 인덱스 존재, `subscription_plans` 에서 `is_active=TRUE` 가 `free`/`monthly_9900` 2종.
 5. 드리프트 주의(메모리): 일부 환경은 마이그레이션 드리프트가 있으므로 운영 DB 적용 전 스키마 비교.

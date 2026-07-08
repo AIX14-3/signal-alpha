@@ -89,6 +89,74 @@ class StockNewsRepository:
         )
         return int(value or 0)
 
+    async def get_digest_by_ticker(self, ticker: str) -> Any | None:
+        """종목 뉴스 다이제스트(LLM 종합 한 줄) — 없으면 None. 적재는 worker 뉴스 데몬."""
+        return await self._connection.fetchrow(
+            """
+            SELECT stock_code, digest_text, model, article_count, generated_at
+            FROM api.stock_news_digest
+            WHERE stock_code = $1
+            """,
+            ticker.strip(),
+        )
+
+    async def list_digests_by_tickers(self, tickers: list[str]) -> list[Any]:
+        """여러 종목 다이제스트 배치 조회 — 홈 '실시간 분석 종목' 리스트 접힌 행 미리보기용(공개).
+
+        get_digest_by_ticker 의 배치판(stock_code = ANY). 미생성 종목은 결과에서 빠지고
+        프론트가 stock_code 로 매핑한다. 빈 입력은 빈 리스트(불필요 쿼리 방지).
+        """
+        cleaned = [t.strip() for t in tickers if t and t.strip()]
+        if not cleaned:
+            return []
+        return await self._connection.fetch(
+            """
+            SELECT stock_code, digest_text, model, article_count, generated_at
+            FROM api.stock_news_digest
+            WHERE stock_code = ANY($1::text[])
+            """,
+            cleaned,
+        )
+
+    async def list_recent(self, *, limit: int = 30) -> list[Any]:
+        """전역 최신 뉴스(종목 무관) + 종목명 조인. 홈 2-pane 좌측 '뉴스 피드'용(공개).
+
+        api.stock_news 는 ticker(stock_code)만 있어 표시용 종목명은 api.stocks 를 LEFT JOIN
+        해 채운다(미매핑/상장폐지 종목은 stock_name NULL 로 보존).
+        """
+        return await self._connection.fetch(
+            """
+            SELECT n.stock_code, s.name AS stock_name,
+                   n.title, n.summary, n.url, n.press, n.source, n.published_at
+            FROM api.stock_news n
+            LEFT JOIN api.stocks s ON s.ticker = n.stock_code
+            ORDER BY n.published_at DESC NULLS LAST, n.collected_at DESC
+            LIMIT $1
+            """,
+            limit,
+        )
+
+    async def summary(self, *, recent_hours: int = 24) -> dict[str, Any]:
+        """전역 뉴스 집계 — 총 기사수·뉴스 보유 종목수·최근 N시간 기사수·최신 수집시각.
+
+        토스식 '뉴스 N건을 분석한 시그널' 헤더용(공개). 종목 무관 전체 집계라 파라미터는
+        최근 윈도우(시간)만 받는다.
+        """
+        row = await self._connection.fetchrow(
+            """
+            SELECT
+                COUNT(*) AS total_articles,
+                COUNT(DISTINCT stock_code) AS stock_count,
+                MAX(collected_at) AS latest_collected_at,
+                COUNT(*) FILTER (
+                    WHERE collected_at >= now() - make_interval(hours => $1)
+                ) AS recent_articles
+            FROM api.stock_news
+            """,
+            recent_hours,
+        )
+        return dict(row) if row is not None else {}
+
 
 class ProcessingQueueRepository:
     """분석 파이프라인 상태 읽기 (api.analysis_pipeline_status). backend 전용.

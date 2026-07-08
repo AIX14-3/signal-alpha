@@ -39,29 +39,25 @@ class SourceBlockMappingTest(unittest.TestCase):
         self.assertEqual(_SOURCE_TO_BREAKDOWN["datalab"], "DATALAB")
 
     def test_reads_flat_hiring_and_datalab_blocks(self):
-        hiring = _source_block("hiring", _BREAKDOWN, locked=False)
+        hiring = _source_block("hiring", _BREAKDOWN)
         self.assertEqual(hiring["direction"], "positive")
         self.assertEqual(hiring["score"], 64)
         self.assertEqual(hiring["data_status"], "ok")
         self.assertEqual(hiring["summary"], "채용 증가")
 
-        datalab = _source_block("datalab", _BREAKDOWN, locked=False)
+        datalab = _source_block("datalab", _BREAKDOWN)
         self.assertEqual(datalab["direction"], "negative")
         self.assertEqual(datalab["score"], 30)
 
     def test_price_and_dart_unchanged(self):
-        self.assertEqual(_source_block("price", _BREAKDOWN, locked=False)["score"], 72)
-        self.assertEqual(_source_block("dart", _BREAKDOWN, locked=False)["score"], 50)
+        self.assertEqual(_source_block("price", _BREAKDOWN)["score"], 72)
+        self.assertEqual(_source_block("dart", _BREAKDOWN)["score"], 50)
 
     def test_absent_source_is_missing(self):
-        block = _source_block("hiring", {"DART": _BREAKDOWN["DART"]}, locked=False)
+        block = _source_block("hiring", {"DART": _BREAKDOWN["DART"]})
         self.assertEqual(block["direction"], "unknown")
         self.assertEqual(block["data_status"], "missing")
         self.assertIsNone(block["score"])
-
-    def test_locked_block_hides_detail(self):
-        block = _source_block("hiring", _BREAKDOWN, locked=True)
-        self.assertEqual(block, {"source": "hiring", "locked": True})
 
 
 _SOURCE_PREDICTIONS = {
@@ -83,21 +79,17 @@ class PredictionRateBlockTest(unittest.TestCase):
         )
 
     def test_reads_score_100_and_direction(self):
-        block = _prediction_rate_block("dart", _SOURCE_PREDICTIONS, locked=False)
+        block = _prediction_rate_block("dart", _SOURCE_PREDICTIONS)
         self.assertEqual(block["score"], 64)
         self.assertEqual(block["direction"], "positive")
         self.assertEqual(block["data_status"], "ok")
-        report = _prediction_rate_block("report", _SOURCE_PREDICTIONS, locked=False)
+        report = _prediction_rate_block("report", _SOURCE_PREDICTIONS)
         self.assertEqual(report["score"], 73)
 
     def test_absent_prediction_is_missing(self):
-        block = _prediction_rate_block("patent", {"SRC_DART": _SOURCE_PREDICTIONS["SRC_DART"]}, locked=False)
+        block = _prediction_rate_block("patent", {"SRC_DART": _SOURCE_PREDICTIONS["SRC_DART"]})
         self.assertEqual(block["data_status"], "missing")
         self.assertIsNone(block["score"])
-
-    def test_locked_hides_detail(self):
-        block = _prediction_rate_block("hiring", _SOURCE_PREDICTIONS, locked=True)
-        self.assertEqual(block, {"source": "hiring", "locked": True})
 
 
 _DART_TERSE = (

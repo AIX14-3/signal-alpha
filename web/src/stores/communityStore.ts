@@ -4,8 +4,9 @@ import { create } from "zustand";
 import { listPopular, listPosts, type CommunityPost } from "@/lib/apiClient";
 import { NOTICE_FALLBACK } from "@/lib/format";
 
-// 피드 정렬 3종(FR-6). latest=최신(키셋 커서), weekly/all=워커 배치 인기(offset).
+// 피드 정렬 3종(FR-6). latest=최신(id 커서), weekly/all=워커 배치 인기(score:id 커서).
 export type CommunitySort = "latest" | "weekly" | "all";
+type CommunityCursor = number | string | null;
 
 const PAGE = 20;
 
@@ -17,9 +18,8 @@ type CommunityState = {
   error: string | null;
   hasMore: boolean;
   notice: string;
-  // latest 커서(다음 페이지 id 상한) / popular offset — 정렬에 따라 하나만 쓴다.
-  cursor: number | null;
-  offset: number;
+  // latest 는 number(id), popular 는 string(score:id) 커서.
+  cursor: CommunityCursor;
   load: (sort?: CommunitySort) => Promise<void>;
   loadMore: () => Promise<void>;
 };
@@ -27,10 +27,11 @@ type CommunityState = {
 // 정렬별 한 페이지 조회 — items/다음 페이지 커서/hasMore 를 통일된 형태로 돌려준다.
 async function fetchPage(
   sort: CommunitySort,
-  opts: { cursor: number | null; offset: number },
-): Promise<{ items: CommunityPost[]; nextCursor: number | null; hasMore: boolean; notice: string }> {
+  opts: { cursor: CommunityCursor },
+): Promise<{ items: CommunityPost[]; nextCursor: CommunityCursor; hasMore: boolean; notice: string }> {
   if (sort === "latest") {
-    const data = await listPosts({ limit: PAGE, cursor: opts.cursor });
+    const cursor = typeof opts.cursor === "number" ? opts.cursor : null;
+    const data = await listPosts({ limit: PAGE, cursor });
     return {
       items: data.items,
       nextCursor: data.next_cursor,
@@ -38,12 +39,12 @@ async function fetchPage(
       notice: data.notice,
     };
   }
-  const data = await listPopular({ window: sort, limit: PAGE, offset: opts.offset });
+  const cursor = typeof opts.cursor === "string" ? opts.cursor : null;
+  const data = await listPopular({ window: sort, limit: PAGE, cursor });
   return {
     items: data.items,
-    nextCursor: null,
-    // 인기는 커서가 없으니 "가득 찬 페이지면 더 있다"로 판단.
-    hasMore: data.items.length === PAGE,
+    nextCursor: data.next_cursor,
+    hasMore: data.next_cursor != null,
     notice: data.notice,
   };
 }
@@ -57,17 +58,15 @@ export const useCommunityStore = create<CommunityState>((set, get) => ({
   hasMore: false,
   notice: NOTICE_FALLBACK,
   cursor: null,
-  offset: 0,
 
   async load(sort) {
     const nextSort = sort ?? get().sort;
     set({ loading: true, error: null, sort: nextSort });
     try {
-      const page = await fetchPage(nextSort, { cursor: null, offset: 0 });
+      const page = await fetchPage(nextSort, { cursor: null });
       set({
         items: page.items,
         cursor: page.nextCursor,
-        offset: page.items.length,
         hasMore: page.hasMore,
         notice: page.notice,
         loading: false,
@@ -78,15 +77,14 @@ export const useCommunityStore = create<CommunityState>((set, get) => ({
   },
 
   async loadMore() {
-    const { loading, loadingMore, hasMore, sort, cursor, offset } = get();
+    const { loading, loadingMore, hasMore, sort, cursor } = get();
     if (loading || loadingMore || !hasMore) return;
     set({ loadingMore: true, error: null });
     try {
-      const page = await fetchPage(sort, { cursor, offset });
+      const page = await fetchPage(sort, { cursor });
       set({
         items: [...get().items, ...page.items],
         cursor: page.nextCursor,
-        offset: get().offset + page.items.length,
         hasMore: page.hasMore,
         loadingMore: false,
       });

@@ -31,7 +31,9 @@ class Settings:
         # 브라우저 프론트(web)에서의 CORS 허용 오리진(쉼표 구분). 로컬 기본값=Next dev.
         self.cors_allow_origins = [
             origin.strip()
-            for origin in getenv("CORS_ALLOW_ORIGINS", "http://localhost:3000").split(",")
+            for origin in getenv(
+                "CORS_ALLOW_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000"
+            ).split(",")
             if origin.strip()
         ]
 
@@ -66,6 +68,12 @@ class Settings:
             getenv("WORKER_INTERNAL_URL", "http://localhost:8011"),
         )
         self.internal_api_token = getenv("INTERNAL_API_TOKEN", "")
+        # 매매 부검 복기 서술(FR-7) — 워커 LLM 온디맨드 호출을 켤지. 기본 off:
+        # base_url 기본값이 localhost 라 켜두면 워커 미배선 환경에서 매 요청 헛호출/로그노이즈.
+        # 워커에 POSTMORTEM_USE_LLM/MODEL 을 구성한 배포에서만 true 로 켠다.
+        self.postmortem_narrative_enabled = getenv(
+            "POSTMORTEM_NARRATIVE_ENABLED", "false"
+        ).strip().lower() in {"1", "true", "yes", "on"}
 
         # 소셜 OAuth(naver/google/kakao) — provider별 client id/secret.
         self.social_providers = {

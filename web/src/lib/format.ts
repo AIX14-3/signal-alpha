@@ -131,6 +131,25 @@ export function dateTimeKST(value: string | null | undefined): string {
     : d.toLocaleString("ko-KR", { timeZone: "Asia/Seoul" });
 }
 
+// 뉴스 목록용 짧은 KST 표기 "MM.DD HH:mm". 원본 ISO(UTC)를 직접 slice 하면 9시간
+// 어긋나고, dateTimeKST 의 로케일 문자열을 slice 하면 로케일 의존으로 깨진다 —
+// Date 파싱 후 KST 파트로 조립한다. null/파싱실패는 "-".
+export function dateTimeShortKST(value: string | null | undefined): string {
+  if (!value) return "-";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  const parts = new Intl.DateTimeFormat("ko-KR", {
+    timeZone: "Asia/Seoul",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(d);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+  return `${get("month")}.${get("day")} ${get("hour")}:${get("minute")}`;
+}
+
 // 수집/LLM 유래 URL은 신뢰할 수 없다 — href 로 렌더하기 전 http(s) 스킴만 허용한다.
 // javascript:/data:/vbscript: 등은 클릭 시 앱 오리진에서 스크립트가 실행돼 토큰 탈취로 이어질 수 있다.
 export function safeHttpUrl(value: string | null | undefined): string | null {

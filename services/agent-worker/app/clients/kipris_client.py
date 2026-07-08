@@ -191,13 +191,34 @@ def _text(element: ET.Element, path: str) -> str | None:
     return node.text.strip() or None
 
 
+def _window_days(name: str, default: int) -> int:
+    from os import getenv
+
+    raw = getenv(name)
+    if raw in (None, ""):
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
 def _default_start_date() -> str:
+    # applicantNameSearchInfo 의 startDate/endDate 는 **출원일(AD)** 창이다. 특허는
+    # 출원 후 ~18개월 뒤 공개되므로, "지금 새로 공개돼 처음 보이는 특허"는 출원일이
+    # 대략 12~24개월 전이다. 기존 기본값(어제 1일치)은 그 창을 완전히 벗어나 매일
+    # 사실상 0건만 수집했다 → 출원일 창을 공개 지연을 덮도록 넓힌다(이미 적재분은
+    # source_hash dedup 으로 skip). ⚠️ 창이 넓으면 대형 출원인은 KIPRIS 무료 월쿼터
+    # (~1,000콜)를 넘길 수 있어 env 로 조절한다. 최근 공개분의 저비용 확보는
+    # BigQuery(공개일 창, collect_patents_bigquery_daily.py)가 주로 담당한다.
+    # 🔬 SPIKE(라이브 키 필요): KIPRIS 가 공개일(open date) 검색/정렬을 지원하면 출원일
+    # 창 대신 그걸 써서 정확·저비용으로 최근 공개분만 받을 수 있다(docs 런북 참조).
     from datetime import date, timedelta
 
-    return (date.today() - timedelta(days=1)).strftime("%Y%m%d")
+    return (date.today() - timedelta(days=_window_days("PATENT_KIPRIS_WINDOW_START_DAYS", 800))).strftime("%Y%m%d")
 
 
 def _default_end_date() -> str:
     from datetime import date, timedelta
 
-    return (date.today() - timedelta(days=1)).strftime("%Y%m%d")
+    return (date.today() - timedelta(days=_window_days("PATENT_KIPRIS_WINDOW_END_DAYS", 0))).strftime("%Y%m%d")

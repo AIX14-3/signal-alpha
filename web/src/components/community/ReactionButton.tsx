@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ApiError,
   toggleCommentReaction,
@@ -34,6 +34,14 @@ export function ReactionButton({
   const [busy, setBusy] = useState(false);
   const [localCount, setLocalCount] = useState<number | undefined>(count);
 
+  useEffect(() => {
+    setActive(initialActive);
+  }, [initialActive]);
+
+  useEffect(() => {
+    setLocalCount(count);
+  }, [count]);
+
   async function toggle() {
     if (!user) {
       showToast("로그인이 필요합니다.", "error");
@@ -45,9 +53,10 @@ export function ReactionButton({
         target === "post"
           ? await togglePostReaction(targetId, type)
           : await toggleCommentReaction(targetId, type);
-      setActive(result.action === "added");
-      setLocalCount(result.like_count);
-      onCount?.(result.like_count);
+      const nextCount = type === "bookmark" ? result.bookmark_count : result.like_count;
+      setActive(result.active);
+      setLocalCount(nextCount);
+      onCount?.(nextCount);
     } catch (error) {
       showToast(
         error instanceof ApiError ? error.message : "처리 중 오류가 발생했습니다.",
@@ -63,14 +72,14 @@ export function ReactionButton({
       type="button"
       onClick={() => void toggle()}
       disabled={busy}
-      data-flow="community-like"
+      data-flow={`community-${type}`}
       className={`rounded-full border px-4 py-2 text-[13.5px] font-semibold disabled:opacity-60 ${
         active
           ? "border-sky bg-surface-2 text-sky-deep"
           : "border-line text-navy-soft hover:border-navy hover:text-navy"
       }`}
     >
-      {active ? "♥" : "♡"}
+      {type === "bookmark" ? (active ? "저장됨" : "저장") : active ? "좋아요 취소" : "좋아요"}
       {localCount != null ? ` ${localCount}` : ""}
     </button>
   );

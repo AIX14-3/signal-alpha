@@ -20,7 +20,7 @@ CONFIG = PatentRuleConfig(
 )
 
 
-def _row(days_ago, *, is_new=False, tech="A", significance=None):
+def _row(days_ago, *, is_new=False, tech="A", significance=None, pub_days_ago=None):
     row = {
         "application_no": f"x{days_ago}",
         "patent_title": "p",
@@ -29,19 +29,25 @@ def _row(days_ago, *, is_new=False, tech="A", significance=None):
         "tech_category": tech,
         "is_new_category": is_new,
     }
+    # 공개일(있으면). 지표는 event_date=공개일(폴백 출원일) 기준으로 버킷팅한다.
+    if pub_days_ago is not None:
+        row["publication_date"] = (AS_OF - timedelta(days=pub_days_ago)).isoformat()
     if significance is not None:
         row["significance"] = significance
     return row
 
 
-def _evidence(rows):
+def _evidence(rows, *, filing_trend=None):
+    metadata = {"rows": rows, "as_of": AS_OF.isoformat(), "lookback_days": 365}
+    if filing_trend is not None:
+        metadata["filing_trend"] = filing_trend
     return [
         RawEvidence(
             source="PATENT",
             stock_code="005930",
             title="t",
             content="",
-            metadata={"rows": rows, "as_of": AS_OF.isoformat(), "lookback_days": 365},
+            metadata=metadata,
         )
     ]
 
@@ -73,6 +79,42 @@ class PatentAnalyzerTest(unittest.IsolatedAsyncioTestCase):
         result = await PatentAnalyzer(CONFIG).analyze("005930", _evidence(rows))
         self.assertIn("stale_data", result.risk_flags)
         self.assertEqual(result.data_status, "partial")
+
+    async def test_recent_publication_of_old_filing_is_fresh_signal(self):
+        # 핵심 회귀: 특허는 출원 후 ~18개월 뒤 공개된다. 출원은 540~600일 전이라도
+        # 최근(10~40일 전) 공개된 특허는 event_date(공개일) 기준으로 recent 버킷에
+        # 잡혀 신호가 나와야 한다 — 정체(stale) 아님. (출원일 기준이면 전부 창 밖·정체)
+        rows = [
+            _row(540, pub_days_ago=10, is_new=True),
+            _row(560, pub_days_ago=20),
+            _row(580, pub_days_ago=30),
+            _row(600, pub_days_ago=40),
+        ]
+        result = await PatentAnalyzer(CONFIG).analyze("005930", _evidence(rows))
+        self.assertNotIn("stale_data", result.risk_flags)
+        self.assertEqual(result.data_status, "ok")
+        self.assertGreater(result.score, 0.0)
+
+    async def test_patent_meta_carries_recent_publications_and_trend(self):
+        # 표시 전용 patent_meta: 최근 공개 특허 목록(공개일 필드) + 장기 출원 추이.
+        rows = [_row(10, pub_days_ago=5), _row(20, pub_days_ago=15)]
+        result = await PatentAnalyzer(CONFIG).analyze(
+            "005930", _evidence(rows, filing_trend=[{"year": 2023, "count": 2}])
+        )
+        self.assertIsNotNone(result.patent_meta)
+        self.assertEqual(len(result.patent_meta.recent_publications), 2)
+        self.assertEqual(
+            result.patent_meta.recent_publications[0]["publication_date"],
+            (AS_OF - timedelta(days=5)).isoformat(),
+        )
+        self.assertEqual(result.patent_meta.filing_trend, [{"year": 2023, "count": 2}])
+
+    async def test_missing_publication_date_falls_back_to_filing(self):
+        # 공개일 미상(백필 전/stale prod): event_date 가 출원일로 폴백해 기존 동작 유지.
+        # 오래된 출원만 있으면 여전히 stale.
+        rows = [_row(300), _row(310), _row(320)]  # publication_date 키 없음
+        result = await PatentAnalyzer(CONFIG).analyze("005930", _evidence(rows))
+        self.assertIn("stale_data", result.risk_flags)
 
     async def test_high_significance_lifts_score_above_unenriched(self):
         # Same filings; the enriched set scores strictly higher (significance drives).

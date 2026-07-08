@@ -10,6 +10,7 @@ from app.publish.journal_outcomes import (
     record_journal_outcomes,
     resolve_outcome,
     sync_journal_chart_prices,
+    sync_stock_prices,
 )
 
 
@@ -237,6 +238,71 @@ def test_chart_sync_noop_without_journals():
     source = _FakeSource({})
 
     stats = asyncio.run(sync_journal_chart_prices(backend, source))
+
+    assert (stats.stocks, stats.rows, stats.failed) == (0, 0, 0)
+    assert source.fetch_calls == 0
+
+
+class _FakeStockPriceBackend:
+    """활성 종목 목록(stocks) + stock_price_daily upsert 기록 대역."""
+
+    def __init__(self, stock_ids):
+        self._stock_ids = stock_ids  # [id, ...]
+        self.upserts = []  # (stock_id, trade_date, close)
+
+    async def fetch(self, sql):
+        assert "FROM stocks" in sql and "is_active" in sql
+        return [{"id": sid} for sid in self._stock_ids]
+
+    async def execute(self, sql, *args):
+        assert "INSERT INTO stock_price_daily" in sql
+        assert "ON CONFLICT (stock_id, trade_date) DO UPDATE" in sql
+        if args[0] == 666:
+            raise RuntimeError("boom")
+        self.upserts.append(args)
+        return "INSERT 0 1"
+
+
+class _FakeWindowlessSource:
+    """조회 창(start_date)과 무관하게 고정 시리즈를 반환(벽시계 비의존)."""
+
+    def __init__(self, series_by_stock):
+        self._series = series_by_stock
+        self.fetch_calls = 0
+
+    async def fetch(self, sql, stock_id, start_date):
+        assert "FROM ohlcv_data" in sql
+        self.fetch_calls += 1
+        return [{"trade_date": d, "close": c} for d, c in self._series.get(stock_id, [])]
+
+
+def test_stock_price_sync_covers_all_active_stocks():
+    backend = _FakeStockPriceBackend([10, 20])
+    source = _FakeWindowlessSource({10: _FULL_SERIES, 20: _FULL_SERIES})
+
+    stats = asyncio.run(sync_stock_prices(backend, source))
+
+    assert stats.stocks == 2 and stats.failed == 0
+    assert stats.rows == 2 * len(_FULL_SERIES)
+    assert {u[0] for u in backend.upserts} == {10, 20}
+
+
+def test_stock_price_sync_isolates_per_stock_failure():
+    backend = _FakeStockPriceBackend([666, 10])
+    source = _FakeWindowlessSource({666: _FULL_SERIES, 10: _FULL_SERIES})
+
+    stats = asyncio.run(sync_stock_prices(backend, source))
+
+    assert stats.failed == 1 and stats.stocks == 1
+    assert any("stock=666" in e for e in stats.errors)
+    assert all(u[0] == 10 for u in backend.upserts)
+
+
+def test_stock_price_sync_noop_without_active_stocks():
+    backend = _FakeStockPriceBackend([])
+    source = _FakeWindowlessSource({})
+
+    stats = asyncio.run(sync_stock_prices(backend, source))
 
     assert (stats.stocks, stats.rows, stats.failed) == (0, 0, 0)
     assert source.fetch_calls == 0

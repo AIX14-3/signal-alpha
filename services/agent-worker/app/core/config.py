@@ -113,6 +113,22 @@ class Settings:
         self.news_refresh_hours = float(getenv("NEWS_REFRESH_HOURS", "6"))
         self.news_fetch_timeout_seconds = float(getenv("NEWS_FETCH_TIMEOUT_SECONDS", "15"))
 
+        # ── 뉴스 LLM 다이제스트 (종목별 종합 1줄, Claude Sonnet, display-only) ──
+        # 관련도 규칙 1차 필터 후 후보를 Claude 1콜에 태워 영향도 선별+요약을 결합한다.
+        # 신호 스코어링과 무관(signal_events/scoring 미접촉). 기본 off. 키 부재/실패 시
+        # digest 없이 기존 뉴스 목록만 노출(폴백). 콜당 단가가 있어 후보 상한·dirty skip 필수.
+        self.news_llm_enabled = _env_bool("NEWS_LLM_ENABLED", default=False)
+        self.news_llm_provider = getenv("NEWS_LLM_PROVIDER", "anthropic")
+        self.news_llm_model = getenv("NEWS_LLM_MODEL", "claude-sonnet-5")
+        self.anthropic_api_key = getenv("ANTHROPIC_API_KEY", "")
+        self.news_llm_timeout_seconds = float(getenv("NEWS_LLM_TIMEOUT_SECONDS", "20"))
+        # LLM 에 넘길 관련도 규칙 후보 상한(토큰·비용 통제).
+        self.news_digest_candidates = int(getenv("NEWS_DIGEST_CANDIDATES", "15"))
+        # 종목 재요약 하한 간격(0=하한 없음; 수집이 잦아질 때 폭주 방지 옵션 3h).
+        self.news_digest_min_interval_hours = float(
+            getenv("NEWS_DIGEST_MIN_INTERVAL_HOURS", "0")
+        )
+
         # ── Hiring 크롤러 resilience (공용 fetch 헬퍼: sites/http.py) ──
         # 일시적 timeout·5xx·커넥션오류를 지수 백오프로 재시도한다(4xx는 비재시도).
         self.hiring_timeout_seconds = float(getenv("HIRING_TIMEOUT_SECONDS", "10"))
