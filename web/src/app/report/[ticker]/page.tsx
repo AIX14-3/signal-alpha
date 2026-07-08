@@ -1,41 +1,61 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
   listJournals,
   type Journal as JournalType,
-  type PredictionRate,
   type ReportSource,
 } from "@/lib/apiClient";
 import { WatchlistButton } from "@/components/WatchlistButton";
+import { EvidenceList } from "@/components/EvidenceList";
+import { EvidenceTimeline } from "@/components/EvidenceTimeline";
+import { MarketIndices } from "@/components/MarketIndices";
+import { PrecedentSection } from "@/components/PrecedentSection";
+import { ReportSideNav } from "@/components/ReportSideNav";
+import { SourceIcon } from "@/components/SourceIcon";
+import { SourceAgreementBar } from "@/components/SourceAgreementBar";
+import { TraceCards } from "@/components/TraceCards";
 import {
+  dataStatusLabel,
   directionLabel,
-  PREDICTION_RATE_ORDER,
   SOURCE_META,
   SOURCE_ORDER,
   sourceLabel,
-  sourceStatusLine,
+  warningLevelLabel,
 } from "@/lib/format";
 import { useAuthStore } from "@/stores/authStore";
 import { useJournalStore } from "@/stores/journalStore";
 import { useReportStore } from "@/stores/reportStore";
 import { useToastStore } from "@/stores/toastStore";
 
+// 캔들 차트는 DOM 의존이라 SSR 비활성으로 클라이언트에서만 로드.
+const StockChart = dynamic(() => import("@/components/StockChart").then((m) => m.StockChart), {
+  ssr: false,
+});
+
 export default function ReportPage() {
   const params = useParams<{ ticker: string }>();
   const ticker = params.ticker;
 
-  const user = useAuthStore((s) => s.user);
+  const status = useAuthStore((s) => s.status);
   const { report, loading, error, load } = useReportStore();
 
   useEffect(() => {
-    // 리포트(/api/reports/{code})는 공개 엔드포인트 — 로그인 여부와 무관하게 전체 리포트를 돌려준다.
+    // 리포트(/api/reports/{code})는 공개 엔드포인트라 토큰이 없으면 401 이 아니라
+    // 200 + is_member=false(익명 뷰)를 돌려준다 → apiFetch 의 401 자동복구가 작동하지 않는다.
+    // 따라서 인메모리 access 토큰이 비어 있는 새로고침 직후 hydrate 완료 전에 로드하면
+    // 로그인 상태인데도 비회원으로 굳어진다. 인증 hydrate 가 확정(authenticated/anonymous)된
+    // 뒤에 로드해 토큰이 실리도록 한다.
+    if (status === "idle" || status === "loading") return;
     void load(ticker);
-  }, [ticker, load]);
+  }, [ticker, load, status]);
 
-  if (loading) return <p className="py-16 text-center text-muted">리포트를 불러오는 중…</p>;
+  // hydrate 가 끝나기 전(idle/loading)에는 아직 로드를 시작하지 않으므로 로딩 표시를 유지한다.
+  if (loading || status === "idle" || status === "loading")
+    return <p className="py-16 text-center text-muted">리포트를 불러오는 중…</p>;
   if (error && !report)
     return (
       <div className="py-16 text-center">
@@ -46,15 +66,21 @@ export default function ReportPage() {
   if (!report) return null;
 
   const dir = directionLabel(report.direction);
-  // 리포트는 전체 공개. 구독 여부는 저널 저장·배지 표시에만 쓰고 authStore 에서 가져온다.
-  const subscribed = user?.subscription_active === true;
   const byKey = new Map(report.sources.map((s) => [s.source, s] as const));
-  const byPred = new Map((report.prediction_rates ?? []).map((p) => [p.source, p] as const));
 
   return (
-    <div className="py-10" data-page="report">
+    <div className="relative py-8" data-page="report">
+      <div className="report-aura pointer-events-none fixed inset-0 -z-10" aria-hidden="true" />
+
+      <div className="flex gap-5 lg:gap-10">
+        <ReportSideNav />
+
+        <div className="min-w-0 flex-1">
+      {/* 시장 지수 미니차트 (코스피·코스닥·원/달러·VIX) — item 7. 리포트 최상단. */}
+      <MarketIndices />
+
       {/* 헤더 */}
-      <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className="mt-4 flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="text-[13px] text-muted">
             {report.stock.stock_code} · {report.stock.market ?? "—"} · {report.stock.sector ?? "—"}
@@ -65,19 +91,14 @@ export default function ReportPage() {
           )}
         </div>
         <div className="text-right">
-          {subscribed && (
-            <span className="pill" style={{ background: "rgba(14,165,233,.12)", color: "#0284c7", padding: "5px 11px" }}>
-              구독 중
-            </span>
-          )}
           <div className="mt-2">
             <WatchlistButton stockCode={report.stock.stock_code} />
           </div>
         </div>
       </div>
 
-      {/* 종합 + 발행 CTA */}
-      <div className="card mt-5 flex flex-wrap items-center gap-6 p-6">
+      {/* 종합 + 발행 CTA — 차트보다 위에 배치(사용자 요청). */}
+      <div id="sec-summary" className="glass mt-5 flex scroll-mt-28 flex-wrap items-center gap-6 p-6">
         <div className="grid h-[120px] w-[120px] place-items-center rounded-full brand-grad text-white">
           <div className="text-center">
             <div className="text-[34px] font-extrabold leading-none">{report.score ?? "–"}</div>
@@ -86,21 +107,20 @@ export default function ReportPage() {
         </div>
         <div className="flex-1 min-w-[240px]">
           <span className={`pill ${tone(dir.tone)}`} style={{ padding: "5px 11px" }}>{dir.label}</span>
-          {report.ml_return?.direction ? (
-            <span className="ml-2 inline-flex items-center gap-1 text-[12px] text-muted">
-              <span>ML 수익률</span>
-              <span
-                className={`pill ${tone(directionLabel(report.ml_return.direction).tone)}`}
-                style={{ padding: "3px 9px" }}
-              >
-                {directionLabel(report.ml_return.direction).label}
-              </span>
-              {report.ml_return.confidence != null ? (
-                <span>신뢰도 {Math.round(report.ml_return.confidence * 100)}%</span>
-              ) : null}
+          {report.warning_level && report.warning_level !== "NORMAL" ? (
+            <span
+              className="pill down ml-2"
+              style={{ padding: "5px 11px" }}
+              title="데이터 확인이 필요한 상태입니다."
+            >
+              {warningLevelLabel(report.warning_level).label}
             </span>
           ) : null}
           <p className="mt-3 text-navy-soft">{report.summary ?? "요약이 없습니다."}</p>
+          <p className="mt-2 text-[12px] leading-relaxed text-muted">
+            <b>종합 점수</b>는 여러 데이터를 합친 <b>방향의 세기</b>(0 부정 ~ 100 긍정)이고,
+            아래 <b>소스 간 일치도</b>는 <b>소스들이 방향에 얼마나 동의하는지</b>를 보여줍니다.
+          </p>
         </div>
         <div className="w-full border-t border-line pt-4 text-[12.5px] text-muted">
           <span>데이터 방향성과 소스 간 일치도는 발행 시점 기준으로 확인합니다.</span>{" "}
@@ -110,40 +130,87 @@ export default function ReportPage() {
         </div>
       </div>
 
-      {/* AI 예측률 — 주가 BASE ⊕ 각 공공데이터로 만든 0–100 예측 점수(통합은 위 종합 점수). */}
-      {byPred.size > 0 && (
-        <section className="mt-8">
-          <h2 className="text-[18px] font-bold">AI 예측률</h2>
-          <p className="mt-1 text-[13px] text-muted">
-            주가 예측을 기준으로 각 공공데이터를 가·감산한 소스별 예측 점수입니다(0–100, 50=중립). 통합 예측은 위 종합 점수예요.
-          </p>
-          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-            {PREDICTION_RATE_ORDER.map((key) => (
-              <PredictionRateCard key={key} sourceKey={key} rate={byPred.get(key)} />
-            ))}
-          </div>
-        </section>
-      )}
-
-      {/* 5소스 카드 */}
-      <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {SOURCE_ORDER.map((key) => {
-          const src = byKey.get(key);
-          return (
-            <SourceCard key={key} sourceKey={key} src={src} ticker={ticker} />
-          );
-        })}
+      {/* 주가 차트 + 시세 (분/일/월/년) — 종합 점수 아래로 이동. */}
+      <div id="sec-chart" className="mt-5 scroll-mt-28">
+        <StockChart stockCode={report.stock.stock_code} stockName={report.stock.stock_name} />
       </div>
 
-      {/* 저널 저장 — 구독자가 리포트(final_signal_id)에 판단을 기록(저널은 구독 전용 기능). */}
-      {subscribed && report.report_version?.final_signal_id != null && (
-        <JournalSaveCard
-          stockCode={report.stock.stock_code}
-          finalSignalId={report.report_version.final_signal_id}
+      {/* 소스별 상세 근거 — 소스 간 일치도보다 위에 배치(사용자 요청) */}
+      <div id="sec-sources" className="scroll-mt-28">
+        <h2 className="mt-8 text-[18px] font-bold">소스별 상세 근거</h2>
+        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {SOURCE_ORDER.map((key) => {
+            const src = byKey.get(key);
+            return (
+              <SourceCard
+                key={key}
+                sourceKey={key}
+                src={src}
+                ticker={ticker}
+              />
+            );
+          })}
+        </div>
+      </div>
+
+      {/* 소스 간 일치도 + 긍정/주의 근거 (근거 중심 §5.3). 리포트 전체 공개(#788). */}
+      <div id="sec-agreement" className="scroll-mt-28">
+        <SourceAgreementBar agreement={report.source_agreement} sources={report.sources} />
+      </div>
+      <div id="sec-evidence" className="scroll-mt-28">
+        <EvidenceList
+          title="긍정 방향 근거"
+          tone="up"
+          lead={report.bull_point}
+          items={report.positive_evidence ?? []}
+          emptyText="현재 긍정 방향으로 확인된 근거가 없습니다."
         />
+        <EvidenceList
+          title="주의 근거"
+          tone="down"
+          lead={report.bear_point}
+          items={report.caution_evidence ?? []}
+          emptyText="현재 특별히 주의할 근거는 확인되지 않았습니다."
+        />
+        {report.warning_level && report.warning_level !== "NORMAL" && (
+          <section className="glass mt-4 p-5" data-section="needs-review">
+            <h2 className="text-[16px] font-bold">추가 확인 필요</h2>
+            <p className="mt-1 text-[13px] text-navy-soft">
+              이 종목은 <b>{warningLevelLabel(report.warning_level).label}</b> 상태로, 소스 간
+              방향이 엇갈리거나 일부 데이터가 아직 부족합니다. 위 소스별 상세 근거를 함께
+              확인하고, 필요하면 저널에 “추가 확인 필요”로 기록해 두면 이후 복기에 도움이 됩니다.
+            </p>
+          </section>
+        )}
+      </div>
+      {/* S5 수요·확장 흔적 카드 */}
+      <div id="sec-trace" className="scroll-mt-28">
+        <TraceCards sources={report.sources} />
+      </div>
+
+      {/* S2 근거 타임라인 — 소스 교차 시간순 근거. */}
+      <div id="sec-timeline" className="scroll-mt-28">
+        <EvidenceTimeline stockCode={report.stock.stock_code} />
+      </div>
+
+      {/* S6 과거 유사 사례 — 같은 소스·방향 신호 뒤 20일 실측 성과(참고용). */}
+      <div id="sec-precedent" className="scroll-mt-28">
+        <PrecedentSection stockCode={report.stock.stock_code} />
+      </div>
+
+      {/* 저널 저장 — 발행 리포트(final_signal_id)에 판단을 기록. */}
+      {report.report_version?.final_signal_id != null && (
+        <div id="sec-journal" className="scroll-mt-28">
+          <JournalSaveCard
+            stockCode={report.stock.stock_code}
+            finalSignalId={report.report_version.final_signal_id}
+          />
+        </div>
       )}
 
-      <p className="mt-6 rounded-[12px] bg-surface-2 p-4 text-[12.5px] text-muted">{report.notice}</p>
+          <p className="mt-6 rounded-[12px] bg-surface-2 p-4 text-[12.5px] text-muted">{report.notice}</p>
+        </div>
+      </div>
     </div>
   );
 }
@@ -290,58 +357,36 @@ function SourceCard({
   const meta = SOURCE_META[sourceKey];
   if (!src) {
     return (
-      <div className="card grid min-h-[140px] place-items-center p-5 text-center text-muted">
-        <div className="font-bold text-navy">{meta.icon} {meta.label}</div>
-        <div className="mt-1 text-[12.5px]">데이터 수집 전</div>
+      <div
+        data-source={sourceKey}
+        className="glass grid min-h-[140px] place-items-center p-5 text-center"
+      >
+        <div className="flex items-center gap-1.5 font-bold text-muted">
+          <SourceIcon source={sourceKey} size={18} /> {meta.label}
+        </div>
+        <div className="text-[12.5px] text-muted">데이터가 아직 없습니다.</div>
       </div>
     );
   }
   const dir = directionLabel(src.direction);
+  const hasScore = (src.data_status === "ok" || src.data_status === "partial") && src.score != null;
   return (
-    <Link href={`/report/${encodeURIComponent(ticker)}/${sourceKey}`} className="card block p-5 transition hover:shadow-lg">
+    <Link href={`/report/${encodeURIComponent(ticker)}/${sourceKey}`} className="glass hover-lift block p-5">
       <div className="flex items-center gap-2 font-bold">
-        {meta.icon} {meta.label}
+        <SourceIcon source={sourceKey} size={18} className="text-navy-soft" /> {meta.label}
         <span className={`pill ${tone(dir.tone)} ml-auto`} style={{ padding: "3px 9px", fontSize: 12 }}>{dir.label}</span>
       </div>
-      <p className="mt-2 min-h-[38px] text-[13.5px] text-navy-soft">{src.summary ?? (src.data_status === "no_signal" ? "시그널이 없습니다." : sourceLabel(sourceKey) + " 데이터 요약")}</p>
-      <div className="mt-2 text-[12px] text-muted">{sourceStatusLine(src.data_status, src.score)}</div>
-      <div className="mt-2 text-[13px] font-semibold text-sky-deep">상세 보기 →</div>
-    </Link>
-  );
-}
-
-function PredictionRateCard({
-  sourceKey,
-  rate,
-}: {
-  sourceKey: "price" | "dart" | "datalab" | "hiring" | "patent" | "report";
-  rate: PredictionRate | undefined;
-}) {
-  const meta = SOURCE_META[sourceKey];
-  if (!rate) {
-    return (
-      <div className="card grid min-h-[104px] place-items-center p-3 text-center">
-        <div className="text-[13px] font-bold">{meta.icon} {meta.label}</div>
-        <div className="mt-2 text-[12px] text-muted">데이터 수집 전</div>
-      </div>
-    );
-  }
-  const dir = directionLabel(rate.direction);
-  const hasScore = rate.data_status !== "missing" && rate.score != null;
-  return (
-    <div className="card p-3 text-center">
-      <div className="text-[13px] font-bold">{meta.icon} {meta.label}</div>
       {hasScore ? (
-        <>
-          <div className="mt-1 text-[26px] font-extrabold leading-none">{rate.score}</div>
-          <span className={`pill ${tone(dir.tone)} mt-2 inline-block`} style={{ padding: "2px 8px", fontSize: 11 }}>
-            {dir.label}
-          </span>
-        </>
+        <div className="mt-3 flex items-baseline gap-1">
+          <span className="text-[36px] font-extrabold leading-none">{src.score}</span>
+          <span className="text-[14px] font-semibold text-muted">/100</span>
+        </div>
       ) : (
-        <div className="mt-3 text-[12px] text-muted">데이터 수집 전</div>
+        <div className="mt-3 text-[16px] font-bold text-muted">{dataStatusLabel(src.data_status) || "—"}</div>
       )}
-    </div>
+      <p className="mt-2 min-h-[38px] text-[13.5px] text-navy-soft">{src.summary ?? (src.data_status === "no_signal" ? "시그널이 없습니다." : sourceLabel(sourceKey) + " 데이터 요약")}</p>
+      <div className="mt-1 text-[13px] font-semibold text-sky-deep">상세 보기 →</div>
+    </Link>
   );
 }
 

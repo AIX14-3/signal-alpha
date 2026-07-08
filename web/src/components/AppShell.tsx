@@ -6,15 +6,16 @@ import type { ReactNode } from "react";
 import { GuardGate } from "@/components/GuardGate";
 import { HeaderStockSearch } from "@/components/HeaderStockSearch";
 import { Toaster } from "@/components/Toaster";
+import { WatchlistStrip } from "@/components/WatchlistStrip";
 import { useAuthStore } from "@/stores/authStore";
 
-// 상단 메뉴는 홈·커뮤니티·관심종목·마이(+로그인)만 노출하며 모두 동일한 텍스트 링크 스타일이다.
-// 관심종목은 마이페이지 관심종목 탭(기본 탭)으로 이동한다 — 컨텍스트성 pill 버튼을 제거해 일관화.
-// 매매 부검·방법론은 마이 안으로 이동, 요금제는 폐지 — 메뉴 배선만 제거하고 페이지 코드는 유지한다.
+// 상단 메뉴는 홈·브리핑·커뮤니티·관심종목·마이(+로그인) — 모두 동일한 텍스트 링크 스타일이다.
+// 관심종목은 최상위 /watchlist 페이지로, 매매 부검·방법론은 마이 안으로, 요금제는 폐지한다.
 const NAV = [
   { href: "/", label: "홈" },
+  { href: "/brief", label: "브리핑" },
   { href: "/community", label: "커뮤니티" },
-  { href: "/mypage", label: "관심종목" },
+  { href: "/watchlist", label: "관심종목" },
   { href: "/mypage", label: "마이" },
 ];
 
@@ -78,6 +79,8 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
         </div>
       </nav>
+
+      <WatchlistStrip />
 
       <main className="relative z-10 mx-auto w-full max-w-[1080px] flex-1 px-6">
         <GuardGate>{children}</GuardGate>

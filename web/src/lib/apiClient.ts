@@ -7,6 +7,8 @@ export * from "./api/auth";
 export * from "./api/social";
 export * from "./api/stocks";
 export * from "./api/reports";
+export * from "./api/market";
+export * from "./api/brief";
 export * from "./api/journal";
 export * from "./api/community";
 export * from "./api/postmortem";

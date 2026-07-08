@@ -8,12 +8,14 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from app.api.routes.admin import admin_router
 from app.api.routes.analytics import analytics_router
 from app.api.routes.auth import auth_router, users_router
+from app.api.routes.brief import router as brief_router
 from app.api.routes.community import router as community_router
 from app.api.routes.dashboard import router as dashboard_router
 from app.api.routes.guard import admin_router as guard_admin_router
 from app.api.routes.guard import router as guard_router
 from app.api.routes.health import router as health_router
 from app.api.routes.journals import router as journals_router
+from app.api.routes.market import router as market_router
 from app.api.routes.methodology import router as methodology_router
 from app.api.routes.payments import router as payments_router
 from app.api.routes.postmortem import router as postmortem_router
@@ -92,6 +94,7 @@ def create_app() -> FastAPI:
     app.include_router(news_router)
     app.include_router(dashboard_router)
     app.include_router(signals_router)
+    app.include_router(brief_router)
     app.include_router(guard_router)
     app.include_router(guard_admin_router)
     app.include_router(reports_router)
@@ -99,6 +102,7 @@ def create_app() -> FastAPI:
     app.include_router(postmortem_router)
     app.include_router(methodology_router)
     app.include_router(community_router)
+    app.include_router(market_router)
     app.include_router(subscriptions_router)
     app.include_router(payments_router)
     app.include_router(admin_router)
