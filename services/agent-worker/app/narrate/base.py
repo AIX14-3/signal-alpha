@@ -100,6 +100,27 @@ def compact_prediction_rate(rate: dict[str, Any] | None) -> dict[str, Any] | Non
     }
 
 
+def narrate_client_from_env(source_key: str, *, settings: Any) -> tuple[Any, str, float] | None:
+    """{SRC}_USE_LLM + {SRC}_LLM_MODEL/PROVIDER/TIMEOUT env → (client, model, timeout). 미구성이면 None.
+
+    소스 narrate 라인의 표준 게이트(_source_narrate_enabled + build_narrate_client)를 단일 진입점으로
+    합친 것. USE_LLM 이 켜져 있고 모델·provider 키가 있어야 클라이언트를 만든다(부작용 없는 게이트).
+    """
+    import os
+
+    if str(os.getenv(f"{source_key}_USE_LLM") or "").strip().lower() not in {"1", "true", "yes", "on"}:
+        return None
+    model = str(os.getenv(f"{source_key}_LLM_MODEL") or "")
+    if not model:
+        return None
+    provider = (os.getenv(f"{source_key}_LLM_PROVIDER") or "gemini").strip().lower()
+    client = build_narrate_client(provider, settings=settings)
+    if client is None:
+        return None
+    timeout = float(os.getenv(f"{source_key}_LLM_TIMEOUT_SECONDS") or 30.0)
+    return client, model, timeout
+
+
 def build_narrate_client(provider: str, *, settings: Any) -> Any | None:
     """provider + settings 키로 LLM 클라이언트 생성(dart/llm.py 의 Gemini/OpenAI 클라이언트 재사용)."""
     from app.analyzers.dart.llm import GeminiGenerateContentClient, OpenAiChatClient

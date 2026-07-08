@@ -8,7 +8,7 @@ import { useEffect, useState } from "react";
 
 import { RoundTripCard } from "@/components/postmortem/RoundTripCard";
 import { formatDate, formatPct } from "@/components/postmortem/util";
-import type { BrokerName } from "@/lib/apiClient";
+import type { BrokerName, PostmortemNarrative } from "@/lib/apiClient";
 import { useAuthStore } from "@/stores/authStore";
 import { usePostmortemStore } from "@/stores/postmortemStore";
 
@@ -347,6 +347,7 @@ function TradeLookupSection() {
           ) : (
             <p className="mt-3 text-[13.5px] text-muted">이 종목의 체결내역이 없습니다. 먼저 증권사를 연동하고 동기화하세요.</p>
           )}
+          <NarrativeCard narrative={trade.narrative} />
         </div>
       ) : null}
     </section>
@@ -384,7 +385,27 @@ function PatternSection() {
           (평균 보유 손실 {patterns.avg_hold_loss_days ?? "—"}일 vs 이익 {patterns.avg_hold_win_days ?? "—"}일).
         </p>
       ) : null}
+      <NarrativeCard narrative={patterns.narrative ?? null} />
     </section>
+  );
+}
+
+// FR-7: 워커 LLM 복기 서술(사후확신 없는 중립 요약). 없으면 렌더 안 함.
+function NarrativeCard({ narrative }: { narrative: PostmortemNarrative | null }) {
+  if (!narrative) return null;
+  return (
+    <div className="card mt-3 px-5 py-4" data-flow="postmortem-narrative">
+      <p className="text-[12px] font-bold text-muted">복기 요약</p>
+      <p className="mt-1 whitespace-pre-wrap text-[13.5px] text-navy-soft">{narrative.summary}</p>
+      {narrative.key_facts.length > 0 ? (
+        <ul className="mt-2 list-disc space-y-0.5 pl-5 text-[12.5px] text-navy-soft">
+          {narrative.key_facts.map((fact, i) => (
+            <li key={i}>{fact}</li>
+          ))}
+        </ul>
+      ) : null}
+      <p className="mt-2 text-[11px] text-muted">기록·학습을 위한 복기이며 성과 평가·투자 권유가 아닙니다.</p>
+    </div>
   );
 }
 

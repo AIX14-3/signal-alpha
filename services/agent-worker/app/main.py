@@ -8,6 +8,7 @@ from app.api.routes.dead_letter import router as dead_letter_router
 from app.api.routes.guard import router as guard_router
 from app.api.routes.health import router as health_router
 from app.api.routes.observability import router as observability_router
+from app.api.routes.postmortem import router as postmortem_router
 from app.api.routes.price import router as price_router
 from app.api.routes.queue import router as queue_router
 from app.api.routes.schedules import router as schedules_router
@@ -30,6 +31,7 @@ def create_app() -> FastAPI:
     app.include_router(queue_router)
     app.include_router(dead_letter_router)
     app.include_router(observability_router)
+    app.include_router(postmortem_router)
     app.include_router(schedules_router)
     app.include_router(tasks_router)
     app.include_router(guard_router)
