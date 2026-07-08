@@ -88,6 +88,17 @@ def test_kiwoom_sell_token_and_skips_zero_qty():
     assert len(fills) == 1 and fills[0].side == "sell" and fills[0].broker_fill_id == "C2"
 
 
+def test_kiwoom_skips_row_with_unparseable_date():
+    # 날짜 필드 누락/오류 → filled_at None → NormalizedFill(None) 전파 방지로 skip.
+    payload = {
+        "acnt_ord_cntr_dtl": [
+            {"cntr_no": "C9", "stk_cd": "A005930", "io_tp_nm": "2", "cntr_qty": "5",
+             "cntr_pric": "71000", "cntr_tm": "100000"},  # cntr_dt 없음
+        ]
+    }
+    assert normalize_kiwoom_rows(payload) == []
+
+
 def test_empty_payloads():
     assert normalize_toss_orders({}) == []
     assert normalize_kiwoom_rows({}) == []

@@ -21,7 +21,7 @@ class _FakeBackend:
 
     async def execute(self, sql, *args):
         assert "INSERT INTO user_trade_signal_overlays" in sql
-        assert "ON CONFLICT (user_id, stock_id, signal_date, kind, source_ref) DO UPDATE" in sql
+        assert "ON CONFLICT (user_id, stock_id, signal_date, kind, source_ref) DO NOTHING" in sql
         self.upserts.append(args)
         return "INSERT 0 1"
 
