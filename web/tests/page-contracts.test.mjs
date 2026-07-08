@@ -41,10 +41,41 @@ test("report page keeps ticker loading and watchlist wired (full public report)"
     "load(ticker)",
     "WatchlistButton",
     "SOURCE_ORDER",
-    "PREDICTION_RATE_ORDER",
+    // AI 예측률(PredictionRateCard)은 근거 중심 재구성에서 제거됨 — PREDICTION_RATE_ORDER 미사용.
     'data-flow="methodology-link"',
     'href="/methodology"',
   ].forEach((expected) => assertIncludes(source, expected, "report page"));
+});
+
+test("report wires the S6 precedent section to the forward-return outcome API", () => {
+  const page = read("src/app/report/[ticker]/page.tsx");
+  [
+    "PrecedentSection",
+    'id="sec-precedent"',
+  ].forEach((expected) => assertIncludes(page, expected, "report page"));
+
+  const section = read("src/components/PrecedentSection.tsx");
+  [
+    "getReportPrecedents",
+    'data-section="precedents"',
+    "avg_abnormal_return",
+    "horizon_days",
+  ].forEach((expected) => assertIncludes(section, expected, "precedent section"));
+
+  assertIncludes(read("src/components/ReportSideNav.tsx"), '"sec-precedent"', "report side nav");
+});
+
+test("brief page loads the public daily-signal feed and links to reports", () => {
+  const source = read("src/app/brief/page.tsx");
+
+  [
+    'data-page="brief"',
+    "getBrief(",
+    'data-flow="brief-card"',
+    "/report/${encodeURIComponent(code)}",
+    "directionLabel",
+    "warningLevelLabel",
+  ].forEach((expected) => assertIncludes(source, expected, "brief page"));
 });
 
 test("mypage keeps account guard and tab data sources wired", () => {

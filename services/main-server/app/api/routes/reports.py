@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import datetime
 import json
+import random
 import re
 from typing import Any
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.routes.auth import NOTICE
@@ -119,7 +122,213 @@ async def get_source_detail(
     }
 
 
+@router.get("/{stock_code}/timeline")
+async def get_report_timeline(
+    stock_code: str,
+    pool: Any = Depends(get_database_pool),
+) -> dict[str, Any]:
+    """종목의 근거 이벤트를 소스 교차 시간순으로 반환(Evidence Timeline).
+
+    소스 상세(/sources/{source})가 특정 소스만 필터하는 것과 달리, 전 소스 signal_events 를
+    한 축(event_date)으로 모아 준다. 리포트 전체 공개(#788)라 게이팅 없이 전 소스를 노출한다.
+    """
+    async with pool.acquire() as connection:
+        row = await SignalRepository(connection).get_current_by_ticker(stock_code)
+        if row is None:
+            raise _api_error(404, "REPORT_NOT_FOUND", "발행된 리포트가 없습니다.")
+        row = dict(row)
+        detail = await SignalRepository(connection).get_detail_by_id(int(row["id"]))
+
+    events = _json_array(dict(detail).get("signal_events")) if detail is not None else []
+    items = [_evidence(e) for e in events]
+    items.sort(key=lambda it: (it.get("event_date") or ""), reverse=True)
+    return {"stock": _stock(row), "items": items, "notice": NOTICE}
+
+
+_PRICE_TF = {"min": 130, "day": 180, "month": 36, "year": 10}
+
+
+@router.get("/{stock_code}/prices")
+async def get_report_prices(stock_code: str, tf: str = "day") -> dict[str, Any]:
+    """리포트 상단 주가 차트용 시세 시계열. tf=min|day|month|year.
+
+    Yahoo Finance(무키)에서 한국 종목 실시세를 서버사이드로 조회한다(005930.KS / .KQ). 조회
+    실패 시 결정론 합성 시세로 폴백(is_demo=true)해 차트가 절대 비지 않게 한다.
+    """
+    tf = tf if tf in _PRICE_TF else "day"
+    bars = await _yahoo_prices(stock_code, tf)
+    is_demo = bars is None
+    if is_demo:
+        bars, _last, _chg, _pct = _demo_price_series(stock_code, tf)
+    assert bars is not None
+    last = int(round(bars[-1]["close"]))
+    prev = int(round(bars[-2]["close"])) if len(bars) > 1 else last
+    change = last - prev
+    pct = round(change / prev * 100, 2) if prev else 0.0
+    return {
+        "stock_code": stock_code,
+        "timeframe": tf,
+        "currency": "KRW",
+        "last_price": last,
+        "change": change,
+        "change_pct": pct,
+        "is_demo": is_demo,
+        "bars": bars,
+    }
+
+
+# 과거 유사 사례(S6) — 이 종목의 과거 발화 이벤트를 (소스·방향)으로 묶고, event_study_panel 의
+# 실측 20일 forward/abnormal 수익률로 "이런 신호 뒤 주가가 어땠나"를 집계한다. 3건 미만 그룹은
+# 표본 부족으로 제외. 임베딩 코사인 recall(signal_episodes)은 pgvector·에피소드 적재가 갖춰진
+# 프로덕션에서 "유사"를 대체하는 v2 경로(응답 계약 동일). 지금은 결정론(같은 소스·방향).
+_PRECEDENT_GROUPS_SQL = """
+    SELECT
+        e.source_type AS source_type,
+        e.signal_direction AS direction,
+        count(*) AS n,
+        avg(p.fwd_return_20d) AS avg_fwd_return_20d,
+        avg(p.abnormal_return_20d) AS avg_abnormal_return_20d,
+        avg(CASE WHEN p.fwd_return_20d > 0 THEN 1.0 ELSE 0.0 END) AS win_rate
+    FROM event_study_panel p
+    JOIN signal_events e ON e.id = p.signal_event_id
+    WHERE p.stock_id = $1 AND p.fwd_return_20d IS NOT NULL
+    GROUP BY e.source_type, e.signal_direction
+    HAVING count(*) >= 3
+    ORDER BY count(*) DESC
+"""
+_PRECEDENT_RECENT_SQL = """
+    SELECT
+        e.source_type AS source_type,
+        e.signal_direction AS direction,
+        e.title AS title,
+        p.asof_date AS asof_date,
+        p.fwd_return_20d AS fwd_return_20d,
+        p.abnormal_return_20d AS abnormal_return_20d
+    FROM event_study_panel p
+    JOIN signal_events e ON e.id = p.signal_event_id
+    WHERE p.stock_id = $1 AND p.fwd_return_20d IS NOT NULL
+    ORDER BY p.asof_date DESC, p.id DESC
+    LIMIT 8
+"""
+
+
+@router.get("/{stock_code}/precedents")
+async def get_report_precedents(
+    stock_code: str,
+    pool: Any = Depends(get_database_pool),
+) -> dict[str, Any]:
+    """과거 유사 사례 + 실측 결과(S6) — "이런 신호 뒤 주가가 어땠나".
+
+    이 종목의 과거 발화 이벤트를 (소스·방향)으로 묶어 20일 실측 수익률·시장초과수익·승률을
+    집계(groups)하고, 최근 개별 사례(recent)를 함께 준다. 전체 공개(#788). 표본이 없으면
+    빈 목록(예: 이벤트스터디 패널 미적재 종목)이라 UI 는 "사례 없음"으로 처리한다.
+    """
+    async with pool.acquire() as connection:
+        row = await SignalRepository(connection).get_current_by_ticker(stock_code)
+        if row is None:
+            raise _api_error(404, "REPORT_NOT_FOUND", "발행된 리포트가 없습니다.")
+        row = dict(row)
+        stock_id = int(row["stock_id"])
+        groups = await connection.fetch(_PRECEDENT_GROUPS_SQL, stock_id)
+        recent = await connection.fetch(_PRECEDENT_RECENT_SQL, stock_id)
+
+    return {
+        "stock": _stock(row),
+        "horizon_days": 20,
+        "groups": [_precedent_group(dict(g)) for g in groups],
+        "recent": [_precedent_example(dict(r)) for r in recent],
+        "notice": NOTICE,
+    }
+
+
 # ----- helpers -----
+
+
+# tf → Yahoo (interval, range). 분=당일 인트라데이, 그 외는 일봉/주봉/월봉.
+_YF_TF = {"min": ("5m", "1d"), "day": ("1d", "6mo"), "month": ("1wk", "2y"), "year": ("1mo", "10y")}
+_YF_UA = "Mozilla/5.0 (compatible; SignalAlpha/1.0)"
+
+
+async def _yahoo_prices(code: str, tf: str) -> list[dict[str, Any]] | None:
+    """Yahoo Finance 실시세(한국). 코스피 .KS → 코스닥 .KQ 순서로 시도. 실패 시 None."""
+    interval, rng = _YF_TF[tf]
+    intraday = tf == "min"
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            for suffix in (".KS", ".KQ"):
+                try:
+                    resp = await client.get(
+                        f"https://query1.finance.yahoo.com/v8/finance/chart/{code}{suffix}",
+                        params={"interval": interval, "range": rng},
+                        headers={"User-Agent": _YF_UA},
+                    )
+                    resp.raise_for_status()
+                    result = resp.json()["chart"]["result"][0]
+                    stamps = result.get("timestamp") or []
+                    q = result["indicators"]["quote"][0]
+                    o, h, low, c = q.get("open"), q.get("high"), q.get("low"), q.get("close")
+                    bars: list[dict[str, Any]] = []
+                    for i, t in enumerate(stamps):
+                        vals = (o[i], h[i], low[i], c[i])
+                        if any(v is None for v in vals):
+                            continue
+                        when = (
+                            int(t)
+                            if intraday
+                            else datetime.datetime.fromtimestamp(t, datetime.timezone.utc)
+                            .date()
+                            .isoformat()
+                        )
+                        bars.append(
+                            {"time": when, "open": round(o[i]), "high": round(h[i]), "low": round(low[i]), "close": round(c[i])}
+                        )
+                    if len(bars) >= 2:
+                        return bars
+                except Exception:
+                    continue
+    except Exception:
+        return None
+    return None
+
+
+def _demo_price_series(ticker: str, tf: str) -> tuple[list[dict[str, Any]], int, int, float]:
+    """종목코드로 시드된 결정론 합성 OHLCV(랜덤워크). 재시작해도 같은 종목은 같은 시세."""
+    seed = sum((i + 1) * ord(c) for i, c in enumerate(ticker)) or 1
+    rng = random.Random(seed * 1000 + {"min": 1, "day": 2, "month": 3, "year": 4}[tf])
+    n = _PRICE_TF[tf]
+    price = float(40000 + (seed * 137) % 60000)  # 40,000 ~ 100,000원 대
+    now = datetime.datetime.now(datetime.timezone.utc)
+
+    def label(i: int) -> Any:
+        back = n - 1 - i
+        if tf == "min":
+            return int((now - datetime.timedelta(minutes=back)).timestamp())
+        if tf == "day":
+            return (now.date() - datetime.timedelta(days=back)).isoformat()
+        if tf == "month":
+            m = now.month - 1 - back
+            y = now.year + (m // 12)
+            return datetime.date(y, (m % 12) + 1, 1).isoformat()
+        return datetime.date(now.year - back, 1, 1).isoformat()  # year
+
+    bars: list[dict[str, Any]] = []
+    drift = 0.0008 if tf in ("month", "year") else 0.0003
+    for i in range(n):
+        chg = rng.uniform(-0.02, 0.02) + drift
+        open_ = price
+        close = max(1000.0, price * (1 + chg))
+        high = max(open_, close) * (1 + rng.uniform(0, 0.008))
+        low = min(open_, close) * (1 - rng.uniform(0, 0.008))
+        bars.append(
+            {"time": label(i), "open": round(open_), "high": round(high), "low": round(low), "close": round(close)}
+        )
+        price = close
+
+    last = int(bars[-1]["close"])
+    prev = int(bars[-2]["close"]) if len(bars) > 1 else last
+    change = last - prev
+    pct = round(change / prev * 100, 2) if prev else 0.0
+    return bars, last, change, pct
 
 
 def _report_response(row: dict[str, Any]) -> dict[str, Any]:
@@ -143,11 +352,21 @@ def _report_response(row: dict[str, Any]) -> dict[str, Any]:
         "score": _number(row.get("final_score")),
         "alignment_rate": _alignment(row.get("confidence")),
         "source_agreement": row.get("source_agreement"),
+        # consensus_score(소스 간 방향 일치도, 0-100)는 근거 중심 리포트의 "소스 간 일치도"
+        # 섹션 시각화에 쓰인다. source_agreement(HIGH/MEDIUM/LOW)와 짝.
+        "consensus_score": _number(row.get("consensus_score")),
         "warning_level": row.get("warning_level"),
         "data_status": "ok",
         "summary": row.get("summary"),
+        # 긍정/주의 한 줄 핵심 + 소스별 근거 배열(근거 중심 재구성 §5.3 3·4 섹션).
+        "bull_point": row.get("bull_point"),
+        "bear_point": row.get("bear_point"),
+        "positive_evidence": _evidence_list(row.get("positive_evidence")),
+        "caution_evidence": _evidence_list(row.get("caution_evidence")),
         "sources": sources,
         "prediction_rates": prediction_rates,
+        # 리포트 전체 공개(#788) — 게이팅 없음. FE 하위호환용으로 항상 unlocked=True 를 노출.
+        "access": {"unlocked": True, "is_member": False},
         "notice": NOTICE,
     }
 
@@ -475,6 +694,63 @@ def _prediction_rate_block(source: str, predictions: dict[str, Any]) -> dict[str
     }
 
 
+def _pct(value: Any) -> float | None:
+    """비율(0.362) → 퍼센트(36.2, 소수 1자리). None 은 그대로."""
+    if value is None:
+        return None
+    return round(float(value) * 100, 1)
+
+
+def _precedent_group(g: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "source": (str(g.get("source_type")).lower() if g.get("source_type") else None),
+        "direction": g.get("direction"),
+        "count": _number(g.get("n")),
+        # 20일 실측 평균 수익률(%)·시장 대비 초과수익(%)·승률(fwd_return_20d>0 비율, %).
+        "avg_return": _pct(g.get("avg_fwd_return_20d")),
+        "avg_abnormal_return": _pct(g.get("avg_abnormal_return_20d")),
+        "win_rate": _pct(g.get("win_rate")),
+    }
+
+
+def _precedent_example(r: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "source": (str(r.get("source_type")).lower() if r.get("source_type") else None),
+        "direction": r.get("direction"),
+        "title": r.get("title"),
+        "date": _iso(r.get("asof_date")),
+        "fwd_return": _pct(r.get("fwd_return_20d")),
+        "abnormal_return": _pct(r.get("abnormal_return_20d")),
+    }
+
+
+def _evidence_list(value: Any) -> list[dict[str, Any]]:
+    """positive_evidence/caution_evidence(집계가 채우는 JSONB dict 배열)를 FE용으로 정규화.
+
+    내부 식별자(agent_result_id/source_signal_event_ids 등)는 떼고, risk_flags 는 이미 있는
+    ``_RISK_FLAG_KO`` 맵으로 사람이 읽을 수 있는 한국어 설명으로 바꾼다(미정의 플래그는 원문).
+    FE 가 dict 내부 구조를 몰라도 되게 {source, summary, risk_flags} 만 노출한다. str 원소
+    (구버전)는 요약만 담는다."""
+    items: list[dict[str, Any]] = []
+    for entry in _json_array(value):
+        if isinstance(entry, dict):
+            source = entry.get("source")
+            flags = entry.get("risk_flags")
+            risk = (
+                [_RISK_FLAG_KO.get(str(f).strip(), str(f)) for f in flags if str(f).strip()]
+                if isinstance(flags, list)
+                else []
+            )
+            items.append({
+                "source": str(source).lower() if source else None,
+                "summary": entry.get("summary"),
+                "risk_flags": risk,
+            })
+        elif isinstance(entry, str) and entry.strip():
+            items.append({"source": None, "summary": entry, "risk_flags": []})
+    return items
+
+
 def _stock(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": row.get("stock_id"),
@@ -494,6 +770,8 @@ def _evidence(event: dict[str, Any]) -> dict[str, Any]:
         "impact_level": event.get("impact_level"),
         "evidence_url": event.get("evidence_url"),
         "source_name": event.get("source_name"),
+        # source_type(DART/REPORT/HIRING/PATENT/DATALAB) — 타임라인에서 소스 아이콘 매핑용(additive).
+        "source_type": event.get("source_type"),
         "is_official": event.get("is_official"),
     }
 

@@ -13,21 +13,17 @@ export type ReportSource = {
   summary?: string | null;
 };
 
-// 메타러너 소스별 예측률 — 주가 BASE ⊕ 각 공공데이터로 만든 0–100 'AI 예측 점수'.
-// 통합(SRC)은 Report.score(헤드라인)로 노출되고, 여기엔 per-source(주가 1 + 공공데이터 5)만 담긴다.
-export type PredictionRate = {
-  source: SourceKey;
-  score?: number | null; // 0–100 (score_100)
-  direction?: string | null; // positive | negative | neutral | unknown
-  data_status?: string;
+export type ReportAccess = {
+  unlocked: boolean;
+  is_member: boolean;
 };
 
-// 메타러너 return 채널 (#525 WS-C) — 결정론 집계 점수(score)와 별개의 학습형 수익률 신호.
-// 미산출 종목은 null.
-export type MlReturn = {
-  score: number | null; // 부호 있는 return 점수(0–100 아님)
-  direction: string | null; // positive | negative | neutral | unknown
-  confidence: number | null; // 방향 합의 신뢰도 [0,1]
+// 긍정/주의 근거 1건 — 집계가 채운 소스별 근거(백엔드 _evidence_list 로 정규화).
+// source 는 소스키(없으면 null), risk_flags 는 사람이 읽을 수 있는 한국어 설명 문자열.
+export type EvidenceItem = {
+  source: SourceKey | null;
+  summary: string | null;
+  risk_flags: string[];
 };
 
 export type Report = {
@@ -42,12 +38,18 @@ export type Report = {
   score: number | null;
   alignment_rate: number | null;
   source_agreement?: string | null;
+  // 소스 간 방향 일치도(0–100). source_agreement(HIGH/MEDIUM/LOW)와 짝으로 "소스 간 일치도" 섹션에 사용.
+  consensus_score?: number | null;
   warning_level?: string | null;
   data_status?: string;
   summary: string | null;
-  ml_return?: MlReturn | null;
+  // 긍정/주의 한 줄 핵심 + 소스별 근거 배열(근거 중심 §5.3 3·4 섹션).
+  bull_point?: string | null;
+  bear_point?: string | null;
+  positive_evidence?: EvidenceItem[];
+  caution_evidence?: EvidenceItem[];
   sources: ReportSource[];
-  prediction_rates?: PredictionRate[];
+  access: ReportAccess;
   notice: string;
 };
 
@@ -59,7 +61,16 @@ export type SourceDetailItem = {
   impact_level: string | null;
   evidence_url: string | null;
   source_name: string | null;
+  // 소스 구분(DART/REPORT/HIRING/PATENT/DATALAB) — 타임라인 아이콘 매핑용. 소스 상세에는 없을 수 있음.
+  source_type?: string | null;
   is_official?: boolean | null;
+};
+
+// 종목 근거 이벤트를 소스 교차 시간순으로 모은 타임라인(Evidence Timeline, S2).
+export type ReportTimeline = {
+  stock: { stock_code?: string | null; stock_name?: string | null };
+  items: SourceDetailItem[];
+  notice: string;
 };
 
 // 증권사 리포트 밸류에이션 fact(집계 score_breakdown.REPORT.valuation). REPORT 소스에만 존재.
@@ -117,4 +128,57 @@ export async function getReport(stockCode: string): Promise<Report> {
 
 export async function getSourceDetail(stockCode: string, source: SourceKey): Promise<SourceDetail> {
   return apiFetch(`/api/reports/${encodeURIComponent(stockCode)}/sources/${source}`);
+}
+
+export async function getReportTimeline(stockCode: string): Promise<ReportTimeline> {
+  return apiFetch(`/api/reports/${encodeURIComponent(stockCode)}/timeline`);
+}
+
+// 리포트 상단 주가 차트용 시세 시계열(현재는 데모 합성, is_demo=true).
+export type PriceBar = { time: string | number; open: number; high: number; low: number; close: number };
+export type PriceSeries = {
+  stock_code: string;
+  timeframe: string;
+  currency: string;
+  last_price: number;
+  change: number;
+  change_pct: number;
+  is_demo: boolean;
+  bars: PriceBar[];
+};
+
+export async function getReportPrices(stockCode: string, tf: string): Promise<PriceSeries> {
+  return apiFetch(`/api/reports/${encodeURIComponent(stockCode)}/prices?tf=${encodeURIComponent(tf)}`);
+}
+
+// 과거 유사 사례(S6) — 이 종목의 과거 발화 이벤트를 (소스·방향)으로 묶어 event_study_panel 의
+// 실측 20일 forward/abnormal 수익률로 사후 성과를 집계. 값은 퍼센트(%) 단위.
+export type PrecedentGroup = {
+  source: SourceKey | null;
+  direction: string | null;
+  count: number | null;
+  avg_return: number | null; // 20일 실측 평균 수익률(%)
+  avg_abnormal_return: number | null; // 시장(코스피20) 대비 초과수익(%)
+  win_rate: number | null; // fwd_return_20d>0 비율(%)
+};
+
+export type PrecedentExample = {
+  source: SourceKey | null;
+  direction: string | null;
+  title: string | null;
+  date: string | null;
+  fwd_return: number | null; // 20일 실측 수익률(%)
+  abnormal_return: number | null; // 시장 대비 초과수익(%)
+};
+
+export type ReportPrecedents = {
+  stock: { stock_code?: string | null; stock_name?: string | null };
+  horizon_days: number;
+  groups: PrecedentGroup[];
+  recent: PrecedentExample[];
+  notice: string;
+};
+
+export async function getReportPrecedents(stockCode: string): Promise<ReportPrecedents> {
+  return apiFetch(`/api/reports/${encodeURIComponent(stockCode)}/precedents`);
 }

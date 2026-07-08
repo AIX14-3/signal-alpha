@@ -29,6 +29,29 @@ export function agreementLabel(agreement: string | null | undefined): string {
   }
 }
 
+/** warning_level → 사용자 표기 + 심각도(색 구분용). 투자 권유 아님, 데이터 확인 안내. */
+export function warningLevelLabel(level: string | null | undefined): {
+  label: string;
+  severity: "normal" | "caution" | "warning";
+} {
+  switch ((level ?? "").toUpperCase()) {
+    case "WARNING":
+      return { label: "경고", severity: "warning" };
+    case "CAUTION":
+      return { label: "주의", severity: "caution" };
+    case "NORMAL":
+      return { label: "양호", severity: "normal" };
+    default:
+      return { label: "—", severity: "normal" };
+  }
+}
+
+/** consensus_score(0–100, 소스 간 방향 일치도) → 백분율 표기. */
+export function consensusPercent(score: number | null | undefined): string {
+  if (score === null || score === undefined) return "–";
+  return `${Math.round(score)}%`;
+}
+
 /** direction → 데이터 방향성 라벨 (투자 권유 표현 금지). */
 export function directionLabel(direction: string | null | undefined): {
   label: string;
@@ -102,16 +125,6 @@ export const SOURCE_ORDER: (
   | "patent"
   | "report"
 )[] = ["price", "dart", "hiring", "datalab", "patent", "report"];
-
-/** AI 예측률 카드 순서 — 주가 1 + 공공데이터 5(DART·증권사리포트·채용·특허·네이버데이터랩). */
-export const PREDICTION_RATE_ORDER: (
-  | "price"
-  | "dart"
-  | "datalab"
-  | "hiring"
-  | "patent"
-  | "report"
-)[] = ["price", "dart", "datalab", "hiring", "patent", "report"];
 
 export function sourceLabel(source: string): string {
   return SOURCE_META[source]?.label ?? source;
