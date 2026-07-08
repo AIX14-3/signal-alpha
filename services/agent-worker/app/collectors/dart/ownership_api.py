@@ -12,23 +12,28 @@ dict 리스트로 파싱한다. HTTP/재시도/에러 분류는 ``DartFinancials
 from __future__ import annotations
 
 import asyncio
+import io
 import json
+import zipfile
 from collections import defaultdict
 from datetime import date, datetime
 from typing import Any, Protocol
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-# 형제 모듈(collectors/dart)의 에러 타입·재시도 분류 재사용 — DART 수집 전반 일관성 유지.
+# 형제 모듈(collectors/dart)의 에러 타입·재시도 분류·문서 디코더 재사용 — DART 수집 전반 일관성.
 from app.collectors.dart.disclosure import (
     DartApiError,
+    _decode_document_bytes,
     _retryable_status_error,
     _to_dart_error,
 )
+from app.collectors.dart.ownership_detail import classify_report, parse_detail_rows
 from app.collectors.price.rate_limiter import RateLimiter
 
 MAJORSTOCK_PATH = "majorstock.json"
 ELESTOCK_PATH = "elestock.json"
+DOCUMENT_PATH = "document.xml"
 
 # OpenDART 호출 제한 대비 기본 요청 간격(초). L1/SEC fair-access(0.2)와 동일 보수값.
 _DEFAULT_MIN_REQUEST_INTERVAL_SEC = 0.2
@@ -61,6 +66,35 @@ class DartOwnershipClient:
 
     async def fetch_elestock(self, *, corp_code: str) -> dict[str, Any]:
         return await self._fetch(path=ELESTOCK_PATH, corp_code=corp_code)
+
+    def build_document_url(self, *, rcept_no: str) -> str:
+        query = urlencode({"crtfc_key": self._api_key, "rcept_no": rcept_no})
+        return f"{self._base_url}/{DOCUMENT_PATH}?{query}"
+
+    async def fetch_document_text(self, *, rcept_no: str) -> str:
+        """공시 본문(document.xml ZIP)을 받아 **원시** 디코드 문자열로 반환(표 구조 보존).
+
+        disclosure 의 parse_document_zip 은 텍스트를 평탄화하므로 세부변동내역 표 파싱엔 못 쓴다.
+        여기서는 압축만 풀고 _decode_document_bytes(cp949 포함)로 디코드만 한다."""
+        url = self.build_document_url(rcept_no=rcept_no)
+
+        async def request() -> str:
+            await self._limiter.wait()
+            return await asyncio.to_thread(self._get_document_text, url)
+
+        return await self._with_retry(request)
+
+    def _get_document_text(self, url: str) -> str:
+        request = Request(url, headers={"Accept": "application/zip, application/octet-stream"})
+        with urlopen(request, timeout=self._timeout_seconds) as response:
+            body = response.read()
+        texts: list[str] = []
+        with zipfile.ZipFile(io.BytesIO(body)) as archive:
+            for name in archive.namelist():
+                if name.endswith("/"):
+                    continue
+                texts.append(_decode_document_bytes(archive.read(name)))
+        return "\n\n".join(texts)
 
     async def _fetch(self, *, path: str, corp_code: str) -> dict[str, Any]:
         url = self.build_url(path=path, corp_code=corp_code)
@@ -139,6 +173,15 @@ class DartOwnershipCollector:
         # 파싱 불가 행(rcept_no/보고자/날짜 누락)은 여기서 버리지 않는다 — 필수키가 빈 채로
         # 통과시켜 리포지토리 upsert 필터가 폐기하고 sync 의 skipped_count 로 가시화되게 한다.
         return events
+
+    async def fetch_trade_detail(self, *, rcept_no: str) -> tuple[str, float | None]:
+        """공시 본문 세부변동내역 → 보고서 단위 (trade_type, unit_price).
+
+        파싱 실패/무-표(classify=None)는 'other' 로 표기해 재-fetch 루프를 막는다(중립 처리됨).
+        네트워크/HTTP 실패는 예외 전파 — 호출부(enrich)가 이번 회차만 건너뛰고 다음 회차에 재시도한다."""
+        text = await self._client.fetch_document_text(rcept_no=rcept_no)
+        trade_type, unit_price = classify_report(parse_detail_rows(text))
+        return (trade_type or "other"), unit_price
 
 
 def _status_rows(response: dict[str, Any]) -> list[dict[str, Any]]:

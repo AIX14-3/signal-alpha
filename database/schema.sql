@@ -1229,9 +1229,12 @@ CREATE TABLE public.dart_ownership_events (
     shares_delta numeric(20,0),
     ratio_delta numeric(8,4),
     report_reason character varying(100),
+    trade_type character varying(20),
+    unit_price numeric(20,4),
     fetched_at timestamp with time zone DEFAULT now() NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT chk_dart_ownership_trade_type CHECK (((trade_type IS NULL) OR ((trade_type)::text = ANY (ARRAY[('onmarket_buy'::character varying)::text, ('onmarket_sell'::character varying)::text, ('gift'::character varying)::text, ('gift_received'::character varying)::text, ('inheritance'::character varying)::text, ('stock_option'::character varying)::text, ('appointment'::character varying)::text, ('offmarket'::character varying)::text, ('mixed'::character varying)::text, ('other'::character varying)::text]))))
 );
 
 

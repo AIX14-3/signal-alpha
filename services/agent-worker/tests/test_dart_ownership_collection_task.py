@@ -27,6 +27,9 @@ class FakeOwnershipCollector:
             }
         ]
 
+    async def fetch_trade_detail(self, *, rcept_no):
+        return "onmarket_buy", None
+
 
 class FakeOwnershipRepository:
     def __init__(self):
@@ -35,6 +38,12 @@ class FakeOwnershipRepository:
     async def upsert_events(self, entries):
         self.entries.extend(entries)
         return len(entries)
+
+    async def list_unenriched_ownership(self, *, stock_id, limit):
+        return []
+
+    async def update_trade_detail(self, *, corp_code, rcept_no, trade_type, unit_price):
+        pass
 
 
 class FakeQueueRepository:

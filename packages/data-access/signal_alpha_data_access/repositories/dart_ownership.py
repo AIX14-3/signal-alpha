@@ -142,6 +142,47 @@ class DartOwnershipRepository:
             limit,
         )
 
+    async def list_unenriched_ownership(self, *, stock_id: int, limit: int = 30) -> Any:
+        """trade_type 미채움(elestock) 보고서를 최신순으로 반환 — 세부변동내역 enrich 대상.
+
+        DISTINCT (corp_code, rcept_no): 보고서=문서 1건이라 rcept 단위로 한 번만 본문을 받으면 된다.
+        majorstock(대량보유, holder_type='major')은 본문 표 구조가 달라 제외(NULL 유지 → B-lite
+        shares_delta 거동). trade_type 은 collect 의 upsert 가 건드리지 않으므로 enrich 값이 보존된다."""
+        return await self._connection.fetch(
+            """
+            SELECT DISTINCT corp_code, rcept_no
+            FROM dart_ownership_events
+            WHERE stock_id = $1
+              AND trade_type IS NULL
+              AND holder_type IN ('executive', 'main_shareholder')
+            ORDER BY rcept_no DESC
+            LIMIT $2
+            """,
+            stock_id,
+            limit,
+        )
+
+    async def update_trade_detail(
+        self,
+        *,
+        corp_code: str,
+        rcept_no: str,
+        trade_type: str,
+        unit_price: float | None = None,
+    ) -> None:
+        """세부변동내역 파싱 결과(거래유형·단가)를 해당 보고서(rcept)의 모든 행에 적재."""
+        await self._connection.execute(
+            """
+            UPDATE dart_ownership_events
+            SET trade_type = $3, unit_price = $4, updated_at = NOW()
+            WHERE corp_code = $1 AND rcept_no = $2
+            """,
+            corp_code.strip(),
+            rcept_no.strip(),
+            trade_type,
+            unit_price,
+        )
+
     async def get_latest_rcept_no(
         self,
         *,
