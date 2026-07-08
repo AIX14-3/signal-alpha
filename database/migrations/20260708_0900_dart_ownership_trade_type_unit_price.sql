@@ -22,23 +22,15 @@ ALTER TABLE public.dart_ownership_events
 -- trade_type 닫힌 어휘(파서가 RPT_RSN 코드→정규화). NULL 허용(미enrich/파싱실패).
 ALTER TABLE public.dart_ownership_events
     DROP CONSTRAINT IF EXISTS chk_dart_ownership_trade_type;
+-- trade_type 어휘: onmarket_buy(장내매수)·onmarket_sell(장내매도)·gift(증여)·gift_received(수증)·
+-- inheritance(상속)·stock_option(주식매수선택권)·appointment(신규선임/보고)·offmarket(장외)·
+-- mixed(시장·비시장 혼재)·other(기타/미매핑). onmarket_buy/sell 만 방향 신호, 나머지는 중립.
+-- unit_price: 취득/처분단가(ACI_AMT2, 주당 KRW) 장내매매 대표값(크기/보조).
+-- (COMMENT ON COLUMN 은 schema.sql 스냅샷 관례상 생략 — 어휘는 위 주석·chk 제약으로 문서화.)
 ALTER TABLE public.dart_ownership_events
     ADD CONSTRAINT chk_dart_ownership_trade_type CHECK (
         trade_type IS NULL OR trade_type IN (
-            'onmarket_buy',   -- 장내매수(+)
-            'onmarket_sell',  -- 장내매도(-)
-            'gift',           -- 증여(-)
-            'gift_received',  -- 수증(+)
-            'inheritance',    -- 상속
-            'stock_option',   -- 주식매수선택권 행사
-            'appointment',    -- 신규선임/신규보고(초기보고)
-            'offmarket',      -- 장외매매
-            'mixed',          -- 한 보고서에 시장·비시장 혼재
-            'other'           -- 기타/미매핑
+            'onmarket_buy', 'onmarket_sell', 'gift', 'gift_received', 'inheritance',
+            'stock_option', 'appointment', 'offmarket', 'mixed', 'other'
         )
     );
-
-COMMENT ON COLUMN public.dart_ownership_events.trade_type IS
-    '세부변동내역 보고사유(RPT_RSN) 정규화 거래유형. onmarket_buy/sell 만 방향 신호, 나머지는 중립.';
-COMMENT ON COLUMN public.dart_ownership_events.unit_price IS
-    '세부변동내역 취득/처분단가(ACI_AMT2, 주당 KRW). 장내매매 행 대표값. 크기/보조용.';
