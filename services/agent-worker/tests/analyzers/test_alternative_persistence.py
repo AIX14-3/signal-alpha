@@ -76,7 +76,7 @@ class AgentProvenancePersistenceTest(unittest.IsolatedAsyncioTestCase):
             0.6,
             "patent summary",
             analysis_source="rules_fallback",
-            prompt_ver="patent-significance-v1",
+            prompt_ver="patent-signif-v1",
             llm_error="LLM down",
             needs_review=True,
         )
@@ -88,7 +88,7 @@ class AgentProvenancePersistenceTest(unittest.IsolatedAsyncioTestCase):
         )
         args = conn.find("INSERT INTO agent_results")[0]
         # 에이전트의 prompt_ver 가 config.version("test")을 대신한다 ($11 → index 10).
-        self.assertEqual(args[10], "patent-significance-v1")
+        self.assertEqual(args[10], "patent-signif-v1")
         detail = json.loads(args[6])  # method_detail ($7 → index 6)
         self.assertEqual(detail["analysis_source"], "rules_fallback")
         self.assertEqual(detail["llm_error"], "LLM down")

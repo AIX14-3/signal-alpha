@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "packages" / "data-
 from app.agents.base import SourceAgentInput
 from app.agents.patent import build_patent_agent
 from app.agents.patent.agent import PatentSignificanceAgent, _deterministic_prelabel, _top_filings
-from app.agents.patent.llm_classifier import MaterialityVerdict
+from app.agents.patent.llm_classifier import PROMPT_VERSION, MaterialityVerdict
 from app.agents.rule_source_agent import RuleSourceAgent
 from app.orchestrator.alternative.tasks import _from_output
 from app.schemas.evidence import RawEvidence
@@ -254,6 +254,13 @@ class PatentTopFilingsTest(unittest.TestCase):
         top = _top_filings(_input(_notable_rows()))
         self.assertTrue(top[0]["is_new_category"])  # new categories rank first
         self.assertLessEqual(len(top), 8)
+
+
+class PatentPromptVersionTest(unittest.TestCase):
+    def test_fits_agent_results_prompt_ver_column(self):
+        # prompt_ver is persisted to agent_results.prompt_ver character varying(20);
+        # a longer version string fails the INSERT on PATENT_LLM_ENABLED publishes.
+        self.assertLessEqual(len(PROMPT_VERSION), 20)
 
 
 if __name__ == "__main__":
