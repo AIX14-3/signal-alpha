@@ -45,6 +45,9 @@ BACKEND_TABLES: frozenset[str] = frozenset(
         "signal_journal_outcomes",
         # 저널 차트용 종가 시리즈 — 같은 러너가 저널 있는 종목만 동기화(종목×거래일 1행).
         "signal_journal_chart_prices",
+        # 종목별 일봉 종가 시리즈(공개 홈 차트) — 발행 러너가 분석 종목 전체를 동기화
+        # (signal_journal_chart_prices 와 같은 워커→백엔드 계약, 저널 유무와 무관).
+        "stock_price_daily",
         "user_signal_reads",
         "report_issuances",
         # 수집 스케줄 제어 평면 (어드민/MCP 가 쓰고 워커 스케줄러가 폴링). 백엔드 DB 보유.

@@ -1,21 +1,20 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
 import { useEffect } from "react";
 import type { ReactNode } from "react";
 import { GuardGate } from "@/components/GuardGate";
 import { HeaderStockSearch } from "@/components/HeaderStockSearch";
 import { Toaster } from "@/components/Toaster";
-import { WatchlistButton } from "@/components/WatchlistButton";
 import { useAuthStore } from "@/stores/authStore";
-import { useHomeStore } from "@/stores/homeStore";
 
-// 상단 메뉴는 홈·커뮤니티·마이(+로그인)만 노출한다.
+// 상단 메뉴는 홈·커뮤니티·관심종목·마이(+로그인)만 노출하며 모두 동일한 텍스트 링크 스타일이다.
+// 관심종목은 마이페이지 관심종목 탭(기본 탭)으로 이동한다 — 컨텍스트성 pill 버튼을 제거해 일관화.
 // 매매 부검·방법론은 마이 안으로 이동, 요금제는 폐지 — 메뉴 배선만 제거하고 페이지 코드는 유지한다.
 const NAV = [
   { href: "/", label: "홈" },
   { href: "/community", label: "커뮤니티" },
+  { href: "/mypage", label: "관심종목" },
   { href: "/mypage", label: "마이" },
 ];
 
@@ -24,9 +23,6 @@ export function AppShell({ children }: { children: ReactNode }) {
   const status = useAuthStore((state) => state.status);
   const hydrate = useAuthStore((state) => state.hydrate);
   const logout = useAuthStore((state) => state.logout);
-  // 관심종목 버튼은 홈 우 pane 에서 메뉴바(마이 왼쪽)로 이동 — 홈에서 선택된 종목에만 적용.
-  const pathname = usePathname();
-  const selectedCode = useHomeStore((state) => state.selectedCode);
 
   useEffect(() => {
     if (status === "idle") {
@@ -55,18 +51,13 @@ export function AppShell({ children }: { children: ReactNode }) {
 
           <div className="ml-auto flex shrink-0 items-center gap-6">
             {NAV.map((item) => (
-              <span key={item.href} className="contents">
-                {/* 마이 왼쪽에 관심종목 버튼(홈에서 종목 선택 시에만) */}
-                {item.href === "/mypage" && pathname === "/" && selectedCode && (
-                  <WatchlistButton key={selectedCode} stockCode={selectedCode} />
-                )}
-                <Link
-                  href={item.href}
-                  className="text-[14.5px] font-medium text-navy-soft hover:text-navy"
-                >
-                  {item.label}
-                </Link>
-              </span>
+              <Link
+                key={item.label}
+                href={item.href}
+                className="text-[14.5px] font-medium text-navy-soft hover:text-navy"
+              >
+                {item.label}
+              </Link>
             ))}
             {user ? (
               <button

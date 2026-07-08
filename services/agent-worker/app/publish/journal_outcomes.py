@@ -232,3 +232,52 @@ async def sync_journal_chart_prices(backend_conn: Any, source_conn: Any) -> Char
             stats.errors.append(f"stock={stock_id}: {exc}")
             logger.warning("chart price sync failed for stock=%s: %s", stock_id, exc)
     return stats
+
+
+# ---------------------------------------------------------------------------
+# 종목별 일봉 종가 시리즈 동기화 (stock_price_daily) — 공개 홈 차트
+# ---------------------------------------------------------------------------
+
+# 홈 차트 조회 창(기본 90일) + 여유. 이 구간의 종가만 백엔드로 동기화한다.
+_PRICE_LOOKBACK_DAYS = 120
+
+# 분석 종목 전체 = 백엔드 stocks 발행 사본의 활성 종목(api.stocks 와 같은 유니버스).
+# 저널 유무와 무관하다는 점이 sync_journal_chart_prices 와의 차이.
+_ACTIVE_STOCKS_SQL = """
+SELECT id
+FROM stocks
+WHERE is_active = TRUE
+"""
+
+_PRICE_UPSERT_SQL = """
+INSERT INTO stock_price_daily (stock_id, trade_date, close_price)
+VALUES ($1, $2, $3)
+ON CONFLICT (stock_id, trade_date) DO UPDATE SET
+    close_price = EXCLUDED.close_price,
+    updated_at = NOW()
+"""
+
+
+async def sync_stock_prices(backend_conn: Any, source_conn: Any) -> ChartSyncStats:
+    """분석 종목 전체의 최근 종가 시리즈를 백엔드로 멱등 upsert 한다.
+
+    구간 = 오늘(KST) - 120일 ~ 최신. 종목×거래일 1행. 수집 DB(ohlcv_data)에서 읽어
+    백엔드 stock_price_daily 로 발행한다(백엔드는 수집 DB 에 접속하지 않음).
+    """
+    stats = ChartSyncStats()
+    start = datetime.now(_KST).date() - timedelta(days=_PRICE_LOOKBACK_DAYS)
+    for row in await backend_conn.fetch(_ACTIVE_STOCKS_SQL):
+        stock_id = int(row["id"])
+        try:
+            bars = await source_conn.fetch(_SERIES_SQL, stock_id, start)
+            for bar in bars:
+                await backend_conn.execute(
+                    _PRICE_UPSERT_SQL, stock_id, bar["trade_date"], bar["close"]
+                )
+            stats.stocks += 1
+            stats.rows += len(bars)
+        except Exception as exc:  # noqa: BLE001 - 종목 1개 실패가 전체를 막지 않음
+            stats.failed += 1
+            stats.errors.append(f"stock={stock_id}: {exc}")
+            logger.warning("stock price sync failed for stock=%s: %s", stock_id, exc)
+    return stats
