@@ -90,7 +90,8 @@ export const useHomeStore = create<HomeState>((set, get) => ({
       })
       .catch((error) => {
         if (token !== selectToken) return;
-        set({ stockNewsLoading: false, stockNewsError: (error as Error).message });
+        // 이전 종목 뉴스가 남아 오해를 주지 않도록 비운다(가격 catch 와 대칭).
+        set({ stockNews: null, stockNewsLoading: false, stockNewsError: (error as Error).message });
       });
     void getStockPrices(code)
       .then((data) => {

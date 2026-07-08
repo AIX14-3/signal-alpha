@@ -27,9 +27,11 @@ news_router = APIRouter(prefix="/api/news", tags=["news"])
 NEWS_SUMMARY_RECENT_HOURS_MIN = 1
 NEWS_SUMMARY_RECENT_HOURS_MAX = 720
 
-# 가격 차트 조회 창 한도: 7일 ~ 365일(과도한 범위 방어). 기본 90일.
+# 가격 차트 조회 창 한도: 7일 ~ 120일, 기본 90일.
+# 상한(120)은 발행 러너 sync_stock_prices 의 동기화 창(_PRICE_LOOKBACK_DAYS=120)과 맞춘다 —
+# 더 크게 허용하면 아직 발행되지 않은 과거 구간이 조용히 잘린 series 로 나간다.
 PRICE_DAYS_MIN = 7
-PRICE_DAYS_MAX = 365
+PRICE_DAYS_MAX = 120
 PRICE_DAYS_DEFAULT = 90
 _KST = ZoneInfo("Asia/Seoul")
 

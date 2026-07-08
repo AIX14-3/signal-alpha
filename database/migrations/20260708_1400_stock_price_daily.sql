@@ -12,7 +12,7 @@
 --   전체를 커버한다. FK 는 backend 의 stocks 발행 사본을 참조.
 -- ============================================================================
 
-CREATE TABLE IF NOT EXISTS public.stock_price_daily (
+CREATE TABLE public.stock_price_daily (
     stock_id    bigint NOT NULL REFERENCES public.stocks(id),
     trade_date  date NOT NULL,
     close_price numeric(12,2) NOT NULL,

@@ -1,8 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { StockPriceChart } from "@/components/StockPriceChart";
+import { WatchlistButton } from "@/components/WatchlistButton";
+import type { Stock } from "@/lib/apiClient";
 import { directionLabel, safeHttpUrl, SOURCE_META, SOURCE_ORDER } from "@/lib/format";
 import { useHomeStore } from "@/stores/homeStore";
 import { useReportStore } from "@/stores/reportStore";
@@ -11,9 +13,25 @@ import { useReportStore } from "@/stores/reportStore";
 // 실시간 차트 · 분석 점수 · 분석 내용 · 관련 뉴스를 보여준다(FR-5/6/7).
 export function LiveAnalysisSection() {
   const chips = useHomeStore((s) => s.chips);
+  const feed = useHomeStore((s) => s.feed);
   const loading = useHomeStore((s) => s.loading);
   const selectedCode = useHomeStore((s) => s.selectedCode);
   const toggle = useHomeStore((s) => s.toggle);
+
+  // 좌 피드/관심종목에서 고른 종목이 상위 30 분석 리스트에 없을 수 있다(피드=최근뉴스, 리스트=listStocks).
+  // 그 경우 선택 종목을 맨 위에 합성 행으로 얹어 아코디언이 반드시 열리도록 한다(뉴스에서 종목명 조회, 없으면 코드).
+  const list = useMemo<Stock[]>(() => {
+    if (!selectedCode || chips.some((c) => c.stock_code === selectedCode)) return chips;
+    const named = feed.find((n) => n.stock_code === selectedCode);
+    const synthetic: Stock = {
+      id: -1,
+      stock_code: selectedCode,
+      stock_name: named?.stock_name ?? selectedCode,
+      market: null,
+      sector: null,
+    };
+    return [synthetic, ...chips];
+  }, [chips, feed, selectedCode]);
 
   return (
     <section data-section="live-analysis" className="glass-card overflow-hidden">
@@ -30,11 +48,11 @@ export function LiveAnalysisSection() {
             <li key={i} className="h-11 rounded-[10px] bg-surface-2" />
           ))}
         </ul>
-      ) : chips.length === 0 ? (
+      ) : list.length === 0 ? (
         <p className="p-8 text-center text-[13px] text-muted">분석 종목을 불러오는 중입니다.</p>
       ) : (
         <ul className="divide-y divide-line">
-          {chips.map((s) => {
+          {list.map((s) => {
             const open = selectedCode === s.stock_code;
             return (
               <li key={s.stock_code}>
@@ -90,6 +108,11 @@ function AnalysisDetail({ stockCode }: { stockCode: string }) {
 
   return (
     <div data-flow="analysis-detail" className="space-y-4 border-t border-line bg-surface-2/30 p-4">
+      {/* 관심종목 토글(WatchlistButton self-gating — 비로그인 시 토스트) */}
+      <div className="flex justify-end">
+        <WatchlistButton key={stockCode} stockCode={stockCode} />
+      </div>
+
       {/* 실시간 차트 */}
       <StockPriceChart series={series} loading={stockPricesLoading} />
 
