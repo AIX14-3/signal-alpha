@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict rdK4Y2vi0OLNfmFJdVTh8XZCymReE1XmK3H4iOjtPGEgsWfX5J1175WVzXF1zeW
+\restrict jlcysNZ0FMIr2Iv3D3UHEibLd9JQ1wVf512Whh7bWB9JCvY3ZCoTXdQ4q6Rea2d
 
 -- Dumped from database version 16.14 (Debian 16.14-1.pgdg12+1)
 -- Dumped by pg_dump version 16.14 (Debian 16.14-1.pgdg12+1)
@@ -453,6 +453,37 @@ CREATE VIEW api.stock_news AS
     published_at,
     collected_at
    FROM public.stock_news;
+
+
+--
+-- Name: stock_news_digest; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.stock_news_digest (
+    stock_id bigint NOT NULL,
+    ticker character varying(10) NOT NULL,
+    digest_text text NOT NULL,
+    model character varying(60) NOT NULL,
+    prompt_version character varying(40) NOT NULL,
+    article_count integer NOT NULL,
+    source_hash character varying(64) NOT NULL,
+    source_window_start timestamp with time zone,
+    source_window_end timestamp with time zone,
+    generated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: stock_news_digest; Type: VIEW; Schema: api; Owner: -
+--
+
+CREATE VIEW api.stock_news_digest AS
+ SELECT ticker AS stock_code,
+    digest_text,
+    model,
+    article_count,
+    generated_at
+   FROM public.stock_news_digest;
 
 
 --
@@ -4731,6 +4762,14 @@ ALTER TABLE ONLY public.source_documents
 
 
 --
+-- Name: stock_news_digest stock_news_digest_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.stock_news_digest
+    ADD CONSTRAINT stock_news_digest_pkey PRIMARY KEY (stock_id);
+
+
+--
 -- Name: stock_news stock_news_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6061,6 +6100,13 @@ CREATE INDEX idx_source_doc_stock ON public.source_documents USING btree (stock_
 
 
 --
+-- Name: idx_stock_news_digest_ticker; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_stock_news_digest_ticker ON public.stock_news_digest USING btree (ticker);
+
+
+--
 -- Name: idx_stock_news_stock_collected; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7211,5 +7257,5 @@ ALTER TABLE ONLY public.watchlists
 -- PostgreSQL database dump complete
 --
 
-\unrestrict rdK4Y2vi0OLNfmFJdVTh8XZCymReE1XmK3H4iOjtPGEgsWfX5J1175WVzXF1zeW
+\unrestrict jlcysNZ0FMIr2Iv3D3UHEibLd9JQ1wVf512Whh7bWB9JCvY3ZCoTXdQ4q6Rea2d
 

@@ -42,11 +42,19 @@ export type StockNewsItem = {
   published_at: string | null;
 };
 
-// 종목별 최신 뉴스 목록 + 건수. 워커 뉴스 데몬이 적재하며, 미수집 종목은 count=0.
+// 종목 뉴스 다이제스트(LLM 종합 한 줄). 워커가 요약하며, 미생성 종목은 null.
+export type StockNewsDigest = {
+  text: string | null;
+  model: string | null;
+  article_count: number;
+  generated_at: string | null;
+};
+
+// 종목별 최신 뉴스 목록 + 건수 + 다이제스트. 미수집 종목은 count=0, digest=null.
 export async function listStockNews(
   stockCode: string,
   limit = 20,
-): Promise<{ count: number; items: StockNewsItem[] }> {
+): Promise<{ count: number; items: StockNewsItem[]; digest: StockNewsDigest | null }> {
   return apiFetch(`/api/stocks/${encodeURIComponent(stockCode)}/news?limit=${limit}`, {
     auth: "none",
   });

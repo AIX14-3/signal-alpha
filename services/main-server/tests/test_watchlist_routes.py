@@ -74,6 +74,30 @@ class FakeConnection:
                 "published_at": None,
             },
         ]
+        # 종목별 뉴스 목록(list_by_ticker) + 다이제스트(get_digest_by_ticker).
+        self.stock_news_by_ticker = {
+            "005930": [
+                {
+                    "stock_code": "005930",
+                    "title": "삼성전자 HBM 수주",
+                    "summary": "요약",
+                    "url": "https://n.example/2",
+                    "press": None,
+                    "source": "NAVER_NEWS",
+                    "published_at": datetime(2026, 7, 7, 8, 0, tzinfo=UTC),
+                    "collected_at": datetime(2026, 7, 7, 9, 0, tzinfo=UTC),
+                }
+            ]
+        }
+        self.digest_by_ticker = {
+            "005930": {
+                "stock_code": "005930",
+                "digest_text": "HBM 신규 고객 확보 보도.",
+                "model": "claude-sonnet-5",
+                "article_count": 2,
+                "generated_at": datetime(2026, 7, 7, 9, 5, tzinfo=UTC),
+            }
+        }
         # summary 집계에 전달된 recent_hours 를 기록해 클램프 검증에 사용.
         self.last_recent_hours = None
 
@@ -81,6 +105,8 @@ class FakeConnection:
         if "FROM api.stock_news" in sql and "total_articles" in sql:
             self.last_recent_hours = args[0]
             return self.news_summary_row
+        if "FROM api.stock_news_digest" in sql:
+            return self.digest_by_ticker.get(args[0])
         if "FROM users" in sql and "WHERE id = $1" in sql:
             return self.users_by_id.get(args[0])
         if "FROM api.stocks" in sql and "WHERE ticker = $1" in sql:
@@ -129,6 +155,8 @@ class FakeConnection:
     async def fetch(self, sql, *args):
         if "FROM api.stock_news" in sql and "LEFT JOIN api.stocks" in sql:
             return self.recent_news_rows[: args[0]]
+        if "FROM api.stock_news" in sql and "WHERE stock_code = $1" in sql:
+            return self.stock_news_by_ticker.get(args[0], [])[: args[1]]
         if "ticker ILIKE" in sql:
             query = args[0].strip("%")
             return [
@@ -153,6 +181,8 @@ class FakeConnection:
         raise AssertionError(f"Unexpected fetch SQL: {sql}")
 
     async def fetchval(self, sql, *args):
+        if "COUNT(*)" in sql and "api.stock_news" in sql:
+            return len(self.stock_news_by_ticker.get(args[0], []))
         if "COUNT(*)" in sql:
             return sum(1 for row in self.watchlists if row["user_id"] == args[0])
         raise AssertionError(f"Unexpected fetchval SQL: {sql}")
@@ -218,6 +248,28 @@ class WatchlistRoutesTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         codes = {item["stock_code"] for item in response.json()["items"]}
         self.assertEqual(codes, {"005930", "000660"})
+
+    def test_stock_news_includes_digest_when_present(self):
+        # 공개 엔드포인트 — 목록/건수 + 종목 다이제스트(있으면).
+        response = self.client.get("/api/stocks/005930/news")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["count"], 1)
+        self.assertEqual(body["items"][0]["title"], "삼성전자 HBM 수주")
+        self.assertIsNotNone(body["digest"])
+        self.assertEqual(body["digest"]["text"], "HBM 신규 고객 확보 보도.")
+        self.assertEqual(body["digest"]["model"], "claude-sonnet-5")
+        self.assertEqual(body["digest"]["article_count"], 2)
+
+    def test_stock_news_digest_null_when_absent(self):
+        # digest 없는 종목 — 계약 유지, digest=null(프론트는 블록 생략).
+        response = self.client.get("/api/stocks/000660/news")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["count"], 0)
+        self.assertIsNone(body["digest"])
 
     def test_news_summary_returns_global_counts_publicly(self):
         # 공개 엔드포인트 — 토큰 없이 200, 전역 집계 필드 반환.
