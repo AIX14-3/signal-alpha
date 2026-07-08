@@ -1,17 +1,15 @@
 "use client";
 
-import { usePathname, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { searchStocks, type Stock } from "@/lib/apiClient";
-import { useHomeStore } from "@/stores/homeStore";
 import { useToastStore } from "@/stores/toastStore";
 
-// 상단 헤더 전역 종목 검색 — 홈 좌 pane 에서 헤더로 승격(#799 후속).
-// 홈(2-pane)에서는 우 pane 선택(homeStore.select)으로 연결하고,
-// 그 외 페이지에서는 종목 리포트(/report/{code})로 이동한다.
+// 상단 헤더 전역 종목 검색. 검색은 "그 종목을 보러 간다"는 명시적 의도이므로 위치와 무관하게
+// 종목 리포트(/report/{code})로 이동한다(검색→리포트 흐름, web-frontend-spec 페이지 인벤토리).
+// (홈 리스트를 훑다 클릭하는 browse 는 LiveAnalysisSection 인라인 아코디언이 담당 — 의도 분리.)
 export function HeaderStockSearch() {
   const router = useRouter();
-  const pathname = usePathname();
   const showToast = useToastStore((s) => s.show);
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
@@ -28,8 +26,7 @@ export function HeaderStockSearch() {
       }
       const code = pickBest(data.items, clean).stock_code;
       setQuery("");
-      if (pathname === "/") void useHomeStore.getState().select(code);
-      else router.push(`/report/${code}`);
+      router.push(`/report/${code}`);
     } catch (e) {
       showToast((e as Error).message, "error");
     } finally {
