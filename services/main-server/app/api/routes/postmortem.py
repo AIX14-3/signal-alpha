@@ -8,13 +8,16 @@
 from __future__ import annotations
 
 import json
+import logging
 from decimal import Decimal
 from typing import Any
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from app.api.routes.auth import _subscription_active, get_current_user
+from app.core.config import Settings, get_settings
 from app.core.database import get_database_pool
 from app.postmortem.analysis import (
     Fill,
@@ -33,8 +36,44 @@ from signal_alpha_data_access.backend import (
 from signal_alpha_data_access.crypto import CredentialCryptoError
 
 router = APIRouter(prefix="/api/postmortem", tags=["postmortem"])
+logger = logging.getLogger(__name__)
 
 _SUPPORTED_BROKERS = {"kiwoom", "toss"}
+
+
+async def _postmortem_narrative(
+    settings: Settings, payload: dict[str, Any]
+) -> dict[str, Any] | None:
+    """워커 internal API 에 온디맨드로 복기 서술(FR-7)을 요청한다.
+
+    LLM 판단은 워커가 수행하고(narrate + reject_advice), 여기선 결과만 붙인다. 미구성/미연결/비활성/
+    권유차단은 모두 조용히 None — 부검 자체는 내러티브 없이도 성립하므로 요청을 실패시키지 않는다.
+    """
+    # 명시적으로 켠 배포에서만 호출(기본 off) — 워커 미배선 환경의 헛호출/로그노이즈 방지.
+    if not getattr(settings, "postmortem_narrative_enabled", False):
+        return None
+    base_url = str(getattr(settings, "agent_worker_internal_base_url", "") or "").rstrip("/")
+    token = (getattr(settings, "internal_api_token", "") or "").strip()
+    if not base_url or not token:
+        return None
+    try:
+        # 선택적 서술이라 요청 경로를 오래 막지 않도록 타임아웃을 짧게.
+        async with httpx.AsyncClient(timeout=12.0) as client:
+            response = await client.post(
+                f"{base_url}/internal/postmortem/narrate",
+                headers={"X-Internal-Token": token},
+                json=payload,
+            )
+        if response.status_code >= 400 or not response.content:
+            return None
+        body = response.json()
+        if not isinstance(body, dict):
+            return None
+        narrative = body.get("narrative")
+        return narrative if isinstance(narrative, dict) else None
+    except (httpx.RequestError, ValueError) as exc:
+        logger.warning("postmortem narrative unavailable: %s", exc)
+        return None
 
 
 class BrokerConnectRequest(BaseModel):
@@ -267,6 +306,7 @@ async def trade_postmortem(
     stock_code: str,
     current_user: dict[str, Any] = Depends(get_current_user),
     pool: Any = Depends(get_database_pool),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
     ticker = stock_code.strip()
     async with pool.acquire() as connection:
@@ -292,18 +332,32 @@ async def trade_postmortem(
         window = signals_in_window(signals, trip.opened_at, trip.closed_at)
         classification = classify_roundtrip(trip, pva, window)
         round_trips.append(_roundtrip_response(trip, pva, classification, window))
-    return {
+    result = {
         "stock_code": ticker,
         "stock_name": stock.get("name"),
         "has_plan": plan is not None,
         "round_trips": round_trips,
+        "narrative": None,
     }
+    # FR-7: 온디맨드 복기 서술(워커 LLM). 부검할 라운드트립이 있을 때만 호출(빈 결과엔 헛호출 안 함).
+    if round_trips:
+        result["narrative"] = await _postmortem_narrative(
+            settings,
+            {
+                "scope": "trade",
+                "stock": {"stock_code": ticker, "stock_name": stock.get("name")},
+                "has_plan": plan is not None,
+                "round_trips": round_trips,
+            },
+        )
+    return result
 
 
 @router.get("/patterns")
 async def pattern_postmortem(
     current_user: dict[str, Any] = Depends(get_current_user),
     pool: Any = Depends(get_database_pool),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
     async with pool.acquire() as connection:
         await _require_subscription(connection, int(current_user["id"]))
@@ -317,9 +371,10 @@ async def pattern_postmortem(
     trips = [t for ticker, fills in by_ticker.items() for t in build_round_trips(ticker, fills)]
     patterns = analyze_patterns(trips)
     if patterns.get("sample", 0) < _MIN_PATTERN_SAMPLE:
-        # 소표본은 훈수 대신 억제 — 몇 건 더 필요한지 안내.
+        # 소표본은 훈수 대신 억제 — 몇 건 더 필요한지 안내(내러티브도 생성하지 않음).
         return {"sample": patterns.get("sample", 0), "suppressed": True, "min_sample": _MIN_PATTERN_SAMPLE}
-    return {"suppressed": False, **patterns}
+    narrative = await _postmortem_narrative(settings, {"scope": "patterns", "patterns": patterns})
+    return {"suppressed": False, "narrative": narrative, **patterns}
 
 
 def _fill_from_row(row: dict[str, Any]) -> Fill:

@@ -133,11 +133,19 @@ export type RoundTrip = {
   observed_signals: ObservedSignal[];
 };
 
+// FR-7: 워커 LLM 복기 서술(사후확신 없는 중립 요약). 미구성/비활성이면 null.
+export type PostmortemNarrative = {
+  summary: string;
+  key_facts: string[];
+  model: string | null;
+};
+
 export type TradePostmortem = {
   stock_code: string;
   stock_name: string | null;
   has_plan: boolean;
   round_trips: RoundTrip[];
+  narrative: PostmortemNarrative | null;
 };
 
 export function getTradePostmortem(stockCode: string): Promise<TradePostmortem> {
@@ -155,6 +163,7 @@ export type PatternSummary = {
   avg_hold_win_days?: number | null;
   avg_hold_loss_days?: number | null;
   disposition_effect?: boolean;
+  narrative?: PostmortemNarrative | null;
 };
 
 export function getPatterns(): Promise<PatternSummary> {
