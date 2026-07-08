@@ -193,6 +193,13 @@ function CommentItem({
           count={comment.like_count}
           active={comment.my_reactions.like}
         />
+        <ReactionButton
+          target="comment"
+          targetId={comment.id}
+          type="bookmark"
+          count={comment.bookmark_count}
+          active={comment.my_reactions.bookmark}
+        />
         {onReply && (
           <button
             type="button"

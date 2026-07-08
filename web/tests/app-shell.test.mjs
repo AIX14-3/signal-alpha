@@ -95,11 +95,26 @@ test("community detail exposes bookmark and active reaction state", async () => 
   assert.match(reactionButton, /result\.active/);
   assert.match(reactionButton, /result\.bookmark_count/);
   assert.match(commentList, /comment\.my_reactions\.like/);
+  assert.match(commentList, /comment\.my_reactions\.bookmark/);
+  assert.match(commentList, /comment\.bookmark_count/);
+  assert.match(commentList, /type="bookmark"/);
   assert.match(commentList, /nextCursor/);
   assert.match(commentList, /loadMore/);
   assert.match(commentList, /listComments\(postId, \{ limit: PAGE, cursor/);
   assert.match(page, /onCountChange/);
   assert.match(commentList, /onCountChange/);
+});
+
+test("community copy uses data direction and evidence framing", async () => {
+  const communityPage = await readFile(new URL("../src/app/community/page.tsx", import.meta.url), "utf8");
+  const mypage = await readFile(new URL("../src/app/mypage/page.tsx", import.meta.url), "utf8");
+
+  assert.match(communityPage, /데이터 방향성/);
+  assert.match(communityPage, /근거/);
+  assert.doesNotMatch(communityPage, /투자 판단/);
+  assert.match(mypage, /데이터 방향성 기록/);
+  assert.match(mypage, /데이터 방향성과 근거/);
+  assert.doesNotMatch(mypage, /나의 판단|투자 추이|판단 성향|판단 후/);
 });
 
 test("admin UI exposes split schedule rows and schedule run history", async () => {
