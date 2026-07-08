@@ -55,17 +55,21 @@ class DartAnalysisAgent:
             llm_model = evidence.llm_model
             llm_error = evidence.llm_error
 
+        # B-lite: 숫자는 결정론(build_dart_analysis_result 의 임팩트 가중 순극성). 방향 이벤트가
+        # 있으면 data_status="ok"(블렌드 산입)·score/direction 실값, 없으면 no_signal 폴백. LLM 은
+        # 여전히 근거만(llm_evidence, verdict 미채택).
+        data_status = str(method_detail.get("data_status") or "no_signal")
         return SourceAgentOutput(
             source="DART",
             stock_code=input_data.stock_code,
-            direction=result.direction,  # "unknown" — 판정 없음. LLM 은 근거만.
-            score=result.score,  # 0.0 — DART 는 숫자 점수 채널이 아님.
+            direction=result.direction,
+            score=result.score,
             summary=result.summary,
             risk_flags=result.risk_flags,
-            method_detail=method_detail,  # data_status="no_signal" (+ 옵션 llm_evidence)
+            method_detail=method_detail,  # data_status(ok/no_signal) + 옵션 llm_evidence
             needs_review=needs_review,
-            data_status="no_signal",
-            analysis_source="features",  # 숫자는 피처(결정론). llm_model 은 근거 기여 provenance 만.
+            data_status=data_status,
+            analysis_source="rules" if data_status == "ok" else "features",
             llm_model=llm_model,
             prompt_ver=FEATURE_PROMPT_VERSION,
             llm_error=llm_error,
