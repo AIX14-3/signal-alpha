@@ -1,7 +1,8 @@
-"""PriceAnalyzeTaskHandler: 주가 분석 후 SRC_INFER + AGGREGATE_SIGNAL 둘 다 인큐.
+"""PriceAnalyzeTaskHandler: 주가 분석 후 AGGREGATE_SIGNAL 인큐.
 
 주가는 평일 매일 분석되므로 발행 하한선 — 대체데이터가 그날 없는 단독 종목도 발행되도록
-PRICE 가 AGGREGATE_SIGNAL 을 직접 인큐한다(fan-in). 메타러너 SRC 라인도 함께 트리거한다.
+PRICE 가 AGGREGATE_SIGNAL 을 직접 인큐한다(fan-in). 주가는 SCORING_SOURCES 라 점수에 직접
+산입되므로 메타러너 SRC 라인(SRC_INFER→RETURN_COMBINE)은 폐기됐다 — 인큐하지 않는다.
 """
 
 import sys
@@ -60,7 +61,7 @@ def _build_handler():
 
 
 class PriceAnalyzeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
-    async def test_price_enqueues_both_src_infer_and_aggregate(self):
+    async def test_price_enqueues_aggregate_not_src_infer(self):
         handler = _build_handler()
 
         result = await handler(
@@ -71,9 +72,10 @@ class PriceAnalyzeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         )
 
         task_types = [call["task_type"] for call in handler._queue.calls]
-        self.assertIn(SRC_INFER, task_types)
+        # 메타러너 SRC 라인 폐기 — SRC_INFER 는 더 이상 인큐되지 않는다.
+        self.assertNotIn(SRC_INFER, task_types)
         self.assertIn(AGGREGATE_SIGNAL, task_types)
-        self.assertIsNotNone(result["src_infer_task_id"])
+        self.assertNotIn("src_infer_task_id", result)
         self.assertIsNotNone(result["aggregate_task_id"])
 
         # AGGREGATE 는 (stock_id, signal_date) fan-in 으로 모든 소스를 모은다.

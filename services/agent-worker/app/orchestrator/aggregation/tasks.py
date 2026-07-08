@@ -8,14 +8,12 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
-from app.ml.meta_learner import return_to_score_100
 from app.orchestrator.aggregation.detect import detect_disagreement
 from app.orchestrator.aggregation.judge import build_memory_reference, judge_with_memory
 from app.orchestrator.aggregation.requery import MAX_REQUERY_ROUNDS
 from app.orchestrator.queue.task_types import REQUERY_SOURCE, SYNTHESIZE
 from signal_alpha_data_access.repositories import (
     AnalysisRepository,
-    MetaSignalRepository,
     NormalizationRepository,
     ProcessingQueueRepository,
 )
@@ -23,15 +21,14 @@ from signal_alpha_data_access.repositories import (
 
 AGGREGATE_RUN_KEY = "AGGREGATED"
 AGGREGATE_VERSION = "final-agg-v1"
-# 통합 SRC 예측(메타러너 return 채널)의 meta_signals run_key. RETURN_COMBINE 이 적재한다.
-SRC_RUN_KEY = "SRC"
 # 대체데이터(HIRING/PATENT/DATALAB)는 서로 다른 신호라 묶지 않고 **각자 독립 소스**로 점수에 넣는다
-# (ALTERNATIVE 로 collapse 안 함). PRICE/REPORT 는 근거 소스로 수용하되 점수 산정에는 넣지 않는다.
+# (ALTERNATIVE 로 collapse 안 함). PRICE/REPORT 도 각자 점수를 내므로 산입 소스다.
 SOURCE_ORDER = ("DART", "PRICE", "REPORT", "HIRING", "PATENT", "DATALAB")
-# 점수에 산입되는 소스. REPORT 는 목표주가 리비전/upside(결정론)로 점수를 내므로 편입한다
-# (data_status="ok" 일 때만; 밸류에이션 신호 없으면 no_signal 로 자연 제외). DART 는 여전히
-# feature-only(no_signal)라 집합엔 있으나 점수 평균에선 빠진다. PRICE 는 근거 전용(미편입).
-SCORING_SOURCES = {"DART", "REPORT", "HIRING", "PATENT", "DATALAB"}
+# 점수에 산입되는 소스(6-소스 통합 점수). PRICE 는 평일 매일 갱신되는 규칙기반 기술분석 점수라 산입해
+# **발행 하한선**을 만든다(주가가 SCORING 이면 대체데이터가 전부 no_signal 이어도 중립 50 이 안 됨).
+# REPORT 는 목표주가 리비전/upside(결정론). DART 는 여전히 feature-only(no_signal)라 집합엔 있으나
+# 점수 평균에선 빠진다. no_signal/failed 소스는 `_aggregate` 에서 등가중 평균 전에 제외된다.
+SCORING_SOURCES = {"PRICE", "DART", "REPORT", "HIRING", "PATENT", "DATALAB"}
 VALID_DIRECTIONS = {"positive", "negative", "neutral", "mixed"}
 SOURCE_ALIASES = {
     "DART": "DART",
@@ -79,7 +76,6 @@ class AggregateSignalTaskHandler:
         self._analysis_repository = AnalysisRepository(connection)
         self._normalization_repository = NormalizationRepository(connection)
         self._queue_repository = ProcessingQueueRepository(connection)
-        self._meta_repository = MetaSignalRepository(connection)
         # Episodic memory (Wave-3 Stage 2) — optional/degradable. When unset the
         # aggregator behaves exactly as before (no recall/write). Built by the
         # queue handler factory when GEMINI_API_KEY is present.
@@ -179,18 +175,14 @@ class AggregateSignalTaskHandler:
 
         warning = "; ".join(aggregate["risk_flags"]) or None
 
-        # 발행 헤드라인 = 통합 SRC 예측(메타러너 return 채널) 우선, 없으면 결정론 블렌드 폴백.
-        # RETURN_COMBINE 이 meta_signals(run_key="SRC")에 적재한 통합 예측 수익률을 0-100 점수로
-        # 변환해 헤드라인으로 쓴다. SRC 가 아직 없거나 stale 이면(아티팩트 전무·RETURN_COMBINE
-        # 미완/실패) **평평한 50 대신** 이미 계산된 결정론 SCORING_SOURCES 블렌드를 헤드라인으로
-        # 폴백한다(_headline). scoring 소스조차 없을 때만 중립(50). SRC 가 나중에 채워지면 AGGREGATE
-        # 재실행이 헤드라인을 학습 결합으로 갱신한다(eventual consistency — meta_signals 는
-        # is_current 게이트가 없어 항상 읽힌다).
-        src_row = await self._meta_repository.latest_for_stock(stock_id=stock_id, run_key=SRC_RUN_KEY)
-        headline_signal, headline_score, headline_method = _headline(src_row, signal_date, aggregate)
+        # 발행 헤드라인 = 6-소스 통합 점수(결정론 등가중 블렌드). 메타러너 학습형 융합(SRC/return
+        # 채널)은 폐기됐다 — scoring 소스가 ≥1 이면 `_aggregate` 가 계산한 결정론 블렌드
+        # (signal/final_score)를 그대로 헤드라인으로 쓰고, scoring 소스조차 없을 때만 중립(50).
+        # 주가가 SCORING_SOURCES 라 평일 매일 갱신되므로 발행이 중립 50 으로 비지 않는다.
+        headline_signal, headline_score, headline_method = _headline(signal_date, aggregate)
         # 점수 산출방식 정직 라벨(표시 전용) — _score_breakdown_with_meta 가 _meta 로 노출한다.
         aggregate["headline_method"] = headline_method
-        aggregate["scoring_method"] = _scoring_method(src_row, headline_method)
+        aggregate["scoring_method"] = _scoring_method(headline_method)
 
         analysis_result = await self._analysis_repository.upsert_analysis_result(
             stock_id=stock_id,
@@ -621,8 +613,8 @@ def _score_breakdown(results: list[NormalizedSourceResult]) -> dict[str, dict[st
                 "analysis_result_id": None,
                 "agent_result_id": None,
                 "risk_flags": ["missing_source"],
-                # 이 소스가 헤드라인 점수 산정에 실제 반영되는지. 결측/근거전용(no_signal)·PRICE·
-                # REPORT·DART(feature-only)는 False → UI/LLM 이 방향 드라이버로 오인하지 않게 한다.
+                # 이 소스가 헤드라인 점수 산정에 실제 반영되는지. 결측 소스는 항상 False →
+                # UI/LLM 이 방향 드라이버로 오인하지 않게 한다.
                 "contributes_to_score": False,
             }
             continue
@@ -909,45 +901,26 @@ def _to_100(score: float) -> float:
     return round(max(0.0, min(100.0, (score + 1.0) * 50.0)), 2)
 
 
-def _headline(src_row: Any, signal_date: date, aggregate: dict[str, Any]) -> tuple[str, float, str]:
-    """발행 헤드라인(signal, 0-100 score, method)을 3단 폴백으로 결정한다.
+def _headline(signal_date: date, aggregate: dict[str, Any]) -> tuple[str, float, str]:
+    """발행 헤드라인(signal, 0-100 score, method)을 6-소스 통합 점수로 결정한다.
 
-    1. **src_meta** — 해당 ``signal_date`` 의 통합 SRC 예측(메타러너 return 채널)이 있으면 그 예측
-       수익률을 tanh 로 0-100 점수에 매핑(50=중립, 상승↑/하락↓). 학습 결합 결과.
-    2. **deterministic_blend** — SRC 가 없거나(아티팩트 전무·RETURN_COMBINE 미완/실패) stale 이지만
-       점수에 기여한 scoring 소스가 ≥1 이면, **평평한 50 대신** 이미 계산된 결정론 블렌드
-       (``aggregate['signal']``/``['final_score']``)를 헤드라인으로 쓴다. → 학습 artifact 없이도,
-       RETURN_COMBINE 재실행이 오지 않아도 실제 방향/점수가 발행된다(neutral-50 박멸).
-    3. **neutral_empty** — scoring 소스조차 없으면(근거 부족) 그때만 중립(50).
+    1. **deterministic_blend** — 점수에 기여한 scoring 소스(SCORING_SOURCES ∩ 비 no_signal/failed)가
+       ≥1 이면, ``_aggregate`` 가 계산한 결정론 등가중 블렌드(``aggregate['signal']``/``['final_score']``)
+       를 그대로 헤드라인으로 쓴다. 주가가 SCORING_SOURCES 라 평일 매일 갱신되므로 사실상 항상 이 경로다.
+    2. **neutral_empty** — scoring 소스조차 없으면(근거 부족) 그때만 중립(50).
 
-    SRC 가 나중에 채워지면 AGGREGATE 재실행이 헤드라인을 (1)로 갱신한다(eventual consistency).
+    메타러너 학습형 융합(SRC/return 채널)은 폐기됐다 — 학습 아티팩트에 의존하지 않는 투명한
+    결정론 집계만 남긴다(예측결합 퍼즐·1/N, 소표본 강건).
     """
-    if src_row:
-        row = dict(src_row)
-        asof = row.get("asof_date")
-        final_score = row.get("final_score")
-        if asof is not None and final_score is not None and _to_date(asof) == signal_date:
-            return (
-                _src_signal(row.get("direction")),
-                return_to_score_100(_number(final_score)),
-                "src_meta",
-            )
     if aggregate.get("scoring_count", 0) > 0:
         return aggregate["signal"], aggregate["final_score"], "deterministic_blend"
     return "neutral", 50.0, "neutral_empty"
 
 
-def _scoring_method(src_row: Any, headline_method: str) -> str:
-    """점수 산출방식 라벨. 학습 채널(src_meta)이면 메타러너 method(linear_stacking/equal_fallback),
-    아니면 headline_method(deterministic_blend/neutral_empty)와 동일."""
-    if headline_method == "src_meta" and src_row:
-        return str(dict(src_row).get("method") or "unknown")
+def _scoring_method(headline_method: str) -> str:
+    """점수 산출방식 라벨. 결정론 통합만 남았으므로 headline_method
+    (deterministic_blend/neutral_empty)와 동일하다."""
     return headline_method
-
-
-def _src_signal(direction: Any) -> str:
-    text = str(direction or "neutral").strip().lower()
-    return text if text in {"positive", "negative", "neutral"} else "neutral"
 
 
 def _dedupe(values: list[str]) -> list[str]:

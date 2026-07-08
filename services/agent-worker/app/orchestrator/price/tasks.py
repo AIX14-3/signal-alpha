@@ -21,7 +21,6 @@ from app.agents.base import SourceAgentInput
 from app.agents.price import PRICE_PROMPT_VERSION, build_price_agent
 from app.collectors.price.ohlcv_reader import OhlcvReader
 from app.orchestrator.queue.context import enqueue_aggregate
-from app.orchestrator.queue.task_types import SRC_INFER
 from signal_alpha_data_access.repositories import (
     AnalysisRepository,
     MarketDataRepository,
@@ -102,18 +101,9 @@ class PriceAnalyzeTaskHandler:
             evidence_quality=100 if result.data_status == "ok" else 0,
             prompt_ver=PRICE_VERSION,
         )
-        # 메타러너 SRC 라인 트리거(C안): 주가 BASE 앵커 ⊕ 대체데이터 → 소스별 7예측률.
-        # 주가는 매 종목마다 분석되므로 여기서 per-stock 1회 SRC_INFER 를 인큐한다. SRC_INFER 가
-        # base 모델로 추론(아티팩트 있는 소스만, 현재 src_price) → RETURN_COMBINE → meta_signals/
-        # final_signals.source_predictions. 아티팩트 전무면 예측 None 으로 안전 no-op(점수 불변).
+        # 주가는 SCORING_SOURCES 라 점수에 직접 산입된다(6-소스 통합 점수). 메타러너 SRC 라인
+        # (SRC_INFER→RETURN_COMBINE→7예측률)은 폐기됐다 — 여기서 인큐하지 않는다.
         priority = str(task_context.get("priority") or "batch")
-        src_infer_task_id = await self._queue.enqueue(
-            stock_id=stock_id,
-            task_type=SRC_INFER,
-            priority=priority,
-            task_context={"stock_code": stock_code, "as_of": analysis_date.isoformat()},
-            dedupe=True,
-        )
         # 주가는 평일 매일 분석되므로 = 발행 하한선. 대체데이터가 그날 없는 단독 종목도 발행되도록
         # 여기서 AGGREGATE_SIGNAL 을 인큐한다(fan-in: (stock_id, signal_date)로 모든 소스를 모음).
         # 대체데이터가 같은 날 AGGREGATE 를 인큐해도 dedupe 로 한 번만 집계된다.
@@ -132,7 +122,6 @@ class PriceAnalyzeTaskHandler:
             "direction": result.direction,
             "score": result.score,
             "data_status": result.data_status,
-            "src_infer_task_id": src_infer_task_id,
             "aggregate_task_id": aggregate_task_id,
         }
 

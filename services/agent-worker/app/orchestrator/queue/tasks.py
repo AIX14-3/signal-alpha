@@ -124,9 +124,7 @@ DEFAULT_CYCLE_PLAN: dict[str, int] = {
     "ANALYZE_PATENT": 20,
     # PRICE — 빠름(DB만 읽음), 큰 캡
     "analyze_price": 50,
-    # ML/메타/집계/발행 (가벼움)
-    "src_infer": 20,
-    "return_combine": 20,
+    # 집계/발행 (가벼움). 메타러너 융합(src_infer/return_combine)은 폐기.
     # 조건부 되묻기(오케스트레이터) — AGGREGATE 앞에 둬 같은 사이클에서 재분석→재종합.
     # 이 키가 없으면 라이브 데몬(plan 기반)이 requery task를 영영 claim 못 해 기능이 죽는다.
     "requery_source": 20,
