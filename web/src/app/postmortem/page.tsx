@@ -17,11 +17,12 @@ export default function PostmortemPage() {
   const status = useAuthStore((s) => s.status);
   const subscribed = user?.subscription_active === true;
 
-  const store = usePostmortemStore();
+  const loadOverview = usePostmortemStore((s) => s.loadOverview);
+  const error = usePostmortemStore((s) => s.error);
 
   useEffect(() => {
-    if (subscribed) void store.loadOverview();
-  }, [subscribed, store.loadOverview]);
+    if (subscribed) void loadOverview();
+  }, [subscribed, loadOverview]);
 
   if (status !== "authenticated" || !user) {
     return (
@@ -59,7 +60,7 @@ export default function PostmortemPage() {
         </p>
       </header>
 
-      {store.error ? <p className="text-[13.5px] text-red">{store.error}</p> : null}
+      {error ? <p className="text-[13.5px] text-red">{error}</p> : null}
 
       <BrokerSection />
       <PlanSection />
@@ -71,7 +72,9 @@ export default function PostmortemPage() {
 
 // ---- 매수 계획(선택) ----------------------------------------------------
 function PlanSection() {
-  const { plans, savePlan, removePlan } = usePostmortemStore();
+  const plans = usePostmortemStore((s) => s.plans);
+  const savePlan = usePostmortemStore((s) => s.savePlan);
+  const removePlan = usePostmortemStore((s) => s.removePlan);
   const [code, setCode] = useState("");
   const [thesis, setThesis] = useState("");
   const [target, setTarget] = useState("");
@@ -150,7 +153,11 @@ function PlanSection() {
 
 // ---- 브로커 연동 --------------------------------------------------------
 function BrokerSection() {
-  const { brokers, syncMessage, connect, disconnect, sync } = usePostmortemStore();
+  const brokers = usePostmortemStore((s) => s.brokers);
+  const syncMessage = usePostmortemStore((s) => s.syncMessage);
+  const connect = usePostmortemStore((s) => s.connect);
+  const disconnect = usePostmortemStore((s) => s.disconnect);
+  const sync = usePostmortemStore((s) => s.sync);
   const [open, setOpen] = useState(false);
 
   return (
@@ -285,7 +292,10 @@ function BrokerConnectForm({
 
 // ---- 단건 부검(종목 조회) ----------------------------------------------
 function TradeLookupSection() {
-  const { trade, loading, loadTrade, clearTrade } = usePostmortemStore();
+  const trade = usePostmortemStore((s) => s.trade);
+  const loading = usePostmortemStore((s) => s.loading);
+  const loadTrade = usePostmortemStore((s) => s.loadTrade);
+  const clearTrade = usePostmortemStore((s) => s.clearTrade);
   const [code, setCode] = useState("");
 
   return (
