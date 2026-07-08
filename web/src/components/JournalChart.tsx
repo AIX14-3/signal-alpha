@@ -86,8 +86,6 @@ export function JournalChartPanel({ journal }: { journal: Journal }) {
         본 차트는 매수·매도 추천이 아니라 판단 복기를 위한 기록입니다.
       </p>
 
-      <RetrospectiveBlock journal={journal} />
-
       <details className="mt-2 text-[12px] text-muted">
         <summary className="cursor-pointer select-none">데이터 표 보기</summary>
         <div className="mt-1 max-h-40 overflow-y-auto">
@@ -113,19 +111,69 @@ export function JournalChartPanel({ journal }: { journal: Journal }) {
   );
 }
 
-/** 회고(결과 확인 후 복기) — outcome 이 확정된 저널에만 작성 가능(서버도 게이트). */
-function RetrospectiveBlock({ journal }: { journal: Journal }) {
+// 회고 경량 구조 — 계획 대비 결과 분류(중립 표현, 성과 판정 아님).
+export const RETRO_OUTCOMES: { key: string; label: string; tone: string }[] = [
+  { key: "as_planned", label: "계획대로", tone: "text-navy-soft" },
+  { key: "unexpected_good", label: "예상보다 좋음", tone: "text-red" },
+  { key: "unexpected_bad", label: "예상보다 아쉬움", tone: "text-sky-deep" },
+];
+const RETRO_LABEL: Record<string, string> = Object.fromEntries(
+  RETRO_OUTCOMES.map((d) => [d.key, d.label]),
+);
+const RETRO_TONE: Record<string, string> = Object.fromEntries(
+  RETRO_OUTCOMES.map((d) => [d.key, d.tone]),
+);
+
+// 회고 작성 여부 — 경량 구조(결과 분류·교훈) 중 하나라도 있으면 작성된 것으로 본다.
+// 대기큐 카운트(mypage)와 카드 표시(여기)가 같은 정의를 쓰도록 단일 출처로 export.
+export function hasRetrospective(journal: Journal): boolean {
+  return Boolean(journal.retro_outcome_class || journal.retrospective_memo);
+}
+
+/**
+ * 회고(결과 확인 후 복기) — outcome 이 확정된 저널에만 작성 가능(서버도 게이트).
+ * 경량 구조: 결과 분류(retro_outcome_class) + 교훈 자유서술(retrospective_memo).
+ * 카드/차트 어디서든 재사용(단일 컴포넌트로 상태 일원화).
+ * autoEditSignal: 값이 증가하면(대기큐에서 눌릴 때마다) 편집 폼을 연다 — 리마운트 없이 재진입.
+ */
+export function RetrospectiveBlock({
+  journal,
+  autoEditSignal = 0,
+}: {
+  journal: Journal;
+  autoEditSignal?: number;
+}) {
   const update = useJournalStore((s) => s.update);
   const showToast = useToastStore((s) => s.show);
-  const [editing, setEditing] = useState(false);
-  const [text, setText] = useState(journal.retrospective_memo ?? "");
-  const [busy, setBusy] = useState(false);
   const ready = journal.outcomes.length > 0;
+  const [editing, setEditing] = useState(false);
+  const [outcomeClass, setOutcomeClass] = useState(journal.retro_outcome_class ?? "");
+  const [lesson, setLesson] = useState(journal.retrospective_memo ?? "");
+  const [busy, setBusy] = useState(false);
+  const hasRetro = hasRetrospective(journal);
+
+  function beginEdit() {
+    // 최신 저널 값으로 폼을 다시 채우고 편집 오픈.
+    setOutcomeClass(journal.retro_outcome_class ?? "");
+    setLesson(journal.retrospective_memo ?? "");
+    setEditing(true);
+  }
+
+  // 대기큐에서 진입(신호 증가)하면 편집 폼을 연다. 리마운트가 아니라 신호 변화에 반응하므로
+  // 다른 카드의 편집 중 텍스트를 버리지 않는다.
+  useEffect(() => {
+    if (autoEditSignal > 0 && ready) beginEdit();
+    // beginEdit 은 최신 journal 로 재시드 — 의도적으로 신호에만 반응.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoEditSignal]);
 
   async function save() {
     setBusy(true);
     try {
-      await update(journal.journal_id, { retrospective_memo: text });
+      await update(journal.journal_id, {
+        retro_outcome_class: outcomeClass,
+        retrospective_memo: lesson,
+      });
       setEditing(false);
       showToast("회고를 저장했습니다.", "success");
     } catch (e) {
@@ -138,27 +186,41 @@ function RetrospectiveBlock({ journal }: { journal: Journal }) {
   return (
     <div className="mt-3 rounded-[12px] bg-surface-2 p-3" data-flow="journal-retrospective">
       <div className="flex items-center justify-between">
-        <span className="text-[13px] font-bold">회고 <span className="font-normal text-muted">— 결과 확인 후 복기</span></span>
+        <span className="text-[13px] font-bold">
+          회고 <span className="font-normal text-muted">— 결과 확인 후 복기</span>
+        </span>
         {ready && !editing && (
           <button
             type="button"
-            onClick={() => {
-              setText(journal.retrospective_memo ?? "");
-              setEditing(true);
-            }}
+            data-flow="journal-retro-edit"
+            onClick={beginEdit}
             className="text-[12.5px] font-semibold text-sky-deep"
           >
-            {journal.retrospective_memo ? "수정" : "회고 남기기"}
+            {hasRetro ? "수정" : "회고 남기기"}
           </button>
         )}
       </div>
+
       {!ready ? (
         <p className="mt-1 text-[12.5px] text-muted">변동(7·30거래일)이 확정되면 회고를 남길 수 있습니다.</p>
       ) : editing ? (
         <div className="mt-2 space-y-2">
+          <div className="flex flex-wrap gap-1.5" data-flow="journal-retro-outcome">
+            {RETRO_OUTCOMES.map((d) => (
+              <button
+                key={d.key}
+                type="button"
+                onClick={() => setOutcomeClass(outcomeClass === d.key ? "" : d.key)}
+                className={`pill flat text-[12px] ${outcomeClass === d.key ? "!border-sky !text-sky-deep font-bold" : ""}`}
+                style={{ padding: "4px 10px" }}
+              >
+                {d.label}
+              </button>
+            ))}
+          </div>
           <textarea
-            value={text}
-            onChange={(e) => setText(e.target.value)}
+            value={lesson}
+            onChange={(e) => setLesson(e.target.value)}
             rows={2}
             className="card w-full px-4 py-2.5 text-[13px] outline-none focus:border-sky"
             placeholder="예상과 달랐던 점, 다음에 참고할 점을 남겨보세요."
@@ -176,9 +238,22 @@ function RetrospectiveBlock({ journal }: { journal: Journal }) {
               취소
             </button>
           </div>
+          <p className="text-[11px] text-muted">기록·학습을 위한 복기이며 성과 평가가 아닙니다.</p>
         </div>
-      ) : journal.retrospective_memo ? (
-        <p className="mt-1 whitespace-pre-wrap text-[13px] text-navy-soft">{journal.retrospective_memo}</p>
+      ) : hasRetro ? (
+        <div className="mt-1.5 space-y-1.5">
+          {journal.retro_outcome_class && (
+            <span
+              className={`pill flat text-[11.5px] font-bold ${RETRO_TONE[journal.retro_outcome_class] ?? ""}`}
+              style={{ padding: "2px 9px" }}
+            >
+              {RETRO_LABEL[journal.retro_outcome_class] ?? journal.retro_outcome_class}
+            </span>
+          )}
+          {journal.retrospective_memo && (
+            <p className="whitespace-pre-wrap text-[13px] text-navy-soft">{journal.retrospective_memo}</p>
+          )}
+        </div>
       ) : (
         <p className="mt-1 text-[12.5px] text-muted">
           변동이 확정됐습니다. 예상과 달랐던 점을 회고로 남겨보세요.

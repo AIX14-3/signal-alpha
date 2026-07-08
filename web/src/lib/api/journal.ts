@@ -23,6 +23,8 @@ export type Journal = {
   memo: string | null;
   // 회고(결과 확인 후 복기) — outcome 확정 전엔 서버가 저장을 거부(RETROSPECTIVE_NOT_READY).
   retrospective_memo: string | null;
+  // 경량 구조 회고 — 계획 대비 결과 분류(as_planned/unexpected_good/unexpected_bad).
+  retro_outcome_class: string | null;
   tags: string[];
   // 작성 시점 신호 스냅샷 — 리포트가 갱신돼도 "그때 판단"의 근거를 보존.
   signal_score_at_time: number | null;
@@ -106,7 +108,13 @@ export async function getJournalChart(
 
 export async function updateJournal(
   id: number,
-  body: { user_view?: string; memo?: string; tags?: string[]; retrospective_memo?: string },
+  body: {
+    user_view?: string;
+    memo?: string;
+    tags?: string[];
+    retrospective_memo?: string;
+    retro_outcome_class?: string;
+  },
 ): Promise<Journal> {
   return apiFetch(`/api/journals/${id}`, { method: "PATCH", body: JSON.stringify(body) });
 }

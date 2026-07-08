@@ -2869,6 +2869,7 @@ CREATE TABLE public.signal_journals (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     tags jsonb DEFAULT '[]'::jsonb NOT NULL,
     retrospective_memo text,
+    retro_outcome_class character varying(20),
     CONSTRAINT signal_journals_user_view_check CHECK (((user_view)::text = ANY (ARRAY[('watch'::character varying)::text, ('research_more'::character varying)::text, ('not_relevant'::character varying)::text])))
 );
 
