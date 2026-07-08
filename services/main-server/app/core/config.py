@@ -31,7 +31,9 @@ class Settings:
         # 브라우저 프론트(web)에서의 CORS 허용 오리진(쉼표 구분). 로컬 기본값=Next dev.
         self.cors_allow_origins = [
             origin.strip()
-            for origin in getenv("CORS_ALLOW_ORIGINS", "http://localhost:3000").split(",")
+            for origin in getenv(
+                "CORS_ALLOW_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000"
+            ).split(",")
             if origin.strip()
         ]
 
