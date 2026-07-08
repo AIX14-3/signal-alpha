@@ -171,8 +171,8 @@ function SourceSparkline({ scores, loading }: { scores: (number | null)[]; loadi
       <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="h-[54px] w-full" aria-hidden="true">
         <defs>
           <linearGradient id="sparkgrad" x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0" stopColor="#0ea5e9" />
-            <stop offset="1" stopColor="#10b981" />
+            <stop offset="0" stopColor="#7c3aed" />
+            <stop offset="1" stopColor="#d946ef" />
           </linearGradient>
         </defs>
         <polyline

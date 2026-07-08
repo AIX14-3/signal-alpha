@@ -14,7 +14,7 @@ export function BackgroundFX() {
     if (!ctx) return;
 
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const COLORS = ["14,165,233", "16,185,129", "99,102,241"]; // sky, green, indigo
+    const COLORS = ["139,92,246", "168,85,247", "217,70,239"]; // violet, purple, fuchsia (브랜드 보라)
 
     let w = 0;
     let h = 0;

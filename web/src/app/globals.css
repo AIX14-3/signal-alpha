@@ -9,9 +9,10 @@
   --color-navy: #0f1b33;
   --color-navy-soft: #36425c;
   --color-muted: #8a97ab;
-  --color-sky: #0ea5e9;
-  --color-sky-deep: #0284c7;
-  --color-green: #10b981;
+  /* 브랜드 액센트 = 보라(violet). 토큰명은 sky 로 유지하되 값만 보라로(전역 액센트 일괄 전환). */
+  --color-sky: #8b5cf6;
+  --color-sky-deep: #7c3aed;
+  --color-green: #10b981; /* 긍정 방향 의미색(브랜드 아님) — 유지 */
   --color-red: #ef4444;
 
   --radius-card: 18px;
@@ -55,7 +56,7 @@ a {
 }
 
 .brand-grad {
-  background: linear-gradient(135deg, var(--color-sky), var(--color-green));
+  background: linear-gradient(135deg, #7c3aed, #a855f7);
 }
 
 .pill {
@@ -85,8 +86,8 @@ a {
   z-index: 0;
   pointer-events: none;
   background:
-    radial-gradient(60% 60% at 18% 8%, rgba(14, 165, 233, 0.08), transparent 60%),
-    radial-gradient(55% 55% at 85% 14%, rgba(16, 185, 129, 0.08), transparent 60%),
+    radial-gradient(60% 60% at 18% 8%, rgba(139, 92, 246, 0.1), transparent 60%),
+    radial-gradient(55% 55% at 85% 14%, rgba(168, 85, 247, 0.1), transparent 60%),
     var(--color-bg);
 }
 
@@ -121,7 +122,7 @@ a {
   width: 340px;
   height: 340px;
   transform: translate(-50%, -50%);
-  background: radial-gradient(circle, rgba(16, 185, 129, 0.18), rgba(14, 165, 233, 0.12) 40%, transparent 70%);
+  background: radial-gradient(circle, rgba(168, 85, 247, 0.18), rgba(124, 58, 237, 0.12) 40%, transparent 70%);
   border-radius: 50%;
   animation: corepulse 3.4s var(--ease-out) infinite;
 }

@@ -18,7 +18,7 @@ export function NewsSummaryBanner() {
       </span>
       <h1 className="mx-auto max-w-[20ch] text-[clamp(26px,4.4vw,44px)] font-extrabold leading-[1.08] tracking-[-0.03em]">
         최근 24시간{" "}
-        <span className="bg-gradient-to-r from-sky to-green bg-clip-text text-transparent">
+        <span className="bg-gradient-to-r from-sky to-[#d946ef] bg-clip-text text-transparent">
           뉴스 {loading ? "…" : count.toLocaleString()}건
         </span>
         을 분석한 시그널
