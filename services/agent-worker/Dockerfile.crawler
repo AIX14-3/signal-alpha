@@ -27,5 +27,10 @@ ENV CHROME_BIN=/usr/bin/chromium \
     CHROMEDRIVER_PATH=/usr/bin/chromedriver
 
 # WORKDIR(/workspace/services/agent-worker)·엔트리포인트는 base 를 상속.
-# hiring CronJob 이 command 로 `sh ops/run_hiring_daily.sh` 를 지정해 수집→분석 체인을 1회 돈다.
+# hiring CronJob 이 command 로 `bash ops/run_hiring_daily.sh` 를 지정해 수집→분석 체인을 1회 돈다
+# (스크립트가 ${BASH_SOURCE[0]} 배열 문법을 쓰므로 sh(dash)가 아닌 bash 필수).
 # (래퍼: flock 중복방지 + catch-up 멱등 + 실패 시 Discord. run_daily_hiring_pipeline.py && run_analyzers.py)
+# 래퍼(ops/run_hiring_daily.sh)와 그 호출 대상(script/run_daily_hiring_pipeline.py, ops/check_hiring_freshness.py)은
+# base 이미지에 COPY 되지 않으므로(hiring 전용) 여기서 COPY — 누락 시 "cannot open ops/run_hiring_daily.sh".
+COPY services/agent-worker/ops ./ops
+COPY services/agent-worker/script ./script

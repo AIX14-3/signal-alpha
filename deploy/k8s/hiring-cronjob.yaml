@@ -35,7 +35,9 @@ spec:
             - name: hiring-crawl
               image: signal-alpha-hiring-crawler    # kustomization images: 에서 레지스트리/태그로 핀
               # WORKDIR=/workspace/services/agent-worker (base 상속) → ops/ 상대경로 호출.
-              command: ["sh", "ops/run_hiring_daily.sh"]
+              # 스크립트가 ${BASH_SOURCE[0]} 배열 문법을 쓰므로 sh(dash)가 아닌 bash로 실행해야 한다
+              # (sh로 실행하면 "Bad substitution"으로 즉시 실패 — 셔뱅은 exec 인자 지정 시 무시됨).
+              command: ["bash", "ops/run_hiring_daily.sh"]
               envFrom:
                 - configMapRef: { name: signal-alpha-config }
                 - secretRef: { name: signal-alpha-secrets }
