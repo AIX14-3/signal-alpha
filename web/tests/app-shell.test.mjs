@@ -48,6 +48,7 @@ test("home page wires the 2-pane panes and report links", async () => {
 
 test("api client exposes the contracted endpoints", async () => {
   const apiClient = await readApiSource();
+  const communityApi = await readFile(new URL("../src/lib/api/community.ts", import.meta.url), "utf8");
 
   for (const fn of [
     "searchStocks",
@@ -65,6 +66,9 @@ test("api client exposes the contracted endpoints", async () => {
   assert.match(apiClient, /scope: "journal_based" \| "signal_based"/);
   assert.match(apiClient, /export type PosthocDirectionBreakdownItem/);
   assert.match(apiClient, /direction_breakdown: PosthocDirectionBreakdownItem\[\]/);
+  assert.match(communityApi, /next_cursor: string \| null/);
+  assert.match(communityApi, /cursor\?: string \| null/);
+  assert.doesNotMatch(communityApi, /offset\?: number/);
 });
 
 test("admin UI exposes split schedule rows and schedule run history", async () => {

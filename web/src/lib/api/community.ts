@@ -51,6 +51,7 @@ export type CommunityFeed = {
 
 export type CommunityPopular = {
   items: CommunityPost[];
+  next_cursor: string | null;
   notice: string;
 };
 
@@ -75,14 +76,14 @@ export async function listPosts(
   return apiFetch(`/api/community/posts${qs ? `?${qs}` : ""}`, { auth: "none" });
 }
 
-// 인기 랭킹 피드(워커 배치 가중합). window=weekly(롤링 7일)|all, offset 페이지네이션.
+// 인기 랭킹 피드(워커 배치 가중합). window=weekly(롤링 7일)|all, score:id 커서 페이지네이션.
 export async function listPopular(
-  params: { window?: "weekly" | "all"; limit?: number; offset?: number } = {},
+  params: { window?: "weekly" | "all"; limit?: number; cursor?: string | null } = {},
 ): Promise<CommunityPopular> {
   const search = new URLSearchParams();
   if (params.window) search.set("window", params.window);
   if (params.limit) search.set("limit", String(params.limit));
-  if (params.offset) search.set("offset", String(params.offset));
+  if (params.cursor != null) search.set("cursor", params.cursor);
   const qs = search.toString();
   return apiFetch(`/api/community/popular${qs ? `?${qs}` : ""}`, { auth: "none" });
 }

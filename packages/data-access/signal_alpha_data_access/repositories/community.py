@@ -10,6 +10,7 @@ asyncpg 스타일: 키워드 전용 인자, $n 위치 파라미터, fetchrow/fet
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any
 
 # 공개 피드/상세가 노출하는 저널 화이트리스트 + 저자 핸들 + 집계 카운트.
@@ -110,20 +111,33 @@ class CommunityRepository:
             limit,
         )
 
-    async def list_popular(self, *, window_kind: str, limit: int, offset: int) -> list[Any]:
-        """인기/주간 인기 — 랭킹 스냅샷(워커 계산) 점수 순."""
+    async def list_popular(
+        self,
+        *,
+        window_kind: str,
+        cursor_score: Decimal | None,
+        cursor_id: int | None,
+        limit: int,
+    ) -> list[Any]:
+        """인기/주간 인기 — 랭킹 스냅샷(워커 계산) 점수/id keyset 순."""
         return await self._connection.fetch(
             f"""
             SELECT {_POST_SELECT}, k.score AS ranking_score
             {_POST_JOINS}
             JOIN community_post_rankings k ON k.post_id = p.id AND k.window_kind = $1
             WHERE p.deleted_at IS NULL AND p.status = 'visible'
+              AND (
+                $2::numeric IS NULL
+                OR k.score < $2
+                OR (k.score = $2 AND p.id < $3)
+              )
             ORDER BY k.score DESC, p.id DESC
-            LIMIT $2 OFFSET $3
+            LIMIT $4
             """,
             window_kind,
+            cursor_score,
+            cursor_id,
             limit,
-            offset,
         )
 
     async def update_post(

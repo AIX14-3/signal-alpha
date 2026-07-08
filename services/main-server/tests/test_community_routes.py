@@ -48,6 +48,7 @@ class FakeConnection:
         self.next_reaction_id = 900
         self.reports = []
         self.next_report_id = 1300
+        self.rankings = {"weekly": {}, "all": {}}
         self.views = set()
 
     # ---- 조인 행 구성 ----
@@ -75,6 +76,9 @@ class FakeConnection:
             "like_count": like_count,
             "comment_count": comment_count,
         }
+
+    def _popular_row(self, post, score):
+        return {**self._post_row(post), "ranking_score": score}
 
     def _comment_row(self, comment):
         author = self.users_by_id[comment["author_user_id"]]
@@ -192,7 +196,25 @@ class FakeConnection:
 
     async def fetch(self, sql, *args):
         if "community_post_rankings" in sql:  # popular
-            return []
+            window_kind = args[0]
+            ranked = [
+                self._popular_row(post, score)
+                for post in self.posts
+                if self._visible(post)
+                for score in [self.rankings.get(window_kind, {}).get(post["id"])]
+                if score is not None
+            ]
+            ranked.sort(key=lambda row: (row["ranking_score"], row["id"]), reverse=True)
+            if len(args) == 3:
+                _, limit, offset = args
+                return ranked[offset:offset + limit]
+            _, cursor_score, cursor_id, limit = args
+            if cursor_score is not None:
+                ranked = [
+                    row for row in ranked
+                    if (row["ranking_score"], row["id"]) < (cursor_score, cursor_id)
+                ]
+            return ranked[:limit]
         if "FROM community_posts" in sql:  # feed
             cursor_id, limit = args
             rows = sorted((p for p in self.posts if self._visible(p)), key=lambda p: p["id"], reverse=True)
@@ -321,6 +343,30 @@ class CommunityRoutesTest(unittest.TestCase):
         self.assertEqual(created.json()["author"]["member_code"], "AAAA2345")
         feed = self.client.get("/api/community/posts").json()["items"]
         self.assertEqual(feed[0]["id"], created.json()["id"])
+
+    def test_popular_uses_score_id_cursor_pagination(self):
+        p1 = self.create_post(self.token1, title="랭킹 1").json()["id"]
+        p2 = self.create_post(self.token1, title="랭킹 2").json()["id"]
+        p3 = self.create_post(self.token1, title="랭킹 3").json()["id"]
+        self.connection.rankings["weekly"] = {
+            p1: Decimal("30.000"),
+            p2: Decimal("20.000"),
+            p3: Decimal("20.000"),
+        }
+
+        first = self.client.get("/api/community/popular?window=weekly&limit=2")
+        self.assertEqual(first.status_code, 200)
+        first_body = first.json()
+        self.assertEqual([item["id"] for item in first_body["items"]], [p1, p3])
+        self.assertEqual(first_body["next_cursor"], f"20.000:{p3}")
+
+        second = self.client.get(
+            f"/api/community/popular?window=weekly&limit=2&cursor={first_body['next_cursor']}"
+        )
+        self.assertEqual(second.status_code, 200)
+        second_body = second.json()
+        self.assertEqual([item["id"] for item in second_body["items"]], [p2])
+        self.assertIsNone(second_body["next_cursor"])
 
     # ---- 반응 ----
     def test_self_like_blocked(self):

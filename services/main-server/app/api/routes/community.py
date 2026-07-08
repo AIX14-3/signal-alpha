@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import secrets
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -157,6 +157,27 @@ def _viewer_key(
     return _anonymous_viewer_key(request, response, settings)
 
 
+def _parse_popular_cursor(cursor: str | None) -> tuple[Decimal | None, int | None]:
+    if cursor is None:
+        return None, None
+    try:
+        score_text, id_text = cursor.split(":", 1)
+        return Decimal(score_text), int(id_text)
+    except (InvalidOperation, ValueError):
+        raise _api_error(400, "INVALID_CURSOR", "cursor 형식이 올바르지 않습니다.") from None
+
+
+def _format_popular_cursor(row: dict[str, Any]) -> str | None:
+    score = row.get("ranking_score")
+    if score is None:
+        return None
+    if isinstance(score, Decimal):
+        score_text = format(score, "f")
+    else:
+        score_text = format(Decimal(str(score)), "f")
+    return f"{score_text}:{row['id']}"
+
+
 # ---- 피드 / 인기 (공개, 비로그인 열람 가능) --------------------------------
 @router.get("/posts")
 async def list_feed(
@@ -176,18 +197,25 @@ async def list_feed(
 async def list_popular(
     window: str = "weekly",
     limit: int = 20,
-    offset: int = 0,
+    cursor: str | None = None,
     pool: Any = Depends(get_database_pool),
 ) -> dict[str, Any]:
     if window not in {"weekly", "all"}:
         raise _api_error(400, "INVALID_WINDOW", "window 는 weekly 또는 all 이어야 합니다.")
     clamped = min(max(limit, 1), _FEED_MAX)
+    cursor_score, cursor_id = _parse_popular_cursor(cursor)
     async with pool.acquire() as connection:
         rows = await CommunityRepository(connection).list_popular(
-            window_kind=window, limit=clamped, offset=max(offset, 0)
+            window_kind=window,
+            limit=clamped + 1,
+            cursor_score=cursor_score,
+            cursor_id=cursor_id,
         )
-    items = [_post_response(dict(row)) for row in rows]
-    return {"items": items, "notice": NOTICE}
+    row_dicts = [dict(row) for row in rows]
+    page_rows = row_dicts[:clamped]
+    next_cursor = _format_popular_cursor(page_rows[-1]) if len(row_dicts) > clamped else None
+    items = [_post_response(row) for row in page_rows]
+    return {"items": items, "next_cursor": next_cursor, "notice": NOTICE}
 
 
 # ---- 게시글 작성/조회/수정/삭제 --------------------------------------------
