@@ -11,6 +11,7 @@ from datetime import date
 from app.analyzers.config import DataLabRuleConfig
 from app.analyzers.datalab.attention import compute_attention_spike
 from app.analyzers.datalab.indicators import compute_indicators
+from app.analyzers.datalab.rules import evaluate_indicators
 from app.schemas.evidence import RawEvidence
 from app.schemas.source_result import EvidenceItem, SourceResult
 
@@ -46,38 +47,52 @@ class DataLabAnalyzer:
             lookback_days=self._config.lookback_days,
         )
 
-        # Phase 0 (#525): 결정론 판정/스코어 제거 — 피처 산출만. 방향/점수 verdict 는 내지 않는다
-        # (학습형 메타러너의 return 채널이 산출). data_status="no_signal" 로 AGGREGATE 점수 평균에서
-        # 제외되고, direction="unknown" 으로 방향 합의에서도 빠진다(소스는 커버리지로만 노출).
-        # 피처는 별도 PIT 경로(app/ml/source_features.assemble_features)가 DB 에서 직접 읽는다.
+        # 메타러너 폐기(2026-07) 후 결정론 verdict 복원 — #525 "피처 전용"은 학습형 메타러너가
+        # 판정을 대신한다는 전제였으나 그 채널이 폐기됐다. 이제 DataLab 도 특허·DART·리포트와 동일하게
+        # rules.evaluate_indicators 로 방향/점수를 내고 AGGREGATE 등가중 통합 점수에 산입된다.
+        assessment = evaluate_indicators(indicators, self._config)
         llm_model, llm_count = _llm_polarity_provenance(rows)
+
+        risk_flags = list(assessment.risk_flags)
+        data_status = "ok"
+        if assessment.direction == "unknown":
+            data_status = "no_signal"
+        elif {"insufficient_history", "stale_data", "low_base"} & set(risk_flags):
+            data_status = "partial"
 
         latest = indicators.latest_observed_date or as_of.isoformat()
         momentum = indicators.momentum_pct
         summary = (
             f"{latest} 기준 최근 {self._config.lookback_days}일 검색 트렌드 {indicators.observations}건 "
-            f"피처 산출(모멘텀 {momentum:+.3f}, 스파이크 {indicators.spike_ratio:.2f}). "
-            f"판정은 학습형 메타러너가 수행."
+            f"분석: 방향 {assessment.direction}, 점수 {assessment.score:+.3f} "
+            f"(모멘텀 {momentum:+.3f}, 스파이크 {indicators.spike_ratio:.2f})."
             if momentum is not None
             else (
                 f"{latest} 기준 최근 {self._config.lookback_days}일 검색 트렌드 "
-                f"{indicators.observations}건 피처 산출. 판정은 학습형 메타러너가 수행."
+                f"{indicators.observations}건 분석: 방향 {assessment.direction}, 점수 {assessment.score:+.3f}."
             )
         )
         if llm_count:
             summary += f" (LLM 분류 키워드 {llm_count}건)"
 
-        # Neutral attention-spike layer: only fires when the loader supplied the
-        # wider PIT search series. Never touches direction/score (kept unknown/0).
         evidence_items = [
             EvidenceItem(
-                title=f"검색 트렌드 피처 {indicators.observations}건",
-                summary=f"{latest} 기준 검색 트렌드 지표(피처) 산출 결과",
+                title=highlight,
+                summary=f"{latest} 기준 검색 트렌드 지표 산출 결과",
+                published_at=latest,
+                source_name="NAVER_DATALAB",
+            )
+            for highlight in assessment.highlights
+        ] or [
+            EvidenceItem(
+                title=f"검색 트렌드 {indicators.observations}건",
+                summary=f"{latest} 기준 검색 트렌드 지표 산출 결과",
                 published_at=latest,
                 source_name="NAVER_DATALAB",
             )
         ]
-        risk_flags: list[str] = []
+        # Neutral attention-spike layer: only fires when the loader supplied the
+        # wider PIT search series. 방향/점수와 독립적인 매그니튜드 근거(additive).
         attention = _attention(metadata, as_of, self._config)
         if attention is not None and attention.risk_flag:
             evidence_items.append(
@@ -88,17 +103,18 @@ class DataLabAnalyzer:
                     source_name="NAVER_DATALAB",
                 )
             )
-            risk_flags.append(attention.risk_flag)
+            if attention.risk_flag not in risk_flags:
+                risk_flags.append(attention.risk_flag)
 
         return SourceResult(
             source="DATALAB",
             stock_code=stock_code,
-            direction="unknown",
-            score=0.0,
+            direction=assessment.direction,
+            score=assessment.score,
             summary=summary,
             evidence_items=evidence_items,
             risk_flags=risk_flags,
-            data_status="no_signal",
+            data_status=data_status,
             llm_model=llm_model,
             attention_tier=attention.attention_tier if attention else None,
             attention_z=round(attention.attention_z, 3) if attention else None,

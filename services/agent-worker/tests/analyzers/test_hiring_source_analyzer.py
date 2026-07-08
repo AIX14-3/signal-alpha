@@ -46,27 +46,26 @@ def _evidence(rows, *, sector_demand=None):
 
 
 class HiringAnalyzerTest(unittest.IsolatedAsyncioTestCase):
-    """Phase 0 (#525): 결정론 판정 제거 — 피처 산출만. 방향/점수 verdict 없음."""
+    """메타러너 폐기(2026-07) 후 결정론 verdict 복원 — 채용도 방향/점수를 낸다."""
 
     async def test_no_data_is_no_signal(self):
         result = await HiringAnalyzer(CONFIG).analyze("005930", _evidence([]))
         self.assertEqual(result.data_status, "no_signal")
         self.assertIn("no_data", result.risk_flags)
 
-    async def test_rows_present_is_feature_only_no_verdict(self):
+    async def test_rows_present_produce_verdict(self):
         rows = [
             _row(5, 150, change_pct=20), _row(10, 150, change_pct=20), _row(15, 150, change_pct=20),
             _row(55, 100), _row(60, 100), _row(65, 100), _row(70, 100), _row(75, 100),
         ]
         result = await HiringAnalyzer(CONFIG).analyze("005930", _evidence(rows))
-        # 판정은 여전히 없음(피처 전용) — 이 계약은 불변.
-        self.assertEqual(result.direction, "unknown")
-        self.assertEqual(result.score, 0.0)
-        self.assertEqual(result.data_status, "no_signal")
-        self.assertEqual(result.risk_flags, [])
-        # 핵심 본질: 행이 있으면 서술 summary 가 생성된다 — 새 자연어 형식("…채용공고 N건…").
+        # 최근 평균 150 > 직전 100 → +50% 모멘텀 → 결정론 positive verdict, 점수 산입 대상.
+        self.assertEqual(result.direction, "positive")
+        self.assertGreater(result.score, 0.0)
+        self.assertEqual(result.data_status, "ok")
+        # 핵심 본질: 행이 있으면 서술 summary 가 생성된다 — 자연어 형식("…채용공고 N건…").
         self.assertIn("채용공고", result.summary)
-        # 내부용어는 사용자 노출 summary 에서 제거됐다(형식 변경의 목적).
+        # 내부용어(피처 산출/메타러너)는 사용자 노출 summary 에 없다.
         self.assertNotIn("피처 산출", result.summary)
         self.assertNotIn("메타러너", result.summary)
 
@@ -97,9 +96,9 @@ class HiringAnalyzerTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("모집", fused.summary)
         self.assertNotIn("주3일", fused.summary)
         self.assertNotIn("9시", fused.summary)
-        # 판정은 여전히 없음(피처 전용).
-        self.assertEqual(fused.direction, "unknown")
-        self.assertEqual(fused.score, 0.0)
+        # +50% 모멘텀 → 결정론 positive verdict.
+        self.assertEqual(fused.direction, "positive")
+        self.assertGreater(fused.score, 0.0)
 
 
 def _plain(rows):

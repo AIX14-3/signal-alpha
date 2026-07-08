@@ -11,6 +11,7 @@ from datetime import date
 
 from app.analyzers.config import HiringRuleConfig
 from app.analyzers.hiring.indicators import compute_indicators
+from app.analyzers.hiring.rules import evaluate_indicators
 from app.schemas.evidence import RawEvidence
 from app.schemas.source_result import EvidenceItem, SourceResult
 
@@ -46,30 +47,49 @@ class HiringAnalyzer:
             lookback_days=self._config.lookback_days,
             sector_demand=metadata.get("sector_demand"),
         )
-        # Phase 0 (#525): 결정론 판정/스코어 제거 — 피처 산출만. 방향/점수 verdict 없음
-        # (학습형 메타러너 return 채널이 산출). data_status="no_signal"+direction="unknown" 으로
-        # AGGREGATE 점수·방향 집계에서 빠진다. 피처는 별도 PIT 경로(assemble_features)가 DB 에서 읽는다.
+        # 메타러너 폐기(2026-07) 후 결정론 verdict 복원 — #525 "피처 전용"은 학습형 메타러너가
+        # 판정을 대신한다는 전제였으나 그 채널이 폐기됐다. 이제 채용도 특허·DART·리포트와 동일하게
+        # rules.evaluate_indicators 로 방향/점수를 내고 AGGREGATE 등가중 통합 점수에 산입된다.
+        assessment = evaluate_indicators(indicators, self._config)
+
+        risk_flags = list(assessment.risk_flags)
+        data_status = "ok"
+        if assessment.direction == "unknown":
+            data_status = "no_signal"
+        elif {"insufficient_history", "stale_data", "low_base"} & set(risk_flags):
+            data_status = "partial"
+
         latest = indicators.latest_observed_date or as_of.isoformat()
         momentum = indicators.momentum_pct
         count = metadata.get("posting_count") or indicators.observations or 0
-        # 사용자 노출용 자연어 한 줄 — 내부용어(피처 산출/메타러너) 없이 서술만. 판정 유보는
-        # direction=unknown·data_status=no_signal(구조)로 이미 정직하게 표현된다.
         head = (
             f"최근 {self._config.lookback_days}일 채용공고 {count}건"
             + (f"(직전 대비 {momentum * 100:+.0f}%)" if momentum is not None else "")
         )
 
-        # Descriptive surfacing — 기술스택만. 판정과 무관(점수 불변). job_title 은 노이즈가 많고,
-        # keyword 선두 [..]도 소스마다 사업부/회사명/고용형태(계약직·경력)/스케줄이 섞여(실측)
-        # 신뢰할 수 있는 '사업부'가 아니라서 서술에서 제외한다.
+        # Descriptive surfacing — 기술스택만. job_title 은 노이즈가 많고, keyword 선두 [..]도
+        # 소스마다 사업부/회사명/고용형태(계약직·경력)/스케줄이 섞여(실측) 신뢰할 수 있는
+        # '사업부'가 아니라서 서술에서 제외한다.
         top_techs = _hiring_focus(rows)
         focus_bits: list[str] = []
         if top_techs:
             focus_bits.append(f"주요 기술: {'·'.join(top_techs)}")
 
-        summary = head + (", " + " · ".join(focus_bits) if focus_bits else "") + "."
+        summary = (
+            head
+            + (", " + " · ".join(focus_bits) if focus_bits else "")
+            + f" → 방향 {assessment.direction}, 점수 {assessment.score:+.3f}."
+        )
 
-        evidence_items: list[EvidenceItem] = []
+        evidence_items: list[EvidenceItem] = [
+            EvidenceItem(
+                title=highlight,
+                summary=f"{latest} 기준 채용 지표 산출 결과",
+                published_at=latest,
+                source_name="HIRING",
+            )
+            for highlight in assessment.highlights
+        ]
         if focus_bits:
             evidence_items.append(
                 EvidenceItem(
@@ -83,12 +103,12 @@ class HiringAnalyzer:
         return SourceResult(
             source="HIRING",
             stock_code=stock_code,
-            direction="unknown",
-            score=0.0,
+            direction=assessment.direction,
+            score=assessment.score,
             summary=summary,
             evidence_items=evidence_items,
-            risk_flags=[],
-            data_status="no_signal",
+            risk_flags=risk_flags,
+            data_status=data_status,
         )
 
 
