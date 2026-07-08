@@ -31,6 +31,7 @@ router = APIRouter(prefix="/api/community", tags=["community"])
 # 서로 다른 신고자 수가 이 값 이상이면 대상 자동 숨김(status='hidden'). 운영 튜닝값.
 REPORT_HIDE_THRESHOLD = 5
 _FEED_MAX = 50
+_COMMENT_MAX = 50
 _REACTION_TYPES = {"like", "bookmark"}
 _VIEWER_COOKIE = "sa_community_viewer"
 _VIEWER_COOKIE_MAX_AGE_SECONDS = 365 * 86400
@@ -354,14 +355,27 @@ async def delete_post(
 @router.get("/posts/{post_id}/comments")
 async def list_comments(
     post_id: int,
+    cursor: int | None = None,
+    limit: int = 20,
     current_user: dict[str, Any] | None = Depends(get_current_user_optional),
     pool: Any = Depends(get_database_pool),
 ) -> dict[str, Any]:
+    clamped = min(max(limit, 1), _COMMENT_MAX)
     async with pool.acquire() as connection:
         repo = CommunityRepository(connection)
-        rows = [dict(row) for row in await repo.list_comments(post_id=post_id)]
-        await _attach_my_reactions(repo, rows, current_user, "comment")
-    return {"items": [_comment_response(row) for row in rows]}
+        rows = [
+            dict(row)
+            for row in await repo.list_comments(
+                post_id=post_id,
+                cursor_id=cursor,
+                limit=clamped + 1,
+            )
+        ]
+        page_rows = rows[:clamped]
+        await _attach_my_reactions(repo, page_rows, current_user, "comment")
+    items = [_comment_response(row) for row in page_rows]
+    next_cursor = items[-1]["id"] if len(rows) > clamped else None
+    return {"items": items, "next_cursor": next_cursor}
 
 
 @router.post("/posts/{post_id}/comments")

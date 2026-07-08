@@ -332,9 +332,20 @@ class FakeConnection:
                 rows = [p for p in rows if p["id"] < cursor_id]
             return [self._post_row(p) for p in rows[:limit]]
         if "FROM community_comments" in sql:  # list_comments
-            rows = [c for c in self.comments if c["post_id"] == args[0]
-                    and c["deleted_at"] is None and c["status"] == "visible"]
-            return [self._comment_row(c) for c in sorted(rows, key=lambda c: c["id"])]
+            post_id = args[0]
+            cursor_id = args[1] if len(args) > 1 else None
+            limit = args[2] if len(args) > 2 else None
+            rows = [
+                c
+                for c in self.comments
+                if c["post_id"] == post_id and c["deleted_at"] is None and c["status"] == "visible"
+            ]
+            rows = sorted(rows, key=lambda c: c["id"])
+            if cursor_id is not None:
+                rows = [c for c in rows if c["id"] > cursor_id]
+            if limit is not None:
+                rows = rows[:limit]
+            return [self._comment_row(c) for c in rows]
         raise AssertionError(f"Unexpected fetch SQL: {sql}")
 
     async def execute(self, sql, *args):
@@ -561,6 +572,34 @@ class CommunityRoutesTest(unittest.TestCase):
         self.assertEqual(item["my_reactions"], {"like": True, "bookmark": False})
 
     # ---- 댓글 1단계 대댓글 ----
+    def test_comments_use_cursor_pagination(self):
+        post_id = self.create_post(self.token1).json()["id"]
+        created_ids = []
+        for idx in range(3):
+            response = self.client.post(
+                f"/api/community/posts/{post_id}/comments",
+                json={"body": f"comment {idx}"},
+                headers=self.headers(self.token2),
+            )
+            self.assertEqual(response.status_code, 200)
+            created_ids.append(response.json()["id"])
+
+        first = self.client.get(f"/api/community/posts/{post_id}/comments?limit=2")
+
+        self.assertEqual(first.status_code, 200)
+        first_body = first.json()
+        self.assertEqual([item["id"] for item in first_body["items"]], created_ids[:2])
+        self.assertEqual(first_body["next_cursor"], created_ids[1])
+
+        second = self.client.get(
+            f"/api/community/posts/{post_id}/comments?limit=2&cursor={first_body['next_cursor']}"
+        )
+
+        self.assertEqual(second.status_code, 200)
+        second_body = second.json()
+        self.assertEqual([item["id"] for item in second_body["items"]], [created_ids[2]])
+        self.assertIsNone(second_body["next_cursor"])
+
     def test_comment_reply_depth_enforced(self):
         post_id = self.create_post(self.token1).json()["id"]
         c1 = self.client.post(f"/api/community/posts/{post_id}/comments",

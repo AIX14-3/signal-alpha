@@ -394,7 +394,7 @@ class CommunityRepository:
         )
 
     # ---- 댓글 -------------------------------------------------------------
-    async def list_comments(self, *, post_id: int) -> list[Any]:
+    async def list_comments(self, *, post_id: int, cursor_id: int | None, limit: int) -> list[Any]:
         return await self._connection.fetch(
             """
             SELECT c.id, c.post_id, c.parent_comment_id, c.body, c.status, c.created_at,
@@ -405,10 +405,16 @@ class CommunityRepository:
                       WHERE r.target_type = 'comment' AND r.target_id = c.id AND r.type = 'bookmark') AS bookmark_count
               FROM community_comments c
               JOIN users u ON u.id = c.author_user_id
-             WHERE c.post_id = $1 AND c.deleted_at IS NULL AND c.status = 'visible'
-             ORDER BY c.created_at, c.id
+             WHERE c.post_id = $1
+               AND c.deleted_at IS NULL
+               AND c.status = 'visible'
+               AND ($2::bigint IS NULL OR c.id > $2)
+             ORDER BY c.id
+             LIMIT $3
             """,
             post_id,
+            cursor_id,
+            limit,
         )
 
     async def create_comment(

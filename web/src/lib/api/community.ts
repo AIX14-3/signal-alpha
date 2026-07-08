@@ -47,6 +47,11 @@ export type CommunityComment = {
   created_at: string | null;
 };
 
+export type CommunityComments = {
+  items: CommunityComment[];
+  next_cursor: number | null;
+};
+
 export type CommunityFeed = {
   items: CommunityPost[];
   // 커서 페이지네이션 — 다음 페이지 요청에 그대로 cursor 로 넘긴다. null 이면 마지막 페이지.
@@ -120,8 +125,15 @@ export async function deletePost(id: number): Promise<{ deleted: boolean }> {
   return apiFetch(`/api/community/posts/${id}`, { method: "DELETE" });
 }
 
-export async function listComments(postId: number): Promise<{ items: CommunityComment[] }> {
-  return apiFetch(`/api/community/posts/${postId}/comments`);
+export async function listComments(
+  postId: number,
+  params: { cursor?: number | null; limit?: number } = {},
+): Promise<CommunityComments> {
+  const search = new URLSearchParams();
+  if (params.cursor != null) search.set("cursor", String(params.cursor));
+  if (params.limit) search.set("limit", String(params.limit));
+  const qs = search.toString();
+  return apiFetch(`/api/community/posts/${postId}/comments${qs ? `?${qs}` : ""}`);
 }
 
 export async function createComment(
