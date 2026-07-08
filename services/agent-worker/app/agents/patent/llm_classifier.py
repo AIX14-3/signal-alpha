@@ -25,7 +25,11 @@ from app.agents.requery_focus import requery_focus_prompt_block
 # scalar the offline enricher caches). A trace tag only — never a buy/sell call.
 Materiality = Literal["strategic", "sustained", "routine", "ambiguous"]
 MATERIALITY_VALUES: set[str] = {"strategic", "sustained", "routine", "ambiguous"}
-PROMPT_VERSION = "patent-significance-v1"
+# NOTE: persisted to ``agent_results.prompt_ver character varying(20)`` — keep
+# this at most 20 chars or the INSERT fails ("value too long for varchar(20)").
+# The old "patent-significance-v1" was 22 chars and broke PATENT_LLM_ENABLED
+# publishes; all other sources' versions already fit (hiring-focus-v1 등).
+PROMPT_VERSION = "patent-signif-v1"
 
 _MAX_FILINGS_IN_PROMPT = 8
 _MAX_RATIONALE_CHARS = 300
