@@ -20,6 +20,11 @@ HIGH_VOLATILITY_PCT = 3.0
 VOLUME_SPIKE_Z = 2.0
 FLOW_STREAK_SESSIONS = 3
 MIXED_COMPONENT_THRESHOLD = 0.2
+# 방향 판정 컷오프. 다른 소스는 config.py 의 *RuleConfig(env override)로 관리하지만 PRICE 는
+# 근거 전용(SCORING_SOURCES 미편입·방향은 표시용)이라 여기 모듈 상수로 둔다. 매직 리터럴을
+# 없애 단일 튜닝 지점을 만든 것. 값은 집계층 기본(±0.2)과 정렬.
+POSITIVE_THRESHOLD = 0.2
+NEGATIVE_THRESHOLD = -0.2
 
 
 @dataclass(frozen=True)
@@ -140,8 +145,8 @@ def _direction(score: float, trend: float, flow: float) -> Direction:
     )
     if conflicting:
         return "mixed"
-    if score >= 0.2:
+    if score >= POSITIVE_THRESHOLD:
         return "positive"
-    if score <= -0.2:
+    if score <= NEGATIVE_THRESHOLD:
         return "negative"
     return "neutral"
