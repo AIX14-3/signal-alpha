@@ -30,8 +30,6 @@ from app.orchestrator.queue.task_types import (
     PROCESS_REPORT,
     PUBLISH_SIGNALS,
     RECORD_EPISODE_OUTCOMES,
-    RETURN_COMBINE,
-    SRC_INFER,
     SYNTHESIZE,
 )
 from app.orchestrator.queue.tasks import TaskHandler
@@ -61,8 +59,6 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
     from app.orchestrator.aggregation.tasks import AggregateSignalTaskHandler
     from app.orchestrator.aggregation.requery import RequerySourceTaskHandler
     from app.orchestrator.price.tasks import PriceAnalyzeTaskHandler
-    from app.ml.return_combine import ReturnCombineTaskHandler
-    from app.ml.source_inference import SrcInferTaskHandler
     from app.publish.publish_task import PublishSignalsTaskHandler
     from app.synthesis.tasks import SynthesizeTaskHandler
 
@@ -112,11 +108,8 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
         ),
         # 오케스트레이터 조건부 되묻기(Wave-3 양방향) — 불일치 소스만 집중 재분석 후 재종합.
         REQUERY_SOURCE: RequerySourceTaskHandler(connection),
-        # 소스별 base 모델 추론(#525 Phase 3). run_key=SRC 로 분리 적재(D4). 성공 예측이
-        # 있으면 RETURN_COMBINE 을 인큐해 return 채널을 결합한다.
-        SRC_INFER: SrcInferTaskHandler(connection),
-        # 메타러너 return 채널 결합(#525 WS-C) — src_* + Report 피처 → meta_signals return 컬럼.
-        RETURN_COMBINE: ReturnCombineTaskHandler(connection),
+        # 메타러너 융합 라인(SRC_INFER→RETURN_COMBINE→7예측률)은 폐기 — 6-소스 통합 점수로 전환.
+        # ml/source_inference·return_combine 모듈은 dormant 보존(연구 재사용·되돌리기).
         # 발행(#11) — 종목 PUBLISHED 테이블을 백엔드 DB 로 복사. BACKEND_DATABASE_URL 없으면 no-op.
         PUBLISH_SIGNALS: PublishSignalsTaskHandler(connection, settings=settings),
         SYNTHESIZE: SynthesizeTaskHandler(connection, settings=settings),

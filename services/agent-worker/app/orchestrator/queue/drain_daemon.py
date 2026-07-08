@@ -38,8 +38,6 @@ from app.orchestrator.queue.task_types import (
     PUBLISH_SIGNALS,
     RECORD_EPISODE_OUTCOMES,
     REQUERY_SOURCE,
-    RETURN_COMBINE,
-    SRC_INFER,
     SYNTHESIZE,
 )
 
@@ -71,8 +69,6 @@ DRAIN_ORDER: tuple[str, ...] = (
     ANALYZE_HIRING,
     ANALYZE_PATENT,
     ANALYZE_PRICE,
-    SRC_INFER,
-    RETURN_COMBINE,
     # 오케스트레이터 되묻기는 AGGREGATE 앞에 둔다: 한 드레인 사이클에서 문제 소스 재분석 →
     # 재종합 순으로 흐르게(되묻기가 새 소스 결과를 남기고, 이어 AGGREGATE 가 재블렌드). 되묻기가
     # 재인큐한 AGGREGATE 는 dedupe + requery_round 상한으로 유한하다(무한루프 없음).

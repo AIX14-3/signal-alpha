@@ -17,9 +17,11 @@
 `COLLECT_*`(DART/report)와 종목 `ANALYZE_*` 팬아웃을 주기 인큐하고, 워커 드레인이 이를 소비합니다.
 
 소스별 핸들러: DART는 `collect_dart → normalize_dart → analyze_dart`, Report는
-`collect_report → process_report → normalize_report → analyze_report`가 연결되어 있습니다. 정량 점수는
-주가(PRICE) ML/DL이 원천이고, DART/REPORT/대안데이터는 근거로 끝단 LLM 종합(`SYNTHESIZE`)에 합류합니다
-(메타러너 미사용, 소스 학습형 `SRC_INFER` 채널은 코드만 있고 라이브 미배선). 새 핸들러는 명시적으로 추가하고
+`collect_report → process_report → normalize_report → analyze_report`가 연결되어 있습니다. 헤드라인 점수는
+**6개 소스(주가·DART·리포트·특허·채용·DataLab)가 각자 점수화된 뒤 `AGGREGATE_SIGNAL`이 등가중 평균한
+결정론 통합 점수**입니다(`SCORING_SOURCES`, 주가 포함). 학습형 메타러너 융합(`SRC_INFER`→`RETURN_COMBINE`
+→7예측률)은 **폐기**됐고 `app/ml/*`는 dormant 보존입니다. 끝단 LLM 종합(`SYNTHESIZE`)은 통합 점수에 소스별
+근거를 서술만 합니다(법적 금지단어 필터). 새 핸들러는 명시적으로 추가하고
 `app/orchestrator/queue` 경로에서 테스트하세요. 라우팅·토폴로지 상세는
 [architecture-diagram.md](../../docs/architecture-diagram.md) 참조.
 

@@ -6,18 +6,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "packages" / "data-access"))
 
-from app.ml.meta_learner import return_to_score_100
 from app.orchestrator.aggregation.tasks import AggregateSignalTaskHandler
 from app.orchestrator.queue.handlers import build_task_handlers
 from app.orchestrator.queue.task_types import AGGREGATE_SIGNAL
 
 
 class FakeConnection:
-    def __init__(self, rows=None, src=None):
+    def __init__(self, rows=None):
         self.calls = []
         self.rows = rows or []
-        # 통합 SRC 예측 행(meta_signals run_key='SRC'). None 이면 헤드라인은 중립(50)으로 폴백.
-        self.src = src
         self.next_id = 700
 
     async def fetch(self, sql, *args):
@@ -26,9 +23,6 @@ class FakeConnection:
 
     async def fetchrow(self, sql, *args):
         self.calls.append(("fetchrow", sql, args))
-        # 헤드라인용 SRC 조회는 id 시퀀스를 소비하지 않게 별도 라우팅.
-        if "FROM meta_signals" in sql:
-            return self.src
         self.next_id += 1
         return {"id": self.next_id}
 
@@ -358,46 +352,11 @@ class AggregateSignalTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         # 당일 수집(미재사용) 소스는 0.
         self.assertEqual(breakdown["PRICE"].get("data_age_days"), None)  # missing 소스엔 age 키 없음
 
-    async def test_headline_uses_integrated_src_prediction(self):
-        # 통합 SRC 예측이 있으면 헤드라인은 결정론 블렌드가 아니라 SRC 방향/점수를 따른다.
-        src = {
-            "asof_date": date(2026, 6, 19),
-            "run_key": "SRC",
-            "final_score": 0.03,  # 예측 수익률 +3%
-            "direction": "positive",
-            "confidence": 0.6,
-        }
-        connection = FakeConnection(
-            rows=[dart_agent_row(direction="negative", source_score=-0.5, method_score=25.0)],
-            src=src,
-        )
-        handler = AggregateSignalTaskHandler(connection)
-
-        result = await handler(
-            {
-                "id": 30,
-                "stock_id": 1,
-                "source_analysis_result_ids": [100],
-                "task_context": {"stock_code": "005930", "signal_date": "2026-06-19"},
-            }
-        )
-
-        self.assertEqual(result["signal"], "positive")
-        self.assertEqual(result["final_score"], return_to_score_100(0.03))
-        self.assertGreater(result["final_score"], 50.0)
-        # 결정론 블렌드(negative)는 헤드라인이 아니라 메타로만.
-        self.assertEqual(result["deterministic_signal"], "negative")
-        final_call = next(call for call in connection.calls if "INSERT INTO final_signals" in call[1])
-        self.assertEqual(final_call[2][7], "positive")  # signal
-        self.assertEqual(final_call[2][5], return_to_score_100(0.03))  # final_score
-
-    async def test_headline_falls_back_to_deterministic_when_src_date_mismatch(self):
-        # SRC 가 다른 날짜 것뿐이면(오늘 미계산) 평평한 50 이 아니라 결정론 블렌드로 폴백한다 —
-        # SRC 가 채워지면 다음 드레인에 학습 결합으로 갱신된다.
-        src = {"asof_date": date(2026, 6, 18), "final_score": 0.03, "direction": "positive"}
+    async def test_headline_uses_deterministic_blend(self):
+        # 메타러너 폐기 후 헤드라인은 항상 결정론 등가중 블렌드다(학습 융합 경로 없음).
+        # DART positive 0.5 → 75.0, deterministic_blend.
         connection = FakeConnection(
             rows=[dart_agent_row(direction="positive", source_score=0.5, method_score=75.0)],
-            src=src,
         )
         handler = AggregateSignalTaskHandler(connection)
 
@@ -415,16 +374,49 @@ class AggregateSignalTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         final_call = next(call for call in connection.calls if "INSERT INTO final_signals" in call[1])
         meta = json.loads(final_call[2][10])["_meta"]
         self.assertEqual(meta["headline_method"], "deterministic_blend")
+        self.assertEqual(meta["scoring_method"], "deterministic_blend")
+        self.assertIn("blend_basis", meta)
 
-    async def test_headline_neutral_empty_only_when_no_scoring_source(self):
-        # scoring 소스가 하나도 없으면(근거 전용 PRICE 만) 그때만 중립 50. PRICE 는 SCORING_SOURCES
-        # 밖이라 점수에 안 들어간다(REPORT 는 이제 편입돼 이 케이스에 못 쓴다).
+    async def test_price_contributes_to_headline_score(self):
+        # 6-소스 통합 점수의 핵심: 주가(PRICE)가 SCORING_SOURCES 라 점수에 산입된다. 대체데이터가
+        # 전부 no_signal 이어도 PRICE 가 방향/점수를 만들어 중립 50 이 아니게 된다(07-08 버그 수정).
         price_row = dart_agent_row(
-            direction="positive", source_score=1.0, method_score=100.0, source="PRICE"
+            direction="positive", source_score=0.6, method_score=80.0, source="PRICE"
         )
         price_row["analysis_run_key"] = "PRICE"
         price_row["analysis_mode"] = "full"
-        connection = FakeConnection(rows=[price_row])
+        dart_no_signal = dart_agent_row(
+            analysis_result_id=120, agent_result_id=220, source="DART",
+            direction="neutral", source_score=0.0, method_score=50.0, data_status="no_signal",
+        )
+        connection = FakeConnection(rows=[price_row, dart_no_signal])
+        handler = AggregateSignalTaskHandler(connection)
+
+        result = await handler(
+            {
+                "id": 30,
+                "stock_id": 1,
+                "task_context": {"stock_code": "005930", "signal_date": "2026-06-19"},
+            }
+        )
+
+        # PRICE 단독 산입 → 0.6 → 80.0, positive. 중립 50 아님.
+        self.assertEqual(result["signal"], "positive")
+        self.assertEqual(result["final_score"], 80.0)
+        final_call = next(call for call in connection.calls if "INSERT INTO final_signals" in call[1])
+        breakdown = json.loads(final_call[2][10])
+        self.assertTrue(breakdown["PRICE"]["contributes_to_score"])  # PRICE 이제 점수 기여
+        self.assertFalse(breakdown["DART"]["contributes_to_score"])  # no_signal 은 제외
+        self.assertEqual(breakdown["_meta"]["headline_method"], "deterministic_blend")
+
+    async def test_headline_neutral_empty_only_when_no_scoring_source(self):
+        # scoring 소스가 하나도 없을 때만(전부 no_signal/missing) 중립 50. PRICE 는 이제
+        # SCORING_SOURCES 라 산입되므로, 이 케이스는 no_signal 소스만 있을 때다.
+        dart_no_signal = dart_agent_row(
+            direction="neutral", source_score=0.0, method_score=50.0,
+            source="DART", data_status="no_signal",
+        )
+        connection = FakeConnection(rows=[dart_no_signal])
         handler = AggregateSignalTaskHandler(connection)
 
         result = await handler(
@@ -440,35 +432,6 @@ class AggregateSignalTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["final_score"], 50.0)
         final_call = next(call for call in connection.calls if "INSERT INTO final_signals" in call[1])
         self.assertEqual(json.loads(final_call[2][10])["_meta"]["headline_method"], "neutral_empty")
-
-    async def test_score_meta_labels_headline_and_scoring_method(self):
-        # _meta 가 산출방식을 정직하게 라벨: SRC 있으면 학습 method, 없으면 deterministic_blend.
-        src = {
-            "asof_date": date(2026, 6, 19),
-            "final_score": 0.03,
-            "direction": "positive",
-            "method": "linear_stacking",
-        }
-        connection = FakeConnection(
-            rows=[dart_agent_row(direction="positive", source_score=0.4, method_score=70.0)],
-            src=src,
-        )
-        handler = AggregateSignalTaskHandler(connection)
-
-        await handler(
-            {
-                "id": 30,
-                "stock_id": 1,
-                "source_analysis_result_ids": [100],
-                "task_context": {"stock_code": "005930", "signal_date": "2026-06-19"},
-            }
-        )
-
-        final_call = next(call for call in connection.calls if "INSERT INTO final_signals" in call[1])
-        meta = json.loads(final_call[2][10])["_meta"]
-        self.assertEqual(meta["headline_method"], "src_meta")
-        self.assertEqual(meta["scoring_method"], "linear_stacking")
-        self.assertIn("blend_basis", meta)
 
     async def test_dart_feature_only_marked_non_contributing(self):
         # DART 가 no_signal(feature-only)이면 contributes_to_score=False — 방향 드라이버 오인 방지.
@@ -504,20 +467,6 @@ class AggregateSignalTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         handlers = build_task_handlers(FakeConnection())
 
         self.assertIn(AGGREGATE_SIGNAL, handlers)
-
-
-class ReturnToScoreTest(unittest.TestCase):
-    def test_zero_return_is_neutral_50(self):
-        self.assertEqual(return_to_score_100(0.0), 50.0)
-
-    def test_positive_above_50_negative_below(self):
-        self.assertGreater(return_to_score_100(0.03), 50.0)
-        self.assertLess(return_to_score_100(-0.03), 50.0)
-
-    def test_monotonic_and_bounded(self):
-        self.assertLess(return_to_score_100(0.03), return_to_score_100(0.10))
-        self.assertGreaterEqual(return_to_score_100(10.0), 99.0)
-        self.assertLessEqual(return_to_score_100(-10.0), 1.0)
 
 
 if __name__ == "__main__":
