@@ -9,10 +9,12 @@ spec: docs/spec/journal-board-spec.md
 
 from __future__ import annotations
 
-from decimal import Decimal
+import hashlib
+import secrets
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from app.api.routes.auth import (
@@ -20,6 +22,7 @@ from app.api.routes.auth import (
     get_current_user,
     get_current_user_optional,
 )
+from app.core.config import Settings, get_settings
 from app.core.database import get_database_pool
 from signal_alpha_data_access.backend import CommunityRepository
 
@@ -28,7 +31,10 @@ router = APIRouter(prefix="/api/community", tags=["community"])
 # 서로 다른 신고자 수가 이 값 이상이면 대상 자동 숨김(status='hidden'). 운영 튜닝값.
 REPORT_HIDE_THRESHOLD = 5
 _FEED_MAX = 50
+_COMMENT_MAX = 50
 _REACTION_TYPES = {"like", "bookmark"}
+_VIEWER_COOKIE = "sa_community_viewer"
+_VIEWER_COOKIE_MAX_AGE_SECONDS = 365 * 86400
 
 
 def _api_error(status_code: int, code: str, message: str) -> HTTPException:
@@ -101,7 +107,12 @@ def _post_response(row: dict[str, Any]) -> dict[str, Any]:
         "show_pnl": row.get("show_pnl", False),
         "view_count": row.get("view_count", 0),
         "like_count": row.get("like_count", 0),
+        "bookmark_count": row.get("bookmark_count", 0),
         "comment_count": row.get("comment_count", 0),
+        "my_reactions": {
+            "like": bool(row.get("my_like", False)),
+            "bookmark": bool(row.get("my_bookmark", False)),
+        },
         "created_at": _timestamp(row.get("created_at")),
         "updated_at": _timestamp(row.get("updated_at")),
     }
@@ -120,8 +131,89 @@ def _comment_response(row: dict[str, Any]) -> dict[str, Any]:
             "member_code": row.get("author_member_code"),
             "nickname": row.get("author_nickname"),
         },
+        "like_count": row.get("like_count", 0),
+        "bookmark_count": row.get("bookmark_count", 0),
+        "my_reactions": {
+            "like": bool(row.get("my_like", False)),
+            "bookmark": bool(row.get("my_bookmark", False)),
+        },
         "created_at": _timestamp(row.get("created_at")),
     }
+
+
+async def _attach_my_reactions(
+    repo: CommunityRepository,
+    rows: list[dict[str, Any]],
+    current_user: dict[str, Any] | None,
+    target_type: str,
+) -> None:
+    for row in rows:
+        row["my_like"] = False
+        row["my_bookmark"] = False
+    if current_user is None or not rows:
+        return
+    reactions = await repo.list_user_reactions(
+        user_id=int(current_user["id"]),
+        target_type=target_type,
+        target_ids=[int(row["id"]) for row in rows],
+    )
+    by_target: dict[int, set[str]] = {}
+    for reaction in reactions:
+        reaction_row = dict(reaction)
+        by_target.setdefault(int(reaction_row["target_id"]), set()).add(str(reaction_row["type"]))
+    for row in rows:
+        types = by_target.get(int(row["id"]), set())
+        row["my_like"] = "like" in types
+        row["my_bookmark"] = "bookmark" in types
+
+
+def _anonymous_viewer_key(request: Request, response: Response, settings: Settings) -> str:
+    token = request.cookies.get(_VIEWER_COOKIE)
+    if not token:
+        token = secrets.token_urlsafe(24)
+        response.set_cookie(
+            key=_VIEWER_COOKIE,
+            value=token,
+            httponly=True,
+            secure=settings.cookie_secure,
+            samesite=settings.cookie_samesite,
+            path="/",
+            max_age=_VIEWER_COOKIE_MAX_AGE_SECONDS,
+            domain=settings.cookie_domain,
+        )
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _viewer_key(
+    current_user: dict[str, Any] | None,
+    request: Request,
+    response: Response,
+    settings: Settings,
+) -> str:
+    if current_user is not None:
+        return f"u{int(current_user['id'])}"
+    return _anonymous_viewer_key(request, response, settings)
+
+
+def _parse_popular_cursor(cursor: str | None) -> tuple[Decimal | None, int | None]:
+    if cursor is None:
+        return None, None
+    try:
+        score_text, id_text = cursor.split(":", 1)
+        return Decimal(score_text), int(id_text)
+    except (InvalidOperation, ValueError):
+        raise _api_error(400, "INVALID_CURSOR", "cursor 형식이 올바르지 않습니다.") from None
+
+
+def _format_popular_cursor(row: dict[str, Any]) -> str | None:
+    score = row.get("ranking_score")
+    if score is None:
+        return None
+    if isinstance(score, Decimal):
+        score_text = format(score, "f")
+    else:
+        score_text = format(Decimal(str(score)), "f")
+    return f"{score_text}:{row['id']}"
 
 
 # ---- 피드 / 인기 (공개, 비로그인 열람 가능) --------------------------------
@@ -129,13 +221,20 @@ def _comment_response(row: dict[str, Any]) -> dict[str, Any]:
 async def list_feed(
     cursor: int | None = None,
     limit: int = 20,
+    current_user: dict[str, Any] | None = Depends(get_current_user_optional),
     pool: Any = Depends(get_database_pool),
 ) -> dict[str, Any]:
     clamped = min(max(limit, 1), _FEED_MAX)
     async with pool.acquire() as connection:
-        rows = await CommunityRepository(connection).list_feed(cursor_id=cursor, limit=clamped)
-    items = [_post_response(dict(row)) for row in rows]
-    next_cursor = items[-1]["id"] if len(items) == clamped else None
+        repo = CommunityRepository(connection)
+        rows = [
+            dict(row)
+            for row in await repo.list_feed(cursor_id=cursor, limit=clamped + 1)
+        ]
+        page_rows = rows[:clamped]
+        await _attach_my_reactions(repo, page_rows, current_user, "post")
+    items = [_post_response(row) for row in page_rows]
+    next_cursor = items[-1]["id"] if len(rows) > clamped else None
     return {"items": items, "next_cursor": next_cursor, "notice": NOTICE}
 
 
@@ -143,18 +242,29 @@ async def list_feed(
 async def list_popular(
     window: str = "weekly",
     limit: int = 20,
-    offset: int = 0,
+    cursor: str | None = None,
+    current_user: dict[str, Any] | None = Depends(get_current_user_optional),
     pool: Any = Depends(get_database_pool),
 ) -> dict[str, Any]:
     if window not in {"weekly", "all"}:
         raise _api_error(400, "INVALID_WINDOW", "window 는 weekly 또는 all 이어야 합니다.")
     clamped = min(max(limit, 1), _FEED_MAX)
+    cursor_score, cursor_id = _parse_popular_cursor(cursor)
     async with pool.acquire() as connection:
-        rows = await CommunityRepository(connection).list_popular(
-            window_kind=window, limit=clamped, offset=max(offset, 0)
+        repo = CommunityRepository(connection)
+        rows = await repo.list_popular(
+            window_kind=window,
+            limit=clamped + 1,
+            cursor_score=cursor_score,
+            cursor_id=cursor_id,
         )
-    items = [_post_response(dict(row)) for row in rows]
-    return {"items": items, "notice": NOTICE}
+    row_dicts = [dict(row) for row in rows]
+    page_rows = row_dicts[:clamped]
+    async with pool.acquire() as connection:
+        await _attach_my_reactions(CommunityRepository(connection), page_rows, current_user, "post")
+    next_cursor = _format_popular_cursor(page_rows[-1]) if len(row_dicts) > clamped else None
+    items = [_post_response(row) for row in page_rows]
+    return {"items": items, "next_cursor": next_cursor, "notice": NOTICE}
 
 
 # ---- 게시글 작성/조회/수정/삭제 --------------------------------------------
@@ -189,18 +299,25 @@ async def create_post(
 @router.get("/posts/{post_id}")
 async def get_post(
     post_id: int,
+    request: Request,
+    response: Response,
     current_user: dict[str, Any] | None = Depends(get_current_user_optional),
     pool: Any = Depends(get_database_pool),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
     async with pool.acquire() as connection:
         repo = CommunityRepository(connection)
         row = await repo.get_post(post_id=post_id)
         if row is None:
             raise _api_error(404, "POST_NOT_FOUND", "게시글을 찾을 수 없습니다.")
-        # 조회수 중복방지: 로그인 사용자만 유저 단위로 1일 1회 집계(어뷰징 방지).
-        if current_user is not None:
-            await repo.record_view(post_id=post_id, viewer_key=f"u{int(current_user['id'])}")
-    return _post_response(dict(row))
+        # 조회수 중복방지: 로그인은 유저, 비로그인은 세션 쿠키 해시 기준으로 1일 1회 집계.
+        row_dict = dict(row)
+        await _attach_my_reactions(repo, [row_dict], current_user, "post")
+        await repo.record_view(
+            post_id=post_id,
+            viewer_key=_viewer_key(current_user, request, response, settings),
+        )
+    return _post_response(row_dict)
 
 
 @router.patch("/posts/{post_id}")
@@ -242,11 +359,27 @@ async def delete_post(
 @router.get("/posts/{post_id}/comments")
 async def list_comments(
     post_id: int,
+    cursor: int | None = None,
+    limit: int = 20,
+    current_user: dict[str, Any] | None = Depends(get_current_user_optional),
     pool: Any = Depends(get_database_pool),
 ) -> dict[str, Any]:
+    clamped = min(max(limit, 1), _COMMENT_MAX)
     async with pool.acquire() as connection:
-        rows = await CommunityRepository(connection).list_comments(post_id=post_id)
-    return {"items": [_comment_response(dict(row)) for row in rows]}
+        repo = CommunityRepository(connection)
+        rows = [
+            dict(row)
+            for row in await repo.list_comments(
+                post_id=post_id,
+                cursor_id=cursor,
+                limit=clamped + 1,
+            )
+        ]
+        page_rows = rows[:clamped]
+        await _attach_my_reactions(repo, page_rows, current_user, "comment")
+    items = [_comment_response(row) for row in page_rows]
+    next_cursor = items[-1]["id"] if len(rows) > clamped else None
+    return {"items": items, "next_cursor": next_cursor}
 
 
 @router.post("/posts/{post_id}/comments")
@@ -305,7 +438,16 @@ async def _toggle(
     like_count = await repo.reaction_count(
         target_type=target_type, target_id=target_id, reaction_type="like"
     )
-    return {"action": action, "type": reaction_type, "like_count": like_count}
+    bookmark_count = await repo.reaction_count(
+        target_type=target_type, target_id=target_id, reaction_type="bookmark"
+    )
+    return {
+        "action": action,
+        "active": action == "added",
+        "type": reaction_type,
+        "like_count": like_count,
+        "bookmark_count": bookmark_count,
+    }
 
 
 @router.post("/posts/{post_id}/reactions")

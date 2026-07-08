@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from app.api.routes.admin import auth, billing, queue_ops, schedules, users
+from app.api.routes.admin import auth, billing, community, queue_ops, schedules, users
 
 # 테스트 호환: dependency_overrides 키와 직접 import 되는 헬퍼를 패키지 네임스페이스에 노출.
 from app.api.routes.admin._serializers import (  # noqa: F401
@@ -26,6 +26,7 @@ admin_router = APIRouter(prefix="/api/admin", tags=["admin"])
 admin_router.include_router(auth.router)
 admin_router.include_router(users.router)
 admin_router.include_router(billing.router)
+admin_router.include_router(community.router)
 admin_router.include_router(queue_ops.router)
 admin_router.include_router(schedules.router)
 

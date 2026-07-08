@@ -24,7 +24,7 @@ export default function CommunityPage() {
         <div>
           <h1 className="text-[24px] font-bold">커뮤니티</h1>
           <p className="mt-1 text-[13.5px] text-muted">
-            투자 판단(저널)을 공유하고 서로의 근거를 살펴보세요.
+            데이터 방향성 기록(저널)을 공유하고 서로의 근거를 살펴보세요.
           </p>
         </div>
       </header>

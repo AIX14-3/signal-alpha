@@ -403,7 +403,7 @@ function JournalTab() {
       <div className="card px-6 py-8 text-center" data-panel="journal" data-flow="journal-subscribe">
         <p className="font-bold">저널은 구독 회원 전용 기능입니다.</p>
         <p className="mt-2 text-[13.5px] text-muted">
-          발행한 리포트에 나의 판단을 기록하고, 이후 실제 주가 변동(7·30거래일)을 함께 복기할 수 있습니다.
+          발행한 리포트에 데이터 방향성 메모를 기록하고, 이후 실제 주가 변동(7·30거래일)을 함께 복기할 수 있습니다.
         </p>
         <Link
           href="/pricing"
@@ -417,7 +417,7 @@ function JournalTab() {
   if (loading) return <p className="text-muted" data-panel="journal">불러오는 중…</p>;
   if (error) return <p className="text-red" data-panel="journal">{error}</p>;
   if (items.length === 0)
-    return <p className="text-muted" data-panel="journal">저장한 저널이 없습니다. 리포트에서 저장해 투자 추이를 기록하세요.</p>;
+    return <p className="text-muted" data-panel="journal">저장한 저널이 없습니다. 리포트에서 데이터 방향성과 근거를 기록하세요.</p>;
 
   function startEdit(j: Journal) {
     setEditingId(j.journal_id);
@@ -491,7 +491,7 @@ function JournalTab() {
 
   function startShare(j: Journal) {
     setSharingId(j.journal_id);
-    setShareTitle(`${j.stock_name ?? j.stock_code} — 나의 판단`);
+    setShareTitle(`${j.stock_name ?? j.stock_code} - 데이터 방향성 기록`);
     setShareBody(j.memo ?? "");
     setSharePnl(false);
   }
@@ -525,7 +525,7 @@ function JournalTab() {
   const outcomeChange = (j: Journal) =>
     j.outcomes.length > 0 ? j.outcomes[j.outcomes.length - 1].change_pct : null;
 
-  // 판단 성향 요약 — 기록 집계일 뿐 성과 평가가 아니다(중립 표현 유지).
+  // 데이터 방향성 기록 요약 — 기록 집계일 뿐 성과 평가가 아니다(중립 표현 유지).
   const viewCounts = items.reduce<Record<string, number>>((acc, j) => {
     acc[j.user_view] = (acc[j.user_view] ?? 0) + 1;
     return acc;
@@ -549,7 +549,7 @@ function JournalTab() {
 
   return (
     <div data-panel="journal">
-      {/* 판단 성향 요약 — 저장한 기록의 중립적 집계 */}
+      {/* 데이터 방향성 기록 요약 — 저장한 기록의 중립적 집계 */}
       <div className="card mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 px-5 py-3 text-[12.5px]" data-flow="journal-summary">
         <span className="font-bold text-navy">저널 {items.length}건</span>
         {JOURNAL_VIEWS.map(([key, label]) =>
@@ -561,7 +561,7 @@ function JournalTab() {
         )}
         {avg7 != null && (
           <span className="text-muted">
-            판단 후 7거래일 평균 변동{" "}
+            기록 후 7거래일 평균 변동{" "}
             <b className={avg7 >= 0 ? "text-red" : "text-sky-deep"}>
               {avg7 >= 0 ? "+" : ""}
               {avg7.toFixed(2)}%

@@ -14,21 +14,34 @@ import { ReactionButton } from "./ReactionButton";
 import { ReportButton } from "./ReportButton";
 import { authorLabel, formatDate } from "./util";
 
+const PAGE = 20;
+
 // 게시글 댓글 트리(1단계 대댓글까지). 목록 조회·작성·대댓글·삭제(본인)·신고·좋아요.
 // 본인 판별은 author.member_code === user.member_code(응답에 user id 없음).
-export function CommentList({ postId }: { postId: number }) {
+export function CommentList({
+  postId,
+  onCountChange,
+}: {
+  postId: number;
+  onCountChange?: (delta: number) => void;
+}) {
   const user = useAuthStore((s) => s.user);
   const showToast = useToastStore((s) => s.show);
   const [comments, setComments] = useState<CommunityComment[]>([]);
+  const [nextCursor, setNextCursor] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [replyTo, setReplyTo] = useState<number | null>(null);
 
   const reload = useCallback(async () => {
+    setLoading(true);
     try {
-      const data = await listComments(postId);
+      const data = await listComments(postId, { limit: PAGE, cursor: null });
       setComments(data.items);
+      setNextCursor(data.next_cursor);
     } catch {
       // 목록 조회 실패는 조용히 — 빈 목록으로 둔다(작성 시 재시도).
+      setNextCursor(null);
     } finally {
       setLoading(false);
     }
@@ -49,6 +62,7 @@ export function CommentList({ postId }: { postId: number }) {
       await createComment(postId, { body: text, parent_comment_id: parentId });
       setReplyTo(null);
       await reload();
+      onCountChange?.(1);
       return true;
     } catch (error) {
       showToast(
@@ -64,12 +78,30 @@ export function CommentList({ postId }: { postId: number }) {
     try {
       await deleteComment(id);
       await reload();
+      onCountChange?.(-1);
       showToast("댓글을 삭제했습니다.", "success");
     } catch (error) {
       showToast(
         error instanceof ApiError ? error.message : "삭제에 실패했습니다.",
         "error",
       );
+    }
+  }
+
+  async function loadMore() {
+    if (nextCursor == null || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const data = await listComments(postId, { limit: PAGE, cursor: nextCursor });
+      setComments((prev) => [...prev, ...data.items]);
+      setNextCursor(data.next_cursor);
+    } catch (error) {
+      showToast(
+        error instanceof ApiError ? error.message : "댓글을 더 불러오지 못했습니다.",
+        "error",
+      );
+    } finally {
+      setLoadingMore(false);
     }
   }
 
@@ -122,6 +154,16 @@ export function CommentList({ postId }: { postId: number }) {
           ))}
         </ul>
       )}
+      {nextCursor != null && !loading && (
+        <button
+          type="button"
+          onClick={() => void loadMore()}
+          disabled={loadingMore}
+          className="mt-4 rounded-full border border-line px-4 py-2 text-[13px] font-bold text-navy-soft hover:border-sky hover:text-sky-deep disabled:opacity-50"
+        >
+          {loadingMore ? "불러오는 중..." : "더 보기"}
+        </button>
+      )}
     </section>
   );
 }
@@ -145,7 +187,19 @@ function CommentItem({
       </div>
       <p className="mt-1 whitespace-pre-wrap text-[14px]">{comment.body}</p>
       <div className="mt-1.5 flex items-center gap-3">
-        <ReactionButton target="comment" targetId={comment.id} />
+        <ReactionButton
+          target="comment"
+          targetId={comment.id}
+          count={comment.like_count}
+          active={comment.my_reactions.like}
+        />
+        <ReactionButton
+          target="comment"
+          targetId={comment.id}
+          type="bookmark"
+          count={comment.bookmark_count}
+          active={comment.my_reactions.bookmark}
+        />
         {onReply && (
           <button
             type="button"

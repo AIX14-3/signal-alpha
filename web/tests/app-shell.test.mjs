@@ -63,6 +63,7 @@ test("home v2 wires the two-column layout and the three right-pane sections", as
 
 test("api client exposes the contracted endpoints", async () => {
   const apiClient = await readApiSource();
+  const communityApi = await readFile(new URL("../src/lib/api/community.ts", import.meta.url), "utf8");
 
   for (const fn of [
     "searchStocks",
@@ -81,6 +82,55 @@ test("api client exposes the contracted endpoints", async () => {
   assert.match(apiClient, /scope: "journal_based" \| "signal_based"/);
   assert.match(apiClient, /export type PosthocDirectionBreakdownItem/);
   assert.match(apiClient, /direction_breakdown: PosthocDirectionBreakdownItem\[\]/);
+  assert.match(communityApi, /next_cursor: string \| null/);
+  assert.match(communityApi, /cursor\?: string \| null/);
+  assert.match(
+    communityApi,
+    /export type CommunityComments = \{\s+items: CommunityComment\[\];\s+next_cursor: number \| null;/s,
+  );
+  assert.match(
+    communityApi,
+    /listComments\(\s*postId: number,\s*params: \{ cursor\?: number \| null; limit\?: number \}/s,
+  );
+  assert.doesNotMatch(communityApi, /offset\?: number/);
+  assert.match(communityApi, /bookmark_count: number/);
+  assert.match(communityApi, /my_reactions: \{ like: boolean; bookmark: boolean \}/);
+  assert.match(communityApi, /active: boolean/);
+});
+
+test("community detail exposes bookmark and active reaction state", async () => {
+  const page = await readFile(new URL("../src/app/community/[postId]/page.tsx", import.meta.url), "utf8");
+  const reactionButton = await readFile(new URL("../src/components/community/ReactionButton.tsx", import.meta.url), "utf8");
+  const commentList = await readFile(new URL("../src/components/community/CommentList.tsx", import.meta.url), "utf8");
+
+  assert.match(page, /type="bookmark"/);
+  assert.match(page, /post\.my_reactions\.like/);
+  assert.match(page, /post\.my_reactions\.bookmark/);
+  assert.match(page, /bookmark_count/);
+  assert.match(reactionButton, /data-flow=\{`community-\$\{type\}`\}/);
+  assert.match(reactionButton, /result\.active/);
+  assert.match(reactionButton, /result\.bookmark_count/);
+  assert.match(commentList, /comment\.my_reactions\.like/);
+  assert.match(commentList, /comment\.my_reactions\.bookmark/);
+  assert.match(commentList, /comment\.bookmark_count/);
+  assert.match(commentList, /type="bookmark"/);
+  assert.match(commentList, /nextCursor/);
+  assert.match(commentList, /loadMore/);
+  assert.match(commentList, /listComments\(postId, \{ limit: PAGE, cursor/);
+  assert.match(page, /onCountChange/);
+  assert.match(commentList, /onCountChange/);
+});
+
+test("community copy uses data direction and evidence framing", async () => {
+  const communityPage = await readFile(new URL("../src/app/community/page.tsx", import.meta.url), "utf8");
+  const mypage = await readFile(new URL("../src/app/mypage/page.tsx", import.meta.url), "utf8");
+
+  assert.match(communityPage, /데이터 방향성/);
+  assert.match(communityPage, /근거/);
+  assert.doesNotMatch(communityPage, /투자 판단/);
+  assert.match(mypage, /데이터 방향성 기록/);
+  assert.match(mypage, /데이터 방향성과 근거/);
+  assert.doesNotMatch(mypage, /나의 판단|투자 추이|판단 성향|판단 후/);
 });
 
 test("admin UI exposes split schedule rows and schedule run history", async () => {
@@ -126,7 +176,31 @@ test("admin UI exposes split schedule rows and schedule run history", async () =
   assert.match(apiClient, /export async function adminSweepStaleQueue/);
   assert.match(apiClient, /export async function adminRetryQueueTask/);
   assert.match(apiClient, /export async function adminReplayDeadLetters/);
+  assert.match(apiClient, /export type AdminCommunityModerationItem/);
+  assert.match(apiClient, /export async function adminListCommunityModeration/);
+  assert.match(
+    apiClient,
+    /adminListCommunityModeration\(\s*params: \{ target_type\?: AdminCommunityModerationTarget; limit\?: number; cursor\?: string \| null \}/s,
+  );
+  assert.match(
+    apiClient,
+    /Promise<\{ items: AdminCommunityModerationItem\[\]; target_type: AdminCommunityModerationTarget; next_cursor: string \| null \}>/s,
+  );
+  assert.match(apiClient, /export async function adminRestoreCommunityPost/);
+  assert.match(apiClient, /export async function adminDeleteCommunityPost/);
+  assert.match(apiClient, /export async function adminRestoreCommunityComment/);
+  assert.match(apiClient, /export async function adminDeleteCommunityComment/);
   assert.match(page, /QueueOpsCard/);
+  assert.match(page, /CommunityModerationCard/);
+  assert.match(page, /adminListCommunityModeration/);
+  assert.match(page, /nextCursor/);
+  assert.match(page, /loadMore/);
+  assert.match(page, /adminListCommunityModeration\(\{ target_type: "all", limit: PAGE, cursor/);
+  assert.match(page, /adminRestoreCommunityPost/);
+  assert.match(page, /adminDeleteCommunityPost/);
+  assert.match(page, /adminRestoreCommunityComment/);
+  assert.match(page, /adminDeleteCommunityComment/);
+  assert.match(page, /moderation_review/);
   assert.match(page, /adminGetQueueOverview/);
   assert.match(page, /adminSweepStaleQueue/);
   assert.match(page, /adminRetryQueueTask/);

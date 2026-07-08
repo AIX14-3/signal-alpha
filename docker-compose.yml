@@ -280,6 +280,9 @@ services:
     volumes:
       - ./web:/app
       - web-node-modules:/app/node_modules
+    env_file:
+      - path: ./web/.env.local
+        required: false
     environment:
       NEXT_PUBLIC_MAIN_API_BASE_URL: ${NEXT_PUBLIC_MAIN_API_BASE_URL:-http://localhost:8000}
     ports:

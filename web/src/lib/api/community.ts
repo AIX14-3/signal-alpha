@@ -26,7 +26,9 @@ export type CommunityPost = {
   show_pnl: boolean;
   view_count: number;
   like_count: number;
+  bookmark_count: number;
   comment_count: number;
+  my_reactions: { like: boolean; bookmark: boolean };
   created_at: string | null;
   updated_at: string | null;
   // /popular 응답에만 존재(워커 배치 가중합 점수).
@@ -39,7 +41,15 @@ export type CommunityComment = {
   parent_comment_id: number | null;
   body: string;
   author: CommunityAuthor;
+  like_count: number;
+  bookmark_count: number;
+  my_reactions: { like: boolean; bookmark: boolean };
   created_at: string | null;
+};
+
+export type CommunityComments = {
+  items: CommunityComment[];
+  next_cursor: number | null;
 };
 
 export type CommunityFeed = {
@@ -51,6 +61,7 @@ export type CommunityFeed = {
 
 export type CommunityPopular = {
   items: CommunityPost[];
+  next_cursor: string | null;
   notice: string;
 };
 
@@ -58,8 +69,10 @@ export type ReactionType = "like" | "bookmark";
 
 export type ReactionResult = {
   action: "added" | "removed";
+  active: boolean;
   type: ReactionType;
   like_count: number;
+  bookmark_count: number;
 };
 
 export type ReportResult = { reported: boolean; hidden: boolean };
@@ -72,19 +85,19 @@ export async function listPosts(
   if (params.cursor != null) search.set("cursor", String(params.cursor));
   if (params.limit) search.set("limit", String(params.limit));
   const qs = search.toString();
-  return apiFetch(`/api/community/posts${qs ? `?${qs}` : ""}`, { auth: "none" });
+  return apiFetch(`/api/community/posts${qs ? `?${qs}` : ""}`);
 }
 
-// 인기 랭킹 피드(워커 배치 가중합). window=weekly(롤링 7일)|all, offset 페이지네이션.
+// 인기 랭킹 피드(워커 배치 가중합). window=weekly(롤링 7일)|all, score:id 커서 페이지네이션.
 export async function listPopular(
-  params: { window?: "weekly" | "all"; limit?: number; offset?: number } = {},
+  params: { window?: "weekly" | "all"; limit?: number; cursor?: string | null } = {},
 ): Promise<CommunityPopular> {
   const search = new URLSearchParams();
   if (params.window) search.set("window", params.window);
   if (params.limit) search.set("limit", String(params.limit));
-  if (params.offset) search.set("offset", String(params.offset));
+  if (params.cursor != null) search.set("cursor", params.cursor);
   const qs = search.toString();
-  return apiFetch(`/api/community/popular${qs ? `?${qs}` : ""}`, { auth: "none" });
+  return apiFetch(`/api/community/popular${qs ? `?${qs}` : ""}`);
 }
 
 export async function getPost(id: number): Promise<CommunityPost> {
@@ -112,8 +125,15 @@ export async function deletePost(id: number): Promise<{ deleted: boolean }> {
   return apiFetch(`/api/community/posts/${id}`, { method: "DELETE" });
 }
 
-export async function listComments(postId: number): Promise<{ items: CommunityComment[] }> {
-  return apiFetch(`/api/community/posts/${postId}/comments`, { auth: "none" });
+export async function listComments(
+  postId: number,
+  params: { cursor?: number | null; limit?: number } = {},
+): Promise<CommunityComments> {
+  const search = new URLSearchParams();
+  if (params.cursor != null) search.set("cursor", String(params.cursor));
+  if (params.limit) search.set("limit", String(params.limit));
+  const qs = search.toString();
+  return apiFetch(`/api/community/posts/${postId}/comments${qs ? `?${qs}` : ""}`);
 }
 
 export async function createComment(
