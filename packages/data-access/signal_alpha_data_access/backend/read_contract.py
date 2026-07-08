@@ -89,6 +89,17 @@ class StockNewsRepository:
         )
         return int(value or 0)
 
+    async def get_digest_by_ticker(self, ticker: str) -> Any | None:
+        """종목 뉴스 다이제스트(LLM 종합 한 줄) — 없으면 None. 적재는 worker 뉴스 데몬."""
+        return await self._connection.fetchrow(
+            """
+            SELECT stock_code, digest_text, model, article_count, generated_at
+            FROM api.stock_news_digest
+            WHERE stock_code = $1
+            """,
+            ticker.strip(),
+        )
+
     async def list_recent(self, *, limit: int = 30) -> list[Any]:
         """전역 최신 뉴스(종목 무관) + 종목명 조인. 홈 2-pane 좌측 '뉴스 피드'용(공개).
 

@@ -10,6 +10,7 @@ import {
   type NewsSummary,
   type RecentNewsItem,
   type Stock,
+  type StockNewsDigest,
   type StockNewsItem,
   type StockPriceSeries,
 } from "@/lib/apiClient";
@@ -23,7 +24,7 @@ type HomeState = {
   loading: boolean;
   error: string | null;
   selectedCode: string | null;
-  stockNews: { count: number; items: StockNewsItem[] } | null;
+  stockNews: { count: number; items: StockNewsItem[]; digest: StockNewsDigest | null } | null;
   stockNewsLoading: boolean;
   stockNewsError: string | null;
   stockPrices: StockPriceSeries | null;

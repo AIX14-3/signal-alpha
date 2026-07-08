@@ -71,15 +71,18 @@ async def list_stock_news(
     limit: int = 20,
     pool: Any = Depends(get_database_pool),
 ) -> dict[str, Any]:
-    """종목별 최신 뉴스 목록 + 건수(공개). 워커 뉴스 데몬이 api.stock_news 로 적재."""
+    """종목별 최신 뉴스 목록 + 건수 + 다이제스트(공개). 워커 뉴스 데몬이 적재·요약."""
     ticker = stock_code.strip()
     async with pool.acquire() as connection:
         repository = StockNewsRepository(connection)
         rows = await repository.list_by_ticker(ticker, limit=min(max(limit, 1), 50))
         count = await repository.count_by_ticker(ticker)
+        digest_row = await repository.get_digest_by_ticker(ticker)
     return {
         "count": count,
         "items": [_news_response(dict(row)) for row in rows],
+        # 종목 뉴스 흐름 한 줄(LLM). 없으면 null → 프론트는 블록 생략.
+        "digest": _digest_response(dict(digest_row)) if digest_row is not None else None,
     }
 
 
@@ -237,6 +240,18 @@ def _recent_news_response(row: dict[str, Any]) -> dict[str, Any]:
         "stock_code": row.get("stock_code"),
         "stock_name": row.get("stock_name"),
         **_news_response(row),
+    }
+
+
+def _digest_response(row: dict[str, Any]) -> dict[str, Any]:
+    generated_at = row.get("generated_at")
+    return {
+        "text": row.get("digest_text"),
+        "model": row.get("model"),
+        "article_count": int(row.get("article_count") or 0),
+        "generated_at": (
+            generated_at.isoformat() if hasattr(generated_at, "isoformat") else generated_at
+        ),
     }
 
 

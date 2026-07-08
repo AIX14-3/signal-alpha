@@ -170,6 +170,13 @@ function AnalysisDetail({ stockCode }: { stockCode: string }) {
             전체 리포트 →
           </Link>
         </div>
+        {/* 종목 뉴스 흐름 한 줄(LLM, display-only). 없으면 생략. 신호 점수와 무관. */}
+        {stockNews?.digest?.text && (
+          <div className="mb-1.5 rounded-[8px] bg-surface-2 px-2.5 py-1.5">
+            <span className="text-[11px] font-semibold text-muted">뉴스 한 줄 · </span>
+            <span className="text-[12px] leading-snug text-navy-soft">{stockNews.digest.text}</span>
+          </div>
+        )}
         {stockNewsLoading ? (
           <p className="py-2 text-[12px] text-muted">뉴스를 불러오는 중…</p>
         ) : !stockNews || stockNews.count === 0 ? (
