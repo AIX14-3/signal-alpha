@@ -160,6 +160,9 @@ class FakeConnection:
         raise AssertionError(f"Unexpected fetchrow SQL: {sql}")
 
     async def fetch(self, sql, *args):
+        if "FROM api.stock_news_digest" in sql:
+            wanted = set(args[0])
+            return [row for code, row in self.digest_by_ticker.items() if code in wanted]
         if "FROM api.stock_news" in sql and "LEFT JOIN api.stocks" in sql:
             return self.recent_news_rows[: args[0]]
         if "FROM api.stock_news" in sql and "WHERE stock_code = $1" in sql:
@@ -280,6 +283,33 @@ class WatchlistRoutesTest(unittest.TestCase):
         body = response.json()
         self.assertEqual(body["count"], 0)
         self.assertIsNone(body["digest"])
+
+    def test_news_digests_batch_returns_present_codes_publicly(self):
+        # 공개 배치 — 있는 종목만 맵에 담고, digest 없는 종목(000660)은 생략.
+        response = self.client.get("/api/news/digests?codes=005930,000660")
+
+        self.assertEqual(response.status_code, 200)
+        digests = response.json()["digests"]
+        self.assertIn("005930", digests)
+        self.assertNotIn("000660", digests)
+        self.assertEqual(digests["005930"]["text"], "HBM 신규 고객 확보 보도.")
+        self.assertEqual(digests["005930"]["model"], "claude-sonnet-5")
+        self.assertEqual(digests["005930"]["article_count"], 2)
+
+    def test_news_digests_batch_empty_codes_returns_empty_map(self):
+        # 공백/빈 codes 는 쿼리 없이 빈 맵(불필요 DB 조회 방지).
+        response = self.client.get("/api/news/digests?codes=%20,%20")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["digests"], {})
+
+    def test_news_digests_batch_dedups_and_caps_without_error(self):
+        # 중복·초과(>50) codes 방어 — 5xx 없이 200, 존재 종목은 여전히 반환.
+        codes = ",".join(["005930", "005930", *[f"9{i:04d}" for i in range(60)]])
+        response = self.client.get(f"/api/news/digests?codes={codes}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("005930", response.json()["digests"])
 
     def test_news_summary_returns_global_counts_publicly(self):
         # 공개 엔드포인트 — 토큰 없이 200, 전역 집계 필드 반환.

@@ -16,6 +16,7 @@ export function LiveAnalysisSection() {
   const feed = useHomeStore((s) => s.feed);
   const loading = useHomeStore((s) => s.loading);
   const selectedCode = useHomeStore((s) => s.selectedCode);
+  const digests = useHomeStore((s) => s.digests);
   const toggle = useHomeStore((s) => s.toggle);
 
   // 좌 피드/관심종목에서 고른 종목이 상위 30 분석 리스트에 없을 수 있다(피드=최근뉴스, 리스트=listStocks).
@@ -54,6 +55,7 @@ export function LiveAnalysisSection() {
         <ul className="divide-y divide-line">
           {list.map((s) => {
             const open = selectedCode === s.stock_code;
+            const digestPreview = digests[s.stock_code]?.text;
             return (
               <li key={s.stock_code}>
                 <button
@@ -70,6 +72,12 @@ export function LiveAnalysisSection() {
                       {s.stock_name ?? s.stock_code}
                     </span>
                     <span className="text-[11.5px] text-muted">{s.stock_code}</span>
+                    {/* 접힌 행 뉴스 흐름 한 줄 미리보기(LLM, display-only). 펼치면 아코디언이 전체를 보여줘 생략. */}
+                    {!open && digestPreview && (
+                      <span className="mt-0.5 block truncate text-[11.5px] text-navy-soft">
+                        📰 {digestPreview}
+                      </span>
+                    )}
                   </span>
                   <span className={`text-[13px] text-muted transition ${open ? "rotate-180" : ""}`}>
                     ▾

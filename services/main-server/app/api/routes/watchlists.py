@@ -155,6 +155,30 @@ async def recent_news(
     return {"items": [_recent_news_response(dict(row)) for row in rows]}
 
 
+@news_router.get("/digests")
+async def list_news_digests(
+    codes: str,
+    pool: Any = Depends(get_database_pool),
+) -> dict[str, Any]:
+    """여러 종목의 뉴스 다이제스트 배치 조회(공개) — 홈 '실시간 분석 종목' 리스트 미리보기.
+
+    codes=쉼표구분 티커(상한 50, 초과분 절단). 미생성 종목은 응답 맵에서 생략 →
+    프론트는 stock_code 로 매핑하고 없으면 미리보기 줄을 그리지 않는다. 계약: {digests: {code: {...}}}.
+    """
+    tickers = [code.strip() for code in codes.split(",") if code.strip()][:50]
+    if not tickers:
+        return {"digests": {}}
+    async with pool.acquire() as connection:
+        rows = await StockNewsRepository(connection).list_digests_by_tickers(tickers)
+    digests: dict[str, Any] = {}
+    for row in rows:
+        data = dict(row)
+        code = data.get("stock_code")
+        if code:
+            digests[code] = _digest_response(data)
+    return {"digests": digests}
+
+
 @watchlists_router.get("")
 async def list_watchlists(
     current_user: dict[str, Any] = Depends(get_current_user),

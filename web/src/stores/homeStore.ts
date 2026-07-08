@@ -4,6 +4,7 @@ import { create } from "zustand";
 import {
   getNewsSummary,
   getStockPrices,
+  listNewsDigests,
   listRecentNews,
   listStockNews,
   listStocks,
@@ -24,6 +25,8 @@ type HomeState = {
   loading: boolean;
   error: string | null;
   selectedCode: string | null;
+  // 실시간 분석 리스트 접힌 행 미리보기용 종목→다이제스트 맵(배치 로드). 미생성 종목은 키 없음.
+  digests: Record<string, StockNewsDigest>;
   stockNews: { count: number; items: StockNewsItem[]; digest: StockNewsDigest | null } | null;
   stockNewsLoading: boolean;
   stockNewsError: string | null;
@@ -44,6 +47,7 @@ export const useHomeStore = create<HomeState>((set, get) => ({
   loading: false,
   error: null,
   selectedCode: null,
+  digests: {},
   stockNews: null,
   stockNewsLoading: false,
   stockNewsError: null,
@@ -67,6 +71,14 @@ export const useHomeStore = create<HomeState>((set, get) => ({
         chips: stocks.items,
         loading: false,
       });
+      // 실시간 분석 리스트(=chips) 종목의 다이제스트를 배치로 미리 로드(접힌 행 한 줄 미리보기).
+      // 미리보기는 이 리스트 행에만 그려지므로 피드 전용 종목은 제외한다(서버 50캡 이내·불필요 조회 방지).
+      // set 은 병합(교체 아님) — 먼저 끝난 select() 의 digest 를 덮어쓰지 않는다.
+      // 실패는 조용히 무시(부가 정보라 목록 로드를 막지 않음).
+      const codes = stocks.items.map((s) => s.stock_code);
+      void listNewsDigests(codes)
+        .then((digests) => set((state) => ({ digests: { ...state.digests, ...digests } })))
+        .catch(() => {});
       // 좌측 첫 항목의 종목을 자동 선택(아코디언 자동 열기).
       const first = recent.items.find((n) => n.stock_code)?.stock_code;
       if (first) void get().select(first);
@@ -87,7 +99,14 @@ export const useHomeStore = create<HomeState>((set, get) => ({
     void listStockNews(code, 20)
       .then((data) => {
         if (token !== selectToken) return; // 더 최신 선택이 있으면 폐기
-        set({ stockNews: data, stockNewsLoading: false });
+        // 방금 받은 최신 digest 를 미리보기 맵에도 반영(접힌 행과 아코디언 정합).
+        set((state) => ({
+          stockNews: data,
+          stockNewsLoading: false,
+          digests: data.digest?.text
+            ? { ...state.digests, [code]: data.digest }
+            : state.digests,
+        }));
       })
       .catch((error) => {
         if (token !== selectToken) return;
