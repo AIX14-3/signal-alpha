@@ -1,6 +1,7 @@
 // 관리자(별도 세션 토큰 sa_admin HttpOnly 쿠키) — 유저·통계·큐운영·스케줄.
 
 import { apiFetch } from "./core";
+import type { CommunityAuthor, CommunityPost } from "./community";
 
 export type AdminUser = {
   id: number;
@@ -143,6 +144,38 @@ export type AdminQueueEvent = {
   count?: number | null;
 };
 
+export type AdminCommunityModerationPostItem = {
+  target_type: "post";
+  id: number;
+  status: string | null;
+  report_count: number;
+  report_reasons: string[];
+  latest_reported_at: string | null;
+  post: CommunityPost;
+};
+
+export type AdminCommunityModerationCommentItem = {
+  target_type: "comment";
+  id: number;
+  post_id: number;
+  post_title: string | null;
+  parent_comment_id: number | null;
+  body: string | null;
+  author: CommunityAuthor;
+  status: string | null;
+  report_count: number;
+  report_reasons: string[];
+  latest_reported_at: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
+export type AdminCommunityModerationItem =
+  | AdminCommunityModerationPostItem
+  | AdminCommunityModerationCommentItem;
+
+export type AdminCommunityModerationTarget = "all" | "post" | "comment";
+
 export async function adminLogin(body: { email: string; password: string }): Promise<{
   expires_at: string;
   admin: { id: number; email: string };
@@ -217,6 +250,40 @@ export async function adminListSchedules(): Promise<{ items: AdminSchedule[] }> 
 
 export async function adminGetQueueOverview(): Promise<AdminQueueOverview> {
   return apiFetch("/api/admin/queue/overview", { auth: "admin" });
+}
+
+export async function adminListCommunityModeration(
+  params: { target_type?: AdminCommunityModerationTarget; limit?: number } = {},
+): Promise<{ items: AdminCommunityModerationItem[]; target_type: AdminCommunityModerationTarget }> {
+  const search = new URLSearchParams();
+  if (params.target_type) search.set("target_type", params.target_type);
+  if (params.limit) search.set("limit", String(params.limit));
+  const qs = search.toString();
+  return apiFetch(`/api/admin/community/moderation${qs ? `?${qs}` : ""}`, { auth: "admin" });
+}
+
+export async function adminRestoreCommunityPost(
+  postId: number,
+): Promise<{ status: string; target_type: "post"; id: number }> {
+  return apiFetch(`/api/admin/community/posts/${postId}/restore`, { method: "POST", auth: "admin" });
+}
+
+export async function adminDeleteCommunityPost(
+  postId: number,
+): Promise<{ status: string; target_type: "post"; id: number }> {
+  return apiFetch(`/api/admin/community/posts/${postId}`, { method: "DELETE", auth: "admin" });
+}
+
+export async function adminRestoreCommunityComment(
+  commentId: number,
+): Promise<{ status: string; target_type: "comment"; id: number }> {
+  return apiFetch(`/api/admin/community/comments/${commentId}/restore`, { method: "POST", auth: "admin" });
+}
+
+export async function adminDeleteCommunityComment(
+  commentId: number,
+): Promise<{ status: string; target_type: "comment"; id: number }> {
+  return apiFetch(`/api/admin/community/comments/${commentId}`, { method: "DELETE", auth: "admin" });
 }
 
 export async function adminSweepStaleQueue(body: {

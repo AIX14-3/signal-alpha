@@ -10,6 +10,7 @@ warnings.filterwarnings(
 )
 from starlette.testclient import TestClient
 
+from app.api.routes import admin as admin_routes
 from app.core.config import get_settings
 from app.core.database import get_database_pool
 from app.core.security import create_access_token
@@ -85,6 +86,30 @@ class FakeConnection:
         return {**comment, "author_member_code": author["member_code"],
                 "author_nickname": author["nickname"]}
 
+    def _report_summary(self, target_type, target_id):
+        reports = [
+            r for r in self.reports
+            if r["target_type"] == target_type and r["target_id"] == target_id
+        ]
+        latest = max((r.get("created_at") for r in reports), default=None)
+        reasons = sorted({r.get("reason") for r in reports if r.get("reason")})
+        return {
+            "report_count": len(reports),
+            "latest_reported_at": latest,
+            "report_reasons": reasons,
+        }
+
+    def _moderation_post_row(self, post):
+        return {**self._post_row(post), **self._report_summary("post", post["id"])}
+
+    def _moderation_comment_row(self, comment):
+        post = self._find_post(comment["post_id"])
+        return {
+            **self._comment_row(comment),
+            "post_title": post["title"] if post else None,
+            **self._report_summary("comment", comment["id"]),
+        }
+
     def _visible(self, post):
         return post["deleted_at"] is None and post["status"] == "visible"
 
@@ -118,7 +143,7 @@ class FakeConnection:
                     return None
             comment = {"id": self.next_comment_id, "post_id": post_id, "parent_comment_id": parent_id,
                        "author_user_id": author_id, "body": body, "status": "visible",
-                       "deleted_at": None, "created_at": _NOW}
+                       "deleted_at": None, "created_at": _NOW, "updated_at": _NOW}
             self.next_comment_id += 1
             self.comments.append(comment)
             return comment["id"]
@@ -128,6 +153,34 @@ class FakeConnection:
         if "SELECT author_user_id FROM community_comments" in sql:
             c = next((c for c in self.comments if c["id"] == args[0] and c["deleted_at"] is None), None)
             return c["author_user_id"] if c else None
+        if "UPDATE community_posts" in sql and "SET status = 'visible'" in sql:
+            post = self._find_post(args[0])
+            if post is None or post["deleted_at"] is not None or post["status"] != "hidden":
+                return None
+            post["status"] = "visible"
+            post["updated_at"] = _NOW
+            return post["id"]
+        if "UPDATE community_comments" in sql and "SET status = 'visible'" in sql:
+            c = next((c for c in self.comments if c["id"] == args[0]), None)
+            if c is None or c["deleted_at"] is not None or c["status"] != "hidden":
+                return None
+            c["status"] = "visible"
+            c["updated_at"] = _NOW
+            return c["id"]
+        if "UPDATE community_posts" in sql and "deleted_at = NOW()" in sql and "status = 'hidden'" in sql:
+            post = self._find_post(args[0])
+            if post is None or post["deleted_at"] is not None or post["status"] != "hidden":
+                return None
+            post["deleted_at"] = _NOW
+            post["updated_at"] = _NOW
+            return post["id"]
+        if "UPDATE community_comments" in sql and "deleted_at = NOW()" in sql and "status = 'hidden'" in sql:
+            c = next((c for c in self.comments if c["id"] == args[0]), None)
+            if c is None or c["deleted_at"] is not None or c["status"] != "hidden":
+                return None
+            c["deleted_at"] = _NOW
+            c["updated_at"] = _NOW
+            return c["id"]
         if "UPDATE community_posts" in sql and "SET title = COALESCE" in sql:
             post = self._find_post(args[0])
             if post is None or post["author_user_id"] != args[1] or post["deleted_at"] is not None:
@@ -182,8 +235,20 @@ class FakeConnection:
         raise AssertionError(f"Unexpected fetchval SQL: {sql}")
 
     async def fetchrow(self, sql, *args):
+        if "INSERT INTO admin_audit_log" in sql:
+            return {"id": 1}
         if "FROM users" in sql and "WHERE id = $1" in sql:
             return self.users_by_id.get(args[0])
+        if "FROM community_posts" in sql and "p.status = 'hidden'" in sql:
+            post = self._find_post(args[0])
+            if post is None or post["deleted_at"] is not None or post["status"] != "hidden":
+                return None
+            return self._moderation_post_row(post)
+        if "FROM community_comments c" in sql and "c.status = 'hidden'" in sql:
+            c = next((c for c in self.comments if c["id"] == args[0]), None)
+            if c is None or c["deleted_at"] is not None or c["status"] != "hidden":
+                return None
+            return self._moderation_comment_row(c)
         if "FROM community_posts" in sql:  # get_post (서브쿼리에 comments/reactions 있어도 메인은 posts)
             post = self._find_post(args[0])
             if post is None or not self._visible(post):
@@ -215,6 +280,24 @@ class FakeConnection:
                     if (row["ranking_score"], row["id"]) < (cursor_score, cursor_id)
                 ]
             return ranked[:limit]
+        if "FROM community_posts" in sql and "p.status = 'hidden'" in sql:
+            limit = args[0]
+            rows = [
+                self._moderation_post_row(post)
+                for post in self.posts
+                if post["deleted_at"] is None and post["status"] == "hidden"
+            ]
+            rows.sort(key=lambda row: (row.get("latest_reported_at") or row["updated_at"], row["id"]), reverse=True)
+            return rows[:limit]
+        if "FROM community_comments c" in sql and "c.status = 'hidden'" in sql:
+            limit = args[0]
+            rows = [
+                self._moderation_comment_row(c)
+                for c in self.comments
+                if c["deleted_at"] is None and c["status"] == "hidden"
+            ]
+            rows.sort(key=lambda row: (row.get("latest_reported_at") or row["updated_at"], row["id"]), reverse=True)
+            return rows[:limit]
         if "FROM community_posts" in sql:  # feed
             cursor_id, limit = args
             rows = sorted((p for p in self.posts if self._visible(p)), key=lambda p: p["id"], reverse=True)
@@ -295,6 +378,12 @@ class CommunityRoutesTest(unittest.TestCase):
 
     def headers(self, token):
         return {"Authorization": f"Bearer {token}"}
+
+    def install_admin(self):
+        app.dependency_overrides[admin_routes.get_current_admin] = lambda: {
+            "admin_id": 42,
+            "admin_email": "admin@example.com",
+        }
 
     def create_post(self, token, **overrides):
         payload = {"title": "삼성 판단 공유", "body": "이렇게 봤습니다", "journal_id": 20, "show_pnl": False}
@@ -418,6 +507,81 @@ class CommunityRoutesTest(unittest.TestCase):
         self.assertEqual(self.client.get("/api/community/posts").json()["items"], [])
 
     # ---- 404 / 권한 ----
+    def test_admin_moderation_lists_hidden_posts_and_comments(self):
+        post_id = self.create_post(self.token1, title="hidden post").json()["id"]
+        comment = self.client.post(
+            f"/api/community/posts/{post_id}/comments",
+            json={"body": "hidden comment"},
+            headers=self.headers(self.token2),
+        ).json()
+        self.connection._find_post(post_id)["status"] = "hidden"
+        self.connection.comments[0]["status"] = "hidden"
+        self.connection.reports.extend([
+            {
+                "id": 1,
+                "reporter_user_id": 2,
+                "target_type": "post",
+                "target_id": post_id,
+                "reason": "spam",
+                "created_at": _NOW,
+            },
+            {
+                "id": 2,
+                "reporter_user_id": 1,
+                "target_type": "comment",
+                "target_id": comment["id"],
+                "reason": "abuse",
+                "created_at": _NOW,
+            },
+        ])
+        self.install_admin()
+
+        response = self.client.get("/api/admin/community/moderation")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual({item["target_type"] for item in body["items"]}, {"post", "comment"})
+        post_item = next(item for item in body["items"] if item["target_type"] == "post")
+        self.assertEqual(post_item["post"]["id"], post_id)
+        self.assertEqual(post_item["report_count"], 1)
+        self.assertEqual(post_item["report_reasons"], ["spam"])
+        self.assertNotIn("author_user_id", post_item["post"])
+        comment_item = next(item for item in body["items"] if item["target_type"] == "comment")
+        self.assertEqual(comment_item["id"], comment["id"])
+        self.assertEqual(comment_item["post_id"], post_id)
+        self.assertEqual(comment_item["report_reasons"], ["abuse"])
+
+    def test_admin_moderation_restores_and_deletes_hidden_targets(self):
+        post_id = self.create_post(self.token1, title="hidden post").json()["id"]
+        comment = self.client.post(
+            f"/api/community/posts/{post_id}/comments",
+            json={"body": "hidden comment"},
+            headers=self.headers(self.token2),
+        ).json()
+        self.connection._find_post(post_id)["status"] = "hidden"
+        self.connection.comments[0]["status"] = "hidden"
+        self.install_admin()
+
+        restored_post = self.client.post(f"/api/admin/community/posts/{post_id}/restore")
+        restored_comment = self.client.post(f"/api/admin/community/comments/{comment['id']}/restore")
+
+        self.assertEqual(restored_post.status_code, 200)
+        self.assertEqual(restored_post.json()["status"], "visible")
+        self.assertEqual(restored_comment.status_code, 200)
+        self.assertEqual(restored_comment.json()["status"], "visible")
+        self.connection._find_post(post_id)["status"] = "hidden"
+        self.connection.comments[0]["status"] = "hidden"
+
+        deleted_comment = self.client.delete(f"/api/admin/community/comments/{comment['id']}")
+        deleted_post = self.client.delete(f"/api/admin/community/posts/{post_id}")
+
+        self.assertEqual(deleted_comment.status_code, 200)
+        self.assertEqual(deleted_comment.json(), {"status": "deleted", "target_type": "comment", "id": comment["id"]})
+        self.assertEqual(deleted_post.status_code, 200)
+        self.assertEqual(deleted_post.json(), {"status": "deleted", "target_type": "post", "id": post_id})
+        self.assertIsNotNone(self.connection.comments[0]["deleted_at"])
+        self.assertIsNotNone(self.connection._find_post(post_id)["deleted_at"])
+
     def test_detail_not_found(self):
         response = self.client.get("/api/community/posts/999")
         self.assertEqual(response.status_code, 404)

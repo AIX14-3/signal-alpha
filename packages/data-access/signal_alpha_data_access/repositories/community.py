@@ -140,6 +140,174 @@ class CommunityRepository:
             limit,
         )
 
+    # ---- 관리자 모더레이션 -------------------------------------------------
+    async def list_hidden_posts(self, *, limit: int) -> list[Any]:
+        """관리자 검토 큐용 숨김 게시글. 공개 응답과 같은 데이터 미니멀리즘을 유지한다."""
+        return await self._connection.fetch(
+            f"""
+            SELECT {_POST_SELECT},
+                   reports.report_count,
+                   reports.latest_reported_at,
+                   reports.report_reasons
+            {_POST_JOINS}
+            LEFT JOIN LATERAL (
+                SELECT
+                    count(*)::int AS report_count,
+                    max(created_at) AS latest_reported_at,
+                    COALESCE(
+                        array_remove(array_agg(DISTINCT reason), NULL),
+                        ARRAY[]::varchar[]
+                    ) AS report_reasons
+                FROM community_reports
+                WHERE target_type = 'post' AND target_id = p.id
+            ) reports ON TRUE
+            WHERE p.deleted_at IS NULL AND p.status = 'hidden'
+            ORDER BY COALESCE(reports.latest_reported_at, p.updated_at, p.created_at) DESC, p.id DESC
+            LIMIT $1
+            """,
+            limit,
+        )
+
+    async def list_hidden_comments(self, *, limit: int) -> list[Any]:
+        """관리자 검토 큐용 숨김 댓글."""
+        return await self._connection.fetch(
+            """
+            SELECT c.id, c.post_id, c.parent_comment_id, c.body, c.status,
+                   c.created_at, c.updated_at, c.author_user_id,
+                   u.member_code AS author_member_code,
+                   u.nickname AS author_nickname,
+                   p.title AS post_title,
+                   reports.report_count,
+                   reports.latest_reported_at,
+                   reports.report_reasons
+              FROM community_comments c
+              JOIN users u ON u.id = c.author_user_id
+              JOIN community_posts p ON p.id = c.post_id
+              LEFT JOIN LATERAL (
+                  SELECT
+                      count(*)::int AS report_count,
+                      max(created_at) AS latest_reported_at,
+                      COALESCE(
+                          array_remove(array_agg(DISTINCT reason), NULL),
+                          ARRAY[]::varchar[]
+                      ) AS report_reasons
+                  FROM community_reports
+                  WHERE target_type = 'comment' AND target_id = c.id
+              ) reports ON TRUE
+             WHERE c.deleted_at IS NULL
+               AND c.status = 'hidden'
+               AND p.deleted_at IS NULL
+             ORDER BY COALESCE(reports.latest_reported_at, c.updated_at, c.created_at) DESC, c.id DESC
+             LIMIT $1
+            """,
+            limit,
+        )
+
+    async def get_hidden_post_for_moderation(self, *, post_id: int) -> Any:
+        return await self._connection.fetchrow(
+            f"""
+            SELECT {_POST_SELECT},
+                   reports.report_count,
+                   reports.latest_reported_at,
+                   reports.report_reasons
+            {_POST_JOINS}
+            LEFT JOIN LATERAL (
+                SELECT
+                    count(*)::int AS report_count,
+                    max(created_at) AS latest_reported_at,
+                    COALESCE(
+                        array_remove(array_agg(DISTINCT reason), NULL),
+                        ARRAY[]::varchar[]
+                    ) AS report_reasons
+                FROM community_reports
+                WHERE target_type = 'post' AND target_id = p.id
+            ) reports ON TRUE
+            WHERE p.id = $1 AND p.deleted_at IS NULL AND p.status = 'hidden'
+            """,
+            post_id,
+        )
+
+    async def get_hidden_comment_for_moderation(self, *, comment_id: int) -> Any:
+        return await self._connection.fetchrow(
+            """
+            SELECT c.id, c.post_id, c.parent_comment_id, c.body, c.status,
+                   c.created_at, c.updated_at, c.author_user_id,
+                   u.member_code AS author_member_code,
+                   u.nickname AS author_nickname,
+                   p.title AS post_title,
+                   reports.report_count,
+                   reports.latest_reported_at,
+                   reports.report_reasons
+              FROM community_comments c
+              JOIN users u ON u.id = c.author_user_id
+              JOIN community_posts p ON p.id = c.post_id
+              LEFT JOIN LATERAL (
+                  SELECT
+                      count(*)::int AS report_count,
+                      max(created_at) AS latest_reported_at,
+                      COALESCE(
+                          array_remove(array_agg(DISTINCT reason), NULL),
+                          ARRAY[]::varchar[]
+                      ) AS report_reasons
+                  FROM community_reports
+                  WHERE target_type = 'comment' AND target_id = c.id
+              ) reports ON TRUE
+             WHERE c.id = $1
+               AND c.deleted_at IS NULL
+               AND c.status = 'hidden'
+               AND p.deleted_at IS NULL
+            """,
+            comment_id,
+        )
+
+    async def restore_hidden_post(self, *, post_id: int) -> bool:
+        restored_id = await self._connection.fetchval(
+            """
+            UPDATE community_posts
+               SET status = 'visible', updated_at = NOW()
+             WHERE id = $1 AND deleted_at IS NULL AND status = 'hidden'
+            RETURNING id
+            """,
+            post_id,
+        )
+        return restored_id is not None
+
+    async def restore_hidden_comment(self, *, comment_id: int) -> bool:
+        restored_id = await self._connection.fetchval(
+            """
+            UPDATE community_comments
+               SET status = 'visible', updated_at = NOW()
+             WHERE id = $1 AND deleted_at IS NULL AND status = 'hidden'
+            RETURNING id
+            """,
+            comment_id,
+        )
+        return restored_id is not None
+
+    async def delete_hidden_post(self, *, post_id: int) -> bool:
+        deleted_id = await self._connection.fetchval(
+            """
+            UPDATE community_posts
+               SET deleted_at = NOW(), updated_at = NOW()
+             WHERE id = $1 AND deleted_at IS NULL AND status = 'hidden'
+            RETURNING id
+            """,
+            post_id,
+        )
+        return deleted_id is not None
+
+    async def delete_hidden_comment(self, *, comment_id: int) -> bool:
+        deleted_id = await self._connection.fetchval(
+            """
+            UPDATE community_comments
+               SET deleted_at = NOW(), updated_at = NOW()
+             WHERE id = $1 AND deleted_at IS NULL AND status = 'hidden'
+            RETURNING id
+            """,
+            comment_id,
+        )
+        return deleted_id is not None
+
     async def update_post(
         self,
         *,
