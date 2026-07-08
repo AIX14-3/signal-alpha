@@ -30,18 +30,33 @@ async function readAdminSource() {
   return parts.join("\n");
 }
 
-test("home page wires the 2-pane panes and report links", async () => {
+test("home v2 wires the two-column layout and the three right-pane sections", async () => {
   const page = await readFile(new URL("../src/app/page.tsx", import.meta.url), "utf8");
   const rightPane = await readFile(new URL("../src/components/HomeRightPane.tsx", import.meta.url), "utf8");
+  const liveAnalysis = await readFile(new URL("../src/components/LiveAnalysisSection.tsx", import.meta.url), "utf8");
+  const watchlistSection = await readFile(new URL("../src/components/WatchlistSection.tsx", import.meta.url), "utf8");
+  const communityPopular = await readFile(new URL("../src/components/CommunityPopularSection.tsx", import.meta.url), "utf8");
   const headerSearch = await readFile(new URL("../src/components/HeaderStockSearch.tsx", import.meta.url), "utf8");
   const layout = await readFile(new URL("../src/app/layout.tsx", import.meta.url), "utf8");
   const apiClient = await readFile(new URL("../src/lib/apiClient.ts", import.meta.url), "utf8");
 
-  // 홈은 좌/우 pane 을 조립하고, 검색은 헤더(HeaderStockSearch)로 승격, 전체 리포트 링크는 우 pane 에 있다.
+  // 홈 v2 = 좌 뉴스 피드 + 우 3섹션. 인-콘텐츠 메뉴 사이드바는 제거됐다.
   assert.match(page, /HomeLeftPane/);
   assert.match(page, /HomeRightPane/);
+  assert.doesNotMatch(page, /HomeSidebar/);
+  // 우 pane 은 관심종목 / 실시간 분석 종목 / 커뮤니티 인기순위 3섹션을 조립한다.
+  assert.match(rightPane, /WatchlistSection/);
+  assert.match(rightPane, /LiveAnalysisSection/);
+  assert.match(rightPane, /CommunityPopularSection/);
+  // 실시간 분석 아코디언: 차트 + 리포트(useReportStore) + 전체 리포트 링크 배선.
+  assert.match(liveAnalysis, /StockPriceChart/);
+  assert.match(liveAnalysis, /useReportStore/);
+  assert.match(liveAnalysis, /\/report\//);
+  // 관심종목 로그인 분기 + 커뮤니티 인기순위 소스.
+  assert.match(watchlistSection, /로그인 후 관심종목을 등록하세요/);
+  assert.match(watchlistSection, /useWatchlistStore/);
+  assert.match(communityPopular, /listPopular/);
   assert.match(headerSearch, /searchStocks/);
-  assert.match(rightPane, /\/report\//);
   assert.match(layout, /AppShell/);
   assert.match(apiClient, /MAIN_API_BASE_URL/);
 });
@@ -51,6 +66,7 @@ test("api client exposes the contracted endpoints", async () => {
 
   for (const fn of [
     "searchStocks",
+    "getStockPrices",
     "listWatchlists",
     "getReport",
     "getPosthocAlignment",

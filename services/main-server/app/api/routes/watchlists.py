@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from datetime import date, datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -9,6 +11,7 @@ from app.api.routes.auth import NOTICE, get_current_user
 from app.core.database import get_database_pool
 from signal_alpha_data_access.backend import (
     StockNewsRepository,
+    StockPriceRepository,
     StockRepository,
     UserSignalRepository,
 )
@@ -23,6 +26,14 @@ news_router = APIRouter(prefix="/api/news", tags=["news"])
 # 뉴스 집계 최근 윈도우 한도: 1시간 ~ 30일. 과도한 값으로 인한 오남용 방어.
 NEWS_SUMMARY_RECENT_HOURS_MIN = 1
 NEWS_SUMMARY_RECENT_HOURS_MAX = 720
+
+# 가격 차트 조회 창 한도: 7일 ~ 120일, 기본 90일.
+# 상한(120)은 발행 러너 sync_stock_prices 의 동기화 창(_PRICE_LOOKBACK_DAYS=120)과 맞춘다 —
+# 더 크게 허용하면 아직 발행되지 않은 과거 구간이 조용히 잘린 series 로 나간다.
+PRICE_DAYS_MIN = 7
+PRICE_DAYS_MAX = 120
+PRICE_DAYS_DEFAULT = 90
+_KST = ZoneInfo("Asia/Seoul")
 
 
 class WatchlistCreateRequest(BaseModel):
@@ -72,6 +83,46 @@ async def list_stock_news(
         "items": [_news_response(dict(row)) for row in rows],
         # 종목 뉴스 흐름 한 줄(LLM). 없으면 null → 프론트는 블록 생략.
         "digest": _digest_response(dict(digest_row)) if digest_row is not None else None,
+    }
+
+
+@stocks_router.get("/{stock_code}/prices")
+async def list_stock_prices(
+    stock_code: str,
+    days: int = PRICE_DAYS_DEFAULT,
+    pool: Any = Depends(get_database_pool),
+) -> dict[str, Any]:
+    """종목별 일봉 종가 시리즈(공개) — 홈 '실시간 분석 종목' 아코디언 차트.
+
+    발행 러너(sync_stock_prices)가 수집 DB ohlcv_data 에서 backend stock_price_daily 로
+    동기화한 종가만 읽는다(백엔드는 수집 DB 에 접속하지 않음). 미동기화 종목은 series 가
+    비고, 프론트는 "차트 준비 중"을 표시한다.
+    """
+    ticker = stock_code.strip()
+    window = min(max(days, PRICE_DAYS_MIN), PRICE_DAYS_MAX)
+    from_date = datetime.now(_KST).date() - timedelta(days=window)
+    async with pool.acquire() as connection:
+        stock = await StockRepository(connection).get_by_ticker(ticker)
+        if stock is None:
+            raise _api_error(404, "STOCK_NOT_FOUND", "종목을 찾을 수 없습니다.")
+        rows = await StockPriceRepository(connection).list_daily_close(
+            stock_id=int(stock["id"]),
+            from_date=from_date,
+        )
+    series = [
+        {
+            "trade_date": _date_iso(row["trade_date"]),
+            "close": _number(row["close_price"]),
+        }
+        for row in rows
+    ]
+    latest = series[-1] if series else None
+    return {
+        "stock": {"stock_code": stock["ticker"], "stock_name": stock["name"]},
+        "series": series,
+        "latest_trade_date": latest["trade_date"] if latest else None,
+        "latest_price": latest["close"] if latest else None,
+        "notice": NOTICE,
     }
 
 
@@ -221,6 +272,20 @@ def _watchlist_response(row: dict[str, Any]) -> dict[str, Any]:
         "notification_enabled": row.get("notification_enabled", False),
         "created_at": row.get("created_at").isoformat() if row.get("created_at") else None,
     }
+
+
+def _date_iso(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    return str(value)
+
+
+def _number(value: Any) -> float | None:
+    if value is None:
+        return None
+    return float(value)
 
 
 def _api_error(status_code: int, code: str, message: str) -> HTTPException:

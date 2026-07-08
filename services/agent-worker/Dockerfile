@@ -50,6 +50,7 @@ COPY services/agent-worker/mvp_runtime.py \
      services/agent-worker/run_scheduler_instance.py \
      services/agent-worker/run_worker_drain.py \
      services/agent-worker/run_journal_outcomes.py \
+     services/agent-worker/run_community_rankings.py \
      ./
 
 EXPOSE 8011

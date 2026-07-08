@@ -1,6 +1,6 @@
 import unittest
 import warnings
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 warnings.filterwarnings(
     "ignore",
@@ -100,6 +100,13 @@ class FakeConnection:
         }
         # summary 집계에 전달된 recent_hours 를 기록해 클램프 검증에 사용.
         self.last_recent_hours = None
+        # 종목별 일봉 종가 시리즈(stock_price_daily). 000660 은 미동기화(빈 시리즈).
+        self.prices_by_stock = {
+            10: [
+                {"trade_date": date(2026, 7, 6), "close_price": 71000.0},
+                {"trade_date": date(2026, 7, 7), "close_price": 71500.0},
+            ],
+        }
 
     async def fetchrow(self, sql, *args):
         if "FROM api.stock_news" in sql and "total_articles" in sql:
@@ -166,6 +173,9 @@ class FakeConnection:
             ][: args[1]]
         if "FROM api.stocks" in sql and "is_active = TRUE" in sql:
             return list(self.stocks_by_ticker.values())[: args[0]]
+        if "FROM stock_price_daily" in sql:
+            # args = (stock_id, from_date). 벽시계 비의존을 위해 날짜 필터는 생략.
+            return list(self.prices_by_stock.get(args[0], []))
         if "FROM watchlists" in sql:
             rows = []
             for watchlist in self.watchlists:
@@ -307,6 +317,36 @@ class WatchlistRoutesTest(unittest.TestCase):
         self.assertEqual(items[0]["title"], "삼성전자 뉴스")
         self.assertIsNone(items[1]["stock_name"])
         self.assertIsNone(items[1]["published_at"])
+
+    def test_stock_prices_returns_series_publicly(self):
+        # 공개 엔드포인트 — 토큰 없이 200, 일봉 종가 시리즈 + 최신값.
+        response = self.client.get("/api/stocks/005930/prices")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["stock"]["stock_code"], "005930")
+        self.assertEqual(body["stock"]["stock_name"], "삼성전자")
+        self.assertEqual(len(body["series"]), 2)
+        self.assertEqual(body["series"][0]["trade_date"], "2026-07-06")
+        self.assertEqual(body["series"][-1]["close"], 71500.0)
+        self.assertEqual(body["latest_price"], 71500.0)
+        self.assertEqual(body["latest_trade_date"], "2026-07-07")
+
+    def test_stock_prices_empty_series_when_unsynced(self):
+        # 미동기화 종목 — 빈 시리즈 + null 최신값(프론트 "차트 준비 중").
+        response = self.client.get("/api/stocks/000660/prices")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["series"], [])
+        self.assertIsNone(body["latest_price"])
+        self.assertIsNone(body["latest_trade_date"])
+
+    def test_stock_prices_unknown_stock_returns_404(self):
+        response = self.client.get("/api/stocks/999999/prices")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["detail"]["code"], "STOCK_NOT_FOUND")
 
     def test_watchlist_requires_authentication(self):
         response = self.client.get("/api/watchlists")
