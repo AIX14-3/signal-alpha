@@ -28,6 +28,15 @@ class HiringAnalyzer:
         evidence: list[RawEvidence],
     ) -> SourceResult:
         rows = _extract_rows(evidence)
+        metadata = evidence[0].metadata if evidence else {}
+        as_of = _as_of(metadata)
+        # opt-in: 공고별 시간감쇠 경로(로더가 metadata["postings"] 제공 시). no-data 가드보다
+        # 먼저 본다 — 감쇠 유효창(≤180d)은 momentum rows(90d) 보다 넓어, 90일보다 오래된 공고만
+        # 있는 종목은 momentum rows 가 비어도 감쇠 경로로 가야 한다. 게이트 off 이거나 목록이
+        # 없으면 아래 현행 momentum 경로 그대로(회귀 보장).
+        postings = metadata.get("postings")
+        if self._config.posting_decay_enabled and postings:
+            return self._analyze_decayed(stock_code, postings, as_of)
         if not rows:
             return SourceResult(
                 source="HIRING",
@@ -38,14 +47,6 @@ class HiringAnalyzer:
                 risk_flags=["no_data"],
                 data_status="no_signal",
             )
-
-        metadata = evidence[0].metadata
-        as_of = _as_of(metadata)
-        # opt-in: 공고별 시간감쇠 경로(로더가 metadata["postings"] 제공 시). 게이트 off 이거나
-        # per-posting 목록이 없으면 아래 현행 momentum 경로 그대로(회귀 보장).
-        postings = metadata.get("postings")
-        if self._config.posting_decay_enabled and postings:
-            return self._analyze_decayed(stock_code, postings, as_of)
         indicators = compute_indicators(
             rows,
             as_of=as_of,

@@ -209,8 +209,6 @@ def evaluate_decayed(
     risk_flags: list[str] = []
     highlights: list[str] = []
     scale = activity_scale if activity_scale is not None else config.activity_scale
-    score = graded(indicators.decayed_activity, scale=scale, weight=1.0)
-    score = round(max(0.0, min(1.0, score)), 3)
 
     if indicators.active_count < config.min_observations:
         risk_flags.append("insufficient_history")
@@ -219,12 +217,32 @@ def evaluate_decayed(
         )
     if indicators.top_skills:
         highlights.append(f"채용 기술스택: {', '.join(indicators.top_skills)}")
-    highlights.append(
-        f"감쇠 채용활동 {indicators.decayed_activity:.2f}"
-        f"(활성 {indicators.active_count}건, 최근 {indicators.days_since_latest}일 전) → 점수 {score:+.2f}"
-    )
 
-    direction: Direction = "positive" if score >= config.positive_threshold else "neutral"
+    # 옵션1: level + 급감 감지. 최근절반 활동이 직전절반의 임계 미만이면 채용 급감 → negative.
+    # baseline_mode 로 추후 "long_term_avg"(옵션3) 교체 가능.
+    declining = (
+        config.baseline_mode == "prior_window"
+        and indicators.prior_half_decayed > 0
+        and indicators.recent_half_decayed
+        < indicators.prior_half_decayed * config.decline_ratio_threshold
+    )
+    if declining:
+        drop = indicators.prior_half_decayed - indicators.recent_half_decayed
+        score = -round(min(1.0, graded(drop, scale=scale, weight=1.0)), 3)
+        risk_flags.append("hiring_decline")
+        highlights.append(
+            f"채용 급감: 최근절반 {indicators.recent_half_decayed:.2f} < 직전절반 "
+            f"{indicators.prior_half_decayed:.2f}(임계 {config.decline_ratio_threshold:.0%}) → 점수 {score:+.2f}"
+        )
+        direction: Direction = "negative" if score <= config.negative_threshold else "neutral"
+    else:
+        score = round(max(0.0, min(1.0, graded(indicators.decayed_activity, scale=scale, weight=1.0))), 3)
+        highlights.append(
+            f"감쇠 채용활동 {indicators.decayed_activity:.2f}"
+            f"(활성 {indicators.active_count}건, 최근 {indicators.days_since_latest}일 전) → 점수 {score:+.2f}"
+        )
+        direction = "positive" if score >= config.positive_threshold else "neutral"
+
     return HiringAssessment(
         direction=direction,
         score=score,

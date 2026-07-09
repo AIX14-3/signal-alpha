@@ -244,3 +244,27 @@ class HiringDecayCalibrationAndExposureTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(posting_ev), 3)  # 공고별 근거 노출
         # 각 근거는 게시일(절대날짜)을 published_at 으로 실어 FE 가 "N일 전"을 계산할 수 있다.
         self.assertTrue(all(e.published_at for e in posting_ev))
+
+
+class HiringDeclineDetectionTest(unittest.TestCase):
+    """(3) level + 급감 감지: 최근절반 활동이 직전절반 대비 급감하면 negative."""
+
+    def test_decline_flips_to_negative(self):
+        # 직전절반(age 16~24)에 4건, 최근절반(age≤15)에 0건 → 채용 급감 → negative.
+        postings = [_posting(18), _posting(20), _posting(22), _posting(24)]
+        i = compute_decayed_activity(postings, as_of=AS_OF, window_days=30, half_life_days=15)
+        self.assertGreater(i.prior_half_decayed, 0)
+        self.assertEqual(i.recent_half_decayed, 0.0)
+        a = evaluate_decayed(i, DECAY_CONFIG, activity_scale=3.0)
+        self.assertEqual(a.direction, "negative")
+        self.assertLess(a.score, 0)
+        self.assertIn("hiring_decline", a.risk_flags)
+
+    def test_steady_activity_stays_positive(self):
+        # 최근절반·직전절반 고르게 → 급감 아님 → level 기반 positive 유지.
+        postings = [_posting(2), _posting(4), _posting(6), _posting(18), _posting(20), _posting(22)]
+        i = compute_decayed_activity(postings, as_of=AS_OF, window_days=30, half_life_days=15)
+        a = evaluate_decayed(i, DECAY_CONFIG, activity_scale=3.0)
+        self.assertNotEqual(a.direction, "negative")
+        self.assertGreater(a.score, 0)
+        self.assertNotIn("hiring_decline", a.risk_flags)

@@ -223,6 +223,11 @@ class HiringRuleConfig:
     # scale 을 크게 둬(더 많은 활동이 있어야 같은 점수) 포화점을 늦춘다(tier 별 캘리브레이션).
     activity_scale: float = 3.0
     activity_scale_large: float = 15.0
+    # 감소→negative(옵션1: level+급감). 유효창을 반으로 나눠 최근절반 활동이 직전절반의
+    # 이 비율 미만이면 채용 급감으로 보고 negative 로 뒤집는다. baseline_mode 로 추후
+    # "long_term_avg"(옵션3, 회사 장기평균 대비)로 교체 가능(데이터 누적 후).
+    decline_ratio_threshold: float = 0.5
+    baseline_mode: str = "prior_window"  # "prior_window"(옵션1) | "long_term_avg"(옵션3, 후속)
     # 대기업 분류(시가총액 미적재 → 큐레이션 티커셋; 추후 market_cap 임계값 전환).
     large_cap_tickers: frozenset[str] = frozenset(
         {
@@ -256,6 +261,8 @@ class HiringRuleConfig:
             decay_half_life_ratio=_float("HIRING_DECAY_HALF_LIFE_RATIO", cls.decay_half_life_ratio),
             activity_scale=_float("HIRING_ACTIVITY_SCALE", cls.activity_scale),
             activity_scale_large=_float("HIRING_ACTIVITY_SCALE_LARGE", cls.activity_scale_large),
+            decline_ratio_threshold=_float("HIRING_DECLINE_RATIO_THRESHOLD", cls.decline_ratio_threshold),
+            baseline_mode=getenv("HIRING_DECAY_BASELINE_MODE", cls.baseline_mode).strip() or cls.baseline_mode,
             large_cap_tickers=_ticker_set("HIRING_LARGE_CAP_TICKERS", cls.large_cap_tickers),
         )
 

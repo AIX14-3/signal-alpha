@@ -132,6 +132,10 @@ class DecayedHiringIndicators:
     # FE age 표시 재료: 활성 공고의 (게시일, 마감일) — 게시일 최신순. FE 가 렌더 시
     # (오늘 − 게시일)로 "N일 전"을 계산한다(절대날짜만 노출, age 숫자는 박제 금지).
     active_postings: tuple[tuple[str, str | None], ...] = ()
+    # 감소 감지(옵션1)용: 유효창을 반으로 나눈 최근절반/직전절반 감쇠합. 직전절반은 반창
+    # 경계 기준으로 재감쇠해 최근절반과 같은 스케일로 비교 가능하게 한다.
+    recent_half_decayed: float = 0.0
+    prior_half_decayed: float = 0.0
 
 
 def compute_decayed_activity(
@@ -148,7 +152,10 @@ def compute_decayed_activity(
     - 가중치: ``0.5 ** (age / half_life_days)`` — 반감기마다 절반(지수 감쇠).
     """
     half_life = half_life_days if half_life_days and half_life_days > 0 else 1.0
+    half_window = window_days / 2.0
     decayed = 0.0
+    recent_half = 0.0
+    prior_half = 0.0
     active = 0
     latest: date | None = None
     skill_counter: Counter[str] = Counter()
@@ -166,6 +173,10 @@ def compute_decayed_activity(
             continue
         active += 1
         decayed += 0.5 ** (age / half_life)
+        if age <= half_window:
+            recent_half += 0.5 ** (age / half_life)
+        else:  # 직전절반: 반창 경계 기준 재감쇠(최근절반과 동일 스케일)
+            prior_half += 0.5 ** ((age - half_window) / half_life)
         active_rows.append((posted, closing.isoformat() if closing else None))
         if latest is None or posted > latest:
             latest = posted
@@ -182,6 +193,8 @@ def compute_decayed_activity(
         distinct_skills=len(skill_counter),
         top_skills=tuple(s for s, _ in skill_counter.most_common(5)),
         active_postings=tuple((d.isoformat(), c) for d, c in active_rows[:20]),
+        recent_half_decayed=round(recent_half, 4),
+        prior_half_decayed=round(prior_half, 4),
     )
 
 
