@@ -25,6 +25,7 @@ import os
 import sys
 from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
 
 _HERE = Path(__file__).resolve()
 sys.path.insert(0, str(_HERE.parents[1]))  # agent-worker 루트 (app.* 임포트)
@@ -34,18 +35,21 @@ sys.path.insert(0, str(_HERE.parent))  # scripts (ic_diagnostic 재사용)
 import asyncpg  # noqa: E402
 
 from app.analyzers.config import (  # noqa: E402
+    DartRuleConfig,
     DataLabRuleConfig,
     HiringRuleConfig,
     PatentRuleConfig,
 )
+from app.analyzers.dart.source_result import build_dart_analysis_result  # noqa: E402
 from app.analyzers.datalab.indicators import compute_indicators as datalab_indicators  # noqa: E402
 from app.analyzers.datalab.rules import evaluate_indicators as datalab_eval  # noqa: E402
 from app.analyzers.hiring.indicators import compute_indicators as hiring_indicators  # noqa: E402
 from app.analyzers.hiring.rules import evaluate_indicators as hiring_eval  # noqa: E402
 from app.analyzers.patent.indicators import compute_indicators as patent_indicators  # noqa: E402
 from app.analyzers.patent.rules import evaluate_indicators as patent_eval  # noqa: E402
+from app.analyzers.price.analyzer import PriceAnalyzer  # noqa: E402
 from app.ml.source_features import KNOWN_AT, pit_rows  # noqa: E402
-from app.ml.train_source_models import _build_loader  # noqa: E402
+from app.ml.train_source_models import _PriceTrainingLoader, _build_loader  # noqa: E402
 from ic_diagnostic import _fmt, _metrics, suggest_weights  # noqa: E402
 
 try:
@@ -56,12 +60,35 @@ except Exception:  # noqa: BLE001
 TARGET = "fwd_return_20d"
 DEFAULT_UNIVERSE = "kospi20_seed"
 
-# SRC(대문자, ALT_WEIGHT/SCORING_SOURCES 정합) → (loader source key, indicators, rules, config)
-SOURCES = {
-    "PATENT": ("patent", patent_indicators, patent_eval, PatentRuleConfig),
-    "DATALAB": ("datalab", datalab_indicators, datalab_eval, DataLabRuleConfig),
-    "HIRING": ("hiring", hiring_indicators, hiring_eval, HiringRuleConfig),
-}
+# (SRC, kind, loader_key, date_key, indicators_fn, eval_fn, config_cls). kind:
+#   rules = compute_indicators + evaluate_indicators (대체데이터 3소스)
+#   dart  = build_dart_analysis_result(events).score (결정론 DART 점수)
+#   price = PriceAnalyzer().analyze (⚠️ 자기참조: 과거가격→미래가격, 대체데이터 알파 아님)
+SOURCES = [
+    ("PATENT", "rules", "patent", KNOWN_AT["patent"], patent_indicators, patent_eval, PatentRuleConfig),
+    ("DATALAB", "rules", "datalab", KNOWN_AT["datalab"], datalab_indicators, datalab_eval, DataLabRuleConfig),
+    ("HIRING", "rules", "hiring", KNOWN_AT["hiring"], hiring_indicators, hiring_eval, HiringRuleConfig),
+    ("DART", "dart", "dart", KNOWN_AT["dart"], None, None, DartRuleConfig),
+    ("PRICE", "price", "price", KNOWN_AT["price"], None, None, None),
+]
+# REPORT 제외: 결정론 분석기/로더 경로가 없고(밸류에이션 별도 경로) 로컬 데이터 27건·최근이라
+# 20일 선행수익률 미경과 → 측정 불가. 데이터·경로 확보 시 별도.
+
+
+async def _score(kind, pit, asof, cfg, sector, ind_fn, eval_fn) -> float:
+    """소스 kind 별 점수 재계산(누수차단된 pit 행 입력). signed [-1, +1] 반환."""
+    if kind == "dart":
+        return build_dart_analysis_result(pit).score
+    if kind == "price":
+        res = await PriceAnalyzer().analyze("", [SimpleNamespace(metadata={"rows": pit})])
+        return res.score
+    # rules (patent/datalab/hiring)
+    lookback = getattr(cfg, "lookback_days", 30)
+    if ind_fn is hiring_indicators:
+        ind = ind_fn(pit, as_of=asof, lookback_days=lookback, sector_demand=sector)
+    else:
+        ind = ind_fn(pit, as_of=asof, lookback_days=lookback)
+    return eval_fn(ind, cfg).score
 
 
 def _require_local(db_url: str) -> None:
@@ -82,40 +109,38 @@ async def recompute(conn, *, asof_from, asof_to, universe) -> dict:
 
     repo = RawDetailRepository(conn)
     src_res: dict[str, dict] = {}
-    for src, (source_key, indicators_fn, eval_fn, cfg_cls) in SOURCES.items():
-        cfg = cfg_cls.from_env()
-        # 종목당 전 이력을 1회만 로드(as_of=max_asof, lookback 크게) → 메모리에서 asof 별 pit 필터.
-        # (stock,asof) 마다 DB 재조회하던 O(라벨수) 쿼리를 O(종목수)로 줄인다. 누수는 pit_rows 가 차단.
-        loader = _build_loader(source_key, repo, max(cfg.lookback_days, 3000), connection=conn)
+    for src, kind, loader_key, date_key, ind_fn, eval_fn, cfg_cls in SOURCES:
+        cfg = cfg_cls.from_env() if cfg_cls else None
+        # 종목당 전 이력을 1회만 로드(as_of=max_asof, 큰 창) → 메모리에서 asof 별 pit 필터.
+        # (stock,asof) 마다 DB 재조회하던 O(라벨수) 쿼리를 O(종목수)로 줄인다. 누수는 pit_rows 차단.
+        if kind == "price":
+            loader = _PriceTrainingLoader(conn, window_days=3000)
+        else:
+            loader = _build_loader(loader_key, repo, max(getattr(cfg, "lookback_days", 0), 3000), connection=conn)
         rows_by_stock: dict[int, list] = {}
         sector_by_stock: dict[int, object] = {}
         for sid in stock_ids:
             ev = await loader.load(stock_id=sid, stock_code="", as_of=max_asof)
             rows_by_stock[sid] = list(ev[0].metadata.get("rows") or []) if ev else []
-            if source_key == "hiring" and ev:
+            if loader_key == "hiring" and ev:
                 sector_by_stock[sid] = ev[0].metadata.get("sector_demand")
 
         pairs: list[tuple[float, float]] = []
         for row in labeled:
             sid = int(row["stock_id"])
             asof = row["asof_date"]
-            pit = pit_rows(rows_by_stock.get(sid) or [], asof, date_key=KNOWN_AT[source_key])
+            pit = pit_rows(rows_by_stock.get(sid) or [], asof, date_key=date_key)
             if not pit:
                 continue  # 소스가 그 시점에 침묵(행 0)
-            if source_key == "hiring":
-                ind = indicators_fn(
-                    pit, as_of=asof, lookback_days=cfg.lookback_days,
-                    sector_demand=sector_by_stock.get(sid),
-                )
-            else:
-                ind = indicators_fn(pit, as_of=asof, lookback_days=cfg.lookback_days)
+            score = await _score(kind, pit, asof, cfg, sector_by_stock.get(sid), ind_fn, eval_fn)
             # 0-100 스케일 변환(ic_diagnostic._metrics/_hit_rate 는 중심 50 가정). IC 는 스케일 불변.
-            pairs.append((eval_fn(ind, cfg).score * 50.0 + 50.0, float(row[TARGET])))
+            pairs.append((score * 50.0 + 50.0, float(row[TARGET])))
 
         src_res[src] = _metrics(pairs)
         m = src_res[src]
+        note = " (⚠️자기참조)" if src == "PRICE" else ""
         print(f"  ▸ {src:8} N={m['n']:5}  IC {_fmt(m['ic'])}  hit {_fmt(m['hit_rate'], True)}  "
-              f"perm-p {m['perm_p']}")
+              f"perm-p {m['perm_p']}{note}")
     return {"labels": len(labeled), "source_ic_20d": src_res}
 
 
@@ -130,7 +155,7 @@ async def main(json_out: str | None, asof_from: date, asof_to: date, universe: s
         await pool.close()
 
     print("\n" + "=" * 76)
-    print(f"recompute-IC — 재계산 표본 라벨 {results['labels']}건 · 20일 지평선 · 대체데이터 3소스")
+    print(f"recompute-IC — 재계산 표본 라벨 {results['labels']}건 · 20일 지평선 · 5소스(대체3+DART+주가, REPORT 제외)")
     print("=" * 76)
     suggestion = suggest_weights(results["source_ic_20d"], include_price=False)
     results["suggested"] = suggestion
