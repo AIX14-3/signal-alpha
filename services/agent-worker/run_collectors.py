@@ -18,6 +18,8 @@ import re
 
 import asyncpg  # type: ignore[import]
 
+from run_analyzers import resolve_ssl
+
 sys.path.insert(0, str(Path(__file__).parent))
 
 from app.clients.kipris_client import KiprisClient
@@ -167,11 +169,15 @@ async def run_once(args: argparse.Namespace) -> None:
     dsn = os.getenv("DATABASE_URL", "")
     if not dsn:
         raise RuntimeError("DATABASE_URL is required.")
+    params = parse_dsn(dsn)
     pool = await asyncpg.create_pool(
-        **parse_dsn(dsn),
+        **params,
         min_size=1,
         max_size=max(2, int(os.getenv("COLLECTOR_DB_POOL_MAX", "5"))),
-        ssl="require",
+        # 관리형 Postgres 는 SSL 필수지만 로컬 docker 는 SSL 업그레이드를 거부한다.
+        # 하드코딩된 "require" 때문에 로컬에서는 수집을 아예 돌릴 수 없었다.
+        # run_analyzers.py 의 resolve_ssl 을 그대로 쓴다(호스트로 판단, DB_SSL 로 override).
+        ssl=resolve_ssl(params["host"]),
         statement_cache_size=0,
     )
     # 타깃별 장애 격리용 집계. 한 종목/카테고리의 API 에러(KIPRIS 쿼터 소진 등)는
