@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from app.analyzers.config import HiringRuleConfig
-from app.analyzers.hiring.indicators import HiringIndicators
+from app.analyzers.hiring.indicators import DecayedHiringIndicators, HiringIndicators
 from app.analyzers.scoring import graded
 
 Direction = Literal["positive", "neutral", "negative", "mixed", "unknown"]
@@ -182,3 +182,85 @@ def _direction(score: float, config: HiringRuleConfig) -> Direction:
     if score <= config.negative_threshold:
         return "negative"
     return "neutral"
+
+
+def evaluate_decayed(
+    indicators: DecayedHiringIndicators,
+    config: HiringRuleConfig | None = None,
+    *,
+    activity_scale: float | None = None,
+) -> HiringAssessment:
+    """공고별 시간감쇠 활동강도 → verdict(opt-in 경로).
+
+    유효창 내 활성 공고가 없으면 no_signal(집계 제외 → per-source 미발행 → FE 만료).
+    있으면 감쇠활동합을 graded(tanh)로 one-sided 양수 매핑(채용활동 강도). 급감(하락) 시
+    negative 로 뒤집으며, 기준은 baseline_mode 로 갈린다(prior_window=반분할·단기 /
+    long_term_avg=회사 장기평균 대비).
+    """
+    config = config or HiringRuleConfig.from_env()
+
+    if indicators.active_count == 0:
+        return HiringAssessment(
+            direction="unknown",
+            score=0.0,
+            risk_flags=["no_active_postings"],
+            highlights=["유효창 내 활성 채용공고가 없습니다."],
+        )
+
+    risk_flags: list[str] = []
+    highlights: list[str] = []
+    scale = activity_scale if activity_scale is not None else config.activity_scale
+
+    if indicators.active_count < config.min_observations:
+        risk_flags.append("insufficient_history")
+        highlights.append(
+            f"활성 공고 {indicators.active_count}건 — 분석 최소치({config.min_observations}) 미만"
+        )
+    if indicators.top_skills:
+        highlights.append(f"채용 기술스택: {', '.join(indicators.top_skills)}")
+
+    # level + 급감 감지. 기준(baseline)이 무엇이냐는 baseline_mode 로 갈린다:
+    #   prior_window(옵션1, 기본): 유효창 반분할 — 최근절반 vs 직전절반(단기, 이력 불요).
+    #   long_term_avg(옵션3): 현재창 감쇠활동 vs 회사 장기 채용률 평균(이력 필요·소표본 가드).
+    # 어느 쪽이든 recent < baseline × 임계면 채용 급감 → negative.
+    if config.baseline_mode == "long_term_avg":
+        baseline = indicators.long_term_avg_decayed
+        recent = indicators.decayed_activity
+        declining = (
+            indicators.long_term_baseline_buckets >= config.min_baseline_buckets
+            and baseline > 0
+            and recent < baseline * config.decline_ratio_threshold
+        )
+        decline_note = (
+            f"채용 급감(장기평균 대비): 현재 감쇠활동 {recent:.2f} < 장기평균 {baseline:.2f}"
+            f"×{config.decline_ratio_threshold:.0%}(과거 {indicators.long_term_baseline_buckets}구간 평균)"
+        )
+    else:  # prior_window (옵션1, 기본)
+        baseline = indicators.prior_half_decayed
+        recent = indicators.recent_half_decayed
+        declining = baseline > 0 and recent < baseline * config.decline_ratio_threshold
+        decline_note = (
+            f"채용 급감: 최근절반 {recent:.2f} < 직전절반 "
+            f"{baseline:.2f}(임계 {config.decline_ratio_threshold:.0%})"
+        )
+
+    if declining:
+        drop = baseline - recent
+        score = -round(min(1.0, graded(drop, scale=scale, weight=1.0)), 3)
+        risk_flags.append("hiring_decline")
+        highlights.append(f"{decline_note} → 점수 {score:+.2f}")
+        direction: Direction = "negative" if score <= config.negative_threshold else "neutral"
+    else:
+        score = round(max(0.0, min(1.0, graded(indicators.decayed_activity, scale=scale, weight=1.0))), 3)
+        highlights.append(
+            f"감쇠 채용활동 {indicators.decayed_activity:.2f}"
+            f"(활성 {indicators.active_count}건, 최근 {indicators.days_since_latest}일 전) → 점수 {score:+.2f}"
+        )
+        direction = "positive" if score >= config.positive_threshold else "neutral"
+
+    return HiringAssessment(
+        direction=direction,
+        score=score,
+        risk_flags=risk_flags,
+        highlights=highlights,
+    )

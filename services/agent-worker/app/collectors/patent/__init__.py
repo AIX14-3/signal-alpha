@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -11,7 +12,13 @@ from typing import Any
 import asyncpg  # type: ignore[import]
 import asyncpg.exceptions  # type: ignore[import]
 
-from app.clients.kipris_client import KiprisClient, KiprisPatentRecord, _default_end_date, _default_start_date
+from app.clients.kipris_client import (
+    KiprisApiError,
+    KiprisClient,
+    KiprisPatentRecord,
+    _default_end_date,
+    _default_start_date,
+)
 from app.collectors.patent.applicant_aliases import build_applicant_aliases as _build_applicant_aliases
 from app.collectors.patent.application_no import canonicalize_application_no
 from app.observability import calculate_run_status as _run_status
@@ -28,6 +35,14 @@ TASK_TYPE = "NORMALIZE_PATENT"
 # source_hash UNIQUE 로 1행만 남는데, 사용자 정책 = **KIPRIS 우선**이라 나중에 온
 # KIPRIS 가 기존 GOOGLE_PATENTS 행을 덮어쓴다(_promote_source_if_outranked).
 _SOURCE_PRIORITY: dict[str, int] = {"KIPRIS": 2, "GOOGLE_PATENTS": 1}
+
+# KIPRIS 월 한도 소진(error 22) 시 BigQuery(Google Patents)로 자동 폴백할지. 기본 off —
+# BigQuery 는 GCP ADC 인증·스캔 비용이 들어 opt-in 이다(env=1/true/on 이면 활성).
+_BQ_FALLBACK_ENV = "PATENT_BQ_FALLBACK_ENABLED"
+
+
+def _bq_fallback_enabled() -> bool:
+    return os.getenv(_BQ_FALLBACK_ENV, "").strip().lower() in ("1", "true", "yes", "on")
 
 
 class PatentApiError(RuntimeError):
@@ -103,6 +118,24 @@ class PatentCollector:
                     if not records or received_for_alias >= total:
                         break
                     page_no += 1
+        except KiprisApiError as exc:
+            # 월 한도 소진(error 22) + 폴백 활성이면 BigQuery 로 이어받는다. dedup(canonical
+            # 출원번호 + source_hash UNIQUE)이 KIPRIS 적재분과 중복을 자동 제거하므로 안전.
+            fallback = None
+            if exc.is_quota_error and _bq_fallback_enabled():
+                fallback = await self._maybe_bigquery_fallback(
+                    stock_id=stock_id, stock_code=stock_code, start=start, end=end
+                )
+            async with self._pool.acquire() as conn:
+                await _finish_run(
+                    conn,
+                    run_id=run_id,
+                    status="failed",
+                    error_message=f"{exc} | bigquery_fallback={'ok' if fallback else 'off/unavailable'}",
+                )
+            if fallback is not None:
+                return fallback
+            raise
         except Exception as exc:
             async with self._pool.acquire() as conn:
                 await _finish_run(conn, run_id=run_id, status="failed", error_message=str(exc))
@@ -144,6 +177,54 @@ class PatentCollector:
             "failed_count": failed,
             "status": status,
         }
+
+    async def _maybe_bigquery_fallback(
+        self, *, stock_id: int, stock_code: str, start: str, end: str
+    ) -> dict[str, Any] | None:
+        """KIPRIS 한도 소진 시 Google Patents(BigQuery)에서 최근 공개분을 받아 같은 적재
+        경로(dedup 포함)로 저장한다. GCP ADC 미설정·패턴 미등록·조회 실패는 삼켜 None 을
+        반환(호출부가 원래 quota 에러로 되돌림). BigQuery 는 ~18개월 지연이라 '최신 출원'이
+        아닌 '최근 공개분'을 채운다(상호보완)."""
+        try:
+            from app.collectors.patent.bigquery_source import (
+                DEFAULT_BQ_PROJECT,
+                SOURCE_NAME as BQ_SOURCE_NAME,
+                TICKER_BQ_PATTERNS,
+                bq_rows,
+                build_records,
+            )
+
+            if stock_code not in TICKER_BQ_PATTERNS:
+                logger.warning("BigQuery fallback: %s 의 assignee 패턴 미등록 → 건너뜀", stock_code)
+                return None
+            project = os.getenv("GOOGLE_CLOUD_PROJECT") or DEFAULT_BQ_PROJECT
+            patterns = TICKER_BQ_PATTERNS[stock_code]
+            # KIPRIS 는 출원일(application_date)로 검색하므로 BigQuery 도 출원연도(filing_date)
+            # 범위로 맞춘다. 동기 BigQuery 클라이언트는 스레드로 격리(이벤트 루프 블로킹 방지).
+            start_year, end_year = int(str(start)[:4]), int(str(end)[:4])
+            rows = await asyncio.to_thread(
+                bq_rows,
+                start_year=start_year,
+                end_year=end_year,
+                patterns=patterns,
+                project=project,
+            )
+            records = build_records(rows, stock_code)
+            logger.info(
+                "BigQuery fallback: %s rows=%d → records=%d (project=%s)",
+                stock_code,
+                len(rows),
+                len(records),
+                project,
+            )
+            result = await self.ingest_records(
+                stock_id=stock_id, records=records, source_name=BQ_SOURCE_NAME
+            )
+            result["via_bigquery_fallback"] = True
+            return result
+        except Exception as exc:  # noqa: BLE001 — 폴백 실패는 원래 quota 에러로 되돌림
+            logger.warning("BigQuery fallback failed for %s: %s", stock_code, exc)
+            return None
 
     async def ingest_records(
         self,

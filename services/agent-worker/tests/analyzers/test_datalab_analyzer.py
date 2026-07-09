@@ -1,8 +1,8 @@
-"""DataLab analyzer — Phase 0 (#525): 결정론 판정 제거, 피처 산출만.
+"""DataLab analyzer — 메타러너 폐기(2026-07) 후 결정론 verdict 복원.
 
-판정/점수는 더 이상 내지 않는다(학습형 메타러너 return 채널이 산출). 분석기는 피처를 계산하고
-``direction="unknown"`` / ``score=0`` / ``data_status="no_signal"`` 로 반환해 AGGREGATE 점수·방향
-집계에서 빠진다(커버리지로만 노출). 피처 자체는 ``compute_indicators`` 단위테스트가 별도로 검증한다.
+#525 "피처 전용"은 학습형 메타러너가 판정을 대신한다는 전제였으나 그 채널이 폐기됐다. 이제 DataLab 도
+특허·DART·리포트와 동일하게 ``rules.evaluate_indicators`` 로 방향/점수를 내고 AGGREGATE 등가중 통합
+점수에 산입된다. 데이터가 없거나 표본이 너무 작으면(guard) no_signal/neutral 로 정직하게 남는다.
 """
 
 import unittest
@@ -79,24 +79,27 @@ class DataLabAnalyzerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.data_status, "no_signal")
         self.assertIn("no_data", result.risk_flags)
 
-    async def test_rows_present_is_feature_only_no_verdict(self):
-        # 강한 상승 검색 트렌드여도 판정을 내지 않는다 — unknown/0/no_signal.
+    async def test_rows_present_produce_verdict(self):
+        # 강한 상승 검색 트렌드(최근 70 > 직전 50, +40%, prior 5건) → 결정론 positive verdict.
         result = await DataLabAnalyzer(CONFIG).analyze("005930", _evidence(_RISING))
-        self.assertEqual(result.direction, "unknown")
-        self.assertEqual(result.score, 0.0)
-        self.assertEqual(result.data_status, "no_signal")
-        self.assertEqual(result.risk_flags, [])
-        self.assertIn("피처 산출", result.summary)
+        self.assertEqual(result.direction, "positive")
+        self.assertGreater(result.score, 0.0)
+        self.assertEqual(result.data_status, "ok")
+        self.assertIn("방향", result.summary)
+        self.assertNotIn("피처 산출", result.summary)
 
-    async def test_risk_keyword_rows_still_no_verdict(self):
-        # 위험 키워드(리콜/불매) 상승도 결정론 negative 판정을 내지 않는다.
+    async def test_small_prior_sample_is_guarded_neutral(self):
+        # 이전 구간 관측이 min_prior_observations 미만이면 low_base 가드로 모멘텀 억제 →
+        # 팬텀 신호 없이 neutral/0(단, data_status 는 partial 로 점수엔 남는다).
         rows = [
             _row(2, 80, polarity="risk"), _row(4, 80, polarity="risk"), _row(6, 80, polarity="risk"),
             _row(18, 40, polarity="risk"), _row(20, 40, polarity="risk"), _row(22, 40, polarity="risk"),
         ]
         result = await DataLabAnalyzer(CONFIG).analyze("005930", _evidence(rows))
-        self.assertEqual(result.direction, "unknown")
+        self.assertEqual(result.direction, "neutral")
         self.assertEqual(result.score, 0.0)
+        self.assertIn("low_base", result.risk_flags)
+        self.assertEqual(result.data_status, "partial")
 
     async def test_llm_polarity_sets_provenance(self):
         # LLM 분류 provenance 는 판정과 무관하게 그대로 노출(llm_model + summary 공개).

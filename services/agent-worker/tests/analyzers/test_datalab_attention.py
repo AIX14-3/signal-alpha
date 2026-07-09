@@ -136,17 +136,18 @@ class AnalyzerAttentionTest(unittest.IsolatedAsyncioTestCase):
             )
         ]
         result = await DataLabAnalyzer(CONFIG).analyze("005930", evidence)
-        # Invariant: attention is neutral — verdict stays unknown/0/no_signal.
-        self.assertEqual(result.direction, "unknown")
+        # Invariant: attention is neutral — 방향/점수는 rules 만 결정한다. 여기 rows 는
+        # prior 표본이 작아 low_base 가드로 neutral/0 이 되고, attention 은 이를 바꾸지 않는다.
+        self.assertEqual(result.direction, "neutral")
         self.assertEqual(result.score, 0.0)
-        self.assertEqual(result.data_status, "no_signal")
+        self.assertEqual(result.data_status, "partial")
         # ...but the neutral spike is surfaced as a structured field + flag + note.
         self.assertEqual(result.attention_tier, "급증")
         self.assertIn("attention_spike", result.risk_flags)
         self.assertIsNotNone(result.attention_note)
 
     async def test_no_attention_series_leaves_output_unchanged(self):
-        # The existing feature-only path (no attention_series) must be untouched.
+        # attention_series 가 없으면 attention 필드/플래그가 붙지 않는다(verdict 는 rules 그대로).
         evidence = [
             RawEvidence(
                 source="DATALAB",
@@ -157,7 +158,8 @@ class AnalyzerAttentionTest(unittest.IsolatedAsyncioTestCase):
             )
         ]
         result = await DataLabAnalyzer(CONFIG).analyze("005930", evidence)
-        self.assertEqual(result.risk_flags, [])
+        # low_base 가드만 남고 attention 파생 필드는 없다.
+        self.assertEqual(result.risk_flags, ["low_base"])
         self.assertIsNone(result.attention_tier)
         self.assertIsNone(result.attention_note)
 

@@ -29,9 +29,12 @@ class HiringEvidenceLoader:
         # 보따리)를 분석 모집합에서 제외한다. 직전 WARMUP_PRIOR_DAYS 이력 유무로 판정하므로
         # 로드 윈도우를 그만큼 앞으로 버퍼링하고, 집계 대상은 원래 분석 윈도우로 다시 컷한다.
         window_since = as_of - timedelta(days=self._lookback_days)
+        # 공고별 감쇠 경로는 대기업 유효창(≤180d)까지 봐야 하므로 fetch 를 그만큼 넓힌다.
+        # momentum 경로는 아래에서 window_since(lookback) 로 다시 컷하므로 무영향.
+        fetch_since = as_of - timedelta(days=max(self._lookback_days, _DECAY_FETCH_DAYS))
         records = await self._repository.list_hiring_details_by_stock(
             stock_id=stock_id,
-            since_date=window_since - timedelta(days=WARMUP_PRIOR_DAYS),
+            since_date=fetch_since - timedelta(days=WARMUP_PRIOR_DAYS),
         )
         factors = await self._seasonal_factors(stock_id)
         # raw_rows: one row per posting (job_count=1 each, from base_collector).
@@ -39,12 +42,16 @@ class HiringEvidenceLoader:
         # indicators.py can compute meaningful momentum (recent_avg vs prior_avg).
         # Without this step all values are 1.0 → momentum always 0.
         raw_rows = [_row(record, factors) for record in records]
-        guarded = _drop_warming_up(raw_rows)  # 소스 배제·종목 유지
+        guarded = _drop_warming_up(raw_rows)  # 소스 배제·종목 유지 (momentum 경로용)
         # 버퍼 컷: 직전5일 판정에만 쓰인 window_since 이전 행은 집계에서 제외(ISO 문자열 사전식 비교).
         window_since_str = window_since.isoformat()
         windowed = [r for r in guarded if (r.get("observed_date") or "") >= window_since_str]
         rows = _aggregate_to_daily(windowed)
         posting_count = sum(r.get("job_count") or 0 for r in windowed)
+        # per-posting(감쇠용): warmup 가드 미적용(공고는 실이벤트라 커버리지 아티팩트 필터가
+        # sparse 공고를 오탈락시킴) + fetch 창 전체. 유효창(대기업/일반)·마감 컷은 스코어러가 한다.
+        fetch_since_str = fetch_since.isoformat()
+        postings = [r for r in raw_rows if (r.get("observed_date") or "") >= fetch_since_str]
         latest = rows[0]["observed_date"] if rows else None
         sector_demand = await self._sector_demand(stock_id, as_of)
         metadata: dict[str, Any] = {
@@ -53,6 +60,9 @@ class HiringEvidenceLoader:
             "lookback_days": self._lookback_days,
             "count": len(rows),          # number of active days (indicators 기준)
             "posting_count": posting_count,  # total individual postings
+            # per-posting 목록(warmup 미적용·fetch 창 전체). 공고별 시간감쇠 스코어러가 소비.
+            # momentum 경로는 무시하므로 순수 추가(회귀 없음).
+            "postings": postings,
             "source_name": "HIRING",
             "sector_demand": sector_demand,
         }
@@ -140,6 +150,12 @@ _NEUTRAL_FACTORS: dict[int, float] = {1: 1.0, 2: 1.0, 3: 1.0, 4: 1.0}
 # 재개) 그날 데이터를 '수집 커버리지 아티팩트'로 보고 제외. 5일 = 일상적 일별 수집 변동은
 # 통과시키되, HYBE 공식사이트 첫 전체 스크랩(20→164)처럼 범위 급변만 거른다.
 WARMUP_PRIOR_DAYS = 5
+
+# 공고별 감쇠 경로가 (a)대기업 유효창(cycle_days_large 기본 180d)과 (b)long_term_avg(옵션3)
+# 장기 baseline 창(HIRING_DECAY_LONG_TERM_WINDOW_DAYS 기본 365d)까지 볼 수 있도록 확보하는
+# fetch 하한(버퍼 포함). 스코어러가 유효창/장기창으로 다시 컷하므로 넉넉히 가져와도 무해하다
+# (prior_window 경로는 window_days 로 컷 → 동작 불변). momentum fetch 는 lookback_days 별도 컷.
+_DECAY_FETCH_DAYS = 400
 
 
 def _warming_up_pairs(rows: list[dict[str, Any]]) -> set[tuple[str, str]]:
@@ -266,6 +282,10 @@ def _row(record: Any, factors: dict[int, float]) -> dict[str, Any]:
         "previous_job_count": _to_int(record["previous_job_count"]),
         "change_pct": _to_float(record["change_pct"]),
         "observed_date": observed_date,
+        # 공고별 시간감쇠 경로용: 게시일(= published_at) + 공고 만료일(closing_date_parsed).
+        # momentum 경로는 observed_date 만 쓰므로 이 두 키는 순수 추가(무해).
+        "posting_date": observed_date,
+        "closing_date_parsed": payload.get("closing_date_parsed"),
         "seasonal_factor": _factor_for(observed_date, factors),
         "source_url": record["source_url"],
         # 소스 식별자(Warming-up 가드용). 포털 공고는 extra_payload에 source_type이 없어
