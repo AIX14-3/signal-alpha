@@ -28,6 +28,16 @@ def test_simple_round_trip_pnl_and_holding():
     assert t.holding_days == 7
 
 
+def test_same_day_daytrade_closes_regardless_of_input_order():
+    # 수기 입력은 날짜만 받아 당일 매수·매도가 동일 filled_at → 매도가 리스트에서 먼저 와도
+    # 매수 우선 타이브레이크로 청산 라운드트립이 미청산으로 오분류되면 안 된다.
+    same_day = [_f("sell", 1, "10", "77000"), _f("buy", 1, "10", "70000")]
+    trips = build_round_trips("005930", same_day)
+    assert len(trips) == 1
+    assert not trips[0].is_open
+    assert trips[0].realized_pnl_pct == 10.0
+
+
 def test_average_cost_across_adds_and_partial_sells():
     # 매수 10@100, 10@200 → 평균 150. 전량 20 매도@180 → +20%.
     trips = build_round_trips(

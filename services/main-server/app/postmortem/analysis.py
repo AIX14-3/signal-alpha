@@ -45,8 +45,12 @@ def build_round_trips(ticker: str, fills: list[Fill]) -> list[RoundTrip]:
     포지션이 0→양수면 개시, 양수→0이면 청산(1 트립 확정). 부분 매수/매도는 평균단가로 흡수.
     보유 없는 매도(pos<=0)는 무시(공매도 미모델, 롱 전용 가정). 마지막에 포지션이 남아 있으면
     미청산 트립(is_open=True)으로 emit.
+
+    같은 체결시각(수기 입력은 날짜만 받아 당일 매매가 동일 timestamp)일 때는 매수를 매도보다
+    먼저 처리한다 — 롱 전용에서 매도는 반드시 선행 매수가 있어야 하므로, 이 타이브레이크가
+    없으면 당일 매수·매도가 매도-선행 순서로 들어와 청산 라운드트립이 미청산으로 오분류된다.
     """
-    ordered = sorted(fills, key=lambda f: f.filled_at)
+    ordered = sorted(fills, key=lambda f: (f.filled_at, 0 if f.side == "buy" else 1))
     trips: list[RoundTrip] = []
 
     pos_qty = Decimal(0)

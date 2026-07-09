@@ -77,11 +77,8 @@ BACKEND_TABLES: frozenset[str] = frozenset(
         # LLM 으로 요약해 BACKEND_DATABASE_URL 로 UPSERT, main-server 가
         # api.stock_news_digest 로 읽는다. stock_news 와 같은 display-only 계약.
         "stock_news_digest",
-        # 매매 부검 — 유저 증권사 API 자격증명(암호문 저장). 등록/해제는 backend,
-        # 동기화 시 복호는 워커(signal_worker SELECT/UPDATE). users 와 공존.
-        "user_broker_credentials",
-        # 매매 부검 — 유저 실매매 체결(공통 정규화). 워커 동기화 러너가 INSERT,
-        # backend 가 부검 조회 SELECT + 유저 데이터 삭제 DELETE. stocks(PUBLISHED) 매핑.
+        # 매매 부검 — 유저 매매 기록(수기 입력, 공통 정규화). backend 가 INSERT/DELETE
+        # (수기 입력·삭제) + 부검 조회 SELECT. 워커는 overlay 산출용 SELECT 만.
         "user_trade_fills",
         # 매매 부검 — 유저 매매 계획(선택 입력, Plan vs Actual 기준선). backend CRUD.
         "user_trade_plans",
@@ -108,6 +105,19 @@ PUBLISHED_TABLES: frozenset[str] = frozenset(
 
 # 부트스트랩/마이그레이션 원장 — 각 DB 가 자체 보유(분류 대상 아님).
 LEDGER_TABLE = "schema_migrations"
+
+# 드롭됐지만 그 테이블을 CREATE/ALTER 하던 과거 타임스탬프 마이그가 히스토리에 남아 있는
+# 테이블. check_targets 는 **모든** 활성 마이그(과거 포함)의 target↔테이블 locality 를 현재
+# 분류로 정적 재검증하므로, 원 소유 DB 분류를 알아야 그 과거 마이그가 통과한다.
+# 이 집합은 라이브 스키마엔 없으므로 backend_keep()/validate()(=존재해야 하는 집합)에는
+# 넣지 않는다 — ownership map 을 정직하게 유지하고, check_targets.bucket_of 만 참조한다.
+#   user_broker_credentials: 증권사 API 연동 삭제(수기 입력 전환)로 20260709_1000 이 DROP.
+#     과거 20260707_1600(CREATE)·_1700(ALTER, target: backend)이 backend 분류를 요구.
+RETIRED_BACKEND_TABLES: frozenset[str] = frozenset(
+    {
+        "user_broker_credentials",
+    }
+)
 
 
 def backend_keep() -> frozenset[str]:
