@@ -6,7 +6,12 @@ import { useCallback, useEffect, useState } from "react";
 import { CommentList } from "@/components/community/CommentList";
 import { ReactionButton } from "@/components/community/ReactionButton";
 import { ReportButton } from "@/components/community/ReportButton";
-import { authorLabel, formatDate, viewLabel } from "@/components/community/util";
+import {
+  authorLabel,
+  formatDate,
+  postDirection,
+  viewLabel,
+} from "@/components/community/util";
 import {
   ApiError,
   deletePost,
@@ -16,6 +21,30 @@ import {
 } from "@/lib/apiClient";
 import { useAuthStore } from "@/stores/authStore";
 import { useToastStore } from "@/stores/toastStore";
+
+const DIRECTION_STYLE = {
+  long: {
+    grad: "linear-gradient(160deg,rgba(16,185,129,.22),rgba(16,185,129,.08))",
+    border: "rgba(16,185,129,.35)",
+    ticker: "#6ee7b7",
+    tag: "#34d399",
+    value: "#6ee7b7",
+  },
+  short: {
+    grad: "linear-gradient(160deg,rgba(239,68,68,.22),rgba(239,68,68,.08))",
+    border: "rgba(239,68,68,.35)",
+    ticker: "#fca5a5",
+    tag: "#f87171",
+    value: "#fca5a5",
+  },
+  neutral: {
+    grad: "linear-gradient(160deg,rgba(139,92,246,.22),rgba(139,92,246,.08))",
+    border: "rgba(139,92,246,.35)",
+    ticker: "#c4b5fd",
+    tag: "#a78bfa",
+    value: "#c4b5fd",
+  },
+} as const;
 
 export default function CommunityPostPage() {
   const params = useParams<{ postId: string }>();
@@ -59,7 +88,8 @@ export default function CommunityPostPage() {
 
   const mine = !!user && post.author.member_code === user.member_code;
   const j = post.journal;
-  const pnl = j?.pnl_pct;
+  const dir = postDirection(post);
+  const style = DIRECTION_STYLE[dir.kind];
 
   async function remove() {
     if (!window.confirm("게시글을 삭제할까요?")) return;
@@ -74,119 +104,184 @@ export default function CommunityPostPage() {
 
   return (
     <div className="py-10" data-page="community-detail">
-      <Link href="/community" className="text-[13px] font-semibold text-muted hover:text-navy">
-        ← 커뮤니티
-      </Link>
-
       {editing ? (
-        <EditForm
-          post={post}
-          onCancel={() => setEditing(false)}
-          onSaved={(updated) => {
-            setPost(updated);
-            setEditing(false);
-            showToast("게시글을 수정했습니다.", "success");
-          }}
-        />
+        <>
+          <Link
+            href="/community"
+            className="text-[13px] font-semibold text-muted hover:text-navy"
+          >
+            ← 커뮤니티
+          </Link>
+          <EditForm
+            post={post}
+            onCancel={() => setEditing(false)}
+            onSaved={(updated) => {
+              setPost(updated);
+              setEditing(false);
+              showToast("게시글을 수정했습니다.", "success");
+            }}
+          />
+        </>
       ) : (
-        <article className="card mt-3 px-6 py-5" data-panel="community-post">
-          <div className="flex items-start justify-between gap-3">
-            <h1 className="text-[22px] font-bold leading-snug">{post.title}</h1>
-            {mine && (
-              <div className="flex shrink-0 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setEditing(true)}
-                  className="text-[13px] font-semibold text-muted hover:text-sky-deep"
-                >
-                  수정
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void remove()}
-                  className="text-[13px] font-semibold text-muted hover:text-red"
-                >
-                  삭제
-                </button>
-              </div>
-            )}
-          </div>
-
-          <div className="mt-2 flex items-center gap-3 text-[12px] text-muted">
-            <span className="font-semibold text-navy-soft">{authorLabel(post.author)}</span>
-            <span>{formatDate(post.created_at)}</span>
-            <span>👁 {post.view_count}</span>
-          </div>
-
-          {/* 라이브 참조 저널 요약(화이트리스트). 원본 삭제 시 안내만. */}
-          {j ? (
-            <div className="mt-4 rounded-[12px] border border-line bg-surface-2 px-4 py-3 text-[13px]">
-              <div className="flex flex-wrap items-center gap-2">
-                {j.stock ? (
-                  <Link
-                    href={`/report/${j.stock.ticker}`}
-                    className="font-bold hover:text-sky-deep"
+        <article
+          className="overflow-hidden rounded-[22px] border border-line shadow-[var(--shadow-card)]"
+          data-panel="community-post"
+        >
+          <div className="bg-navy px-7 py-6">
+            <div className="flex items-center justify-between gap-3">
+              <Link
+                href="/community"
+                className="text-[12.5px] font-bold text-muted hover:text-white"
+              >
+                ← 커뮤니티
+              </Link>
+              {mine && (
+                <div className="flex shrink-0 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setEditing(true)}
+                    className="text-[12.5px] font-semibold text-muted hover:text-white"
                   >
-                    {j.stock.name ?? j.stock.ticker}
-                    <span className="font-normal text-muted"> {j.stock.ticker}</span>
-                  </Link>
-                ) : (
-                  <span className="font-bold">종목 정보 없음</span>
-                )}
-                {j.user_view && <span className="text-muted">· {viewLabel(j.user_view)}</span>}
-                {post.show_pnl && pnl != null && (
-                  <span
-                    className={`pill ${pnl >= 0 ? "up" : "down"}`}
-                    style={{ padding: "3px 9px" }}
+                    수정
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void remove()}
+                    className="text-[12.5px] font-semibold text-muted hover:text-red"
                   >
-                    {pnl >= 0 ? "+" : ""}
-                    {pnl.toFixed(2)}%
-                  </span>
-                )}
-              </div>
-              {j.user_memo && (
-                <p className="mt-2 whitespace-pre-wrap text-navy-soft">{j.user_memo}</p>
+                    삭제
+                  </button>
+                </div>
               )}
             </div>
-          ) : (
-            post.journal === null && (
-              <p className="mt-4 text-[12.5px] text-muted">참조한 저널 원본이 없습니다.</p>
-            )
-          )}
 
-          {post.body && (
-            <p className="mt-4 whitespace-pre-wrap text-[15px] leading-relaxed">{post.body}</p>
-          )}
+            <div className="mt-4 flex items-stretch gap-3.5">
+              {j?.stock && (
+                <div
+                  className="w-[112px] shrink-0 rounded-[14px] border px-3.5 py-3"
+                  style={{ background: style.grad, borderColor: style.border }}
+                >
+                  <div
+                    className="font-mono text-[13px] font-bold"
+                    style={{ color: style.ticker }}
+                  >
+                    {j.stock.ticker}
+                  </div>
+                  <div className="mt-0.5 text-[12.5px] font-bold text-white">
+                    {j.stock.name ?? j.stock.ticker}
+                  </div>
+                  <div
+                    className="mt-3 text-[10px] font-bold uppercase tracking-wide"
+                    style={{ color: style.tag }}
+                  >
+                    {dir.icon} {dir.label}
+                  </div>
+                  {dir.pctText ? (
+                    <div
+                      className="text-[20px] font-extrabold leading-tight tabular-nums"
+                      style={{ color: style.value }}
+                    >
+                      {dir.pctText}
+                    </div>
+                  ) : (
+                    <div className="text-[13px] font-bold text-muted">관망</div>
+                  )}
+                </div>
+              )}
+              <div className="flex min-w-0 flex-1 flex-col justify-center">
+                <h1 className="text-[20px] font-extrabold leading-snug text-white">
+                  {post.title}
+                </h1>
+                <div className="mt-2.5 flex items-center gap-2.5 text-[11.5px] text-muted">
+                  <span className="font-bold text-[#c4b5fd]">{authorLabel(post.author)}</span>
+                  <span>{formatDate(post.created_at)}</span>
+                  <span>👁 {post.view_count}</span>
+                </div>
+              </div>
+            </div>
+          </div>
 
-          <div className="mt-5 flex items-center gap-3 border-t border-line pt-4">
-            <ReactionButton
-              target="post"
-              targetId={post.id}
-              count={post.like_count}
-              active={post.my_reactions.like}
-              onCount={(likeCount) => setPost((p) => (p ? { ...p, like_count: likeCount } : p))}
-            />
-            <ReactionButton
-              target="post"
-              targetId={post.id}
-              type="bookmark"
-              count={post.bookmark_count}
-              active={post.my_reactions.bookmark}
-              onCount={(bookmarkCount) =>
-                setPost((p) => (p ? { ...p, bookmark_count: bookmarkCount } : p))
-              }
-            />
-            <span className="text-[13px] text-muted">💬 {post.comment_count}</span>
-            {!mine && (
-              <span className="ml-auto">
-                <ReportButton target="post" targetId={post.id} />
-              </span>
+          <div className="bg-surface px-7 py-6">
+            {/* 라이브 참조 저널 요약(화이트리스트). 원본 삭제 시 안내만. */}
+            {j ? (
+              <div className="rounded-[14px] border border-line bg-surface-2 px-4 py-3.5 text-[13px]">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[10px] font-extrabold uppercase tracking-wide text-sky-deep">
+                    ＄ 참조 저널
+                  </span>
+                  {j.stock ? (
+                    <Link
+                      href={`/report/${j.stock.ticker}`}
+                      className="font-bold hover:text-sky-deep"
+                    >
+                      {j.stock.name ?? j.stock.ticker}
+                      <span className="font-normal text-muted"> {j.stock.ticker}</span>
+                    </Link>
+                  ) : (
+                    <span className="font-bold">종목 정보 없음</span>
+                  )}
+                  {j.user_view && <span className="text-muted">· {viewLabel(j.user_view)}</span>}
+                  {dir.pctText && (
+                    <span
+                      className={`pill ${dir.kind === "long" ? "up" : "down"}`}
+                      style={{ padding: "3px 9px" }}
+                    >
+                      {dir.pctText}
+                    </span>
+                  )}
+                </div>
+                {j.user_memo && (
+                  <p className="mt-2.5 whitespace-pre-wrap text-navy-soft">{j.user_memo}</p>
+                )}
+              </div>
+            ) : (
+              post.journal === null && (
+                <p className="text-[12.5px] text-muted">참조한 저널 원본이 없습니다.</p>
+              )
             )}
+
+            {post.body && (
+              <p className="mt-4 whitespace-pre-wrap text-[14.5px] leading-[1.75]">
+                {post.body}
+              </p>
+            )}
+
+            <div className="mt-5 flex items-center gap-2.5 border-t border-line pt-4">
+              <ReactionButton
+                variant="pill"
+                target="post"
+                targetId={post.id}
+                count={post.like_count}
+                active={post.my_reactions.like}
+                onCount={(likeCount) => setPost((p) => (p ? { ...p, like_count: likeCount } : p))}
+              />
+              <ReactionButton
+                variant="pill"
+                target="post"
+                targetId={post.id}
+                type="bookmark"
+                count={post.bookmark_count}
+                active={post.my_reactions.bookmark}
+                onCount={(bookmarkCount) =>
+                  setPost((p) => (p ? { ...p, bookmark_count: bookmarkCount } : p))
+                }
+              />
+              <span className="text-[13px] text-muted">💬 {post.comment_count}</span>
+              {!mine && (
+                <span className="ml-auto">
+                  <ReportButton target="post" targetId={post.id} />
+                </span>
+              )}
+            </div>
           </div>
         </article>
       )}
 
-      <CommentList postId={post.id} onCountChange={handleCommentCountChange} />
+      <CommentList
+        postId={post.id}
+        postAuthorCode={post.author.member_code}
+        onCountChange={handleCommentCountChange}
+      />
     </div>
   );
 }
