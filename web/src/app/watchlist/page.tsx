@@ -1,26 +1,22 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import { listWatchlists, type WatchlistItem } from "@/lib/apiClient";
+import { useEffect } from "react";
 import { useAuthStore } from "@/stores/authStore";
+import { useWatchlistStore } from "@/stores/watchlistStore";
 
 export default function WatchlistPage() {
   const status = useAuthStore((s) => s.status);
-  const [items, setItems] = useState<WatchlistItem[] | null>(null);
+  const items = useWatchlistStore((s) => s.items);
+  const loaded = useWatchlistStore((s) => s.loaded);
+  const ensureLoaded = useWatchlistStore((s) => s.ensureLoaded);
 
   useEffect(() => {
-    if (status === "idle" || status === "loading") return;
-    if (status !== "authenticated") {
-      setItems([]);
-      return;
-    }
-    listWatchlists()
-      .then((d) => setItems(d.items))
-      .catch(() => setItems([]));
-  }, [status]);
+    if (status === "authenticated") void ensureLoaded();
+  }, [status, ensureLoaded]);
 
-  if (status === "idle" || status === "loading" || items === null)
+  const settling = status === "idle" || status === "loading";
+  if (settling || (status === "authenticated" && !loaded))
     return <p className="py-16 text-center text-muted">관심종목을 불러오는 중…</p>;
 
   return (
