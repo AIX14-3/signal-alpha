@@ -21,7 +21,8 @@ function Sparkline({ bars, up }: { bars: IndexBar[]; up: boolean }) {
   );
 }
 
-export function MarketIndices() {
+// variant "grid" = 리포트 상단(2/4열 카드). "list" = 홈 좌측 열 카드(제목+실시간 배지+세로 리스트, 재현.dc.html 오마주).
+export function MarketIndices({ variant = "grid" }: { variant?: "grid" | "list" }) {
   const [items, setItems] = useState<MarketIndex[] | null>(null);
 
   useEffect(() => {
@@ -33,6 +34,54 @@ export function MarketIndices() {
       alive = false;
     };
   }, []);
+
+  if (variant === "list") {
+    return (
+      <section data-section="market-indices" className="glass-card p-4">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-[14px] font-bold text-navy">시장 지수</h2>
+          <span className="flex items-center gap-1.5 text-[11.5px] text-muted">
+            <span className="live-dot" /> 실시간
+          </span>
+        </div>
+        {!items ? (
+          <ul className="animate-pulse space-y-2">
+            {[0, 1, 2].map((i) => (
+              <li key={i} className="h-12 rounded-[10px] bg-surface-2" />
+            ))}
+          </ul>
+        ) : items.length === 0 ? (
+          <p className="px-1 py-6 text-center text-[12.5px] text-muted">시장 지수를 불러오지 못했습니다.</p>
+        ) : (
+          <ul className="space-y-1">
+            {items.map((idx, i) => {
+              const up = idx.change >= 0;
+              return (
+                <li key={idx.key}>
+                  <div
+                    className={`flex items-center justify-between gap-2 rounded-[10px] px-3 py-2.5 ${
+                      i === 0 ? "bg-surface-2" : ""
+                    }`}
+                  >
+                    <div>
+                      <div className="text-[12px] font-semibold text-muted">{idx.name}</div>
+                      <div className="text-[16px] font-extrabold leading-tight text-navy">
+                        {idx.last.toLocaleString("ko-KR")}
+                      </div>
+                      <div className={`text-[11.5px] font-bold ${up ? "text-[#16a34a]" : "text-[#dc2626]"}`}>
+                        {up ? "▲" : "▼"} {Math.abs(idx.change_pct)}%
+                      </div>
+                    </div>
+                    <Sparkline bars={idx.bars} up={up} />
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
+    );
+  }
 
   if (!items || items.length === 0) return null;
 

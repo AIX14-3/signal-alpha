@@ -18,14 +18,15 @@ export default function HomePage() {
       <BackgroundFX />
       <div className="dash-blobs" aria-hidden="true" />
       <NewsSummaryBanner />
-      {/* 홈 v2 — 인-콘텐츠 메뉴 제거, 2컬럼: 좌 실시간 뉴스 피드 / 우 3섹션(관심·실시간 분석·커뮤니티 인기).
-          데스크톱 2컬럼, 모바일 세로 스택(NFR-4). */}
+      {/* 홈 v2 — 인-콘텐츠 메뉴 제거, 3컬럼 그리드(그리드 재현.dc.html 오마주):
+          좌(1fr) 시장 지수 + 실시간 뉴스 피드 / 우(0.9fr+1.15fr, col-span-2) 관심·실시간 분석·커뮤니티 인기.
+          데스크톱 3컬럼, 모바일 세로 스택(NFR-4). */}
       <div
         data-page="home"
-        className="glass relative z-10 mb-16 grid grid-cols-1 gap-5 p-4 sm:p-5 lg:grid-cols-[1fr_380px] lg:gap-6 lg:p-6"
+        className="glass relative z-10 mb-16 grid grid-cols-1 gap-5 p-4 sm:p-5 lg:grid-cols-[1fr_0.9fr_1.15fr] lg:gap-6 lg:p-6"
       >
         <HomeLeftPane />
-        <HomeRightPane />
+        <HomeRightPane className="lg:col-span-2" />
       </div>
     </>
   );
