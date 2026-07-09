@@ -238,8 +238,15 @@ async def delete_watchlist(
 
 
 def _stock_response(row: dict[str, Any]) -> dict[str, Any]:
+    """종목 정보 투영. ``id`` 는 반드시 **종목** id 여야 한다.
+
+    관심종목 조회 SQL 은 ``SELECT watchlists.*, stocks.ticker, …`` 라 ``row["id"]`` 가
+    **관심종목 행 id** 다(종목 id 가 아니다). 그대로 내보내면 클라이언트가 그 값을
+    stock_id 로 믿고 엉뚱한 종목의 신호를 조회한다(실측: watchlist id 3 → stock_id 8).
+    stock_id 컬럼이 함께 오면 그것을 우선한다.
+    """
     return {
-        "id": row["id"],
+        "id": row.get("stock_id", row["id"]),
         "stock_code": row["ticker"],
         "stock_name": row["name"],
         "market": row.get("market"),

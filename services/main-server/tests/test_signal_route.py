@@ -512,5 +512,74 @@ class SignalListItemLatestPerSourceTest(unittest.TestCase):
         self.assertEqual(item["score_breakdown"]["sources"]["hiring"]["data_status"], "missing")
 
 
+class SignalChangeDeltaTest(unittest.TestCase):
+    """관심종목 추적용 변화량(Δ). 비교 기준이 오래됐으면 만들지 않는다."""
+
+    @staticmethod
+    def _aggregated(signal_date: str, score: float, signal: str = "mixed") -> dict:
+        from datetime import date as _date
+
+        year, month, day = (int(p) for p in signal_date.split("-"))
+        return {
+            "stock_id": 1,
+            "run_key": "AGGREGATED",
+            "signal_date": _date(year, month, day),
+            "published_at": None,
+            "created_at": None,
+            "final_score": Decimal(str(score)),
+            "signal": signal,
+            "warning_level": "NORMAL",
+            "source_agreement": "HIGH",
+            "consensus_score": None,
+            "confidence": None,
+            "needs_review": False,
+            "score_breakdown": {},
+            "ticker": "005930",
+            "name": "삼성전자",
+            "market": "KOSPI",
+            "summary": "요약",
+        }
+
+    def test_delta_is_current_minus_previous(self):
+        from app.api.routes.signals import _signal_list_item
+
+        item = _signal_list_item(
+            1,
+            [self._aggregated("2026-07-09", 50.2)],
+            previous=self._aggregated("2026-07-08", 7.6, signal="negative"),
+        )
+
+        change = item["change"]
+        self.assertEqual(change["score_delta"], 42.6)
+        self.assertEqual(change["previous_score"], 7.6)
+        self.assertEqual(change["previous_direction"], "NEGATIVE")
+        self.assertEqual(change["previous_signal_date"], "2026-07-08")
+
+    def test_stale_previous_signal_produces_no_delta(self):
+        # 실측: 어떤 종목의 직전 AGGREGATED 가 2023-12-13 이었다.
+        # 2년 반 전 점수와 비교해 "변화 +12" 라고 쓰면 거짓말이다.
+        from app.api.routes.signals import _signal_list_item
+
+        item = _signal_list_item(
+            1,
+            [self._aggregated("2026-07-09", 50.2)],
+            previous=self._aggregated("2023-12-13", 38.0),
+        )
+
+        change = item["change"]
+        self.assertIsNone(change["score_delta"])
+        # 비교 기준 날짜는 남겨 화면이 "변화 없음" 이 아니라 "비교 불가" 로 읽게 한다.
+        self.assertEqual(change["previous_signal_date"], "2023-12-13")
+
+    def test_no_previous_signal_produces_no_delta(self):
+        from app.api.routes.signals import _signal_list_item
+
+        item = _signal_list_item(1, [self._aggregated("2026-07-09", 50.2)], previous=None)
+
+        self.assertIsNone(item["change"]["score_delta"])
+        self.assertIsNone(item["change"]["previous_signal_date"])
+        self.assertEqual(item["change"]["signal_date"], "2026-07-09")
+
+
 if __name__ == "__main__":
     unittest.main()

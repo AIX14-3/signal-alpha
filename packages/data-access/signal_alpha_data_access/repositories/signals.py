@@ -87,6 +87,38 @@ class SignalRepository:
             limit,
         )
 
+    async def list_previous_aggregated_by_stock_ids(self, stock_ids: list[int]) -> list[Any]:
+        """종목별 **직전** 통합 신호(AGGREGATED) 1행 — 최신 바로 앞의 signal_date.
+
+        "어제 대비 +12" 같은 변화량을 만들기 위한 비교 기준이다. is_current 가
+        (stock_id, signal_date, run_key) 단위로 유일해 과거 발행본이 그대로 남아 있으므로
+        (``_LATEST_PER_SOURCE`` 주석 참조) 별도 이력 테이블 없이 바로 앞 행을 집을 수 있다.
+
+        신호가 하루 한 번만 발행된 종목은 직전 행이 없어 결과에서 빠진다(호출부가 변화량 없음
+        으로 처리). 최신 행 자체는 ``list_current_by_stock_ids`` 가 준다.
+        """
+        if not stock_ids:
+            return []
+        return await self._connection.fetch(
+            """
+            SELECT *
+            FROM (
+                SELECT *,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY stock_id
+                           ORDER BY signal_date DESC,
+                                    published_at DESC NULLS LAST,
+                                    created_at DESC
+                       ) AS recency_rank
+                FROM api.signals_current
+                WHERE stock_id = ANY($1::BIGINT[])
+                  AND run_key = 'AGGREGATED'
+            ) ranked
+            WHERE recency_rank = 2
+            """,
+            stock_ids,
+        )
+
     async def list_current_by_stock_ids(self, stock_ids: list[int]) -> list[Any]:
         if not stock_ids:
             return []
