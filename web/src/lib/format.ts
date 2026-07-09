@@ -195,15 +195,17 @@ export function isExpired(closingDate: string | null | undefined): boolean {
  * 출원연도 Y의 공개분은 대체로 Y+2 중에 마무리된다. */
 export const FILING_TREND_INCOMPLETE_YEARS = 2;
 
-/** 추이에서 미완성 출원연도를 잘라낸다.
+/** 추이의 각 연도에 "아직 집계 중" 여부를 붙인다(행은 버리지 않는다).
  *
  * 수집된 특허는 **이미 공개된 것**뿐인데 공개는 출원보다 ~18개월 늦다. 그래서 최근
- * 출원연도는 실제 출원 건수보다 훨씬 적게 집계되고, 그대로 그리면 R&D가 급감한 것처럼
- * 보인다(예: 2023년 9,204건 → 2025년 279건). 착시를 만들 바에는 빼는 편이 정직하다.
+ * 출원연도는 실제 출원 건수보다 적게 잡히고, 아무 표시 없이 그리면 R&D가 급감한 것처럼
+ * 읽힌다(예: 2023년 9,204건 → 2025년 279건). 값은 그대로 노출하되 미완성임을 밝힌다.
  */
-export function completeFilingYears<T extends { year: number }>(trend: T[]): T[] {
+export function markIncompleteFilingYears<T extends { year: number }>(
+  trend: T[],
+): (T & { incomplete: boolean })[] {
   const cutoff = todayKST().getFullYear() - FILING_TREND_INCOMPLETE_YEARS;
-  return trend.filter((d) => d.year <= cutoff);
+  return trend.map((d) => ({ ...d, incomplete: d.year > cutoff }));
 }
 
 // DB 타임스탬프(UTC ISO)를 KST 로 표기. 원문을 그대로 slice 하면 UTC 시각이 로컬처럼
