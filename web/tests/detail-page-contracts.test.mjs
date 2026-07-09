@@ -47,6 +47,10 @@ test("shared source detail body renders verdict, narrative, evidence links and r
     "detail.patent",
     // 특허는 공개일 기준 경과일("공개 N일 전")을 함께 보여준다.
     "relativeDayLabel(p.publication_date)",
+    // 출원추이는 원본이 아니라 "완성된 연도"만 그린다. 수집된 특허는 이미 공개된 것뿐이라
+    // 최근 출원연도는 미달집계되고, 그대로 그리면 R&D 급감으로 오독된다.
+    "completeFilingYears(detail.patent?.filing_trend ?? [])",
+    "<FilingTrendChart data={filingTrend} />",
     // 채용은 게시일 경과("N일 전")와 마감 상태를 보여준다. 상시채용은 만료가 아니다.
     "detail.hiring",
     "relativeDayLabel(p.posting_date)",
@@ -59,6 +63,16 @@ test("shared source detail body renders verdict, narrative, evidence links and r
     "referenceLinks(",
     "detail.notice",
   ].forEach((expected) => assertIncludes(source, expected, "source detail body"));
+});
+
+test("filing trend excludes the trailing years that publication lag leaves undercounted", () => {
+  const source = read("src/lib/format.ts");
+
+  [
+    "export const FILING_TREND_INCOMPLETE_YEARS = 2",
+    "const cutoff = todayKST().getFullYear() - FILING_TREND_INCOMPLETE_YEARS",
+    "return trend.filter((d) => d.year <= cutoff)",
+  ].forEach((expected) => assertIncludes(source, expected, "completeFilingYears"));
 });
 
 test("source detail opens as a centered document dialog whose open state lives in the URL", () => {

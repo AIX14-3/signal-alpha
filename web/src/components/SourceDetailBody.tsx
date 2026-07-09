@@ -3,7 +3,9 @@
 import { ExternalLink } from "lucide-react";
 import type { SourceDetail, SourceKey } from "@/lib/apiClient";
 import {
+  completeFilingYears,
   directionLabel,
+  FILING_TREND_INCOMPLETE_YEARS,
   isExpired,
   relativeDayLabel,
   safeHttpUrl,
@@ -50,6 +52,7 @@ function Section({ title, hint, children }: { title: string; hint?: string; chil
 }
 
 export function SourceDetailBody({ detail, source }: { detail: SourceDetail; source: SourceKey }) {
+  const filingTrend = completeFilingYears(detail.patent?.filing_trend ?? []);
   const dir = directionLabel(detail.direction);
   const linked = detail.items.filter((it) => safeHttpUrl(it.evidence_url));
   const refs = referenceLinks(
@@ -115,12 +118,15 @@ export function SourceDetailBody({ detail, source }: { detail: SourceDetail; sou
       )}
 
       {/* PATENT 전용 — 장기 출원 추이 */}
-      {source === "patent" && detail.patent && detail.patent.filing_trend.length > 0 && (
+      {source === "patent" && filingTrend.length > 0 && (
         <Section
           title="장기 출원 추이 (연도별 출원 건수)"
-          hint="특허는 출원 후 약 18개월 뒤 공개됩니다. 아래는 출원 연도별 건수(장기 R&D 흐름)입니다."
+          hint={
+            `특허는 출원 후 약 18개월 뒤 공개됩니다. 아래는 출원 연도별 건수(장기 R&D 흐름)입니다. ` +
+            `최근 ${FILING_TREND_INCOMPLETE_YEARS}년은 아직 공개되지 않은 출원이 많아 집계에서 제외했습니다.`
+          }
         >
-          <FilingTrendChart data={detail.patent.filing_trend} />
+          <FilingTrendChart data={filingTrend} />
         </Section>
       )}
 
