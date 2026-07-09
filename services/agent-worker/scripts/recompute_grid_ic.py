@@ -26,6 +26,7 @@ import asyncpg  # noqa: E402
 
 from app.ml.source_features import pit_rows  # noqa: E402
 from app.ml.train_source_models import _PriceTrainingLoader, _build_loader  # noqa: E402
+import recompute_source_ic as _rc  # noqa: E402  (WF_BLOCKS 전역 조절용)
 from ic_diagnostic import _fmt, forward_return, load_price_series  # noqa: E402
 from recompute_source_ic import SOURCES, _recommend, _score, _source_metrics  # noqa: E402
 
@@ -120,5 +121,7 @@ if __name__ == "__main__":
     ap.add_argument("--horizon", type=int, default=20, choices=(1, 5, 20))
     ap.add_argument("--grid-days", type=int, default=20, help="asof 간격(거래일). 20≈월별")
     ap.add_argument("--asof-from", type=_d, default=_d("2019-01-01"))
+    ap.add_argument("--wf-blocks", type=int, default=_rc.WF_BLOCKS, help="워크포워드 시간분할 블록 수")
     args = ap.parse_args()
+    _rc.WF_BLOCKS = args.wf_blocks  # 규칙격자 워크포워드 블록 수 반영
     asyncio.run(main(args.horizon, args.grid_days, args.asof_from))
