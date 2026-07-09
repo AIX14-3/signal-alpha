@@ -30,31 +30,35 @@ async function readAdminSource() {
   return parts.join("\n");
 }
 
-test("home v2 wires the two-column layout and the three right-pane sections", async () => {
+test("home dashboard wires market-indices/watchlist bands and the two-column layout", async () => {
   const page = await readFile(new URL("../src/app/page.tsx", import.meta.url), "utf8");
   const rightPane = await readFile(new URL("../src/components/HomeRightPane.tsx", import.meta.url), "utf8");
   const liveAnalysis = await readFile(new URL("../src/components/LiveAnalysisSection.tsx", import.meta.url), "utf8");
   const watchlistSection = await readFile(new URL("../src/components/WatchlistSection.tsx", import.meta.url), "utf8");
+  const marketIndices = await readFile(new URL("../src/components/MarketIndices.tsx", import.meta.url), "utf8");
   const communityPopular = await readFile(new URL("../src/components/CommunityPopularSection.tsx", import.meta.url), "utf8");
   const headerSearch = await readFile(new URL("../src/components/HeaderStockSearch.tsx", import.meta.url), "utf8");
   const layout = await readFile(new URL("../src/app/layout.tsx", import.meta.url), "utf8");
   const apiClient = await readFile(new URL("../src/lib/apiClient.ts", import.meta.url), "utf8");
 
-  // 홈 v2 = 좌 뉴스 피드 + 우 3섹션. 인-콘텐츠 메뉴 사이드바는 제거됐다.
+  // 홈 대시보드 = 상단 가로 밴드(시장 지수·관심종목) + 좌 뉴스 피드 / 우 2섹션. 인-콘텐츠 메뉴 사이드바는 제거됐다.
+  assert.match(page, /MarketIndices/);
+  assert.match(page, /WatchlistSection/);
   assert.match(page, /HomeLeftPane/);
   assert.match(page, /HomeRightPane/);
   assert.doesNotMatch(page, /HomeSidebar/);
-  // 우 pane 은 관심종목 / 실시간 분석 종목 / 커뮤니티 인기순위 3섹션을 조립한다.
-  assert.match(rightPane, /WatchlistSection/);
+  // 우 pane 은 실시간 분석 종목 / 커뮤니티 인기순위 2섹션을 조립한다(관심종목은 상단 밴드로 승격).
   assert.match(rightPane, /LiveAnalysisSection/);
   assert.match(rightPane, /CommunityPopularSection/);
+  assert.doesNotMatch(rightPane, /WatchlistSection/);
   // 실시간 분석 아코디언: 차트 + 리포트(useReportStore) + 전체 리포트 링크 배선.
   assert.match(liveAnalysis, /StockPriceChart/);
   assert.match(liveAnalysis, /useReportStore/);
   assert.match(liveAnalysis, /\/report\//);
-  // 관심종목 로그인 분기 + 커뮤니티 인기순위 소스.
+  // 관심종목 로그인 분기 + 시장 지수 밴드 variant + 커뮤니티 인기순위 소스.
   assert.match(watchlistSection, /로그인 후 관심종목을 등록하세요/);
   assert.match(watchlistSection, /useWatchlistStore/);
+  assert.match(marketIndices, /variant === "band"/);
   assert.match(communityPopular, /listPopular/);
   assert.match(headerSearch, /searchStocks/);
   assert.match(layout, /AppShell/);

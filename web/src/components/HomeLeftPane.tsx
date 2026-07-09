@@ -3,37 +3,17 @@
 import { dateTimeShortKST } from "@/lib/format";
 import { useHomeStore } from "@/stores/homeStore";
 
-// 좌 pane(대시보드 메인) = 상단 KPI 3장 + 실시간 뉴스 "트랜잭션 테이블"(레퍼런스 Transaction History 오마주).
+// 좌 pane(대시보드 메인) = 실시간 뉴스 "트랜잭션 테이블"(레퍼런스 Transaction History 오마주).
+// NewsSummary KPI(뉴스건수·종목수)는 상단 히어로(NewsSummaryBanner)가 이미 보여주므로 여기서는 생략.
 // 종목 검색은 헤더(HeaderStockSearch)로 승격. 뉴스 행을 고르면 우 pane 스탯 레일이 갱신된다.
 export function HomeLeftPane() {
   const feed = useHomeStore((s) => s.feed);
-  const summary = useHomeStore((s) => s.summary);
   const loading = useHomeStore((s) => s.loading);
   const selectedCode = useHomeStore((s) => s.selectedCode);
   const select = useHomeStore((s) => s.select);
 
-  const kpis: { label: string; value: number | null | undefined; unit: string; icon: string }[] = [
-    { label: "최근 24시간 뉴스", value: summary?.recent_articles, unit: "건", icon: "📰" },
-    { label: "분석 종목", value: summary?.stock_count, unit: "개", icon: "🎯" },
-    { label: "누적 분석 기사", value: summary?.total_articles, unit: "건", icon: "🗂️" },
-  ];
-
   return (
     <div className="flex min-h-0 flex-col gap-5">
-      {/* KPI 3장 — NewsSummary 실데이터 */}
-      <div className="grid grid-cols-3 gap-3">
-        {kpis.map((k) => (
-          <div key={k.label} className="glass-card p-4">
-            <div className="text-[17px]">{k.icon}</div>
-            <div className="mt-2 text-[clamp(18px,2.4vw,24px)] font-extrabold leading-none text-navy">
-              {loading || k.value == null ? "…" : k.value.toLocaleString()}
-              <span className="ml-1 text-[12px] font-semibold text-muted">{k.unit}</span>
-            </div>
-            <div className="mt-1.5 text-[11.5px] text-muted">{k.label}</div>
-          </div>
-        ))}
-      </div>
-
       {/* 실시간 뉴스 테이블 */}
       <div className="glass-card overflow-hidden">
         <div className="flex items-center justify-between px-4 py-3">
