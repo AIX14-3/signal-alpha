@@ -53,8 +53,13 @@ class PatentAnalyzer:
         patent_meta = _patent_meta(rows, metadata)
 
         risk_flags = list(assessment.risk_flags)
+
+        # 만료(signal_expired): 데이터를 지우거나 집계에서 빼지 않는다. 감쇠로 점수는
+        # 이미 0에 수렴하지만, 특허 목록·근거는 그대로 노출하고 signal_expired 플래그로
+        # 프론트에만 "만료" 배지를 표시한다. 신뢰도가 가장 낮은 상태이므로 partial.
+        expired = "signal_expired" in risk_flags
         data_status = "ok"
-        if "insufficient_history" in risk_flags or "stale_data" in risk_flags:
+        if expired or "insufficient_history" in risk_flags or "stale_data" in risk_flags:
             data_status = "partial"
 
         # latest = 가장 최근 이벤트(공개일 폴백 출원일). 창은 공개일 기준이라
@@ -64,6 +69,11 @@ class PatentAnalyzer:
             f"{latest} 기준 최근 {self._config.lookback_days}일 공개 특허 {indicators.total}건 분석: "
             f"방향 {assessment.direction}, 점수 {assessment.score:+.3f}."
         )
+        if expired:
+            summary += (
+                f" (가장 최근 공개가 {indicators.days_since_latest}일 전 — "
+                f"유효기간 {self._config.signal_max_age_days}일 초과, 만료 표시)"
+            )
         return SourceResult(
             source="PATENT",
             stock_code=stock_code,

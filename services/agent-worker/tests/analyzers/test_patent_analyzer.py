@@ -10,7 +10,8 @@ CONFIG = PatentRuleConfig(
     lookback_days=365,
     min_count=3,
     momentum_threshold=0.5,
-    stale_days=180,
+    decay_onset_days=90,
+    signal_max_age_days=365,
     momentum_weight=0.5,
     new_category_weight=0.3,
     activity_weight=0.2,
@@ -154,6 +155,68 @@ class PatentAnalyzerTest(unittest.IsolatedAsyncioTestCase):
         rows = [_row(10), _row(20)]  # total 2 < min_count 3
         result = await PatentAnalyzer(CONFIG).analyze("005930", _evidence(rows))
         self.assertIn("insufficient_history", result.risk_flags)
+
+    # --- 신선도 생애주기(freshness lifecycle) -----------------------------------
+    def test_recency_factor_boundaries(self):
+        from app.analyzers.patent.rules import _recency_factor
+
+        # 나이 미상·온셋 이하 → 신선(1.0).
+        self.assertEqual(_recency_factor(None, CONFIG), 1.0)
+        self.assertEqual(_recency_factor(50, CONFIG), 1.0)
+        self.assertEqual(_recency_factor(90, CONFIG), 1.0)  # 온셋 경계 포함
+        # 만료 경계/초과 → 0.0.
+        self.assertEqual(_recency_factor(365, CONFIG), 0.0)
+        self.assertEqual(_recency_factor(400, CONFIG), 0.0)
+        # 감쇠 구간 → 선형. 중간점 227일 ≈ 0.5.
+        self.assertAlmostEqual(
+            _recency_factor(227, CONFIG), (365 - 227) / (365 - 90), places=6
+        )
+        self.assertTrue(0.49 < _recency_factor(227, CONFIG) < 0.51)
+
+    def test_decay_fades_score_preserving_sign(self):
+        # 동일 지표를 나이만 바꿔 넣어 신선도 페이드를 격리 검증(모멘텀 교란 배제).
+        from app.analyzers.patent.indicators import PatentIndicators
+        from app.analyzers.patent.rules import evaluate_indicators
+
+        def ind(age):
+            return PatentIndicators(
+                total=5, recent_count=4, prior_count=1, momentum_ratio=3.0,
+                new_category_count=1, new_category_ratio=0.2,
+                distinct_tech_categories=3, latest_application_date="2026-01-01",
+                days_since_latest=age, llm_enriched_count=0,
+                mean_significance=None, max_significance=None,
+            )
+
+        fresh = evaluate_indicators(ind(10), CONFIG)
+        decay = evaluate_indicators(ind(227), CONFIG)
+        self.assertGreater(fresh.score, 0.0)
+        self.assertGreater(decay.score, 0.0)  # 부호 유지(양수→작아진 양수)
+        self.assertLess(decay.score, fresh.score)
+        self.assertAlmostEqual(
+            decay.score, round(fresh.score * (365 - 227) / (365 - 90), 3), places=2
+        )
+        self.assertIn("stale_data", decay.risk_flags)
+        self.assertNotIn("stale_data", fresh.risk_flags)
+        self.assertNotIn("signal_expired", decay.risk_flags)
+        self.assertTrue(any("감쇠" in h for h in decay.highlights))
+
+    async def test_expired_signal_is_flagged_not_deleted(self):
+        # 가장 최근 공개가 유효기간(365일)을 넘김: 데이터를 지우거나 집계에서 빼지
+        # 않는다(no_signal 아님). 감쇠로 점수는 0에 수렴하지만, 특허 목록은 그대로
+        # 노출되고 signal_expired 플래그로 프론트에만 "만료"를 표시한다.
+        rows = [
+            _row(410, pub_days_ago=400),
+            _row(420, pub_days_ago=410),
+            _row(430, pub_days_ago=420),
+        ]
+        result = await PatentAnalyzer(CONFIG).analyze("005930", _evidence(rows))
+        self.assertNotEqual(result.data_status, "no_signal")  # 데이터 유지
+        self.assertEqual(result.data_status, "partial")  # 신뢰도만 낮춤
+        self.assertEqual(result.score, 0.0)  # 감쇠로 0에 수렴
+        self.assertIn("signal_expired", result.risk_flags)  # FE 만료 배지 신호
+        # 특허 목록 데이터는 지워지지 않고 그대로 노출된다.
+        self.assertIsNotNone(result.patent_meta)
+        self.assertEqual(len(result.patent_meta.recent_publications), 3)
 
 
 if __name__ == "__main__":

@@ -48,28 +48,55 @@ def evaluate_indicators(
         highlights.append(
             f"특허 출원 {indicators.total}건 — 분석 최소치({config.min_count}) 미만, 신뢰도 낮음"
         )
-    if (
-        indicators.days_since_latest is not None
-        and indicators.days_since_latest > config.stale_days
-    ):
-        risk_flags.append("stale_data")
-        highlights.append(
-            f"최근 공개가 {indicators.days_since_latest}일 전 — {config.stale_days}일 기준 정체"
-        )
 
     momentum = _momentum_component(indicators, config, highlights)
     new_category = _new_category_component(indicators, config, highlights)
     activity = _activity_component(indicators, config, highlights)
     significance = _significance_component(indicators, config, highlights)
 
-    score = max(-1.0, min(1.0, momentum + new_category + activity + significance))
+    raw_score = max(-1.0, min(1.0, momentum + new_category + activity + significance))
+
+    # 신선도 생애주기: 가장 최근 공개 특허의 나이로 점수를 페이드한다(부호 유지).
+    factor = _recency_factor(indicators.days_since_latest, config)
+    age = indicators.days_since_latest
+    if age is not None and age >= config.signal_max_age_days:
+        # 만료 — analyzer 가 no_signal("데이터 없음")로 승격한다.
+        risk_flags.append("signal_expired")
+        highlights.append(
+            f"최근 공개가 {age}일 전 — 유효기간({config.signal_max_age_days}일) 초과, 신호 만료"
+        )
+    elif age is not None and age > config.decay_onset_days:
+        # 감쇠 구간 — 점수를 factor 배로 줄이고, 집계 confidence 페널티(stale_penalty)를 유지.
+        risk_flags.append("stale_data")
+        highlights.append(
+            f"최근 공개가 {age}일 전 — 신선도 {factor * 100:.0f}%로 감쇠 (점수 ×{factor:.2f})"
+        )
+
+    score = round(raw_score * factor, 3)
     direction = _direction(score, momentum, indicators, config)
     return PatentAssessment(
         direction=direction,
-        score=round(score, 3),
+        score=score,
         risk_flags=risk_flags,
         highlights=highlights,
     )
+
+
+def _recency_factor(days_since_latest: int | None, config: PatentRuleConfig) -> float:
+    """가장 최근 공개 특허의 나이 → 신선도 배수(1.0~0.0).
+
+    - 나이 미상 또는 온셋 이하: 1.0(신선, 100%).
+    - 온셋 ~ 만료: 선형으로 1.0 → 0.0(부호는 유지, 크기만 감쇠).
+    - 만료 이상: 0.0(analyzer 가 no_signal 로 처리).
+    """
+    if days_since_latest is None or days_since_latest <= config.decay_onset_days:
+        return 1.0
+    if days_since_latest >= config.signal_max_age_days:
+        return 0.0
+    span = config.signal_max_age_days - config.decay_onset_days
+    if span <= 0:  # degenerate config(onset >= max) → 온셋 초과 즉시 만료
+        return 0.0
+    return (config.signal_max_age_days - days_since_latest) / span
 
 
 def _momentum_component(
