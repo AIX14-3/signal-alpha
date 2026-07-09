@@ -4,7 +4,9 @@ import { ExternalLink } from "lucide-react";
 import type { SourceDetail, SourceKey } from "@/lib/apiClient";
 import {
   directionLabel,
+  FILING_TREND_INCOMPLETE_YEARS,
   isExpired,
+  markIncompleteFilingYears,
   relativeDayLabel,
   safeHttpUrl,
   won,
@@ -15,7 +17,7 @@ import { referenceLinks } from "@/lib/sourceLinks";
 // (/report/[ticker]/[source])가 공유한다. 표현만 담당하고 데이터 로딩은 호출부 몫.
 
 // 장기 출원 추이 — 연도별 출원 건수 막대 차트(외부 라이브러리 없이 CSS 막대, 테마 토큰 사용).
-function FilingTrendChart({ data }: { data: { year: number; count: number }[] }) {
+function FilingTrendChart({ data }: { data: { year: number; count: number; incomplete: boolean }[] }) {
   const max = Math.max(...data.map((d) => d.count), 1);
   return (
     <div
@@ -27,12 +29,26 @@ function FilingTrendChart({ data }: { data: { year: number; count: number }[] })
       {data.map((d) => (
         <div key={d.year} className="flex flex-1 flex-col items-center justify-end gap-1">
           <div className="text-[11px] text-muted">{d.count}</div>
+          {/* 아직 공개분이 다 안 들어온 연도는 실제보다 적게 잡힌다 → 값은 그대로 두고
+              반투명·점선 테두리로 "확정치 아님"을 알린다. */}
           <div
-            className="w-full rounded-t bg-sky-deep"
-            style={{ height: `${Math.max(4, (d.count / max) * 100)}%` }}
-            title={`${d.year}년 ${d.count}건`}
+            className={`w-full rounded-t bg-sky-deep${d.incomplete ? " opacity-40" : ""}`}
+            style={
+              d.incomplete
+                ? {
+                    height: `${Math.max(4, (d.count / max) * 100)}%`,
+                    border: "1px dashed currentColor",
+                  }
+                : { height: `${Math.max(4, (d.count / max) * 100)}%` }
+            }
+            title={
+              d.incomplete
+                ? `${d.year}년 ${d.count}건 (집계 중 — 미공개 출원 다수)`
+                : `${d.year}년 ${d.count}건`
+            }
           />
           <div className="text-[11px] text-muted">{d.year}</div>
+          {d.incomplete && <div className="text-[10px] text-muted">집계중</div>}
         </div>
       ))}
     </div>
@@ -50,6 +66,7 @@ function Section({ title, hint, children }: { title: string; hint?: string; chil
 }
 
 export function SourceDetailBody({ detail, source }: { detail: SourceDetail; source: SourceKey }) {
+  const filingTrend = markIncompleteFilingYears(detail.patent?.filing_trend ?? []);
   const dir = directionLabel(detail.direction);
   const linked = detail.items.filter((it) => safeHttpUrl(it.evidence_url));
   const refs = referenceLinks(
@@ -115,12 +132,16 @@ export function SourceDetailBody({ detail, source }: { detail: SourceDetail; sou
       )}
 
       {/* PATENT 전용 — 장기 출원 추이 */}
-      {source === "patent" && detail.patent && detail.patent.filing_trend.length > 0 && (
+      {source === "patent" && filingTrend.length > 0 && (
         <Section
           title="장기 출원 추이 (연도별 출원 건수)"
-          hint="특허는 출원 후 약 18개월 뒤 공개됩니다. 아래는 출원 연도별 건수(장기 R&D 흐름)입니다."
+          hint={
+            `특허는 출원 후 약 18개월 뒤 공개됩니다. 아래는 출원 연도별 건수(장기 R&D 흐름)입니다. ` +
+            `최근 ${FILING_TREND_INCOMPLETE_YEARS}년('집계중')은 아직 공개되지 않은 출원이 많아 ` +
+            `실제보다 적게 잡힙니다 — 감소로 읽지 마세요.`
+          }
         >
-          <FilingTrendChart data={detail.patent.filing_trend} />
+          <FilingTrendChart data={filingTrend} />
         </Section>
       )}
 

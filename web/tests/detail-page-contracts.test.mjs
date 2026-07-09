@@ -47,6 +47,11 @@ test("shared source detail body renders verdict, narrative, evidence links and r
     "detail.patent",
     // 특허는 공개일 기준 경과일("공개 N일 전")을 함께 보여준다.
     "relativeDayLabel(p.publication_date)",
+    // 출원추이는 모든 연도를 그리되, 공개 시차로 아직 미달집계인 최근 연도는 "집계중"으로
+    // 구분한다(값을 버리지 않는다). 표시가 없으면 R&D 급감으로 오독된다.
+    "markIncompleteFilingYears(detail.patent?.filing_trend ?? [])",
+    "<FilingTrendChart data={filingTrend} />",
+    "집계중",
     // 채용은 게시일 경과("N일 전")와 마감 상태를 보여준다. 상시채용은 만료가 아니다.
     "detail.hiring",
     "relativeDayLabel(p.posting_date)",
@@ -59,6 +64,22 @@ test("shared source detail body renders verdict, narrative, evidence links and r
     "referenceLinks(",
     "detail.notice",
   ].forEach((expected) => assertIncludes(source, expected, "source detail body"));
+});
+
+test("filing trend keeps every year but flags the ones publication lag leaves undercounted", () => {
+  const source = read("src/lib/format.ts");
+
+  [
+    "export const FILING_TREND_INCOMPLETE_YEARS = 2",
+    "const cutoff = todayKST().getFullYear() - FILING_TREND_INCOMPLETE_YEARS",
+    // 행을 버리지 않는다 — map 으로 incomplete 플래그만 붙인다(filter 금지).
+    "return trend.map((d) => ({ ...d, incomplete: d.year > cutoff }))",
+  ].forEach((expected) => assertIncludes(source, expected, "markIncompleteFilingYears"));
+
+  assert.ok(
+    !source.includes("trend.filter("),
+    "markIncompleteFilingYears must not drop years — every collected year stays on the chart",
+  );
 });
 
 test("source detail opens as a centered document dialog whose open state lives in the URL", () => {
