@@ -23,18 +23,31 @@ function Sparkline({ bars, up }: { bars: IndexBar[]; up: boolean }) {
 
 function IndexCard({ idx, tone = "glass" }: { idx: MarketIndex; tone?: "glass" | "flat" }) {
   const up = idx.change >= 0;
+  // 서버는 지수 조회에 실패하면 결정론 합성 시계열로 폴백한다(is_demo). 그걸 실시세처럼
+  // 보여 주면 없는 숫자를 사실로 만든다 — 주가 차트(StockChart)와 같은 방식으로 밝힌다.
+  const demo = idx.is_demo;
   return (
     <div
       className={`flex items-center justify-between gap-2 rounded-[12px] p-3 ${
         tone === "glass" ? "glass hover-lift" : "border border-line bg-surface-2"
-      }`}
+      } ${demo ? "opacity-60" : ""}`}
+      title={demo ? "지수를 불러오지 못해 예시 값을 보여 줍니다(실데이터 아님)." : undefined}
     >
       <div>
-        <div className="text-[12px] font-semibold text-muted">{idx.name}</div>
+        <div className="flex items-center gap-1 text-[12px] font-semibold text-muted">
+          <span>{idx.name}</span>
+          {demo && (
+            <span className="rounded-[4px] bg-muted/15 px-1 text-[10px] font-bold text-muted">예시</span>
+          )}
+        </div>
         <div className="text-[15px] font-extrabold leading-tight text-navy">
           {idx.last.toLocaleString("ko-KR")}
         </div>
-        <div className={`text-[11.5px] font-bold ${up ? "text-[#16a34a]" : "text-[#dc2626]"}`}>
+        <div
+          className={`text-[11.5px] font-bold ${
+            demo ? "text-muted" : up ? "text-[#16a34a]" : "text-[#dc2626]"
+          }`}
+        >
           {up ? "▲" : "▼"} {Math.abs(idx.change_pct)}%
         </div>
       </div>
@@ -70,14 +83,21 @@ export function MarketIndices({ variant = "grid" }: { variant?: "grid" | "band" 
     };
   }, []);
 
+  // 하나라도 예시 값이면 "실시간"이라고 말하지 않는다.
+  const anyDemo = (items ?? []).some((idx) => idx.is_demo);
+
   if (variant === "band") {
     return (
       <section data-section="market-indices" className="glass-card p-4">
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-[14px] font-bold text-navy">시장 지수</h2>
-          <span className="flex items-center gap-1.5 text-[11.5px] text-muted">
-            <span className="live-dot" /> 실시간
-          </span>
+          {anyDemo ? (
+            <span className="text-[11.5px] text-muted">일부 지수를 불러오지 못했습니다</span>
+          ) : (
+            <span className="flex items-center gap-1.5 text-[11.5px] text-muted">
+              <span className="live-dot" /> 실시간
+            </span>
+          )}
         </div>
         {!items ? (
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">

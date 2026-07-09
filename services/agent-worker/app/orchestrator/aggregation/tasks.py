@@ -903,6 +903,8 @@ def _evidence_items(results: list[NormalizedSourceResult], direction: str) -> li
             "source": result.source,
             # 방향은 표시 계층이 문장을 만들 때 필요하다("… 긍정 방향으로 읽힙니다").
             "direction": result.direction,
+            # data_status 가 있어야 표시 계층이 "점수에서 빠진 소스"를 설명할 수 있다.
+            "data_status": result.data_status,
             "summary": result.summary,
             "risk_flags": result.risk_flags,
             "agent_result_id": result.agent_result_id,
@@ -928,6 +930,7 @@ def _caution_items(
         {
             "source": result.source,
             "direction": result.direction,
+            "data_status": result.data_status,
             "summary": result.summary,
             "risk_flags": result.risk_flags,
             "agent_result_id": result.agent_result_id,
@@ -937,7 +940,10 @@ def _caution_items(
         if result.direction != "positive"
         and (result.needs_review or result.risk_flags or result.direction in {"negative", "mixed"})
     ]
-    items.extend({"source": source, "risk_flags": ["missing_source"]} for source in missing_sources)
+    items.extend(
+        {"source": source, "data_status": "missing", "risk_flags": ["missing_source"]}
+        for source in missing_sources
+    )
     return items
 
 

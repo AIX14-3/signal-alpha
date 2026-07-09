@@ -585,13 +585,66 @@ def _humanize_patent_summary(detail: dict[str, Any]) -> str | None:
     return f"{_leading_date(summary)}{head} 특허는 출원 후 약 18개월 뒤에 공개됩니다."
 
 
+# 이 상태의 소스는 집계기의 등가중 평균에서 **빠진다**(aggregation/tasks.py `_aggregate`:
+# available 은 failed 제외, 점수 평균은 no_signal 제외). missing 은 결과 행 자체가 없는 소스.
+_EXCLUDED_STATUSES = {"no_signal", "missing", "failed"}
+
+_SOURCE_LABEL_KO = {
+    "dart": "공시",
+    "price": "주가",
+    "report": "증권사 리포트",
+    "datalab": "검색량",
+    "patent": "특허",
+    "hiring": "채용",
+}
+
+# 소스별 "왜 점수에 못 들어갔나". 데이터가 아예 없는 것과 "있지만 방향을 못 가른 것"은 다르다.
+_EXCLUSION_REASON_KO = {
+    "dart": "최근 공시에서 방향을 가를 만한 내용을 찾지 못해",
+    "price": "최근 시세 데이터가 충분하지 않아",
+    "report": "밸류에이션을 추출할 만한 증권사 리포트가 없어",
+    "datalab": "최근 검색량 데이터가 충분하지 않아",
+    "patent": "최근 공개된 특허를 찾지 못해",
+    "hiring": "최근 올라온 채용 공고를 찾지 못해",
+}
+
+
+def _object_particle(word: str) -> str:
+    """받침 유무로 목적격 조사(을/를)를 고른다. "채용를" 같은 비문을 막는다."""
+    if not word:
+        return "를"
+    last = word[-1]
+    if not ("가" <= last <= "힣"):
+        return "를"
+    has_final_consonant = (ord(last) - 0xAC00) % 28 != 0
+    return "을" if has_final_consonant else "를"
+
+
+def _exclusion_note(source: str, detail: dict[str, Any]) -> str | None:
+    """점수에 산입되지 않은 소스의 설명 문장. 산입된 소스는 None.
+
+    "분석할 채용 데이터가 없습니다"로 끝내면 사용자는 그래서 종합 점수가 어떻게 나온 건지
+    알 수 없다. 빠진 이유와 함께 **나머지 소스로 계산했다**는 사실까지 밝힌다.
+    """
+    status = str(detail.get("data_status") or "").lower()
+    if status not in _EXCLUDED_STATUSES:
+        return None
+    reason = (
+        "이 데이터를 분석하지 못해"
+        if status == "failed"
+        else _EXCLUSION_REASON_KO.get(source, "이 데이터를 확인하지 못해")
+    )
+    label = _SOURCE_LABEL_KO.get(source, source)
+    return f"{reason} 이번 종합 점수는 {label}{_object_particle(label)} 빼고 나머지 소스로 계산했습니다."
+
+
 def _humanize_hiring_summary(detail: dict[str, Any]) -> str | None:
     """채용 요약에서 내부 표현(테이블명·점수 코드)을 걷어 낸다."""
     summary = detail.get("summary")
     if not isinstance(summary, str) or not summary.strip():
         return summary if isinstance(summary, str) else None
     if _HIRING_NO_DATA_RE.search(summary):
-        return "아직 이 회사의 채용 공고가 모이지 않아 채용 흐름을 판단하지 못했습니다."
+        return "최근 올라온 채용 공고를 찾지 못했습니다."
     if not _HIRING_TERSE_RE.search(summary):
         return summary
     phrase = _direction_phrase(detail)
@@ -604,7 +657,14 @@ def _humanize_hiring_summary(detail: dict[str, Any]) -> str | None:
 
 
 def _humanize_summary(source: str, detail: dict[str, Any]) -> str | None:
-    """소스별 기계식 요약을 사람이 읽기 쉬운 문장으로 풀어 쓰는 디스패처(그 외엔 원문 통과)."""
+    """소스별 기계식 요약을 사람이 읽기 쉬운 문장으로 풀어 쓰는 디스패처(그 외엔 원문 통과).
+
+    점수에 산입되지 않은 소스는 무엇을 못 봤는지 + **그래서 종합 점수를 어떻게 냈는지**를
+    함께 밝힌다. 데이터가 없다는 사실만 알리고 끝내면 종합 점수가 어디서 왔는지 알 수 없다.
+    """
+    note = _exclusion_note(source, detail)
+    if note:
+        return note
     if source == "price":
         return _humanize_price_summary(detail)
     if source == "datalab":
@@ -941,6 +1001,8 @@ def _evidence_list(value: Any) -> list[dict[str, Any]]:
                         "summary": summary,
                         "risk_flags": flags,
                         "direction": entry.get("direction"),
+                        # 점수에서 빠진 소스는 그 사실과 이유를 문장으로 대체한다.
+                        "data_status": entry.get("data_status"),
                     },
                 )
             items.append({
