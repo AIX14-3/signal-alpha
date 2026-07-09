@@ -22,7 +22,10 @@ RUN apt-get update \
     && ln -sf /usr/bin/chromium /usr/bin/google-chrome-stable
 
 # 번들 chromium/드라이버를 쓰도록(런타임 webdriver_manager 다운로드 회피 — 잠긴 컨테이너 안전).
-# /usr/bin/chromedriver 가 PATH 에 있어 driver_utils 의 webdriver.Chrome 폴백이 이를 집는다.
+# driver_utils.resolve_chromedriver_path() 가 CHROMEDRIVER_PATH 를 **먼저** 보고 채택하며,
+# 없을 때만 webdriver_manager 로 폴백한다. 위 apt-get 이 chromium 과 chromium-driver 를 한
+# 트랜잭션에 설치하므로 두 버전은 항상 일치한다 — wdm 은 최신 패치를 받아와 어긋날 수 있다
+# (2026-07-08 prod 장애: chromium .46 ↔ wdm chromedriver .49 → Chrome instance exited).
 ENV CHROME_BIN=/usr/bin/chromium \
     CHROMEDRIVER_PATH=/usr/bin/chromedriver
 
