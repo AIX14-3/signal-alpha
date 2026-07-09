@@ -166,10 +166,11 @@ class SynthesizeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         pp = result["report"]["price_prediction"]
         self.assertEqual(pp["direction"], "positive")
         self.assertEqual(pp["score_100"], 59.0)
-        # 결정론 내러티브 첫 key_point 로 주가예측이 별도 노출된다.
-        self.assertTrue(
-            any("주가예측" in p for p in result["report"]["narrative"]["key_points"])
-        )
+        # 결정론 내러티브 첫 key_point 로 주가예측이 별도 노출된다(사람이 읽는 문장으로).
+        points = result["report"]["narrative"]["key_points"]
+        self.assertTrue(any("주가만 놓고 본 예측" in p for p in points))
+        # 내부 코드(positive)를 그대로 노출하지 않는다.
+        self.assertTrue(any("긍정 방향" in p for p in points))
 
     async def test_price_prediction_none_when_price_missing(self):
         final = {**_FINAL, "score_breakdown": {"PRICE": {"data_status": "missing"}}}
@@ -225,7 +226,8 @@ class SynthesizeTaskHandlerTest(unittest.IsolatedAsyncioTestCase):
         final = {**_FINAL, "source_predictions": dict(_SOURCE_PREDICTIONS)}
         connection = _FakeConnection(final, list(_EVENTS))
         result = await self._run(connection, synthesizer=None)
-        self.assertTrue(any("메타예측" in p for p in result["report"]["narrative"]["key_points"]))
+        points = result["report"]["narrative"]["key_points"]
+        self.assertTrue(any("주가와 대체데이터를 합친 예측" in p for p in points))
 
     async def test_source_freshness_surfaced_when_reused(self):
         # last-known 재사용 — data_age_days>0 인 소스만 신선도로 노출(missing/0 제외).

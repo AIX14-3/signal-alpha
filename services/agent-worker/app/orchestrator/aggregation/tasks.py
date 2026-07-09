@@ -9,6 +9,7 @@ from decimal import Decimal
 from typing import Any
 
 from app.analyzers.config import AggregatorConfig
+from app.core.korean_labels import SIGNAL_KO, SOURCE_KO
 from app.orchestrator.aggregation.detect import detect_disagreement
 from app.orchestrator.aggregation.judge import build_memory_reference, judge_with_memory
 from app.orchestrator.aggregation.requery import MAX_REQUERY_ROUNDS
@@ -481,6 +482,27 @@ def _coalesce_by_source(
     return coalesced
 
 
+# 한 소스가 여러 런으로 묶일 때 이어붙일 요약 문장의 상한. 넘으면 뒤는 버린다.
+_MAX_BLENDED_SUMMARIES = 3
+
+
+def _blended_summaries(summaries: list[str]) -> list[str]:
+    """묶인 런들의 요약을 중복 제거 + 개수 제한.
+
+    DART 는 공시 1건당 런이 하나씩 생겨, 같은 템플릿 문장이 열댓 번 그대로 반복된 채
+    " / " 로 이어붙어 화면에 나갔다. 같은 문장을 스무 번 읽히는 건 정보가 아니다.
+    """
+    seen: set[str] = set()
+    unique: list[str] = []
+    for text in summaries:
+        key = text.strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        unique.append(key)
+    return unique[:_MAX_BLENDED_SUMMARIES]
+
+
 def _blend_group(
     source: str,
     group: list[NormalizedSourceResult],
@@ -492,7 +514,7 @@ def _blend_group(
     for r in group:
         risk_flags.extend(r.risk_flags)
         event_ids.extend(r.source_signal_event_ids)
-    summaries = [r.summary for r in group if r.summary]
+    summaries = _blended_summaries([r.summary for r in group if r.summary])
     return NormalizedSourceResult(
         source=source,
         analysis_result_id=group[0].analysis_result_id,
@@ -832,12 +854,22 @@ def _summary(
     missing_sources: list[str],
     warning_level: str,
 ) -> str:
+    # 사용자에게 그대로 노출되는 문장이다(LLM 서술이 붙기 전 결정론 폴백). 한국어로 쓴다.
     if not available:
-        return "Source data was not sufficient to publish a data direction."
-    source_names = ", ".join(result.source for result in available)
-    missing_text = f" Missing sources: {', '.join(missing_sources)}." if missing_sources else ""
-    review_text = " Additional review is needed." if warning_level in {"CAUTION", "WARNING"} else ""
-    return f"{source_names} data shows a {signal} data direction.{missing_text}{review_text}"
+        return "데이터가 충분하지 않아 방향을 판단하지 못했습니다."
+    source_names = ", ".join(SOURCE_KO.get(result.source, result.source) for result in available)
+    direction_text = SIGNAL_KO.get(signal, signal)
+    missing_text = (
+        f" 아직 {', '.join(SOURCE_KO.get(s, s) for s in missing_sources)} 데이터는 반영되지 않았습니다."
+        if missing_sources
+        else ""
+    )
+    review_text = (
+        " 소스 간 신호가 엇갈려 근거를 함께 확인하는 것이 좋습니다."
+        if warning_level in {"CAUTION", "WARNING"}
+        else ""
+    )
+    return f"{source_names} 데이터가 {direction_text} 방향을 가리킵니다.{missing_text}{review_text}"
 
 
 def _evidence_point(results: list[NormalizedSourceResult], direction: str) -> str | None:
