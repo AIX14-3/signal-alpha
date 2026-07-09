@@ -1,12 +1,19 @@
-"""prod hiring 스키마 드리프트 교정 — 빠진 hiring 객체만 baseline 정의대로 생성.
+"""hiring 스키마 드리프트 교정 — 빠진 hiring 객체만 baseline 정의대로 생성.
 
-배경
-----
-prod DB 는 "마이그레이션 하나가 빠진" 상태가 아니라 **옛 베이스라인에서 만들어져 드리프트된**
-상태다(`schema_migrations` 원장이 비어 있음). 그 결과 hiring 테이블 9개 중 3개
-(`hiring_baseline` / `hiring_quarantine` / `hiring_raw_details`)만 존재하고, 나머지가 없다.
+⚠️ 운영(Cloud SQL) DB 는 대상이 아니다
+--------------------------------------
+**라이브 수집 DB(Cloud SQL `signal_collection`, 워커의 `WORKER_DATABASE_URL`)는 정상이다.**
+hiring 테이블 9개가 전부 있고 `hiring_sources`(15행)·`hiring_portal_company_ids` 도 존재한다
+(2026-07-09 클러스터에서 실측). 거기에 이 스크립트를 돌리면 전부 skip 되는 no-op 이다.
 
-이 결손이 런타임에 미치는 영향(둘 다 except 가 삼켜 경고만 남고 조용히 스킵된다):
+대상은 **드리프트된 다른 DB** 다 — 구체적으로 레포 루트 `.env` 의 `DATABASE_URL` 이 가리키는
+Supabase(Neon→Supabase→Cloud SQL 이관 과정에서 남은 구 DB)와, 그와 같은 상태의 개발용 DB.
+거기서는 hiring 테이블 9개 중 3개(`hiring_baseline`/`hiring_quarantine`/`hiring_raw_details`)만
+존재하고 `schema_migrations` 원장이 비어 있다.
+
+무엇이 문제인가 (드리프트된 DB 에서)
+----------------------------------
+결손 시 런타임 영향 — 둘 다 except 가 삼켜 경고만 남고 조용히 스킵된다:
   - `hiring_sources` 부재 → `_load_source_specs()` 예외 → **공식 채용사이트 크롤러 15개 전부 스킵**
   - `hiring_portal_company_ids` 부재 → `_load_jobkorea_company_ids()` 예외 →
     잡코리아 회원번호 직접수집(노이즈 0·Selenium 불요) 경로가 죽고 전 종목 키워드 폴백
@@ -18,8 +25,9 @@ prod DB 는 "마이그레이션 하나가 빠진" 상태가 아니라 **옛 베�
 가 경고하는 report_chunks 이중 정의 사고와 동일 패턴). 원장 전체 재정합은 hiring 밖 테이블까지
 건드리는 팀 결정 사항이다.
 
-→ 그래서 이 스크립트는 마이그레이션이 아니라 **prod 를 migrations/ 정의에 맞추는 일회성 교정 도구**다.
-   스키마의 소스 오브 트루스는 여전히 `database/migrations/` 이고, 아래 DDL 은 거기서 그대로 발췌했다.
+→ 그래서 이 스크립트는 마이그레이션이 아니라 **드리프트된 DB 를 migrations/ 정의에 맞추는
+   일회성 교정 도구**다. 스키마의 소스 오브 트루스는 여전히 `database/migrations/` 이고,
+   아래 DDL 은 거기서 그대로 발췌했다.
 
 안전장치
 --------
@@ -32,13 +40,13 @@ prod DB 는 "마이그레이션 하나가 빠진" 상태가 아니라 **옛 베�
 사용
 ----
     # 무엇이 생성될지 확인 (아무것도 안 바꿈)
-    uv run python scripts/repair_prod_hiring_schema.py
+    uv run python scripts/repair_hiring_schema.py
 
     # 실제 적용
-    uv run python scripts/repair_prod_hiring_schema.py --yes
+    uv run python scripts/repair_hiring_schema.py --yes
 
     # DATABASE_URL 직접 지정
-    uv run python scripts/repair_prod_hiring_schema.py --database-url postgresql://... --yes
+    uv run python scripts/repair_hiring_schema.py --database-url postgresql://... --yes
 
 DDL 출처
 --------
