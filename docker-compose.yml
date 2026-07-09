@@ -128,6 +128,10 @@ services:
       HIRING_RETRY_BACKOFF_SECONDS: ${HIRING_RETRY_BACKOFF_SECONDS:-0.5}
       HIRING_UA_POOL: "${HIRING_UA_POOL:-Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36,Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36,Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0,Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0,Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15}"
       HIRING_RATE_LIMIT_MAX_BACKOFF_SECONDS: ${HIRING_RATE_LIMIT_MAX_BACKOFF_SECONDS:-30}
+      # 포털별 수집 on/off. 사람인만 기본 false — 안티봇 IP 차단으로 실적재가 0건이다.
+      HIRING_ENABLE_SARAMIN: ${HIRING_ENABLE_SARAMIN:-false}
+      HIRING_ENABLE_JOBKOREA: ${HIRING_ENABLE_JOBKOREA:-true}
+      HIRING_ENABLE_JASOSEOL: ${HIRING_ENABLE_JASOSEOL:-true}
       HIRING_OPS_DAEMON_ENABLED: ${HIRING_OPS_DAEMON_ENABLED:-false}
       DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
       HIRING_OPS_INTERVAL_SEC: ${HIRING_OPS_INTERVAL_SEC:-300}

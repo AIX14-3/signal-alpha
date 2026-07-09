@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import os
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -342,6 +343,9 @@ class CollectAliasGroupingTest(unittest.TestCase):
             use_official=True,
             rate_limit_sec=0.0,
             driver_rotation_size=0,
+            # 이 테스트의 관심사는 '별칭 커버리지'다. 사람인은 이제 기본 off(안티봇 차단)이라
+            # 원래 의도를 유지하려면 명시적으로 켠다. off 동작 자체는 PortalToggleTest 가 검증.
+            enable_saramin=True,
         )
         alias_map = {"naver": "NAVER", "네이버": "NAVER", "삼성전자": "삼성전자"}
 
@@ -406,6 +410,74 @@ class CollectAliasGroupingTest(unittest.TestCase):
         # 직접수집은 canonical 로 1회, 키워드 crawl 은 호출 안 함(매핑됨).
         jobkorea.crawl_by_member_id.assert_called_once_with("21572628", "NAVER")
         jobkorea.crawl.assert_not_called()
+
+
+class PortalToggleTest(unittest.TestCase):
+    """포털별 on/off (HIRING_ENABLE_*). 세 포털은 폴백 체인이 아니라 독립 합집합이므로
+    하나를 꺼도 나머지는 그대로 돌아야 한다."""
+
+    def _collect(self, **flags):
+        """flags 미지정 = None → 생성자가 설정(env HIRING_ENABLE_*)의 기본값을 쓴다."""
+        saramin = _stub_portal("SARAMIN")
+        jobkorea = _stub_portal("JOBKOREA")
+        jasoseol = _stub_portal("JASOSEOL")
+
+        crawler = MultiSourceCrawler(
+            database_url="postgresql://test/ignored",
+            use_portals=True,
+            use_official=False,
+            rate_limit_sec=0.0,
+            driver_rotation_size=0,
+            **flags,
+        )
+        with patch.object(
+            multi_source_crawler, "_load_stock_aliases", return_value={"기아": "기아"}
+        ), patch.object(
+            multi_source_crawler, "_load_jobkorea_company_ids", return_value={}
+        ), patch.object(
+            MultiSourceCrawler, "_get_portal_crawlers",
+            return_value=(saramin, jobkorea, jasoseol),
+        ), patch.object(
+            MultiSourceCrawler, "_setup_driver", autospec=True
+        ), patch.object(MultiSourceCrawler, "_quit_driver", autospec=True):
+            crawler.collect(["기아"])
+        return saramin, jobkorea, jasoseol
+
+    def test_settings_default_saramin_off_others_on(self):
+        """설정 기본값: 사람인만 off. env 를 비운 상태로 확인(로컬 .env 에 안 흔들리게)."""
+        from app.core.config import Settings
+
+        with patch.dict(os.environ):
+            for key in ("HIRING_ENABLE_SARAMIN", "HIRING_ENABLE_JOBKOREA",
+                        "HIRING_ENABLE_JASOSEOL"):
+                os.environ.pop(key, None)
+            settings = Settings()
+
+        self.assertFalse(settings.hiring_enable_saramin)
+        self.assertTrue(settings.hiring_enable_jobkorea)
+        self.assertTrue(settings.hiring_enable_jasoseol)
+
+    def test_saramin_disabled_does_not_disturb_other_portals(self):
+        """사람인을 꺼도 잡코리아·자소설은 그대로 — 합집합이지 폴백 체인이 아니다."""
+        saramin, jobkorea, jasoseol = self._collect(enable_saramin=False)
+        saramin.crawl.assert_not_called()
+        jobkorea.crawl.assert_called_once_with("기아")
+        jasoseol.crawl.assert_called_once_with("기아")
+
+    def test_saramin_can_be_re_enabled(self):
+        """IP/프록시가 바뀌면 플래그 하나로 되살아난다 — 크롤러는 삭제되지 않았다."""
+        saramin, _, _ = self._collect(enable_saramin=True)
+        saramin.crawl.assert_called_once_with("기아")
+
+    def test_each_portal_toggles_independently(self):
+        """잡코리아만 꺼도 자소설은 계속 돈다(폴백 체인이 아님을 박제)."""
+        saramin, jobkorea, jasoseol = self._collect(
+            enable_saramin=False, enable_jobkorea=False
+        )
+        saramin.crawl.assert_not_called()
+        jobkorea.crawl.assert_not_called()
+        jobkorea.crawl_by_member_id.assert_not_called()
+        jasoseol.crawl.assert_called_once_with("기아")
 
 
 if __name__ == "__main__":

@@ -154,6 +154,18 @@ class Settings:
         self.hiring_rate_limit_max_backoff_seconds = float(
             getenv("HIRING_RATE_LIMIT_MAX_BACKOFF_SECONDS", "30")
         )
+        # ── Hiring 포털별 수집 on/off ──
+        # 세 포털은 폴백 체인이 아니라 매번 전부 도는 합집합이다(multi_source_crawler.collect).
+        # 그래서 한 소스가 0건이어도 다른 소스는 영향받지 않고, 개별로 끄는 게 안전하다.
+        #
+        # 사람인만 기본 off: 안티봇으로 헤드리스 접근이 IP 차단돼 전 기간 실적재 0건이다
+        # (커밋 68cd180 "SARAMIN 전 기간 0건이 차단 무음처리 탓으로 확인됨"). 켜 두면 종목당
+        # (별칭 수 × 페이지 로드 + rate-limit sleep)이 순수 낭비이고, 차단된 IP를 계속 두드린다.
+        # 크롤러·차단 감지(is_blocked)는 그대로 남아 있으니, IP/프록시가 바뀌면 이 값만 true 로
+        # 되돌려 재개한다(#162 프록시 로테이션).
+        self.hiring_enable_saramin = _env_bool("HIRING_ENABLE_SARAMIN", default=False)
+        self.hiring_enable_jobkorea = _env_bool("HIRING_ENABLE_JOBKOREA", default=True)
+        self.hiring_enable_jasoseol = _env_bool("HIRING_ENABLE_JASOSEOL", default=True)
 
         # ── Realtime price collector (Kiwoom REST, agent-worker 내장 데몬) ──
         self.price_collector_enabled = _env_bool("PRICE_COLLECTOR_ENABLED", default=True)

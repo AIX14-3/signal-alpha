@@ -2,12 +2,16 @@
 multi_source_crawler.py
 멀티소스 채용공고 수집기 (Strategy Pattern 오케스트레이터)
 
-수집 소스 (총 5계층):
-  1. 사람인 (Saramin)             — 키워드 검색 기반 (모든 is_target 기업)
-  2. 잡코리아 (Jobkorea)          — 키워드 검색 기반 (모든 is_target 기업)
-  3. official_api                  — 공식 API (driver=None, 삼성전자 등)
-  4. official_selenium             — 공식 SPA/ATS (NAVER, 카카오, SK하이닉스 등)
-  5. recruiter_kr / simple_site    — 집계/정적 사이트
+수집 소스 (총 5계층). 폴백 체인이 아니라 **매번 전부 도는 합집합**이다 — 한 소스가 0건이어도
+다른 소스는 영향받지 않는다:
+  1. 사람인 (Saramin)             — 키워드 검색 기반. **기본 비활성**(HIRING_ENABLE_SARAMIN):
+                                    안티봇으로 헤드리스 접근이 IP 차단돼 실적재가 0건이다
+  2. 잡코리아 (Jobkorea)          — 회원번호 직접수집(hiring_portal_company_ids 매핑 시,
+                                    Selenium 불요·노이즈 0) 또는 키워드 검색 폴백
+  3. 자소설닷컴 (Jasoseol)        — 공개 JSON API (Selenium 불요)
+  4. official_api                  — 공식 API (driver=None, 삼성전자 등)
+  5. official_selenium             — 공식 SPA/ATS (NAVER, 카카오, SK하이닉스 등)
+     recruiter_kr / simple_site    — 집계/정적 사이트
 
 크롤러 설정은 hiring_sources 테이블에서 동적 로드:
   기업 추가/변경 = hiring_sources INSERT/UPDATE 한 줄 (코드 수정 불필요)
@@ -229,12 +233,15 @@ class MultiSourceCrawler(BaseCollector):
     Args:
         database_url:         PostgreSQL 연결 문자열
         headless:             Selenium 헤드리스 모드 (기본 True)
-        use_portals:          사람인/잡코리아 포털 수집 여부 (기본 True)
+        use_portals:          포털 3종(사람인·잡코리아·자소설) 마스터 스위치 (기본 True)
         use_official:         기업 공식 사이트 수집 여부 (기본 True)
         rate_limit_sec:       기업 간 대기 시간 (기본 2.0s)
         driver_rotation_size: 몇 개 기업마다 Chrome 을 재시작할지 (기본 3).
                               헤드리스 Chrome 의 메모리 누적 크래시 방지.
                               0 또는 음수면 로테이션 비활성화.
+        enable_saramin:       사람인 개별 on/off. None → HIRING_ENABLE_SARAMIN (기본 False)
+        enable_jobkorea:      잡코리아 개별 on/off. None → HIRING_ENABLE_JOBKOREA (기본 True)
+        enable_jasoseol:      자소설 개별 on/off. None → HIRING_ENABLE_JASOSEOL (기본 True)
     """
 
     def __init__(
@@ -245,6 +252,9 @@ class MultiSourceCrawler(BaseCollector):
         use_official: bool = True,
         rate_limit_sec: float = 2.0,
         driver_rotation_size: int = 3,
+        enable_saramin: bool | None = None,
+        enable_jobkorea: bool | None = None,
+        enable_jasoseol: bool | None = None,
     ):
         super().__init__(database_url)
         self.headless = headless
@@ -253,6 +263,22 @@ class MultiSourceCrawler(BaseCollector):
         self.rate_limit_sec = rate_limit_sec
         self.driver_rotation_size = max(driver_rotation_size, 0)
         self.driver = None
+
+        # 포털별 on/off. None 이면 설정(env HIRING_ENABLE_*)에서 해석한다.
+        # 세 포털은 폴백 체인이 아니라 매번 전부 도는 합집합이라 개별로 끄는 게 안전하다.
+        # 사람인 기본값만 False — 안티봇 IP 차단으로 실적재가 계속 0건이다(커밋 68cd180).
+        from app.core.config import get_settings
+
+        cfg = get_settings()
+        self.enable_saramin = (
+            cfg.hiring_enable_saramin if enable_saramin is None else enable_saramin
+        )
+        self.enable_jobkorea = (
+            cfg.hiring_enable_jobkorea if enable_jobkorea is None else enable_jobkorea
+        )
+        self.enable_jasoseol = (
+            cfg.hiring_enable_jasoseol if enable_jasoseol is None else enable_jasoseol
+        )
 
     # ── WebDriver 초기화 ──────────────────────────────────────────────────────
     def _setup_driver(self) -> None:
@@ -311,6 +337,18 @@ class MultiSourceCrawler(BaseCollector):
                 reset_block_signals,
             )
         reset_block_signals()
+
+        if self.use_portals:
+            active = [
+                label for label, on in (
+                    ("SARAMIN", self.enable_saramin),
+                    ("JOBKOREA", self.enable_jobkorea),
+                    ("JASOSEOL", self.enable_jasoseol),
+                ) if on
+            ]
+            logger.info("✓ 활성 포털: %s", ", ".join(active) if active else "(없음)")
+            if not self.enable_saramin:
+                logger.info("  ℹ️  사람인 비활성(HIRING_ENABLE_SARAMIN=false) — 안티봇 IP 차단")
 
         all_jobs: list[dict] = []
         # hiring_sources 사양은 driver 와 무관하므로 루프 진입 전 1회만 DB 조회.
@@ -393,52 +431,55 @@ class MultiSourceCrawler(BaseCollector):
                 if self.use_portals:
                     saramin, jobkorea, jasoseol = self._get_portal_crawlers()
 
-                    # 사람인: 별칭마다 키워드 검색
-                    for term in search_terms:
-                        try:
-                            results = saramin.crawl(term)
-                            company_jobs.extend(results)
-                            logger.info("  ✓ [%s] %d건 (%s)",
-                                        saramin.source_label, len(results), term)
-                        except Exception as exc:
-                            logger.warning("  ⚠️  [%s] 오류(%s): %s",
-                                           saramin.source_label, term, exc)
-                        time.sleep(self.rate_limit_sec)
+                    # 사람인: 별칭마다 키워드 검색. 기본 비활성(안티봇 IP 차단 → 전 기간 0건).
+                    if self.enable_saramin:
+                        for term in search_terms:
+                            try:
+                                results = saramin.crawl(term)
+                                company_jobs.extend(results)
+                                logger.info("  ✓ [%s] %d건 (%s)",
+                                            saramin.source_label, len(results), term)
+                            except Exception as exc:
+                                logger.warning("  ⚠️  [%s] 오류(%s): %s",
+                                               saramin.source_label, term, exc)
+                            time.sleep(self.rate_limit_sec)
 
                     # 잡코리아: 회원번호 매핑(canonical) 있으면 직접수집 1회(노이즈 0, #313).
                     # 미매핑이면 별칭마다 키워드 폴백. crawl_by_member_id None(DOM깨짐) 도 별칭 폴백.
-                    member_id = jobkorea_company_ids.get(company)
-                    try:
-                        results = (
-                            jobkorea.crawl_by_member_id(member_id, company)
-                            if member_id else None
-                        )
-                        via = "회원번호"
-                        if results is None:           # 미매핑 또는 DOM 깨짐 → 별칭 키워드 폴백
-                            via = "키워드"
-                            results = []
-                            for term in search_terms:
-                                results.extend(jobkorea.crawl(term))
-                                time.sleep(self.rate_limit_sec)
-                        company_jobs.extend(results)
-                        logger.info(
-                            "  ✓ [%s] %d건 (%s)", jobkorea.source_label, len(results), via
-                        )
-                    except Exception as exc:
-                        logger.warning("  ⚠️  [%s] 오류: %s", jobkorea.source_label, exc)
-                    time.sleep(self.rate_limit_sec)
+                    if self.enable_jobkorea:
+                        member_id = jobkorea_company_ids.get(company)
+                        try:
+                            results = (
+                                jobkorea.crawl_by_member_id(member_id, company)
+                                if member_id else None
+                            )
+                            via = "회원번호"
+                            if results is None:       # 미매핑 또는 DOM 깨짐 → 별칭 키워드 폴백
+                                via = "키워드"
+                                results = []
+                                for term in search_terms:
+                                    results.extend(jobkorea.crawl(term))
+                                    time.sleep(self.rate_limit_sec)
+                            company_jobs.extend(results)
+                            logger.info(
+                                "  ✓ [%s] %d건 (%s)", jobkorea.source_label, len(results), via
+                            )
+                        except Exception as exc:
+                            logger.warning("  ⚠️  [%s] 오류: %s", jobkorea.source_label, exc)
+                        time.sleep(self.rate_limit_sec)
 
                     # 자소설닷컴: 공개 JSON API(런당 1회 fetch+기업별 필터). 별칭마다 필터.
-                    for term in search_terms:
-                        try:
-                            results = jasoseol.crawl(term)
-                            company_jobs.extend(results)
-                            logger.info("  ✓ [%s] %d건 (%s)",
-                                        jasoseol.source_label, len(results), term)
-                        except Exception as exc:
-                            logger.warning("  ⚠️  [%s] 오류(%s): %s",
-                                           jasoseol.source_label, term, exc)
-                        time.sleep(self.rate_limit_sec)
+                    if self.enable_jasoseol:
+                        for term in search_terms:
+                            try:
+                                results = jasoseol.crawl(term)
+                                company_jobs.extend(results)
+                                logger.info("  ✓ [%s] %d건 (%s)",
+                                            jasoseol.source_label, len(results), term)
+                            except Exception as exc:
+                                logger.warning("  ⚠️  [%s] 오류(%s): %s",
+                                               jasoseol.source_label, term, exc)
+                            time.sleep(self.rate_limit_sec)
 
                 # 2) 공식 사이트 수집 (hiring_sources DB 기반)
                 if self.use_official:
