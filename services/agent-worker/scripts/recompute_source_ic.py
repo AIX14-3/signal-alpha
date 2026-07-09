@@ -164,9 +164,11 @@ def _strong_subset(triples: list[tuple[float, float, object]]) -> list:
     return [t for t in triples if abs(t[0] - 50.0) >= thr]
 
 
-def _walkforward_ics(triples: list[tuple[float, float, object]], k: int = WF_BLOCKS) -> list:
-    """asof 날짜를 연속 k블록으로 나눠 블록별 시장중립 IC. 한 구간(레짐)만 좋고 다른 구간에서
+def _walkforward_ics(triples: list[tuple[float, float, object]], k: int | None = None) -> list:
+    """asof 날짜를 연속 k블록으로 나눠 블록별 시장중립 IC(k 기본=WF_BLOCKS, CLI --wf-blocks 로 조절).
+    한 구간(레짐)만 좋고 다른 구간에서
     무너지는 아티팩트(DART 상승장 등)를 드러낸다 = 과거 데이터로 흉내낸 OOS."""
+    k = k if k is not None else WF_BLOCKS
     uniq = sorted({t[2] for t in triples})
     if len(uniq) < k:
         return []
@@ -319,6 +321,8 @@ if __name__ == "__main__":
     ap.add_argument("--asof-from", type=_d, default=_d("2021-01-01"))
     ap.add_argument("--asof-to", type=_d, default=_d("2026-06-01"))
     ap.add_argument("--universe", default=DEFAULT_UNIVERSE, help="event_study_panel universe_snapshot (기본 kospi20_seed)")
+    ap.add_argument("--wf-blocks", type=int, default=WF_BLOCKS, help="워크포워드 시간분할 블록 수(기본 3)")
     ap.add_argument("--json", default=None)
     args = ap.parse_args()
+    WF_BLOCKS = args.wf_blocks  # 모듈 전역 갱신 → _walkforward_ics 가 호출 시 참조
     asyncio.run(main(args.json, args.asof_from, args.asof_to, args.universe))
