@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter, OrderedDict
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -141,8 +142,105 @@ async def list_signals(
     return [_signal_list_item(stock_id, source_rows) for stock_id, source_rows in grouped.items()]
 
 
+def _recency_key(row: dict[str, Any]) -> tuple[Any, Any, Any]:
+    """행의 최신도. 리포지토리 정렬과 같은 축(signal_date → published_at → created_at)."""
+    return (
+        row.get("signal_date") or date.min,
+        row.get("published_at") or datetime.min.replace(tzinfo=UTC),
+        row.get("created_at") or datetime.min.replace(tzinfo=UTC),
+    )
+
+
+def _latest_row_per_run_key(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """run_key 별 **가장 최신** 행만 남긴다.
+
+    ``api.signals_current`` 는 과거 signal_date 행도 is_current=TRUE 로 들고 있어(리포지토리
+    주석 참조) 한 종목에 같은 run_key 가 여러 날짜로 들어올 수 있다. 입력 순서에 기대어
+    덮어쓰면 오래된 행이 남는다 — 최신도를 명시적으로 비교한다.
+    """
+    latest: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        run_key = (row.get("run_key") or "").lower()
+        if run_key not in ALT_RUN_KEYS:
+            continue
+        current = latest.get(run_key)
+        if current is None or _recency_key(row) > _recency_key(current):
+            latest[run_key] = row
+    return latest
+
+
+def _latest_aggregated_row(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """종목의 최신 AGGREGATED 행. 집계기가 6소스를 합쳐 낸 통합 신호다."""
+    aggregated = [row for row in rows if (row.get("run_key") or "").upper() == "AGGREGATED"]
+    return max(aggregated, key=_recency_key) if aggregated else None
+
+
+def _sources_from_breakdown(breakdown: Any) -> dict[str, Any]:
+    """AGGREGATED.score_breakdown → 6소스 {direction, score, data_status} 맵.
+
+    worker breakdown 은 부호 점수 ``score``(-1~1)와 사용자 노출용 ``score_100``(0~100)을
+    함께 싣는다. 노출은 ``score_100`` 을 쓴다(reports/dashboard 와 동일 규칙).
+    """
+    if isinstance(breakdown, str):
+        try:
+            breakdown = json.loads(breakdown)
+        except json.JSONDecodeError:
+            breakdown = None
+    if not isinstance(breakdown, dict):
+        breakdown = {}
+    sources: dict[str, Any] = {}
+    for source in SOURCE_ORDER:
+        detail = breakdown.get(source)
+        if not isinstance(detail, dict):
+            sources[source.lower()] = {"direction": "UNKNOWN", "score": None, "data_status": "missing"}
+            continue
+        sources[source.lower()] = {
+            "direction": _to_direction(detail.get("direction")),
+            "score": _number(detail.get("score_100", detail.get("score"))),
+            "data_status": detail.get("data_status", "ok"),
+        }
+    return sources
+
+
+def _aggregated_list_item(stock_id: int, base: dict[str, Any], row: dict[str, Any]) -> dict[str, Any]:
+    """통합 신호(AGGREGATED) 기반 카드 — 6소스가 모두 반영된 점수를 그대로 노출한다.
+
+    이전에는 대체데이터 3소스(hiring/patent/datalab)의 소스별 발행 행만 평균해서
+    DART·PRICE·REPORT 가 헤드라인 점수에 아예 들어가지 않았다. 집계기가 이미 6소스를
+    등가중 평균해 final_score 를 내놓으므로(005930: 6소스 평균 → 48.35) 그 값을 쓴다.
+    """
+    consensus = row.get("consensus_score")
+    if consensus is None:
+        consensus = row.get("confidence")
+    warning_level = row.get("warning_level") or "NORMAL"
+    return {
+        "stock_id": stock_id,
+        "stock": {
+            "id": stock_id,
+            "stock_code": base.get("ticker"),
+            "stock_name": base.get("name"),
+            "market": base.get("market"),
+        },
+        "direction": _to_direction(row.get("signal")),
+        "score": _number(row.get("final_score")),
+        "alignment_rate": _alignment_rate(_number(consensus)),
+        "source_agreement": row.get("source_agreement"),
+        "warning_level": warning_level,
+        "data_status": _overall_data_status(
+            {"warning_level": warning_level, "needs_review": bool(row.get("needs_review", False))}
+        ),
+        "summary": row.get("summary") or base.get("summary"),
+        "score_breakdown": {"sources": _sources_from_breakdown(row.get("score_breakdown"))},
+    }
+
+
 def _signal_list_item(stock_id: int, rows: list[dict[str, Any]]) -> dict[str, Any]:
     base = rows[0]
+    aggregated = _latest_aggregated_row(rows)
+    if aggregated is not None:
+        return _aggregated_list_item(stock_id, base, aggregated)
+
+    # 폴백: 아직 집계 전(소스별 발행만 있는) 종목. 있는 소스만으로 카드를 만든다.
     alternative: dict[str, Any] = {key: None for key in ALT_RUN_KEYS}
     scores: list[float] = []
     directions: list[str] = []
@@ -151,10 +249,7 @@ def _signal_list_item(stock_id: int, rows: list[dict[str, Any]]) -> dict[str, An
     consensus_values: list[float] = []
     needs_review = False
 
-    for row in rows:
-        run_key = (row.get("run_key") or "").lower()
-        if run_key not in alternative:
-            continue
+    for run_key, row in _latest_row_per_run_key(rows).items():
         signal = row.get("signal") or "neutral"
         alternative[run_key] = {"direction": _to_direction(signal), "score": _number(row.get("final_score"))}
         directions.append(signal)
@@ -191,7 +286,21 @@ def _signal_list_item(stock_id: int, rows: list[dict[str, Any]]) -> dict[str, An
         "warning_level": warning_level,
         "data_status": _overall_data_status({"warning_level": warning_level, "needs_review": needs_review}),
         "summary": base.get("summary"),
-        "score_breakdown": {"alternative": alternative, "dart": None, "report": None},
+        # 집계 전이라 6소스 breakdown 이 없다 — 발행된 소스만 채우고 나머지는 missing.
+        "score_breakdown": {
+            "sources": {
+                source.lower(): (
+                    {
+                        "direction": alternative[source.lower()]["direction"],
+                        "score": alternative[source.lower()]["score"],
+                        "data_status": "ok",
+                    }
+                    if alternative.get(source.lower())
+                    else {"direction": "UNKNOWN", "score": None, "data_status": "missing"}
+                )
+                for source in SOURCE_ORDER
+            }
+        },
     }
 
 

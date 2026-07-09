@@ -214,6 +214,32 @@ class AnalysisAndSignalRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("stock_id = ANY", sql)
         self.assertEqual(connection.calls[0][2], ([1, 2],))
 
+    async def test_list_current_by_stock_ids_folds_history_to_latest_row_per_source(self):
+        # is_current 는 (stock_id, signal_date, run_key) 유일이라 과거 날짜 행도 딸려 온다.
+        # 목록 조회는 (종목, run_key) 최신 1행으로 접어야 호출부가 날짜를 가로질러 평균내지 않는다.
+        connection = FakeConnection()
+        repository = SignalRepository(connection)
+
+        await repository.list_current_by_stock_ids([1])
+
+        sql = connection.calls[0][1]
+        self.assertIn("DISTINCT ON (stock_id, run_key)", sql)
+        self.assertIn("signal_date DESC", sql)
+
+    async def test_list_current_published_limits_stocks_not_rows(self):
+        # limit 을 행에 걸면 한 종목의 이력이 창을 다 먹어 다른 종목이 잘려 나간다.
+        connection = FakeConnection()
+        repository = SignalRepository(connection)
+
+        await repository.list_current_published(30)
+
+        sql = connection.calls[0][1]
+        self.assertIn("DISTINCT ON (stock_id, run_key)", sql)
+        self.assertIn("recent_stocks", sql)
+        # LIMIT 은 종목을 고르는 CTE 안에만 있어야 한다(최종 SELECT 에 걸리면 다시 행 절단).
+        self.assertNotIn("LIMIT", sql.rsplit("INNER JOIN recent_stocks", 1)[-1])
+        self.assertEqual(connection.calls[0][2], (30,))
+
     async def test_get_detail_by_id_joins_stock_analysis_agent_results_and_events(self):
         connection = FakeConnection()
         repository = SignalRepository(connection)

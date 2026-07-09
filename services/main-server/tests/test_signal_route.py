@@ -205,10 +205,12 @@ class SignalRouteTest(unittest.TestCase):
         self.assertEqual(item["warning_level"], "WARNING")  # 가장 보수적
         self.assertEqual(item["data_status"], "failed")  # WARNING → failed
         self.assertEqual(item["summary"], "채용 신호 요약")  # 기준행(첫 행) summary
-        alternative = item["score_breakdown"]["alternative"]
-        self.assertEqual(set(alternative), {"hiring", "patent", "datalab"})
-        self.assertEqual(alternative["hiring"]["score"], 80)
-        self.assertEqual(alternative["patent"]["direction"], "NEUTRAL")  # 대문자
+        # AGGREGATED 행이 없는 종목(집계 전) — 발행된 소스만 채우고 나머지는 missing.
+        sources = item["score_breakdown"]["sources"]
+        self.assertEqual(set(sources), {"dart", "price", "report", "hiring", "patent", "datalab"})
+        self.assertEqual(sources["hiring"]["score"], 80)
+        self.assertEqual(sources["patent"]["direction"], "NEUTRAL")  # 대문자
+        self.assertEqual(sources["dart"]["data_status"], "missing")
 
     def test_list_signals_with_stock_ids_filter(self):
         connection = FakeConnection(list_rows=_signal_list_rows() + _signal_list_rows(stock_id=20, ticker="000660"))
@@ -391,6 +393,123 @@ def _signal_detail_row():
             }
         ],
     }
+
+
+class SignalListItemLatestPerSourceTest(unittest.TestCase):
+    """종목 카드의 점수/소스별 값은 **각 소스의 최신 행**만으로 만들어야 한다.
+
+    ``api.signals_current`` 가 과거 signal_date 행도 함께 들고 있어(is_current 는
+    (stock_id, signal_date, run_key) 유일), 순서에 기대면 오래된 행이 남고 점수는
+    날짜를 가로질러 평균돼 "어느 날짜의 값도 아닌 수"가 나온다.
+    """
+
+    @staticmethod
+    def _row(run_key: str, signal_date: str, score: float, signal: str = "neutral") -> dict:
+        from datetime import date as _date
+
+        year, month, day = (int(p) for p in signal_date.split("-"))
+        return {
+            "stock_id": 1,
+            "run_key": run_key,
+            "signal_date": _date(year, month, day),
+            "published_at": None,
+            "created_at": None,
+            "final_score": Decimal(str(score)),
+            "signal": signal,
+            "warning_level": "NORMAL",
+            "source_agreement": "HIGH",
+            "consensus_score": None,
+            "confidence": None,
+            "needs_review": False,
+            "ticker": "005930",
+            "name": "삼성전자",
+            "market": "KOSPI",
+            "summary": "요약",
+        }
+
+    def test_per_source_value_is_the_newest_row_not_the_last_one_seen(self):
+        from app.api.routes.signals import _signal_list_item
+
+        # 오래된 행이 뒤에 오도록 섞어 넣는다(예전 구현은 마지막 행으로 덮어써 78.05 를 남겼다).
+        rows = [
+            self._row("HIRING", "2026-07-09", 50.0),
+            self._row("HIRING", "2026-07-07", 78.05),
+            self._row("DATALAB", "2026-07-09", 78.45),
+            self._row("DATALAB", "2026-07-07", 86.65),
+            self._row("PATENT", "2026-07-09", 46.65),
+        ]
+
+        item = _signal_list_item(1, rows)
+        sources = item["score_breakdown"]["sources"]
+
+        self.assertEqual(sources["hiring"]["score"], 50.0)
+        self.assertEqual(sources["datalab"]["score"], 78.45)
+        self.assertEqual(sources["patent"]["score"], 46.65)
+
+    def test_score_averages_only_the_newest_row_of_each_source(self):
+        from app.api.routes.signals import _signal_list_item
+
+        rows = [
+            self._row("HIRING", "2026-07-09", 50.0),
+            self._row("HIRING", "2026-07-07", 78.05),
+            self._row("DATALAB", "2026-07-09", 78.45),
+            self._row("DATALAB", "2026-07-07", 86.65),
+            self._row("PATENT", "2026-07-09", 46.65),
+        ]
+
+        item = _signal_list_item(1, rows)
+
+        # (50.00 + 78.45 + 46.65) / 3 = 58.37 — 이력을 섞으면 62.83 같은 무의미한 수가 나온다.
+        self.assertEqual(item["score"], 58.37)
+
+    def test_headline_score_comes_from_the_aggregated_six_source_signal(self):
+        """헤드라인은 집계기의 6소스 통합 점수 — 대체데이터 3소스 평균이 아니다.
+
+        005930 실측: DART -0.036 · PRICE 0.400 · HIRING -0.217 · PATENT -0.067 ·
+        REPORT -0.848 · DATALAB 0.569 → 등가중 평균 -0.0332 → 48.35.
+        3소스만 평균하면 58.37 이 나와 DART·PRICE·REPORT 가 통째로 빠진다.
+        """
+        from app.api.routes.signals import _signal_list_item
+
+        aggregated = self._row("AGGREGATED", "2026-07-09", 48.35, signal="mixed")
+        aggregated["score_breakdown"] = {
+            "DART": {"direction": "neutral", "score": -0.036, "score_100": 49.1},
+            "PRICE": {"direction": "positive", "score": 0.4, "score_100": 70.0},
+            "REPORT": {"direction": "negative", "score": -0.848, "score_100": 7.6},
+            "HIRING": {"direction": "negative", "score": -0.217, "score_100": 39.15},
+            "PATENT": {"direction": "mixed", "score": -0.067, "score_100": 46.65},
+            "DATALAB": {"direction": "positive", "score": 0.569, "score_100": 78.45},
+            "_meta": {"anything": True},
+        }
+        rows = [aggregated, self._row("PATENT", "2026-07-09", 46.65)]
+
+        item = _signal_list_item(1, rows)
+
+        self.assertEqual(item["score"], 48.35)
+        self.assertEqual(item["direction"], "MIXED")
+
+        sources = item["score_breakdown"]["sources"]
+        # DART·PRICE·REPORT 가 응답에 실제로 실린다(예전엔 dart/report 가 항상 None 이었다).
+        self.assertEqual(sources["dart"]["score"], 49.1)
+        self.assertEqual(sources["report"]["score"], 7.6)
+        self.assertEqual(sources["report"]["direction"], "NEGATIVE")
+        self.assertEqual(sources["price"]["score"], 70.0)
+        # 노출은 score_100(0~100). 부호 점수(-0.848)를 그대로 내보내면 안 된다.
+        self.assertNotEqual(sources["report"]["score"], -0.848)
+        # 내부 키(_meta)는 소스로 새어 나가지 않는다.
+        self.assertEqual(set(sources), {"dart", "price", "report", "hiring", "patent", "datalab"})
+
+    def test_aggregated_wins_over_stale_per_source_rows(self):
+        from app.api.routes.signals import _signal_list_item
+
+        aggregated = self._row("AGGREGATED", "2026-07-09", 48.35)
+        aggregated["score_breakdown"] = {}
+        rows = [self._row("HIRING", "2026-07-01", 99.0), aggregated]
+
+        item = _signal_list_item(1, rows)
+
+        self.assertEqual(item["score"], 48.35)
+        self.assertEqual(item["score_breakdown"]["sources"]["hiring"]["data_status"], "missing")
 
 
 if __name__ == "__main__":
