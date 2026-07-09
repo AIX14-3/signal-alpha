@@ -15,6 +15,7 @@ import os
 from collections.abc import Mapping
 from typing import Any
 
+from app.core.korean_labels import SIGNAL_KO, SOURCE_KO, WARNING_KO
 from app.orchestrator.queue.context import (
     enqueue_publish_signals,
     parse_int_list,
@@ -561,45 +562,55 @@ def _price_prediction(score_breakdown: Any) -> dict[str, Any] | None:
 
 
 def _deterministic_narrative(report: RiskReport) -> RiskNarrative:
+    """LLM 서술이 없을 때(미구성/실패) 쓰는 폴백. **이게 곧 사용자가 읽는 글**이므로
+    내부 코드(mixed/CAUTION/DART/needs_review)를 그대로 노출하지 않는다."""
     status = "발행 보류" if (report.vetoed or not report.is_published) else "발행"
-    headline = f"{report.signal} 데이터 신호 ({status})"
+    direction_text = SIGNAL_KO.get(report.signal, report.signal)
+    headline = f"데이터 방향은 {direction_text}입니다 ({status})"
     body = (
-        f"종합 방향은 '{report.signal}', 경보수준 '{report.warning_level}'. "
-        f"근거 {len(report.evidence)}건 기반의 데이터 신호입니다."
+        f"근거 {len(report.evidence)}건을 종합한 결과 데이터 방향은 {direction_text}이고, "
+        f"{WARNING_KO.get(report.warning_level, report.warning_level)} 수준입니다."
     )
     key_points = [
-        f"[{item.get('source_type')}] {item.get('title')}"
+        f"{SOURCE_KO.get(str(item.get('source_type')), str(item.get('source_type')))} — {item.get('title')}"
         for item in report.evidence[:3]
         if item.get("title")
     ]
     # 주가 단독 예측을 별도 라인으로 노출(대체데이터 종합과 구분).
     if report.price_prediction:
         pp = report.price_prediction
+        pp_direction = SIGNAL_KO.get(str(pp.get("direction")), str(pp.get("direction")))
         key_points.insert(
             0,
-            f"[주가예측] 방향 {pp.get('direction')}, 예측확률 {pp.get('score_100')}",
+            f"주가만 놓고 본 예측은 {pp_direction} 방향입니다(예측확률 {pp.get('score_100')}점).",
         )
     # 7개 예측률(주가 BASE ⊕ 대체데이터) 통합치를 한 줄로 노출(수치 불변).
     if report.source_predictions:
         integrated = report.source_predictions.get("SRC") or {}
         if integrated.get("final_score") is not None:
+            integrated_direction = SIGNAL_KO.get(
+                str(integrated.get("direction")), str(integrated.get("direction"))
+            )
             key_points.append(
-                f"[메타예측] 통합 방향 {integrated.get('direction')} · "
-                f"소스별 {len(report.source_predictions)}개 예측률"
+                f"주가와 대체데이터를 합친 예측은 {integrated_direction} 방향입니다"
+                f"(소스 {len(report.source_predictions)}개 반영)."
             )
     caution_points: list[str] = []
     if report.vetoed and report.veto_keywords:
-        caution_points.append("리스크 veto: " + ", ".join(report.veto_keywords))
+        caution_points.append(
+            "다음 키워드가 확인돼 신호 발행을 보류했습니다: " + ", ".join(report.veto_keywords)
+        )
     # last-known 재사용 소스의 신선도를 "최종 업데이트 N일 전" 으로 안내.
     if report.source_freshness:
         stale = ", ".join(
-            f"{source} {age}일 전" for source, age in sorted(report.source_freshness.items())
+            f"{SOURCE_KO.get(source, source)} {age}일 전"
+            for source, age in sorted(report.source_freshness.items())
         )
-        caution_points.append(f"일부 데이터 재사용(최종 업데이트): {stale}")
+        caution_points.append(f"일부 데이터는 최신이 아닙니다(최종 업데이트: {stale}).")
     if report.needs_review:
-        caution_points.append("검토 필요(needs_review)")
+        caution_points.append("소스 간 신호가 엇갈려 근거를 함께 확인하는 것이 좋습니다.")
     if not report.is_published:
-        caution_points.append("미발행 상태")
+        caution_points.append("신호로 발행하기에는 근거가 부족해 참고용으로만 노출합니다.")
     return RiskNarrative(
         headline=headline,
         narrative=body,

@@ -9,6 +9,7 @@ from decimal import Decimal
 from typing import Any
 
 from app.analyzers.config import AggregatorConfig
+from app.core.korean_labels import SIGNAL_KO, SOURCE_KO
 from app.orchestrator.aggregation.detect import detect_disagreement
 from app.orchestrator.aggregation.judge import build_memory_reference, judge_with_memory
 from app.orchestrator.aggregation.requery import MAX_REQUERY_ROUNDS
@@ -481,6 +482,39 @@ def _coalesce_by_source(
     return coalesced
 
 
+# 한 소스가 여러 런으로 묶일 때 이어붙일 요약 문장의 상한. 넘으면 뒤는 버린다.
+_MAX_BLENDED_SUMMARIES = 3
+
+
+def _blended_summaries(summaries: list[str]) -> list[str]:
+    """묶인 런들의 요약을 중복 제거 + 개수 제한.
+
+    DART 는 공시 1건당 런이 하나씩 생겨, 같은 템플릿 문장이 열댓 번 그대로 반복된 채
+    " / " 로 이어붙어 화면에 나갔다. 같은 문장을 스무 번 읽히는 건 정보가 아니다.
+    """
+    seen: set[str] = set()
+    unique: list[str] = []
+    for text in summaries:
+        key = text.strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        unique.append(key)
+    return unique[:_MAX_BLENDED_SUMMARIES]
+
+
+def _join_sentences(summaries: list[str]) -> str | None:
+    """완결된 문장들을 글로 읽히게 잇는다.
+
+    예전엔 " / " 로 이어 붙여 사람이 읽는 글이 아니라 로그처럼 보였다. 마침표로 끝나는
+    문장은 그대로 이어 붙이고, 그렇지 않은 조각만 마침표를 붙인다.
+    """
+    if not summaries:
+        return None
+    sentences = [text if text.endswith((".", "!", "?", "다", "요")) else f"{text}." for text in summaries]
+    return " ".join(sentences)
+
+
 def _blend_group(
     source: str,
     group: list[NormalizedSourceResult],
@@ -492,7 +526,8 @@ def _blend_group(
     for r in group:
         risk_flags.extend(r.risk_flags)
         event_ids.extend(r.source_signal_event_ids)
-    summaries = [r.summary for r in group if r.summary]
+    summaries = _blended_summaries([r.summary for r in group if r.summary])
+    blended_summary = _join_sentences(summaries)
     return NormalizedSourceResult(
         source=source,
         analysis_result_id=group[0].analysis_result_id,
@@ -503,7 +538,7 @@ def _blend_group(
         data_status=_blend_status([r.data_status for r in group]),
         needs_review=any(r.needs_review for r in group),
         risk_flags=_dedupe(risk_flags),
-        summary=" / ".join(summaries) if summaries else None,
+        summary=blended_summary,
         source_signal_event_ids=sorted(set(event_ids)),
         valuation=next((r.valuation for r in group if r.valuation is not None), None),
         fine_source=source,
@@ -832,12 +867,22 @@ def _summary(
     missing_sources: list[str],
     warning_level: str,
 ) -> str:
+    # 사용자에게 그대로 노출되는 문장이다(LLM 서술이 붙기 전 결정론 폴백). 한국어로 쓴다.
     if not available:
-        return "Source data was not sufficient to publish a data direction."
-    source_names = ", ".join(result.source for result in available)
-    missing_text = f" Missing sources: {', '.join(missing_sources)}." if missing_sources else ""
-    review_text = " Additional review is needed." if warning_level in {"CAUTION", "WARNING"} else ""
-    return f"{source_names} data shows a {signal} data direction.{missing_text}{review_text}"
+        return "데이터가 충분하지 않아 방향을 판단하지 못했습니다."
+    source_names = ", ".join(SOURCE_KO.get(result.source, result.source) for result in available)
+    direction_text = SIGNAL_KO.get(signal, signal)
+    missing_text = (
+        f" 아직 {', '.join(SOURCE_KO.get(s, s) for s in missing_sources)} 데이터는 반영되지 않았습니다."
+        if missing_sources
+        else ""
+    )
+    review_text = (
+        " 소스 간 신호가 엇갈려 근거를 함께 확인하는 것이 좋습니다."
+        if warning_level in {"CAUTION", "WARNING"}
+        else ""
+    )
+    return f"{source_names} 데이터가 {direction_text} 방향을 가리킵니다.{missing_text}{review_text}"
 
 
 def _evidence_point(results: list[NormalizedSourceResult], direction: str) -> str | None:
@@ -848,10 +893,18 @@ def _evidence_point(results: list[NormalizedSourceResult], direction: str) -> st
 
 
 def _evidence_items(results: list[NormalizedSourceResult], direction: str) -> list[dict[str, Any]]:
+    """해당 방향으로 판정된 소스만. 위험 플래그는 함께 실어 보낸다.
+
+    긍정 근거로 실린 소스에도 데이터 품질 주의(예: 관측 기간이 짧음)가 붙을 수 있다.
+    그 플래그를 여기서 함께 노출해야, 같은 소스를 '주의 근거' 에 또 싣지 않아도 된다.
+    """
     return [
         {
             "source": result.source,
+            # 방향은 표시 계층이 문장을 만들 때 필요하다("… 긍정 방향으로 읽힙니다").
+            "direction": result.direction,
             "summary": result.summary,
+            "risk_flags": result.risk_flags,
             "agent_result_id": result.agent_result_id,
             "source_signal_event_ids": result.source_signal_event_ids,
         }
@@ -865,16 +918,24 @@ def _caution_items(
     failed: list[NormalizedSourceResult],
     missing_sources: list[str],
 ) -> list[dict[str, Any]]:
+    """주의 근거 — **긍정 근거에 실린 소스는 제외**한다(한 소스는 한쪽에만).
+
+    예전에는 방향이 positive 여도 risk_flags 나 needs_review 가 있으면 여기에도 실려,
+    같은 소스가 '긍정 방향 근거' 와 '주의 근거' 에 동시에 나타났다. 읽는 사람은 이 소스가
+    호재인지 악재인지 알 수 없다. 방향이 판정을 소유하고, 품질 주의는 그 카드에 따라간다.
+    """
     items = [
         {
             "source": result.source,
+            "direction": result.direction,
             "summary": result.summary,
             "risk_flags": result.risk_flags,
             "agent_result_id": result.agent_result_id,
             **({"valuation": result.valuation} if result.valuation is not None else {}),
         }
         for result in [*available, *failed]
-        if result.needs_review or result.risk_flags or result.direction in {"negative", "mixed"}
+        if result.direction != "positive"
+        and (result.needs_review or result.risk_flags or result.direction in {"negative", "mixed"})
     ]
     items.extend({"source": source, "risk_flags": ["missing_source"]} for source in missing_sources)
     return items

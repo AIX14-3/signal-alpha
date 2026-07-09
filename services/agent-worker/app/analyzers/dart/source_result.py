@@ -20,6 +20,30 @@ from typing import Any
 
 from app.analyzers.config import DartRuleConfig
 from app.analyzers.scoring import graded
+from app.core.korean_labels import DART_EVENT_TYPE_KO, SIGNAL_KO, counts_text
+
+
+def _summary_text(
+    *,
+    events: list[dict[str, Any]],
+    data_status: str,
+    event_type_counts: Counter,
+    direction_counts: Counter,
+) -> str:
+    """소스 카드/근거에 그대로 노출되는 문장. 사람이 읽을 한국어로만 쓴다.
+
+    예전에는 f-string 에 ``dict(Counter)`` 를 그대로 끼워 넣어
+    "방향 {'neutral': 1}" 같은 파이썬 repr 이 화면에 노출됐다.
+    """
+    total = len(events)
+    types_text = counts_text(event_type_counts, DART_EVENT_TYPE_KO)
+    if data_status == "ok":
+        directions_text = counts_text(direction_counts, SIGNAL_KO)
+        return f"최근 공시 {total}건을 확인했습니다({types_text}). 방향은 {directions_text}입니다."
+    return (
+        f"최근 공시 {total}건을 확인했습니다({types_text}). "
+        "방향을 가를 만한 내용은 없어 점수에는 반영하지 않고 근거로만 씁니다."
+    )
 
 
 @dataclass(frozen=True)
@@ -147,15 +171,11 @@ def build_dart_analysis_result(events: list[dict[str, Any]]) -> DartAnalysisResu
         "latest_event_date": latest_event.isoformat() if latest_event else None,
     }
 
-    summary = (
-        f"DART 공시 {len(events)}건 — 방향 {dict(direction_counts)} "
-        f"(임팩트 가중 순극성 점수 {score:+.2f})."
-        if data_status == "ok"
-        else (
-            f"DART 공시 {len(events)}건 피처 산출"
-            f"(유형 {dict(event_type_counts)}, 방향 {dict(direction_counts)}). "
-            f"방향성 이벤트 없음 — 점수 미반영, 근거로만."
-        )
+    summary = _summary_text(
+        events=events,
+        data_status=data_status,
+        event_type_counts=event_type_counts,
+        direction_counts=direction_counts,
     )
     return DartAnalysisResult(
         direction=signal_direction,  # B-lite: 행위형 공시 극성 + 내부자 shares_delta 부호 순극성.
