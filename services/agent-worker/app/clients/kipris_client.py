@@ -11,9 +11,20 @@ from urllib.request import Request, urlopen
 _MAX_RETRIES = 3
 _RETRY_BACKOFF_SECONDS = 1.0
 
+# KIPRIS resultCode 22 = LIMITED_NUMBER_OF_SERVICE_REQUESTS_EXCEEDS (월 사용 한도 소진).
+# 이 코드가 뜨면 이번 달은 같은 인증키로 더 못 부르므로 BigQuery 폴백 대상이 된다.
+QUOTA_EXCEEDED_CODE = "22"
+
 
 class KiprisApiError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, result_code: str | None = None) -> None:
+        super().__init__(message)
+        self.result_code = result_code
+
+    @property
+    def is_quota_error(self) -> bool:
+        """월 호출 한도 소진(resultCode 22) 여부 — BigQuery 폴백 트리거."""
+        return self.result_code == QUOTA_EXCEEDED_CODE
 
 
 class KiprisPatentRecord:
@@ -140,7 +151,9 @@ class KiprisClient:
         )
         if result_code not in ("00", "E0000", ""):
             result_msg = _text(root, ".//resultMsg") or _text(root, ".//ResultMsg") or ""
-            raise KiprisApiError(f"KIPRIS API error {result_code}: {result_msg}")
+            raise KiprisApiError(
+                f"KIPRIS API error {result_code}: {result_msg}", result_code=result_code
+            )
 
         total_count = int(_text(root, ".//TotalSearchCount") or _text(root, ".//totalCount") or "0")
         records: list[KiprisPatentRecord] = []

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
 import unittest
 from datetime import date
 
 import asyncpg.exceptions
 
-from app.clients.kipris_client import KiprisClient, KiprisPatentRecord
+from app.clients.kipris_client import KiprisApiError, KiprisClient, KiprisPatentRecord
 from app.collectors.patent import PatentCollector, _build_applicant_aliases, _parse_date, _run_status, _tech_category
 from app.utils.hash_utils import make_source_hash
 
@@ -429,3 +430,41 @@ class TestKiprisClientParsing(unittest.TestCase):
         self.assertEqual(records[0].invention_title, "메모리 장치")
         self.assertEqual(records[0].applicant_name, "에스케이하이닉스 주식회사")
         self.assertEqual(records[0].ipc_code, "H01L")
+
+
+class _QuotaKiprisClient:
+    """search 가 항상 KIPRIS 월 한도 소진(error 22)을 던지는 스텁."""
+
+    async def search_by_applicant(self, *, applicant, start_date, end_date, page_no):
+        raise KiprisApiError("KIPRIS API error 22: LIMITED_...", result_code="22")
+
+
+class TestPatentBigQueryFallback(unittest.IsolatedAsyncioTestCase):
+    """KIPRIS error 22 → BigQuery 자동 폴백(env opt-in). dedup 계약은 ingest_records 재사용."""
+
+    async def test_quota_error_triggers_bigquery_fallback_when_enabled(self):
+        import app.collectors.patent.bigquery_source as bq
+
+        rec = _make_record(application_no="KR-20230099999-A")
+        orig_rows, orig_build = bq.bq_rows, bq.build_records
+        bq.bq_rows = lambda **_k: [{"stub": True}]
+        bq.build_records = lambda _rows, _ticker: [rec]
+        os.environ["PATENT_BQ_FALLBACK_ENABLED"] = "true"
+        try:
+            conn = FakeConnection()
+            collector = PatentCollector(pool=FakePool(conn), client=_QuotaKiprisClient(), collector_ver="1.0")
+            result = await collector.run(
+                stock_id=1, stock_code="005930", stock_name="삼성전자", applicant_names=["삼성전자"]
+            )
+            self.assertTrue(result.get("via_bigquery_fallback"))
+            self.assertEqual(result["collected_count"], 1)  # BigQuery 레코드가 적재 경로로 흘렀다
+        finally:
+            bq.bq_rows, bq.build_records = orig_rows, orig_build
+            os.environ.pop("PATENT_BQ_FALLBACK_ENABLED", None)
+
+    async def test_quota_error_without_flag_still_raises(self):
+        os.environ.pop("PATENT_BQ_FALLBACK_ENABLED", None)
+        conn = FakeConnection()
+        collector = PatentCollector(pool=FakePool(conn), client=_QuotaKiprisClient(), collector_ver="1.0")
+        with self.assertRaises(KiprisApiError):
+            await collector.run(stock_id=1, stock_code="005930", applicant_names=["삼성전자"])
