@@ -69,21 +69,15 @@ test("report page renders the full report with no non-member blind gating", () =
   );
 });
 
-test("mypage exposes stable tab panels and subscription action anchors", () => {
+test("mypage exposes stable tab panels (no subscription/billing tab)", () => {
   const source = read("src/app/mypage/page.tsx");
 
   [
     "data-tab={key}",
     'data-panel="watchlist"',
-    'data-panel="subscription"',
     'data-panel="journal"',
     'data-panel="social"',
     'data-panel="profile"',
-    'data-flow="subscription-resume"',
-    'data-flow="subscription-renew"',
-    'data-flow="subscription-cancel"',
-    'data-flow="subscription-start"',
-    'data-flow="subscription-refund"',
     'data-flow="profile-save"',
     'data-flow="profile-withdraw"',
     'data-flow="journal-subscribe"',
@@ -101,6 +95,19 @@ test("mypage exposes stable tab panels and subscription action anchors", () => {
     "JournalChartPanel",
     "JournalTimelinePanel",
   ].forEach((expected) => assertIncludes(source, expected, "mypage"));
+
+  // 구독(결제 관리) 탭 제거 확인 — 저널 탭의 구독 전용 게이트는 유지(범위 밖).
+  [
+    'data-panel="subscription"',
+    "SubscriptionTab",
+    'data-flow="subscription-resume"',
+    'data-flow="subscription-renew"',
+    'data-flow="subscription-cancel"',
+    'data-flow="subscription-start"',
+    'data-flow="subscription-refund"',
+  ].forEach((removed) =>
+    assert.ok(!source.includes(removed), `mypage should NOT include ${JSON.stringify(removed)}`),
+  );
 });
 
 test("report page surfaces existing journal history before saving again", () => {

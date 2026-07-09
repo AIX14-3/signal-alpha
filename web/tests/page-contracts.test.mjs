@@ -85,16 +85,18 @@ test("mypage keeps account guard and tab data sources wired", () => {
     'data-page="mypage"',
     'router.replace("/login")',
     '"watchlist"',
-    '"subscription"',
     '"journal"',
     '"social"',
     '"profile"',
-    "getMySubscription()",
-    "paymentHistory()",
     "useJournalStore",
     "useWatchlistStore",
     "useSocialStore",
   ].forEach((expected) => assertIncludes(source, expected, "mypage"));
+
+  // 구독(결제 관리) 탭 제거 확인.
+  assert.ok(!source.includes('"subscription"'), 'mypage should NOT include "subscription" tab key');
+  assert.ok(!source.includes("getMySubscription()"), "mypage should NOT call getMySubscription()");
+  assert.ok(!source.includes("paymentHistory()"), "mypage should NOT call paymentHistory()");
 });
 
 test("methodology page explains posthoc alignment without recommendation framing", () => {
