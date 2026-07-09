@@ -60,8 +60,9 @@ class HiringEvidenceLoader:
             "lookback_days": self._lookback_days,
             "count": len(rows),          # number of active days (indicators 기준)
             "posting_count": posting_count,  # total individual postings
-            # per-posting 목록(warmup 미적용·fetch 창 전체). 공고별 시간감쇠 스코어러가 소비.
-            # momentum 경로는 무시하므로 순수 추가(회귀 없음).
+            # per-posting 목록(warmup 미적용·fetch 창 전체). 공고별 시간감쇠 스코어러가 소비하고,
+            # 분석기가 같은 목록에서 표시 전용 hiring_meta(게시일·마감일)를 파생한다.
+            # rows 는 일별 집계라 개별 공고의 마감일이 남지 않으므로 이 목록이 유일한 출처다.
             "postings": postings,
             "source_name": "HIRING",
             "sector_demand": sector_demand,
@@ -286,6 +287,10 @@ def _row(record: Any, factors: dict[int, float]) -> dict[str, Any]:
         # momentum 경로는 observed_date 만 쓰므로 이 두 키는 순수 추가(무해).
         "posting_date": observed_date,
         "closing_date_parsed": payload.get("closing_date_parsed"),
+        # 표시 전용(hiring_meta): 사람이 읽는 마감 표기 + 상시채용 여부. 상시채용은 마감일이
+        # 없는 정상 상태라 화면에서 "만료"로 표시하면 안 된다. 점수·방향에는 쓰이지 않는다.
+        "closing_date_display": payload.get("closing_date_display") or None,
+        "is_always_open": bool(payload.get("is_always_open")),
         "seasonal_factor": _factor_for(observed_date, factors),
         "source_url": record["source_url"],
         # 소스 식별자(Warming-up 가드용). 포털 공고는 extra_payload에 source_type이 없어

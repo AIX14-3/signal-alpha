@@ -13,7 +13,35 @@ from app.analyzers.config import HiringRuleConfig
 from app.analyzers.hiring.indicators import compute_decayed_activity, compute_indicators
 from app.analyzers.hiring.rules import evaluate_decayed, evaluate_indicators
 from app.schemas.evidence import RawEvidence
-from app.schemas.source_result import EvidenceItem, SourceResult
+from app.schemas.source_result import EvidenceItem, HiringMeta, SourceResult
+
+# 화면에 노출할 공고 수 상한. 전체를 실으면 score_breakdown JSON 이 비대해진다.
+_POSTINGS_LIMIT = 20
+
+
+def _hiring_meta(postings: object) -> HiringMeta | None:
+    """로더의 metadata["postings"](공고 1건=1행)에서 표시 전용 목록을 파생(게시일 최신순).
+
+    감쇠 스코어러가 쓰는 것과 같은 목록이며, 점수·방향에는 영향이 없다. 값이 없으면 None →
+    persistence 가 키 자체를 남기지 않아 기존 method_detail 모양이 그대로다.
+    """
+    if not isinstance(postings, list) or not postings:
+        return None
+    rows = [p for p in postings if isinstance(p, dict)]
+    ordered = sorted(rows, key=lambda r: r.get("posting_date") or "", reverse=True)
+    return HiringMeta(
+        postings=[
+            {
+                "job_title": r.get("job_title"),
+                "posting_date": r.get("posting_date"),
+                "closing_date": r.get("closing_date_parsed"),
+                "closing_date_display": r.get("closing_date_display"),
+                "is_always_open": bool(r.get("is_always_open")),
+                "source_url": r.get("source_url"),
+            }
+            for r in ordered[:_POSTINGS_LIMIT]
+        ]
+    )
 
 
 class HiringAnalyzer:
@@ -46,6 +74,8 @@ class HiringAnalyzer:
                 summary="분석할 채용 데이터가 없습니다 (hiring_raw_details 미적재).",
                 risk_flags=["no_data"],
                 data_status="no_signal",
+                # 지표용 rows 가 비어도 공고 목록은 있을 수 있다(감쇠 창이 더 넓다).
+                hiring_meta=_hiring_meta(postings),
             )
         indicators = compute_indicators(
             rows,
@@ -115,6 +145,8 @@ class HiringAnalyzer:
             evidence_items=evidence_items,
             risk_flags=risk_flags,
             data_status=data_status,
+            # 표시 전용(게시일·마감일). 점수·방향 불변.
+            hiring_meta=_hiring_meta(metadata.get("postings")),
         )
 
     def _analyze_decayed(
@@ -184,6 +216,8 @@ class HiringAnalyzer:
             evidence_items=evidence_items,
             risk_flags=list(assessment.risk_flags),
             data_status=data_status,
+            # 표시 전용(게시일·마감일). 감쇠 스코어러가 쓰는 것과 같은 목록에서 파생.
+            hiring_meta=_hiring_meta(postings),
         )
 
 

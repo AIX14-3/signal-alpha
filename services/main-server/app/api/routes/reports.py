@@ -117,6 +117,8 @@ async def get_source_detail(
         "valuation": _report_valuation(breakdown) if source == "report" else None,
         # PATENT 는 최근 공개된 특허 목록 + 장기 출원 추이를 추가 노출. 그 외 소스는 None.
         "patent": _patent_detail(breakdown) if source == "patent" else None,
+        # HIRING 은 최근 공고의 게시일·마감일을 추가 노출. 그 외 소스는 None.
+        "hiring": _hiring_detail(breakdown) if source == "hiring" else None,
         "items": items,
         "notice": NOTICE,
     }
@@ -676,6 +678,24 @@ def _patent_detail(breakdown: dict[str, Any]) -> dict[str, Any] | None:
         "recent_publications": recent if isinstance(recent, list) else [],
         "filing_trend": trend if isinstance(trend, list) else [],
     }
+
+
+def _hiring_detail(breakdown: dict[str, Any]) -> dict[str, Any] | None:
+    """score_breakdown.HIRING.hiring(최근 공고의 게시일·마감일)을 노출. 없으면 None.
+
+    공고는 게시 후 마감일까지만 유효하므로 두 날짜 축을 함께 보여준다:
+    posting_date=게시일, closing_date=마감일(ISO, 없으면 None). ``is_always_open`` 이 참이면
+    마감일 없는 상시채용이라 만료로 표시하면 안 된다. 경과일/만료 판정은 화면이 수행한다
+    (서버가 미리 계산하면 응답 캐시 시점에 굳는다).
+    """
+    hiring = breakdown.get("HIRING")
+    if not isinstance(hiring, dict):
+        return None
+    block = hiring.get("hiring")
+    if not isinstance(block, dict):
+        return None
+    postings = block.get("postings")
+    return {"postings": postings if isinstance(postings, list) else []}
 
 
 def _prediction_rate_block(source: str, predictions: dict[str, Any]) -> dict[str, Any]:

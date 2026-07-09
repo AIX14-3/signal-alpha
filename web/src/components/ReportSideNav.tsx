@@ -20,11 +20,12 @@ const SECTIONS: { id: string; Icon: ComponentType<LucideProps>; label: string }[
   { id: "sec-summary", Icon: Target, label: "종합" },
   { id: "sec-chart", Icon: LineChart, label: "시세" },
   { id: "sec-sources", Icon: LayoutGrid, label: "소스별" },
+  // 과거 유사 사례를 일치도 위로 올렸다(리포트 본문 배치와 순서를 맞춘다).
+  { id: "sec-precedent", Icon: FileText, label: "사례" },
   { id: "sec-agreement", Icon: Compass, label: "일치도" },
   { id: "sec-evidence", Icon: Pin, label: "근거" },
   { id: "sec-trace", Icon: Search, label: "흔적" },
   { id: "sec-timeline", Icon: Clock, label: "이력" },
-  { id: "sec-precedent", Icon: FileText, label: "사례" },
   { id: "sec-journal", Icon: PenLine, label: "저널" },
 ];
 

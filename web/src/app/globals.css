@@ -208,6 +208,188 @@ html {
   70% { box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
   100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
 }
+/* 소스 상세 = 서류철에서 꺼낸 종이 한 장. 화면 중앙에서 솟아오르듯 펼쳐지고,
+   닫으면 서류철로 되돌아가듯 가라앉는다(카드의 서류 애니메이션과 짝). */
+@keyframes panel-in {
+  from { transform: translateY(28px) scale(0.94); opacity: 0; }
+  to { transform: translateY(0) scale(1); opacity: 1; }
+}
+@keyframes panel-out {
+  from { transform: translateY(0) scale(1); opacity: 1; }
+  to { transform: translateY(22px) scale(0.95); opacity: 0; }
+}
+@keyframes scrim-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes scrim-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-panel="source-detail"] [role="dialog"],
+  [data-panel="source-detail"] [data-scrim] { animation: none !important; }
+}
+
+/* ---------- 서류철(폴더) 카드 ----------
+   구조(뒤 → 앞): 뒷표지(탭 달린 폴더 등) → 서류 3장 → 앞표지(카드 본문).
+   평소엔 앞표지가 서류를 완전히 덮어 "닫힌 서류철"이다.
+   호버하면 앞표지가 아래로 젖혀지며(rotateX) 안의 서류가 위로 솟는다.
+   클릭(=열림)하면 서류가 우상단으로 빨려 나가고 그 자리에서 우측 슬라이드오버가 열린다.
+   닫으면 같은 경로로 되돌아온다(맥 Dock 지니 효과 근사).
+   뒷표지 색은 방향 의미색(up/down/flat) — 무슨 판정인지 곁눈으로 읽힌다. */
+.folder {
+  position: relative;
+  padding-top: 26px; /* 위로 솟아오른 서류가 차지할 여백 */
+  perspective: 900px;
+  height: 100%; /* 그리드 행 높이에 맞춰 서류철 표지 높이를 통일(뒷표지·서류 노출 방지) */
+}
+
+/* 뒷표지 — 앞표지보다 위로 더 올라와 폴더 등과 탭이 보인다 */
+.folder-back {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 14px;
+  bottom: 0;
+  z-index: 1;
+  border-radius: 14px 18px var(--radius-card) var(--radius-card);
+  box-shadow: 0 10px 26px rgba(15, 27, 51, 0.12);
+}
+/* 폴더 탭(좌상단 돌출부) */
+.folder-back::before {
+  content: "";
+  position: absolute;
+  left: 14px;
+  top: -10px;
+  width: 38%;
+  height: 14px;
+  border-radius: 10px 12px 0 0;
+  background: inherit;
+  filter: brightness(0.92);
+}
+.folder-back.up {
+  background: linear-gradient(160deg, #34d399, var(--color-green));
+}
+.folder-back.down {
+  background: linear-gradient(160deg, #f87171, var(--color-red));
+}
+/* 중립은 무채색 — 보라(브랜드색)를 쓰면 판정이 있는 것처럼 읽힌다. */
+.folder-back.flat {
+  background: linear-gradient(160deg, #cbd5e1, #94a3b8);
+}
+
+/* 서류 — 앞표지 뒤에 숨어 있다가 호버 시 위로 솟는다 */
+.folder-paper {
+  position: absolute;
+  z-index: 2;
+  top: 34px;
+  bottom: 22px;
+  border-radius: 4px;
+  background: linear-gradient(180deg, #fff, #f7f9fc);
+  border: 1px solid var(--color-line);
+  box-shadow: 0 4px 12px rgba(15, 27, 51, 0.08);
+  transform: translateY(0) rotate(0deg);
+  transition: transform 0.3s var(--ease-out), opacity 0.24s var(--ease-out);
+}
+.folder-paper-1 { left: 16%; right: 16%; }
+.folder-paper-2 { left: 11%; right: 21%; }
+.folder-paper-3 { left: 21%; right: 11%; }
+
+/* 서류 위의 글줄(장식) */
+.folder-paper::after {
+  content: "";
+  position: absolute;
+  left: 12%;
+  right: 12%;
+  top: 12px;
+  height: 12px;
+  border-radius: 2px;
+  background: repeating-linear-gradient(180deg, var(--color-line) 0 2px, transparent 2px 6px);
+}
+
+/* 호버·포커스 = 서류철이 열리고 서류가 위로 솟으며 살짝 부채꼴로 벌어진다 */
+.folder:hover .folder-paper-1,
+.folder:focus-within .folder-paper-1 {
+  transform: translateY(-30px) rotate(0deg);
+}
+.folder:hover .folder-paper-2,
+.folder:focus-within .folder-paper-2 {
+  transform: translateY(-22px) rotate(-3.5deg);
+}
+.folder:hover .folder-paper-3,
+.folder:focus-within .folder-paper-3 {
+  transform: translateY(-24px) rotate(3.5deg);
+}
+
+/* 앞표지 — `.glass` 가 파일 뒤쪽에서 한 번 더 선언되므로 특이도를 올려 덮어쓴다.
+   불투명도를 높여야 뒤 서류·의미색이 표지로 번지지 않는다. */
+.glass.folder-front {
+  position: relative;
+  z-index: 3;
+  border-radius: 10px 10px var(--radius-card) var(--radius-card);
+  background: rgba(255, 255, 255, 0.94);
+  transform-origin: bottom center;
+  transition: transform 0.3s var(--ease-out), box-shadow 0.22s var(--ease-out);
+}
+/* 앞표지가 아래로 젖혀지며 열린다 */
+.folder:hover .glass.folder-front,
+.folder:focus-within .glass.folder-front {
+  transform: rotateX(9deg);
+}
+
+/* 열림(상세 표시 중) = 서류가 위로 빠져나가 화면 중앙의 보고서가 된 상태.
+   닫으면 transition 이 역재생돼 서류가 서류철로 되돌아온다. */
+.folder.is-open .folder-paper {
+  opacity: 0;
+  transition: transform 0.34s cubic-bezier(0.5, 0, 0.75, 0), opacity 0.3s ease-in 0.04s;
+}
+.folder.is-open .folder-paper-1 { transform: translateY(-150px) scale(1.5); }
+.folder.is-open .folder-paper-2 { transform: translateY(-138px) scale(1.42) rotate(-5deg); }
+.folder.is-open .folder-paper-3 { transform: translateY(-142px) scale(1.42) rotate(5deg); }
+/* 열린 동안 표지는 젖혀둔 채로 유지 */
+.folder.is-open .glass.folder-front { transform: rotateX(9deg); }
+
+/* 꺼낸 서류(중앙 보고서) — 글래스가 아니라 종이. 흰 바탕 + 얕은 모서리 + 깊은 그림자. */
+.doc-sheet {
+  background: #fff;
+  border: 1px solid var(--color-line);
+  border-radius: 10px;
+  box-shadow: 0 40px 90px rgba(15, 27, 51, 0.28), 0 8px 24px rgba(15, 27, 51, 0.12);
+}
+/* 종이 상단의 접힘/제본 자국 */
+.doc-sheet::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 5px;
+  border-radius: 10px 10px 0 0;
+  background: linear-gradient(90deg, rgba(124, 58, 237, 0.5), rgba(139, 92, 246, 0.18));
+}
+/* 보고서 본문 안에서는 글래스 카드를 종이 톤으로 중화한다 — 흰 종이 위 반투명은 탁해 보인다.
+   (같은 본문을 쓰는 전체 페이지에서는 글래스 그대로.) */
+.doc-body .glass {
+  background: #fff;
+  border: 1px solid var(--color-line);
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-radius: 12px;
+}
+.doc-body .glass:hover {
+  box-shadow: none;
+  border-color: var(--color-line);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .folder-paper,
+  .glass.folder-front { transition: none; }
+  .folder:hover .glass.folder-front,
+  .folder:focus-within .glass.folder-front,
+  .folder.is-open .glass.folder-front { transform: none; }
+}
 .live-dot {
   width: 7px;
   height: 7px;

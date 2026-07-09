@@ -255,6 +255,11 @@ def _base_detail(rule: SourceResult) -> dict[str, Any]:
     detail: dict[str, Any] = {"data_status": rule.data_status}
     if rule.evidence_items:
         detail["evidence_items"] = [asdict(item) for item in rule.evidence_items]
+    # 표시 전용 채용 데이터(최근 공고의 게시일·마감일). 이 왕복이 싣지 않으면 복원된
+    # SourceResult 에서 사라져 score_breakdown.HIRING.hiring 에 도달하지 못한다.
+    # 점수·방향과 무관(RuleSourceAgent._to_output 과 동일 규약).
+    if rule.hiring_meta is not None:
+        detail["hiring"] = asdict(rule.hiring_meta)
     return detail
 
 

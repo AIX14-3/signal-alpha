@@ -158,6 +158,10 @@ def _method_detail(source_result: SourceResult) -> dict[str, Any]:
             "recent_publications": source_result.patent_meta.recent_publications,
             "filing_trend": source_result.patent_meta.filing_trend,
         }
+    # HIRING 표시 전용 구조화 데이터(최근 공고의 게시일·마감일). patent 와 동일하게 JSONB
+    # 로만 흐른다 — 점수·방향 불변.
+    if source_result.hiring_meta is not None:
+        detail["hiring"] = {"postings": source_result.hiring_meta.postings}
     # Agent provenance — DART/REPORT lanes already persist these in method_detail
     # (dart/tasks.py), so mirror them here. Written only when the round-trip
     # carried them, keeping legacy (analyzer-direct) detail shapes unchanged.

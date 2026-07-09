@@ -2,12 +2,13 @@
 
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import {
   listJournals,
   type Journal as JournalType,
   type ReportSource,
+  type SourceKey,
 } from "@/lib/apiClient";
 import { WatchlistButton } from "@/components/WatchlistButton";
 import { EvidenceList } from "@/components/EvidenceList";
@@ -15,12 +16,14 @@ import { EvidenceTimeline } from "@/components/EvidenceTimeline";
 import { MarketIndices } from "@/components/MarketIndices";
 import { PrecedentSection } from "@/components/PrecedentSection";
 import { ReportSideNav } from "@/components/ReportSideNav";
+import { SourceDetailPanel } from "@/components/SourceDetailPanel";
 import { SourceIcon } from "@/components/SourceIcon";
 import { SourceAgreementBar } from "@/components/SourceAgreementBar";
 import { TraceCards } from "@/components/TraceCards";
 import {
   dataStatusLabel,
   directionLabel,
+  scoreText,
   SOURCE_META,
   SOURCE_ORDER,
   sourceLabel,
@@ -36,12 +39,42 @@ const StockChart = dynamic(() => import("@/components/StockChart").then((m) => m
   ssr: false,
 });
 
+// useSearchParams 는 정적 프리렌더를 CSR 로 되돌리므로 Suspense 경계가 필요하다(Next 15).
 export default function ReportPage() {
+  return (
+    <Suspense fallback={<p className="py-16 text-center text-muted">리포트를 불러오는 중…</p>}>
+      <ReportPageInner />
+    </Suspense>
+  );
+}
+
+function ReportPageInner() {
   const params = useParams<{ ticker: string }>();
   const ticker = params.ticker;
 
   const status = useAuthStore((s) => s.status);
   const { report, loading, error, load } = useReportStore();
+
+  // 소스 상세 슬라이드오버의 열림 상태는 URL 이 소유한다(?source=dart).
+  // → 뒤로가기로 닫히고, 새로고침해도 유지되며, 링크로 공유된다.
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const requested = searchParams.get("source");
+  const openSource: SourceKey | null =
+    requested && (SOURCE_ORDER as readonly string[]).includes(requested)
+      ? (requested as SourceKey)
+      : null;
+
+  const openPanel = useCallback(
+    (source: SourceKey) => {
+      router.push(`${pathname}?source=${source}`, { scroll: false });
+    },
+    [router, pathname],
+  );
+  const closePanel = useCallback(() => {
+    router.push(pathname, { scroll: false });
+  }, [router, pathname]);
 
   useEffect(() => {
     // 리포트(/api/reports/{code})는 공개 엔드포인트라 토큰이 없으면 401 이 아니라
@@ -101,7 +134,7 @@ export default function ReportPage() {
       <div id="sec-summary" className="glass mt-5 flex scroll-mt-28 flex-wrap items-center gap-6 p-6">
         <div className="grid h-[120px] w-[120px] place-items-center rounded-full brand-grad text-white">
           <div className="text-center">
-            <div className="text-[34px] font-extrabold leading-none">{report.score ?? "–"}</div>
+            <div className="text-[34px] font-extrabold leading-none">{scoreText(report.score)}</div>
             <div className="text-[12px] opacity-90">종합 점수</div>
           </div>
         </div>
@@ -138,7 +171,7 @@ export default function ReportPage() {
       {/* 소스별 상세 근거 — 소스 간 일치도보다 위에 배치(사용자 요청) */}
       <div id="sec-sources" className="scroll-mt-28">
         <h2 className="mt-8 text-[18px] font-bold">소스별 상세 근거</h2>
-        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="mt-4 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
           {SOURCE_ORDER.map((key) => {
             const src = byKey.get(key);
             return (
@@ -146,11 +179,17 @@ export default function ReportPage() {
                 key={key}
                 sourceKey={key}
                 src={src}
-                ticker={ticker}
+                open={openSource === key}
+                onOpen={openPanel}
               />
             );
           })}
         </div>
+      </div>
+
+      {/* S6 과거 유사 사례 — 소스 간 일치도 위에 배치(사용자 요청). */}
+      <div id="sec-precedent" className="scroll-mt-28">
+        <PrecedentSection stockCode={report.stock.stock_code} />
       </div>
 
       {/* 소스 간 일치도 + 긍정/주의 근거 (근거 중심 §5.3). 리포트 전체 공개(#788). */}
@@ -193,11 +232,6 @@ export default function ReportPage() {
         <EvidenceTimeline stockCode={report.stock.stock_code} />
       </div>
 
-      {/* S6 과거 유사 사례 — 같은 소스·방향 신호 뒤 20일 실측 성과(참고용). */}
-      <div id="sec-precedent" className="scroll-mt-28">
-        <PrecedentSection stockCode={report.stock.stock_code} />
-      </div>
-
       {/* 저널 저장 — 발행 리포트(final_signal_id)에 판단을 기록. */}
       {report.report_version?.final_signal_id != null && (
         <div id="sec-journal" className="scroll-mt-28">
@@ -211,6 +245,10 @@ export default function ReportPage() {
           <p className="mt-6 rounded-[12px] bg-surface-2 p-4 text-[12.5px] text-muted">{report.notice}</p>
         </div>
       </div>
+
+      {openSource && (
+        <SourceDetailPanel ticker={ticker} source={openSource} onClose={closePanel} />
+      )}
     </div>
   );
 }
@@ -348,18 +386,21 @@ function JournalSaveCard({ stockCode, finalSignalId }: { stockCode: string; fina
 function SourceCard({
   sourceKey,
   src,
-  ticker,
+  open,
+  onOpen,
 }: {
-  sourceKey: "price" | "dart" | "hiring" | "datalab" | "patent" | "report";
+  sourceKey: SourceKey;
   src: ReportSource | undefined;
-  ticker: string;
+  open: boolean;
+  onOpen: (source: SourceKey) => void;
 }) {
   const meta = SOURCE_META[sourceKey];
   if (!src) {
+    // 빈 서류철 — 안에 든 서류가 없으므로 표지만 둔다.
     return (
       <div
         data-source={sourceKey}
-        className="glass grid min-h-[140px] place-items-center p-5 text-center"
+        className="glass folder-front grid h-full min-h-[168px] place-items-center p-5 text-center"
       >
         <div className="flex items-center gap-1.5 font-bold text-muted">
           <SourceIcon source={sourceKey} size={18} /> {meta.label}
@@ -371,22 +412,50 @@ function SourceCard({
   const dir = directionLabel(src.direction);
   const hasScore = (src.data_status === "ok" || src.data_status === "partial") && src.score != null;
   return (
-    <Link href={`/report/${encodeURIComponent(ticker)}/${sourceKey}`} className="glass hover-lift block p-5">
-      <div className="flex items-center gap-2 font-bold">
-        <SourceIcon source={sourceKey} size={18} className="text-navy-soft" /> {meta.label}
-        <span className={`pill ${tone(dir.tone)} ml-auto`} style={{ padding: "3px 9px", fontSize: 12 }}>{dir.label}</span>
-      </div>
-      {hasScore ? (
-        <div className="mt-3 flex items-baseline gap-1">
-          <span className="text-[36px] font-extrabold leading-none">{src.score}</span>
-          <span className="text-[14px] font-semibold text-muted">/100</span>
+    // 서류철: 뒷표지(방향 의미색) 안에 서류 3장이 들어 있고 앞표지가 덮고 있다.
+    // 호버 → 표지가 젖혀지며 서류가 위로 솟음. 클릭 → 서류가 우상단으로 빨려 나가고
+    // 그 자리에서 우측 슬라이드오버가 열린다(닫으면 서류가 되돌아온다).
+    <div className={`folder ${open ? "is-open" : ""}`}>
+      <span className={`folder-back ${tone(dir.tone)}`} aria-hidden="true" />
+      <span className="folder-paper folder-paper-2" aria-hidden="true" />
+      <span className="folder-paper folder-paper-3" aria-hidden="true" />
+      <span className="folder-paper folder-paper-1" aria-hidden="true" />
+      <button
+        type="button"
+        data-source={sourceKey}
+        onClick={() => onOpen(sourceKey)}
+        aria-label={`${meta.label} 상세 보기`}
+        aria-expanded={open}
+        className="glass folder-front flex h-full w-full flex-col p-5 text-left"
+      >
+        <div className="flex items-center gap-2 font-bold">
+          <SourceIcon source={sourceKey} size={18} className="text-navy-soft" /> {meta.label}
+          <span className={`pill ${tone(dir.tone)} ml-auto`} style={{ padding: "3px 9px", fontSize: 12 }}>{dir.label}</span>
         </div>
-      ) : (
-        <div className="mt-3 text-[16px] font-bold text-muted">{dataStatusLabel(src.data_status) || "—"}</div>
-      )}
-      <p className="mt-2 min-h-[38px] text-[13.5px] text-navy-soft">{src.summary ?? (src.data_status === "no_signal" ? "시그널이 없습니다." : sourceLabel(sourceKey) + " 데이터 요약")}</p>
-      <div className="mt-1 text-[13px] font-semibold text-sky-deep">상세 보기 →</div>
-    </Link>
+        {/* 점수/상태 줄은 높이를 고정한다 — 소스마다 글자 크기가 달라 요약 시작선이 어긋난다. */}
+        <div className="mt-3 flex h-[40px] items-baseline gap-1">
+          {hasScore ? (
+            <>
+              <span className="text-[36px] font-extrabold leading-none">{scoreText(src.score)}</span>
+              <span className="text-[14px] font-semibold text-muted">/100</span>
+            </>
+          ) : (
+            <span className="text-[16px] font-bold leading-none text-muted">
+              {dataStatusLabel(src.data_status) || "—"}
+            </span>
+          )}
+        </div>
+        {/* 카드 높이를 서류철끼리 맞추려고 요약은 3줄에서 말줄임한다(전문은 상세에서). */}
+        <p className="mt-3 line-clamp-3 text-[13.5px] text-navy-soft">
+          {src.summary ??
+            (src.data_status === "no_signal"
+              ? "시그널이 없습니다."
+              : sourceLabel(sourceKey) + " 데이터 요약")}
+        </p>
+        {/* mt-auto 로 표지 맨 아래에 고정 — 요약 길이가 달라도 CTA 높이가 어긋나지 않는다. */}
+        <div className="mt-auto pt-3 text-[13px] font-semibold text-sky-deep">상세 서류 보기</div>
+      </button>
+    </div>
   );
 }
 
