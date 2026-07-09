@@ -226,6 +226,27 @@ class AnalysisAndSignalRepositoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("DISTINCT ON (stock_id, run_key)", sql)
         self.assertIn("signal_date DESC", sql)
 
+    async def test_list_previous_aggregated_picks_the_second_newest_row(self):
+        # 변화량(Δ)의 비교 기준. AGGREGATED 만, 종목별 최신 바로 앞 행.
+        connection = FakeConnection()
+        repository = SignalRepository(connection)
+
+        await repository.list_previous_aggregated_by_stock_ids([1, 2])
+
+        sql = connection.calls[0][1]
+        self.assertIn("run_key = 'AGGREGATED'", sql)
+        self.assertIn("ROW_NUMBER() OVER", sql)
+        self.assertIn("PARTITION BY stock_id", sql)
+        self.assertIn("recency_rank = 2", sql)
+        self.assertEqual(connection.calls[0][2], ([1, 2],))
+
+    async def test_list_previous_aggregated_short_circuits_on_empty_input(self):
+        connection = FakeConnection()
+        repository = SignalRepository(connection)
+
+        self.assertEqual(await repository.list_previous_aggregated_by_stock_ids([]), [])
+        self.assertEqual(connection.calls, [])
+
     async def test_list_current_published_limits_stocks_not_rows(self):
         # limit 을 행에 걸면 한 종목의 이력이 창을 다 먹어 다른 종목이 잘려 나간다.
         connection = FakeConnection()

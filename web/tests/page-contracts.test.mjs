@@ -78,6 +78,36 @@ test("brief page loads the public daily-signal feed and links to reports", () =>
   ].forEach((expected) => assertIncludes(source, expected, "brief page"));
 });
 
+test("watchlist page tracks change, not just bookmarks", () => {
+  const source = read("src/app/watchlist/page.tsx");
+
+  [
+    'data-page="watchlist"',
+    // 브리핑과 다른 정렬축: 절대 점수 세기가 아니라 변화량(Δ)이 큰 순.
+    "getSignalsByStockIds(stockIds)",
+    "Math.abs(a.item.change.score_delta ?? -1)",
+    // 소스별 막대 그래프 — 브리핑 카드에 없는 정보(두 화면을 가르는 축).
+    "SourceBars",
+    // 막대는 0이 아니라 중립 50을 기준으로 갈린다. 50.0 을 방향색으로 칠하면 없는 방향이 생긴다.
+    "const NEUTRAL_SCORE = 50",
+    "const NEUTRAL_BAND = 0.5",
+    "Math.abs(offset) < NEUTRAL_BAND",
+    'data-flow="watchlist-card"',
+  ].forEach((expected) => assertIncludes(source, expected, "watchlist page"));
+
+  // Δ 가 null 이면 "변화 없음" 이 아니라 **비교 불가** 다 — 0 과 구분해야 한다.
+  assertIncludes(source, "delta === null", "watchlist page");
+  assertIncludes(source, "delta === 0", "watchlist page");
+});
+
+test("signals client exposes the change payload used for delta sorting", () => {
+  const source = read("src/lib/api/signals.ts");
+
+  ["score_delta", "previous_signal_date", "previous_score", "getSignalsByStockIds"].forEach(
+    (expected) => assertIncludes(source, expected, "signals client"),
+  );
+});
+
 test("mypage keeps account guard and tab data sources wired", () => {
   const source = read("src/app/mypage/page.tsx");
 

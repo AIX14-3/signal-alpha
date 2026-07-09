@@ -472,5 +472,37 @@ class WatchlistRoutesTest(unittest.TestCase):
         self.assertEqual(len(self.connection.watchlists), 11)
 
 
+class StockResponseIdTest(unittest.TestCase):
+    """관심종목 응답의 ``stock.id`` 는 **종목** id 여야 한다.
+
+    조회 SQL 이 ``SELECT watchlists.*, stocks.ticker, …`` 라 row["id"] 는 관심종목 행 id 다.
+    그대로 내보내면 클라이언트가 그 값을 stock_id 로 믿고 **다른 종목**의 신호를 불러온다
+    (실측: watchlist id 3 → stock_id 8).
+    """
+
+    def test_stock_id_wins_over_watchlist_row_id(self):
+        from app.api.routes.watchlists import _stock_response
+
+        row = {  # 실제 SQL 이 돌려주는 모양 — id 는 watchlists.id 다.
+            "id": 3,
+            "user_id": 1,
+            "stock_id": 8,
+            "notification_enabled": False,
+            "ticker": "000270",
+            "name": "기아",
+            "market": "KOSPI",
+            "sector": "자동차",
+        }
+
+        self.assertEqual(_stock_response(row)["id"], 8)
+
+    def test_falls_back_to_id_when_stock_id_absent(self):
+        from app.api.routes.watchlists import _stock_response
+
+        row = {"id": 8, "ticker": "000270", "name": "기아"}
+
+        self.assertEqual(_stock_response(row)["id"], 8)
+
+
 if __name__ == "__main__":
     unittest.main()

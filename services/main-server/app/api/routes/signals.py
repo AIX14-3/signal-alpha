@@ -133,13 +133,23 @@ async def list_signals(
             if parsed
             else await repository.list_current_published()
         )
+        # 변화량(Δ)은 종목을 지목해 물었을 때만 구한다(관심종목 추적 화면). 브리핑처럼
+        # 전 종목을 훑는 호출에는 불필요한 쿼리를 태우지 않는다.
+        previous_rows = (
+            await repository.list_previous_aggregated_by_stock_ids(parsed) if parsed else []
+        )
+
+    previous_by_stock = {int(dict(row)["stock_id"]): dict(row) for row in previous_rows}
 
     grouped: "OrderedDict[int, list[dict[str, Any]]]" = OrderedDict()
     for row in rows:
         record = dict(row)
         grouped.setdefault(record["stock_id"], []).append(record)
 
-    return [_signal_list_item(stock_id, source_rows) for stock_id, source_rows in grouped.items()]
+    return [
+        _signal_list_item(stock_id, source_rows, previous=previous_by_stock.get(stock_id))
+        for stock_id, source_rows in grouped.items()
+    ]
 
 
 def _recency_key(row: dict[str, Any]) -> tuple[Any, Any, Any]:
@@ -202,7 +212,53 @@ def _sources_from_breakdown(breakdown: Any) -> dict[str, Any]:
     return sources
 
 
-def _aggregated_list_item(stock_id: int, base: dict[str, Any], row: dict[str, Any]) -> dict[str, Any]:
+# 직전 발행본이 이보다 오래되면 변화량을 만들지 않는다. 2년 전 점수와 비교해 "변화 +12" 라고
+# 쓰면 거짓말이다(실측: 어떤 종목의 직전 AGGREGATED 가 2023-12-13 이었다).
+_MAX_DELTA_AGE_DAYS = 14
+
+
+def _to_date(value: Any) -> date | None:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    return None
+
+
+def _change(row: dict[str, Any], previous: dict[str, Any] | None) -> dict[str, Any]:
+    """현재 신호 대비 직전 발행본의 변화. 비교할 수 없으면 값들은 None 이다.
+
+    ``score_delta`` 가 None 인 경우는 셋이다 — 직전 발행본이 없거나, 점수가 없거나,
+    직전 발행이 너무 오래됐거나. 어느 쪽이든 화면은 "변화 없음" 이 아니라 "비교 불가" 로
+    읽어야 하므로 ``previous_signal_date`` 를 함께 노출한다.
+    """
+    current_date = _to_date(row.get("signal_date"))
+    previous_date = _to_date(previous.get("signal_date")) if previous else None
+    change: dict[str, Any] = {
+        "signal_date": current_date.isoformat() if current_date else None,
+        "previous_signal_date": previous_date.isoformat() if previous_date else None,
+        "previous_score": _number(previous.get("final_score")) if previous else None,
+        "previous_direction": _to_direction(previous.get("signal")) if previous else None,
+        "score_delta": None,
+    }
+    if previous is None or current_date is None or previous_date is None:
+        return change
+    if (current_date - previous_date).days > _MAX_DELTA_AGE_DAYS:
+        return change  # 직전 발행이 너무 오래됨 → 변화량을 만들지 않는다.
+    current_score = _number(row.get("final_score"))
+    previous_score = change["previous_score"]
+    if current_score is None or previous_score is None:
+        return change
+    change["score_delta"] = round(current_score - previous_score, 2)
+    return change
+
+
+def _aggregated_list_item(
+    stock_id: int,
+    base: dict[str, Any],
+    row: dict[str, Any],
+    previous: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """통합 신호(AGGREGATED) 기반 카드 — 6소스가 모두 반영된 점수를 그대로 노출한다.
 
     이전에는 대체데이터 3소스(hiring/patent/datalab)의 소스별 발행 행만 평균해서
@@ -231,14 +287,20 @@ def _aggregated_list_item(stock_id: int, base: dict[str, Any], row: dict[str, An
         ),
         "summary": row.get("summary") or base.get("summary"),
         "score_breakdown": {"sources": _sources_from_breakdown(row.get("score_breakdown"))},
+        # 관심종목 추적 화면이 "무엇이 달라졌나" 로 정렬하기 위한 재료.
+        "change": _change(row, previous),
     }
 
 
-def _signal_list_item(stock_id: int, rows: list[dict[str, Any]]) -> dict[str, Any]:
+def _signal_list_item(
+    stock_id: int,
+    rows: list[dict[str, Any]],
+    previous: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     base = rows[0]
     aggregated = _latest_aggregated_row(rows)
     if aggregated is not None:
-        return _aggregated_list_item(stock_id, base, aggregated)
+        return _aggregated_list_item(stock_id, base, aggregated, previous)
 
     # 폴백: 아직 집계 전(소스별 발행만 있는) 종목. 있는 소스만으로 카드를 만든다.
     alternative: dict[str, Any] = {key: None for key in ALT_RUN_KEYS}
@@ -301,6 +363,8 @@ def _signal_list_item(stock_id: int, rows: list[dict[str, Any]]) -> dict[str, An
                 for source in SOURCE_ORDER
             }
         },
+        # 집계 전 종목은 비교 기준(AGGREGATED 직전 행)이 없다 — 계약은 같은 모양을 유지한다.
+        "change": _change(base, None),
     }
 
 
