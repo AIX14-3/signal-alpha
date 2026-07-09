@@ -43,17 +43,30 @@ function IndexCard({ idx, tone = "glass" }: { idx: MarketIndex; tone?: "glass" |
   );
 }
 
+// "실시간" 배지가 실제로 갱신되도록 마운트 후 주기적으로 재조회한다. Yahoo 일봉 API 특성상
+// 초 단위 실시간은 불가하므로 45초 폴링으로 최신 종가/현재가를 반영한다.
+const REFRESH_MS = 45_000;
+
 // variant "grid" = 리포트 상단(기존, 유리 카드 4열). "band" = 홈 대시보드 상단 가로 밴드(제목+실시간 배지 패널).
 export function MarketIndices({ variant = "grid" }: { variant?: "grid" | "band" }) {
   const [items, setItems] = useState<MarketIndex[] | null>(null);
 
   useEffect(() => {
     let alive = true;
-    getMarketIndices()
-      .then((d) => alive && setItems(d.indices))
-      .catch(() => alive && setItems([]));
+    const load = () =>
+      getMarketIndices()
+        .then((d) => {
+          if (alive) setItems(d.indices);
+        })
+        .catch(() => {
+          // 일시적 실패 시 기존 값을 유지하고, 최초 로드 실패만 빈 상태로 표시한다.
+          if (alive) setItems((prev) => prev ?? []);
+        });
+    void load();
+    const timer = setInterval(load, REFRESH_MS);
     return () => {
       alive = false;
+      clearInterval(timer);
     };
   }, []);
 
