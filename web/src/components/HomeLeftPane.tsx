@@ -14,8 +14,8 @@ export function HomeLeftPane() {
 
   return (
     <div className="flex min-h-0 flex-col gap-5">
-      {/* 실시간 뉴스 테이블 */}
-      <div className="glass-card overflow-hidden">
+      {/* 실시간 뉴스 테이블 — 우 pane(분석+커뮤니티) 높이에 맞춰 컬럼 하단까지 늘어난다(flex-1). */}
+      <div className="glass-card flex flex-1 flex-col overflow-hidden">
         <div className="flex items-center justify-between px-4 py-3">
           <div className="text-[14px] font-bold text-navy">실시간 뉴스 피드</div>
           <span className="text-[11.5px] text-muted">행을 누르면 오른쪽에 분석이 열립니다</span>
@@ -32,9 +32,11 @@ export function HomeLeftPane() {
             ))}
           </ul>
         ) : feed.length === 0 ? (
-          <p className="p-8 text-center text-[13px] text-muted">아직 수집된 뉴스가 없습니다.</p>
+          <p className="flex flex-1 items-center justify-center p-8 text-center text-[13px] text-muted">
+            아직 수집된 뉴스가 없습니다.
+          </p>
         ) : (
-          <ul className="max-h-[540px] divide-y divide-line overflow-y-auto">
+          <ul className="min-h-0 flex-1 divide-y divide-line overflow-y-auto">
             {feed.map((n, i) => (
               <li key={`${n.stock_code}-${i}`}>
                 <button
