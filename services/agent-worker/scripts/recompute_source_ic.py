@@ -50,7 +50,16 @@ from app.analyzers.patent.rules import evaluate_indicators as patent_eval  # noq
 from app.analyzers.price.analyzer import PriceAnalyzer  # noqa: E402
 from app.ml.source_features import KNOWN_AT, pit_rows  # noqa: E402
 from app.ml.train_source_models import _PriceTrainingLoader, _build_loader  # noqa: E402
-from ic_diagnostic import _fmt, _metrics, suggest_weights  # noqa: E402
+from ic_diagnostic import (  # noqa: E402
+    MIN_N,
+    PERM_ITERS,
+    PERM_P_GATE,
+    SCORING_SOURCES,
+    _fmt,
+    _metrics,
+    _pearson,
+    _perm_pvalue,
+)
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -75,10 +84,34 @@ SOURCES = [
 # 20일 선행수익률 미경과 → 측정 불가. 데이터·경로 확보 시 별도.
 
 
+def _dart_blite_events(pit: list[dict]) -> list[dict]:
+    """DART ownership 이벤트에 B-lite 방향/임팩트를 부여한다(프로덕션 코드 불변, 하니스 전용).
+
+    build_dart_analysis_result 의 B-lite 는 event['signal_direction']·['impact_level'] 로 임팩트
+    가중 순극성을 낸다. 수집된 ownership 이벤트엔 이 파생 필드가 없어 상수 0(no_signal)이 된다.
+    소스 주석(source_result.py:161)이 명시한 대로 **내부자 shares_delta 부호**를 방향으로,
+    ratio_delta 크기를 임팩트로 매핑해 B-lite 경로를 활성화한다(#805 의도의 근사).
+    """
+    out = []
+    for e in pit:
+        d = dict(e)
+        sd = e.get("shares_delta")
+        d["signal_direction"] = (
+            "positive" if (sd is not None and float(sd) > 0)
+            else "negative" if (sd is not None and float(sd) < 0)
+            else "unknown"
+        )
+        rd = e.get("ratio_delta")
+        mag = abs(float(rd)) if rd is not None else 0.0
+        d["impact_level"] = "high" if mag >= 1.0 else "medium" if mag >= 0.2 else "low"
+        out.append(d)
+    return out
+
+
 async def _score(kind, pit, asof, cfg, sector, ind_fn, eval_fn) -> float:
     """소스 kind 별 점수 재계산(누수차단된 pit 행 입력). signed [-1, +1] 반환."""
     if kind == "dart":
-        return build_dart_analysis_result(pit).score
+        return build_dart_analysis_result(_dart_blite_events(pit)).score
     if kind == "price":
         res = await PriceAnalyzer().analyze("", [SimpleNamespace(metadata={"rows": pit})])
         return res.score
@@ -94,6 +127,63 @@ async def _score(kind, pit, asof, cfg, sector, ind_fn, eval_fn) -> float:
 def _require_local(db_url: str) -> None:
     if not any(h in db_url for h in ("localhost", "127.0.0.1")):
         raise SystemExit(f"refusing: DATABASE_URL host not local ({db_url.split('@')[-1]}).")
+
+
+def _demean(vals: list[float], keys: list) -> list[float]:
+    """같은 key(예: asof 날짜) 그룹의 평균을 뺀 값 리스트."""
+    from collections import defaultdict
+
+    groups: dict = defaultdict(list)
+    for v, k in zip(vals, keys):
+        groups[k].append(v)
+    means = {k: sum(v) / len(v) for k, v in groups.items()}
+    return [v - means[k] for v, k in zip(vals, keys)]
+
+
+def _source_metrics(triples: list[tuple[float, float, object]]) -> dict:
+    """raw IC + **시장중립 IC**(같은 asof 날짜 평균을 score/return 양쪽에서 빼 공통 시장추세 제거).
+
+    raw IC 는 상승장 base-rate(대부분 양의 수익)에 속을 수 있다 — 상승장에서 어떤 소스든 부호가
+    수익과 우연히 맞으면 IC 가 부풀려진다(DART B-lite 사례: raw +0.35 → 시장중립 +0.03). 진짜
+    예측력은 시장중립 IC 이며, 권장 가중은 이 값을 기준으로 한다.
+    """
+    pairs = [(s, r) for s, r, _ in triples]
+    m = dict(_metrics(pairs))  # n, ic(raw), hit_rate, tercile_lift, perm_p
+    dates = [d for _, _, d in triples]
+    s_dm = _demean([s for s, _, _ in triples], dates)
+    r_dm = _demean([r for _, r, _ in triples], dates)
+    m["ic_neutral"] = _pearson(s_dm, r_dm)
+    m["perm_p_neutral"] = _perm_pvalue(list(zip(s_dm, r_dm)), PERM_ITERS)
+    return m
+
+
+# 효과크기 하한: 대표본에선 IC 0.03~0.04 도 통계적 유의(p<0.05)로 뜨지만 경제적으론 노이즈다
+# (설명력 ~0.1%, 패널 자기상관으로 p값 과대낙관). 트레이더블 방향신호로 인정할 최소 |IC|.
+MIN_ABS_IC = 0.05
+
+
+def _recommend(src_res: dict, *, include_price: bool = False) -> dict:
+    """권장 가중은 **시장중립 IC** 기준(raw 아님). 자격: N≥MIN_N·중립IC≥MIN_ABS_IC·순열검정 통과.
+
+    유의성만이 아니라 효과크기 하한(MIN_ABS_IC)을 함께 요구해 대표본 노이즈를 배제한다.
+    """
+    eligible = {}
+    for src, m in src_res.items():
+        if src == "PRICE" and not include_price:
+            continue
+        icn, n, p = m.get("ic_neutral"), m.get("n", 0), m.get("perm_p_neutral")
+        if (icn is not None and icn >= MIN_ABS_IC and n >= MIN_N
+                and p is not None and p <= PERM_P_GATE):
+            eligible[src] = icn
+    if not eligible:
+        return {"mode": "equal", "weights": {},
+                "rationale": f"시장중립 IC≥{MIN_ABS_IC}·유의 소스 없음 → 등가중 유지(대표본 노이즈 배제)."}
+    total = sum(eligible.values())
+    weights = {s: 0.0 for s in SCORING_SOURCES}
+    for s, icn in eligible.items():
+        weights[s] = round(icn / total * len(eligible), 3)
+    return {"mode": "ic", "weights": weights,
+            "rationale": f"{sorted(eligible)} 가 시장중립 IC 로도 유의미 양수 → IC 비례 가중."}
 
 
 async def recompute(conn, *, asof_from, asof_to, universe) -> dict:
@@ -125,7 +215,7 @@ async def recompute(conn, *, asof_from, asof_to, universe) -> dict:
             if loader_key == "hiring" and ev:
                 sector_by_stock[sid] = ev[0].metadata.get("sector_demand")
 
-        pairs: list[tuple[float, float]] = []
+        triples: list[tuple[float, float, object]] = []
         for row in labeled:
             sid = int(row["stock_id"])
             asof = row["asof_date"]
@@ -134,13 +224,13 @@ async def recompute(conn, *, asof_from, asof_to, universe) -> dict:
                 continue  # 소스가 그 시점에 침묵(행 0)
             score = await _score(kind, pit, asof, cfg, sector_by_stock.get(sid), ind_fn, eval_fn)
             # 0-100 스케일 변환(ic_diagnostic._metrics/_hit_rate 는 중심 50 가정). IC 는 스케일 불변.
-            pairs.append((score * 50.0 + 50.0, float(row[TARGET])))
+            triples.append((score * 50.0 + 50.0, float(row[TARGET]), asof))
 
-        src_res[src] = _metrics(pairs)
+        src_res[src] = _source_metrics(triples)
         m = src_res[src]
         note = " (⚠️자기참조)" if src == "PRICE" else ""
-        print(f"  ▸ {src:8} N={m['n']:5}  IC {_fmt(m['ic'])}  hit {_fmt(m['hit_rate'], True)}  "
-              f"perm-p {m['perm_p']}{note}")
+        print(f"  ▸ {src:8} N={m['n']:5}  raw-IC {_fmt(m['ic'])}  시장중립-IC {_fmt(m['ic_neutral'])}  "
+              f"hit {_fmt(m['hit_rate'], True)}  perm-p(중립) {m['perm_p_neutral']}{note}")
     return {"labels": len(labeled), "source_ic_20d": src_res}
 
 
@@ -157,7 +247,7 @@ async def main(json_out: str | None, asof_from: date, asof_to: date, universe: s
     print("\n" + "=" * 76)
     print(f"recompute-IC — 재계산 표본 라벨 {results['labels']}건 · 20일 지평선 · 5소스(대체3+DART+주가, REPORT 제외)")
     print("=" * 76)
-    suggestion = suggest_weights(results["source_ic_20d"], include_price=False)
+    suggestion = _recommend(results["source_ic_20d"], include_price=False)
     results["suggested"] = suggestion
     print(f"권장: weight_mode = {suggestion['mode']}  ({suggestion['rationale']})")
     if suggestion["mode"] == "ic":
