@@ -141,12 +141,13 @@ class SummaryHumanizerTest(unittest.TestCase):
         self.assertNotIn("-0.067", text)
 
     def test_hiring_no_data_summary_hides_the_table_name(self):
+        # data_status 가 없는 구버전 발행 행 — 제외 사유는 못 붙이지만 테이블명은 새면 안 된다.
         text = _humanize_summary(
             "hiring", {"summary": "분석할 채용 데이터가 없습니다 (hiring_raw_details 미적재).", "direction": "unknown"}
         )
 
         self.assertNotIn("hiring_raw_details", text)
-        self.assertIn("채용 공고가 모이지 않아", text)
+        self.assertIn("채용 공고를 찾지 못했습니다", text)
 
     def test_missing_direction_never_produces_a_broken_sentence(self):
         # direction 이 없으면 예전엔 "방향성 판단 방향으로 읽힙니다" 같은 비문이 나왔다.
@@ -173,6 +174,61 @@ class SummaryHumanizerTest(unittest.TestCase):
         )
 
         self.assertIn("긍정 방향으로 읽힙니다", items[0]["summary"])
+
+    def test_excluded_source_explains_how_the_score_was_computed(self):
+        # "분석할 채용 데이터가 없습니다"로 끝내면 종합 점수가 어디서 왔는지 알 수 없다.
+        text = _humanize_summary(
+            "hiring",
+            {"summary": "분석할 채용 데이터가 없습니다 (hiring_raw_details 미적재).", "data_status": "no_signal"},
+        )
+
+        self.assertIn("채용 공고를 찾지 못해", text)
+        self.assertIn("나머지 소스로 계산했습니다", text)
+        self.assertNotIn("hiring_raw_details", text)
+
+    def test_every_source_has_its_own_exclusion_reason(self):
+        for source, fragment in (
+            ("dart", "공시에서 방향을 가를"),
+            ("price", "시세 데이터가 충분하지"),
+            ("report", "증권사 리포트가 없어"),
+            ("datalab", "검색량 데이터가 충분하지"),
+            ("patent", "공개된 특허를 찾지"),
+            ("hiring", "채용 공고를 찾지"),
+        ):
+            with self.subTest(source=source):
+                text = _humanize_summary(source, {"summary": "무엇이든", "data_status": "missing"})
+                self.assertIn(fragment, text)
+                self.assertIn("나머지 소스로 계산했습니다", text)
+
+    def test_object_particle_follows_the_final_consonant(self):
+        from app.api.routes.reports import _object_particle
+
+        # 받침 있음 → 을 / 없음 → 를. "채용를" 같은 비문을 막는다.
+        self.assertEqual(_object_particle("채용"), "을")
+        self.assertEqual(_object_particle("검색량"), "을")
+        self.assertEqual(_object_particle("공시"), "를")
+        self.assertEqual(_object_particle("주가"), "를")
+        self.assertEqual(_object_particle("특허"), "를")
+        self.assertEqual(_object_particle("증권사 리포트"), "를")
+
+    def test_exclusion_note_uses_the_right_particle(self):
+        text = _humanize_summary("hiring", {"summary": "x", "data_status": "missing"})
+        self.assertIn("채용을 빼고", text)
+        self.assertNotIn("채용를", text)
+
+        text = _humanize_summary("dart", {"summary": "x", "data_status": "missing"})
+        self.assertIn("공시를 빼고", text)
+
+    def test_failed_source_says_it_could_not_be_analyzed(self):
+        text = _humanize_summary("patent", {"summary": "x", "data_status": "failed"})
+
+        self.assertIn("분석하지 못해", text)
+
+    def test_scoring_source_keeps_its_own_summary(self):
+        narrative = "특허 공개가 늘었습니다."
+        text = _humanize_summary("patent", {"summary": narrative, "data_status": "ok"})
+
+        self.assertEqual(text, narrative)
 
     def test_llm_narrative_is_left_alone(self):
         narrative = "삼성전자는 최근 반도체 수요 회복에 힘입어 검색 관심이 늘었습니다."
