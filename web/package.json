@@ -6,6 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "lint": "tsc --noEmit",
+    "lint:eslint": "eslint src",
     "start": "next start",
     "test": "node --test tests/*.test.mjs",
     "test:render": "node --test qa/render-smoke.test.mjs",
@@ -21,10 +22,13 @@
     "zustand": "^5.0.14"
   },
   "devDependencies": {
+    "@eslint/eslintrc": "^3.3.5",
     "@tailwindcss/postcss": "^4.3.1",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "eslint": "^9.39.4",
+    "eslint-config-next": "^15.5.20",
     "postcss": "^8.5.15",
     "tailwindcss": "^4.3.1",
     "typescript": "^5.7.0"

@@ -167,11 +167,15 @@ async def run_once(args: argparse.Namespace) -> None:
     dsn = os.getenv("DATABASE_URL", "")
     if not dsn:
         raise RuntimeError("DATABASE_URL is required.")
+    # SSL 모드는 env 토글. prod(Cloud SQL/Neon)는 기본 `require`, 로컬 평문 postgres 는
+    # COLLECTOR_DB_SSL=disable 로 꺼서 `rejected SSL upgrade` 없이 수집한다(로컬 픽스처 계산 경로).
+    ssl_mode = os.getenv("COLLECTOR_DB_SSL", "require")
+    ssl_arg = None if ssl_mode.strip().lower() in ("", "disable", "false", "off") else ssl_mode
     pool = await asyncpg.create_pool(
         **parse_dsn(dsn),
         min_size=1,
         max_size=max(2, int(os.getenv("COLLECTOR_DB_POOL_MAX", "5"))),
-        ssl="require",
+        ssl=ssl_arg,
         statement_cache_size=0,
     )
     # 타깃별 장애 격리용 집계. 한 종목/카테고리의 API 에러(KIPRIS 쿼터 소진 등)는
