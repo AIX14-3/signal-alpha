@@ -1,6 +1,6 @@
 "use client";
 
-// 매매 의사결정 부검 — 브로커 연동·동기화·계획·단건/패턴 부검. 구독 전용.
+// 매매 의사결정 부검 — 수기 체결 입력·계획·단건/패턴 부검. 구독 전용.
 // 스탠스: 예측 아님·사후확신 없음. "그때 관측 가능했던 신호"로만 판단한다.
 
 import Link from "next/link";
@@ -8,7 +8,7 @@ import { useEffect, useState } from "react";
 
 import { RoundTripCard } from "@/components/postmortem/RoundTripCard";
 import { formatDate, formatPct } from "@/components/postmortem/util";
-import type { BrokerName, PostmortemNarrative } from "@/lib/apiClient";
+import type { PostmortemNarrative } from "@/lib/apiClient";
 import { useAuthStore } from "@/stores/authStore";
 import { usePostmortemStore } from "@/stores/postmortemStore";
 
@@ -62,7 +62,7 @@ export default function PostmortemPage() {
 
       {error ? <p className="text-[13.5px] text-red">{error}</p> : null}
 
-      <BrokerSection />
+      <ManualFillSection />
       <PlanSection />
       <TradeLookupSection />
       <PatternSection />
@@ -157,142 +157,118 @@ function PlanSection() {
   );
 }
 
-// ---- 브로커 연동 --------------------------------------------------------
-function BrokerSection() {
-  const brokers = usePostmortemStore((s) => s.brokers);
-  const syncMessage = usePostmortemStore((s) => s.syncMessage);
-  const connect = usePostmortemStore((s) => s.connect);
-  const disconnect = usePostmortemStore((s) => s.disconnect);
-  const sync = usePostmortemStore((s) => s.sync);
-  const [open, setOpen] = useState(false);
+// ---- 수기 매매 기록 -----------------------------------------------------
+function ManualFillSection() {
+  const fills = usePostmortemStore((s) => s.fills);
+  const addFill = usePostmortemStore((s) => s.addFill);
+  const removeFill = usePostmortemStore((s) => s.removeFill);
+
+  const [code, setCode] = useState("");
+  const [side, setSide] = useState<"buy" | "sell">("buy");
+  const [date, setDate] = useState("");
+  const [qty, setQty] = useState("");
+  const [price, setPrice] = useState("");
+  const [fee, setFee] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const numOrNull = (v: string): number | null => {
+    // 천 단위 콤마(예: "70,000")를 허용 — Number("70,000")=NaN 이라 그대로면 조용히 거부된다.
+    const cleaned = v.replace(/,/g, "").trim();
+    if (!cleaned) return null;
+    const n = Number(cleaned);
+    return Number.isNaN(n) ? null : n;
+  };
+
+  const canSubmit = code.trim() && date && numOrNull(qty) !== null && numOrNull(price) !== null;
 
   return (
-    <section data-panel="postmortem-brokers">
-      <div className="flex items-center justify-between">
-        <h2 className="text-[16px] font-bold text-navy">증권사 연동</h2>
-        <button
-          type="button"
-          onClick={() => void sync()}
-          disabled={brokers.length === 0}
-          className="rounded-full border border-line px-5 py-2 text-[13px] font-semibold text-navy-soft hover:border-navy hover:text-navy disabled:opacity-60"
-        >
-          체결 동기화
-        </button>
-      </div>
+    <section data-panel="postmortem-fills">
+      <h2 className="text-[16px] font-bold text-navy">매매 기록 입력</h2>
+      <p className="mt-1 text-[13px] text-muted">
+        매수·매도 체결을 직접 입력하면, 이를 라운드트립으로 묶어 부검합니다. 수량·가격은 체결 단위로 적어주세요.
+      </p>
 
-      {syncMessage ? <p className="mt-2 text-[13px] text-sky-deep">{syncMessage}</p> : null}
-
-      {brokers.length > 0 ? (
+      {fills.length > 0 ? (
         <ul className="mt-3 space-y-2">
-          {brokers.map((b) => (
-            <li key={b.id} className="card flex items-center justify-between px-4 py-3">
-              <div className="text-[13.5px]">
-                <span className="font-semibold text-navy">{b.broker === "kiwoom" ? "키움증권" : "토스증권"}</span>
-                {b.is_mock ? <span className="pill flat ml-2 text-[11px]">모의</span> : null}
-                <span className="ml-2 text-muted">{b.account_ref || "기본 계좌"}</span>
-                <span className={`ml-2 text-[12px] ${b.status === "error" ? "text-red" : "text-muted"}`}>
-                  {b.status === "error" ? `오류: ${b.last_error ?? ""}` : b.last_synced_at ? `최근 동기화 ${formatDate(b.last_synced_at)}` : "동기화 전"}
+          {fills.map((f) => (
+            <li key={f.id} className="card flex items-center justify-between px-4 py-3 text-[13px]">
+              <span className="text-navy-soft">
+                <span className={`font-semibold ${f.side === "buy" ? "text-red" : "text-sky-deep"}`}>
+                  {f.side === "buy" ? "매수" : "매도"}
                 </span>
-              </div>
-              <button
-                type="button"
-                onClick={() => void disconnect(b.id)}
-                className="text-[12.5px] text-muted hover:text-red"
-              >
-                연동 해제
+                <span className="ml-2 font-semibold text-navy">{f.stock_code}</span>
+                <span className="ml-2 text-muted">{f.filled_at ? formatDate(f.filled_at) : ""}</span>
+                <span className="ml-2">{f.quantity ?? "-"}주 · {f.price ?? "-"}</span>
+                {f.fee ? <span className="ml-2 text-muted">수수료 {f.fee}</span> : null}
+              </span>
+              <button type="button" onClick={() => void removeFill(f.id)} className="text-[12.5px] text-muted hover:text-red">
+                삭제
               </button>
             </li>
           ))}
         </ul>
       ) : (
-        <p className="mt-3 text-[13.5px] text-muted">연동된 증권사가 없습니다. 아래에서 API 키를 등록하세요.</p>
+        <p className="mt-3 text-[13.5px] text-muted">입력된 매매 기록이 없습니다. 아래에서 첫 체결을 기록하세요.</p>
       )}
 
-      {open ? (
-        <BrokerConnectForm
-          onDone={() => setOpen(false)}
-          onSubmit={async (body) => {
-            await connect(body);
-            setOpen(false);
-          }}
-        />
-      ) : (
-        <button
-          type="button"
-          onClick={() => setOpen(true)}
-          className="mt-3 text-[13px] font-semibold text-sky-deep hover:underline"
-        >
-          + 증권사 API 키 등록
+      <form
+        className="card mt-3 space-y-2 px-5 py-4"
+        data-flow="postmortem-fill-add"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          const quantity = numOrNull(qty);
+          const priceNum = numOrNull(price);
+          if (!code.trim() || !date || quantity === null || priceNum === null) return;
+          setBusy(true);
+          setErr(null);
+          try {
+            await addFill({
+              stock_code: code.trim(),
+              side,
+              filled_at: date,
+              quantity,
+              price: priceNum,
+              fee: numOrNull(fee),
+            });
+            setCode("");
+            setDate("");
+            setQty("");
+            setPrice("");
+            setFee("");
+          } catch (error) {
+            // 실패 시 입력을 보존하고 사유를 표시한다(unhandled rejection 방지).
+            setErr(error instanceof Error ? error.message : "매매 기록 저장에 실패했습니다.");
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        <div className="flex gap-2">
+          {(["buy", "sell"] as const).map((s) => (
+            <button
+              type="button"
+              key={s}
+              onClick={() => setSide(s)}
+              className={`pill flat text-[13px] ${side === s ? "!border-sky !text-sky-deep font-bold" : ""}`}
+            >
+              {s === "buy" ? "매수" : "매도"}
+            </button>
+          ))}
+        </div>
+        <input className="card w-full px-4 py-2.5 text-[13.5px] outline-none focus:border-sky" placeholder="종목코드 (예: 005930)" value={code} onChange={(e) => setCode(e.target.value)} />
+        <input className="card w-full px-4 py-2.5 text-[13.5px] outline-none focus:border-sky" type="date" aria-label="체결일" value={date} onChange={(e) => setDate(e.target.value)} />
+        <div className="flex gap-2">
+          <input className="card w-full px-4 py-2.5 text-[13.5px] outline-none focus:border-sky" placeholder="수량(주)" inputMode="decimal" value={qty} onChange={(e) => setQty(e.target.value)} />
+          <input className="card w-full px-4 py-2.5 text-[13.5px] outline-none focus:border-sky" placeholder="체결가" inputMode="decimal" value={price} onChange={(e) => setPrice(e.target.value)} />
+        </div>
+        <input className="card w-full px-4 py-2.5 text-[13.5px] outline-none focus:border-sky" placeholder="수수료(선택)" inputMode="decimal" value={fee} onChange={(e) => setFee(e.target.value)} />
+        {err ? <p className="text-[13px] text-red">{err}</p> : null}
+        <button type="submit" disabled={busy || !canSubmit} className="brand-grad rounded-full px-5 py-2 text-[13px] font-bold text-white disabled:opacity-60">
+          {busy ? "저장 중…" : "매매 기록 추가"}
         </button>
-      )}
+      </form>
     </section>
-  );
-}
-
-function BrokerConnectForm({
-  onSubmit,
-  onDone,
-}: {
-  onSubmit: (body: { broker: BrokerName; app_key: string; app_secret: string; account_ref: string; is_mock: boolean }) => Promise<void>;
-  onDone: () => void;
-}) {
-  const [broker, setBroker] = useState<BrokerName>("kiwoom");
-  const [appKey, setAppKey] = useState("");
-  const [appSecret, setAppSecret] = useState("");
-  const [accountRef, setAccountRef] = useState("");
-  const [isMock, setIsMock] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  return (
-    <form
-      className="card mt-3 space-y-3 px-5 py-4"
-      data-flow="postmortem-broker-connect"
-      onSubmit={async (e) => {
-        e.preventDefault();
-        setBusy(true);
-        setErr(null);
-        try {
-          await onSubmit({ broker, app_key: appKey, app_secret: appSecret, account_ref: accountRef, is_mock: isMock });
-        } catch (error) {
-          setErr(error instanceof Error ? error.message : "등록에 실패했습니다.");
-        } finally {
-          setBusy(false);
-        }
-      }}
-    >
-      <div className="flex gap-2">
-        {(["kiwoom", "toss"] as BrokerName[]).map((b) => (
-          <button
-            type="button"
-            key={b}
-            onClick={() => setBroker(b)}
-            className={`pill flat text-[13px] ${broker === b ? "!border-sky !text-sky-deep font-bold" : ""}`}
-          >
-            {b === "kiwoom" ? "키움증권" : "토스증권"}
-          </button>
-        ))}
-      </div>
-      <input className="card w-full px-4 py-2.5 text-[13.5px] outline-none focus:border-sky" placeholder="App Key" value={appKey} onChange={(e) => setAppKey(e.target.value)} />
-      <input className="card w-full px-4 py-2.5 text-[13.5px] outline-none focus:border-sky" placeholder="App Secret" type="password" value={appSecret} onChange={(e) => setAppSecret(e.target.value)} />
-      <input className="card w-full px-4 py-2.5 text-[13.5px] outline-none focus:border-sky" placeholder="계좌번호(선택, 토스는 계좌 시퀀스)" value={accountRef} onChange={(e) => setAccountRef(e.target.value)} />
-      <label className="flex items-center gap-2 text-[13px] text-navy-soft">
-        <input type="checkbox" checked={isMock} onChange={(e) => setIsMock(e.target.checked)} />
-        모의투자 계좌 키
-      </label>
-      <p className="text-[12px] text-muted">
-        키는 암호화되어 저장되며 다시 표시되지 않습니다. 체결 조회에만 사용됩니다.
-      </p>
-      {err ? <p className="text-[13px] text-red">{err}</p> : null}
-      <div className="flex gap-2">
-        <button type="submit" disabled={busy || !appKey || !appSecret} className="brand-grad rounded-full px-5 py-2 text-[13px] font-bold text-white disabled:opacity-60">
-          {busy ? "등록 중…" : "연동"}
-        </button>
-        <button type="button" onClick={onDone} className="text-[13px] text-muted hover:text-navy">
-          취소
-        </button>
-      </div>
-    </form>
   );
 }
 
@@ -345,7 +321,7 @@ function TradeLookupSection() {
               ))}
             </ul>
           ) : (
-            <p className="mt-3 text-[13.5px] text-muted">이 종목의 체결내역이 없습니다. 먼저 증권사를 연동하고 동기화하세요.</p>
+            <p className="mt-3 text-[13.5px] text-muted">이 종목의 매매 기록이 없습니다. 먼저 매매 기록을 입력하세요.</p>
           )}
           <NarrativeCard narrative={trade.narrative} />
         </div>

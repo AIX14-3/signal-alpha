@@ -90,7 +90,10 @@ def _strip_noise(sql: str) -> str:
 
 
 def bucket_of(table: str) -> str:
-    if table in db_partition.BACKEND_TABLES:
+    # RETIRED_BACKEND_TABLES: 드롭됐지만 과거 마이그가 CREATE/ALTER 하던 backend 테이블.
+    # 라이브엔 없어 BACKEND_TABLES 엔 없지만, 과거 마이그 locality 재검증엔 원 분류가 필요.
+    retired = getattr(db_partition, "RETIRED_BACKEND_TABLES", frozenset())
+    if table in db_partition.BACKEND_TABLES or table in retired:
         return "backend"
     if table in db_partition.PUBLISHED_TABLES:
         return "published"

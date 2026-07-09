@@ -1,51 +1,12 @@
-// 매매 의사결정 부검 — 브로커 연동·체결·계획·단건/패턴 부검. main-server /api/postmortem 계약과 1:1.
-// 전 엔드포인트 구독 전용(402). 키 평문은 응답에 없다(등록/조회 메타만). 수량·가격은 정밀도
-// 보존 위해 문자열. 사후확신 금지 — 관측신호는 그때 볼 수 있었던 것(PIT).
+// 매매 의사결정 부검 — 수기 체결 입력·계획·단건/패턴 부검. main-server /api/postmortem 계약과 1:1.
+// 전 엔드포인트 구독 전용(402). 수량·가격은 정밀도 보존 위해 문자열. 사후확신 금지 —
+// 관측신호는 그때 볼 수 있었던 것(PIT).
 
 import { apiFetch } from "./core";
 
-// ---- 브로커 연동 --------------------------------------------------------
-export type BrokerName = "kiwoom" | "toss";
-
-export type BrokerCredential = {
-  id: number;
-  broker: BrokerName;
-  account_ref: string;
-  is_mock: boolean;
-  status: "active" | "error" | "revoked";
-  last_synced_at: string | null;
-  last_error: string | null;
-  created_at: string | null;
-};
-
-export type BrokerConnectBody = {
-  broker: BrokerName;
-  app_key: string;
-  app_secret: string;
-  account_ref?: string;
-  is_mock?: boolean;
-};
-
-export function listBrokers(): Promise<{ count: number; items: BrokerCredential[] }> {
-  return apiFetch(`/api/postmortem/brokers`);
-}
-
-export function connectBroker(body: BrokerConnectBody): Promise<BrokerCredential> {
-  return apiFetch(`/api/postmortem/brokers`, { method: "POST", body: JSON.stringify(body) });
-}
-
-export function disconnectBroker(credentialId: number): Promise<{ status: string }> {
-  return apiFetch(`/api/postmortem/brokers/${credentialId}`, { method: "DELETE" });
-}
-
-export function requestSync(): Promise<{ status: string; requested: number }> {
-  return apiFetch(`/api/postmortem/sync`, { method: "POST" });
-}
-
-// ---- 체결내역 -----------------------------------------------------------
+// ---- 수기 체결내역 ------------------------------------------------------
 export type TradeFill = {
   id: number;
-  broker: BrokerName;
   stock_code: string;
   stock_id: number | null;
   side: "buy" | "sell";
@@ -55,9 +16,27 @@ export type TradeFill = {
   fee: string | null;
 };
 
+// filled_at 은 ISO(날짜 또는 날짜시각) 문자열. 수량·가격·수수료는 숫자.
+export type FillCreateBody = {
+  stock_code: string;
+  side: "buy" | "sell";
+  filled_at: string;
+  quantity: number;
+  price: number;
+  fee?: number | null;
+};
+
 export function listFills(stockCode?: string): Promise<{ count: number; items: TradeFill[] }> {
   const qs = stockCode ? `?stock_code=${encodeURIComponent(stockCode)}` : "";
   return apiFetch(`/api/postmortem/fills${qs}`);
+}
+
+export function createFill(body: FillCreateBody): Promise<TradeFill> {
+  return apiFetch(`/api/postmortem/fills`, { method: "POST", body: JSON.stringify(body) });
+}
+
+export function deleteFill(fillId: number): Promise<{ status: string }> {
+  return apiFetch(`/api/postmortem/fills/${fillId}`, { method: "DELETE" });
 }
 
 // ---- 매매 계획(선택) ----------------------------------------------------

@@ -155,5 +155,88 @@ class PostmortemRoutesTest(unittest.TestCase):
         mock.assert_awaited_once()
 
 
+class _FakeCreateFillsRepo:
+    """insert_fill 인자를 캡처하고 삽입 행을 반환하는 페이크."""
+
+    last_kwargs: dict | None = None
+    deleted: bool = True
+    delete_args: dict | None = None
+
+    def __init__(self, _conn):
+        pass
+
+    async def insert_fill(self, **kwargs):
+        type(self).last_kwargs = kwargs
+        return {
+            "id": 99,
+            "stock_id": kwargs.get("stock_id"),
+            "ticker": kwargs["ticker"],
+            "side": kwargs["side"],
+            "filled_at": kwargs["filled_at"],
+            "quantity": kwargs["quantity"],
+            "price": kwargs["price"],
+            "fee": kwargs.get("fee"),
+        }
+
+    async def delete_fill(self, **kwargs):
+        type(self).delete_args = kwargs
+        return type(self).deleted
+
+
+class ManualFillRoutesTest(unittest.TestCase):
+    def setUp(self):
+        app.dependency_overrides[get_current_user] = lambda: {"id": 1}
+        app.dependency_overrides[get_database_pool] = lambda: _FakePool()
+        self._patchers = [
+            patch(f"{_MODULE}._subscription_active", new=AsyncMock(return_value=True)),
+            patch(f"{_MODULE}.StockRepository", new=_FakeStockRepo),
+            patch(f"{_MODULE}.UserTradeFillsRepository", new=_FakeCreateFillsRepo),
+        ]
+        for p in self._patchers:
+            p.start()
+
+    def tearDown(self):
+        for p in self._patchers:
+            p.stop()
+        app.dependency_overrides.clear()
+        _FakeCreateFillsRepo.last_kwargs = None
+        _FakeCreateFillsRepo.delete_args = None
+        _FakeCreateFillsRepo.deleted = True
+
+    def test_create_fill_maps_stock_and_returns_row(self):
+        body = {"stock_code": "005930", "side": "buy", "filled_at": "2026-03-01", "quantity": 10, "price": 70000, "fee": 12.5}
+        response = TestClient(app).post("/api/postmortem/fills", json=body)
+        self.assertEqual(response.status_code, 200)
+        out = response.json()
+        self.assertEqual(out["id"], 99)
+        self.assertEqual(out["stock_code"], "005930")
+        self.assertNotIn("broker", out)
+        # 종목코드가 stock_id 로 매핑돼 전달됐는지(FakeStockRepo → id=7).
+        self.assertEqual(_FakeCreateFillsRepo.last_kwargs["stock_id"], 7)
+        self.assertEqual(_FakeCreateFillsRepo.last_kwargs["side"], "buy")
+
+    def test_create_fill_rejects_bad_side(self):
+        body = {"stock_code": "005930", "side": "hold", "filled_at": "2026-03-01", "quantity": 10, "price": 70000}
+        response = TestClient(app).post("/api/postmortem/fills", json=body)
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"]["code"], "INVALID_SIDE")
+
+    def test_create_fill_rejects_nonpositive_quantity(self):
+        body = {"stock_code": "005930", "side": "buy", "filled_at": "2026-03-01", "quantity": 0, "price": 70000}
+        response = TestClient(app).post("/api/postmortem/fills", json=body)
+        self.assertEqual(response.status_code, 422)  # pydantic gt=0
+
+    def test_delete_fill_hit_and_miss(self):
+        _FakeCreateFillsRepo.deleted = True
+        ok = TestClient(app).delete("/api/postmortem/fills/99")
+        self.assertEqual(ok.status_code, 200)
+        self.assertEqual(_FakeCreateFillsRepo.delete_args, {"user_id": 1, "fill_id": 99})
+
+        _FakeCreateFillsRepo.deleted = False
+        miss = TestClient(app).delete("/api/postmortem/fills/1234")
+        self.assertEqual(miss.status_code, 404)
+        self.assertEqual(miss.json()["detail"]["code"], "FILL_NOT_FOUND")
+
+
 if __name__ == "__main__":
     unittest.main()

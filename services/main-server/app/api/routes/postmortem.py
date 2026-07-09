@@ -1,14 +1,15 @@
-"""매매 의사결정 부검 — 브로커 연동 라우트 (PR-1: 자격증명 저장).
+"""매매 의사결정 부검 — 수기 체결 입력 + 계획 + 단건/패턴 부검 라우트.
 
-유저가 키움/토스 API 키(앱키·시크릿)를 등록하면 at-rest 암호화해 저장한다. 평문 키는
-응답·로그 어디에도 남기지 않는다(마스킹조차 저장본 기준이 아니라 입력 즉시 암호화). 부검은
-저널 강화 기능이라 **구독 전용**(저널과 동일 402 게이트). 체결 동기화·부검 계산은 후속 PR.
+유저가 체결 내역(side=buy/sell, 일자·수량·가격)을 직접 입력하면 그걸 라운드트립으로 묶어
+부검한다. 부검은 저널 강화 기능이라 **구독 전용**(저널과 동일 402 게이트). 사후확신 없이
+"그때 관측 가능했던 신호"로만 판단한다.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
@@ -28,17 +29,15 @@ from app.postmortem.analysis import (
 from app.postmortem.classify import classify_roundtrip, signals_in_window
 from signal_alpha_data_access.backend import (
     StockRepository,
-    UserBrokerCredentialRepository,
     UserTradeFillsRepository,
     UserTradePlanRepository,
     UserTradeSignalOverlayRepository,
 )
-from signal_alpha_data_access.crypto import CredentialCryptoError
 
 router = APIRouter(prefix="/api/postmortem", tags=["postmortem"])
 logger = logging.getLogger(__name__)
 
-_SUPPORTED_BROKERS = {"kiwoom", "toss"}
+_SUPPORTED_SIDES = {"buy", "sell"}
 
 
 async def _postmortem_narrative(
@@ -76,90 +75,45 @@ async def _postmortem_narrative(
         return None
 
 
-class BrokerConnectRequest(BaseModel):
-    broker: str
-    app_key: str = Field(min_length=1)
-    app_secret: str = Field(min_length=1)
-    account_ref: str = ""
-    is_mock: bool = False
+async def _optional_stock_id(connection: Any, ticker: str) -> int | None:
+    """종목코드 → stock_id. 미상장/미매핑이면 None(체결·계획은 코드만으로도 성립, overlay만 제한)."""
+    stock = await StockRepository(connection).get_by_ticker(ticker)
+    return int(stock["id"]) if stock else None
 
 
-@router.get("/brokers")
-async def list_brokers(
+class FillCreateRequest(BaseModel):
+    stock_code: str = Field(min_length=1)
+    side: str
+    filled_at: datetime
+    quantity: float = Field(gt=0)
+    price: float = Field(gt=0)
+    fee: float | None = Field(default=None, ge=0)
+
+
+@router.post("/fills")
+async def create_fill(
+    payload: FillCreateRequest,
     current_user: dict[str, Any] = Depends(get_current_user),
     pool: Any = Depends(get_database_pool),
 ) -> dict[str, Any]:
+    """수기 체결 1건 입력(side=buy/sell, 일자·수량·가격). 종목은 코드로 매핑(미상장이면 stock_id NULL)."""
+    side = payload.side.strip().lower()
+    if side not in _SUPPORTED_SIDES:
+        raise _api_error(400, "INVALID_SIDE", "체결 구분은 buy/sell 만 가능합니다.")
+    ticker = payload.stock_code.strip()
     async with pool.acquire() as connection:
         await _require_subscription(connection, int(current_user["id"]))
-        rows = await UserBrokerCredentialRepository(connection).list_credentials(
-            user_id=int(current_user["id"])
+        row = await UserTradeFillsRepository(connection).insert_fill(
+            user_id=int(current_user["id"]),
+            stock_id=await _optional_stock_id(connection, ticker),
+            ticker=ticker,
+            side=side,
+            filled_at=payload.filled_at,
+            quantity=payload.quantity,
+            price=payload.price,
+            fee=payload.fee,
         )
-    items = [_broker_response(dict(row)) for row in rows]
-    return {"count": len(items), "items": items}
-
-
-@router.post("/brokers")
-async def connect_broker(
-    payload: BrokerConnectRequest,
-    current_user: dict[str, Any] = Depends(get_current_user),
-    pool: Any = Depends(get_database_pool),
-) -> dict[str, Any]:
-    broker = payload.broker.strip().lower()
-    if broker not in _SUPPORTED_BROKERS:
-        raise _api_error(400, "UNSUPPORTED_BROKER", "지원하지 않는 증권사입니다. (키움/토스)")
-    async with pool.acquire() as connection:
-        await _require_subscription(connection, int(current_user["id"]))
-        try:
-            row = await UserBrokerCredentialRepository(connection).upsert_credential(
-                user_id=int(current_user["id"]),
-                broker=broker,
-                account_ref=payload.account_ref.strip(),
-                is_mock=payload.is_mock,
-                app_key=payload.app_key,
-                app_secret=payload.app_secret,
-            )
-        except CredentialCryptoError:
-            # 서버 암호화 마스터키 미설정/오류 — 평문 저장 폴백 금지. 내부 상세는 노출하지 않는다.
-            raise _api_error(
-                503,
-                "CREDENTIAL_ENCRYPTION_UNAVAILABLE",
-                "자격증명 암호화를 사용할 수 없습니다. 잠시 후 다시 시도해 주세요.",
-            ) from None
-    return _broker_response(dict(row))
-
-
-@router.delete("/brokers/{credential_id}")
-async def disconnect_broker(
-    credential_id: int,
-    current_user: dict[str, Any] = Depends(get_current_user),
-    pool: Any = Depends(get_database_pool),
-) -> dict[str, Any]:
-    async with pool.acquire() as connection:
-        await _require_subscription(connection, int(current_user["id"]))
-        deleted = await UserBrokerCredentialRepository(connection).delete_credential(
-            user_id=int(current_user["id"]), credential_id=credential_id
-        )
-    if not deleted:
-        raise _api_error(404, "BROKER_NOT_FOUND", "연동 정보를 찾을 수 없습니다.")
-    # 자격증명만 삭제 — 이미 동기화된 체결 데이터는 유지(유저가 별도로 삭제 가능, spec §7).
-    return {"status": "disconnected"}
-
-
-@router.post("/sync")
-async def request_sync(
-    current_user: dict[str, Any] = Depends(get_current_user),
-    pool: Any = Depends(get_database_pool),
-) -> dict[str, Any]:
-    # main-server 는 워커 코드를 직접 호출하지 않는다 — 동기화 요청 플래그만 찍고 202.
-    # 워커 러너(잦은 크론)가 요청분을 우선 처리한다(온디맨드 + 주기 증분).
-    async with pool.acquire() as connection:
-        await _require_subscription(connection, int(current_user["id"]))
-        requested = await UserBrokerCredentialRepository(connection).request_sync(
-            user_id=int(current_user["id"])
-        )
-    if requested == 0:
-        raise _api_error(400, "NO_ACTIVE_BROKER", "먼저 증권사를 연동해 주세요.")
-    return {"status": "queued", "requested": requested}
+    return _fill_response(dict(row))
 
 
 @router.get("/fills")
@@ -187,11 +141,27 @@ async def list_fills(
     return {"count": len(items), "items": items}
 
 
+@router.delete("/fills/{fill_id}")
+async def delete_fill(
+    fill_id: int,
+    current_user: dict[str, Any] = Depends(get_current_user),
+    pool: Any = Depends(get_database_pool),
+) -> dict[str, Any]:
+    """오입력한 체결 삭제. 본인 소유 행만 삭제된다."""
+    async with pool.acquire() as connection:
+        await _require_subscription(connection, int(current_user["id"]))
+        deleted = await UserTradeFillsRepository(connection).delete_fill(
+            user_id=int(current_user["id"]), fill_id=fill_id
+        )
+    if not deleted:
+        raise _api_error(404, "FILL_NOT_FOUND", "체결 기록을 찾을 수 없습니다.")
+    return {"status": "deleted"}
+
+
 def _fill_response(row: dict[str, Any]) -> dict[str, Any]:
     # 수량·가격은 정밀도 보존 위해 문자열로 내보낸다.
     return {
         "id": row["id"],
-        "broker": row["broker"],
         "stock_code": row["ticker"],
         "stock_id": row.get("stock_id"),
         "side": row["side"],
@@ -204,20 +174,6 @@ def _fill_response(row: dict[str, Any]) -> dict[str, Any]:
 
 def _num_str(value: Any) -> str | None:
     return None if value is None else str(value)
-
-
-def _broker_response(row: dict[str, Any]) -> dict[str, Any]:
-    """연동 메타만 — 키 평문/암호문은 절대 포함하지 않는다."""
-    return {
-        "id": row["id"],
-        "broker": row["broker"],
-        "account_ref": row.get("account_ref") or "",
-        "is_mock": row["is_mock"],
-        "status": row["status"],
-        "last_synced_at": _iso(row.get("last_synced_at")),
-        "last_error": row.get("last_error"),
-        "created_at": _iso(row.get("created_at")),
-    }
 
 
 def _iso(value: Any) -> str | None:
@@ -258,10 +214,9 @@ async def upsert_plan(
     ticker = payload.stock_code.strip()
     async with pool.acquire() as connection:
         await _require_subscription(connection, int(current_user["id"]))
-        stock = await StockRepository(connection).get_by_ticker(ticker)
         row = await UserTradePlanRepository(connection).upsert_plan(
             user_id=int(current_user["id"]),
-            stock_id=int(stock["id"]) if stock else None,
+            stock_id=await _optional_stock_id(connection, ticker),
             ticker=ticker,
             thesis=payload.thesis,
             target_price=payload.target_price,
