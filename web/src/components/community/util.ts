@@ -30,3 +30,54 @@ export function viewLabel(view: string | null | undefined): string {
   if (!view) return "";
   return VIEW_LABEL[view] ?? view;
 }
+
+export type PostDirection = {
+  kind: "long" | "short" | "neutral";
+  label: string;
+  icon: string;
+  // show_pnl=true 이고 pnl_pct 가 있을 때만 채워진다. 없으면 카드가 방향 라벨만 보여준다.
+  pctText: string | null;
+};
+
+// 게시글 카드/상세의 시그널 블록에 쓸 방향 메타. pnl_pct 부호로만 판정한다
+// (user_view 는 watch/research_more/not_relevant 라 상승/하락과 무관).
+export function postDirection(post: {
+  show_pnl: boolean;
+  journal: { user_view: string | null; pnl_pct: number | null } | null;
+}): PostDirection {
+  const pnl = post.journal?.pnl_pct;
+  if (post.show_pnl && pnl != null) {
+    const up = pnl >= 0;
+    return {
+      kind: up ? "long" : "short",
+      label: up ? "LONG" : "SHORT",
+      icon: up ? "▲" : "▼",
+      pctText: `${up ? "+" : ""}${pnl.toFixed(2)}%`,
+    };
+  }
+  return {
+    kind: "neutral",
+    label: viewLabel(post.journal?.user_view) || "관망",
+    icon: "◆",
+    pctText: null,
+  };
+}
+
+const AVATAR_PALETTE = [
+  "linear-gradient(135deg,#a78bfa,#7c3aed)",
+  "linear-gradient(135deg,#6ee7b7,#10b981)",
+  "linear-gradient(135deg,#fca5a5,#ef4444)",
+  "linear-gradient(135deg,#7dd3fc,#0ea5e9)",
+  "linear-gradient(135deg,#fcd34d,#f59e0b)",
+];
+
+// 댓글 아바타용 결정론적 그라디언트 — 작성자 식별자로 팔레트에서 고정 선택(장식 목적, 의미 없음).
+export function avatarGradient(seed: string): string {
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
+  return AVATAR_PALETTE[hash % AVATAR_PALETTE.length];
+}
+
+export function avatarInitial(label: string): string {
+  return label.trim().charAt(0) || "?";
+}

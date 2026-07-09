@@ -19,6 +19,7 @@ export function ReactionButton({
   active: initialActive = false,
   onCount,
   type = "like",
+  variant = "pill",
 }: {
   target: "post" | "comment";
   targetId: number;
@@ -27,6 +28,8 @@ export function ReactionButton({
   active?: boolean;
   onCount?: (likeCount: number) => void;
   type?: ReactionType;
+  // pill: 게시글 상세의 큰 버튼. inline: 댓글 행의 텍스트형 버튼.
+  variant?: "pill" | "inline";
 }) {
   const user = useAuthStore((state) => state.user);
   const showToast = useToastStore((state) => state.show);
@@ -67,19 +70,41 @@ export function ReactionButton({
     }
   }
 
+  const icon = type === "bookmark" ? "🔖" : "♥";
+  const label =
+    type === "bookmark" ? (active ? "저장됨" : "저장") : active ? "좋아요 취소" : "좋아요";
+
+  if (variant === "inline") {
+    return (
+      <button
+        type="button"
+        onClick={() => void toggle()}
+        disabled={busy}
+        data-flow={`community-${type}`}
+        className={`text-[11.5px] font-semibold disabled:opacity-60 ${
+          active ? "text-sky-deep" : "text-muted hover:text-sky-deep"
+        }`}
+      >
+        {icon} {localCount ?? 0}
+      </button>
+    );
+  }
+
   return (
     <button
       type="button"
       onClick={() => void toggle()}
       disabled={busy}
       data-flow={`community-${type}`}
-      className={`rounded-full border px-4 py-2 text-[13.5px] font-semibold disabled:opacity-60 ${
+      className={`rounded-full px-4 py-2 text-[13px] font-bold disabled:opacity-60 ${
         active
-          ? "border-sky bg-surface-2 text-sky-deep"
-          : "border-line text-navy-soft hover:border-navy hover:text-navy"
+          ? type === "like"
+            ? "brand-grad text-white shadow-[0_6px_14px_rgba(124,58,237,.25)]"
+            : "border border-line bg-surface-2 text-sky-deep"
+          : "border border-line text-navy-soft hover:border-navy hover:text-navy"
       }`}
     >
-      {type === "bookmark" ? (active ? "저장됨" : "저장") : active ? "좋아요 취소" : "좋아요"}
+      {icon} {label}
       {localCount != null ? ` ${localCount}` : ""}
     </button>
   );
