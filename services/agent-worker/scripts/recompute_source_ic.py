@@ -140,12 +140,50 @@ def _demean(vals: list[float], keys: list) -> list[float]:
     return [v - means[k] for v, k in zip(vals, keys)]
 
 
-def _source_metrics(triples: list[tuple[float, float, object]]) -> dict:
-    """raw IC + **시장중립 IC**(같은 asof 날짜 평균을 score/return 양쪽에서 빼 공통 시장추세 제거).
+WF_BLOCKS = 3  # 워크포워드 시간분할 블록 수(연속 날짜 구간)
+STRONG_Q = 2.0 / 3.0  # 조건부 IC: |score-50| 상위 1/3(신호가 강한 표본)만
 
-    raw IC 는 상승장 base-rate(대부분 양의 수익)에 속을 수 있다 — 상승장에서 어떤 소스든 부호가
-    수익과 우연히 맞으면 IC 가 부풀려진다(DART B-lite 사례: raw +0.35 → 시장중립 +0.03). 진짜
-    예측력은 시장중립 IC 이며, 권장 가중은 이 값을 기준으로 한다.
+
+def _neutral_ic(triples: list[tuple[float, float, object]]) -> float | None:
+    """시장중립 IC = 같은 asof 날짜 평균을 score/return 양쪽에서 뺀 뒤 피어슨."""
+    if len(triples) < 3:
+        return None
+    dates = [t[2] for t in triples]
+    s = _demean([t[0] for t in triples], dates)
+    r = _demean([t[1] for t in triples], dates)
+    return _pearson(s, r)
+
+
+def _strong_subset(triples: list[tuple[float, float, object]]) -> list:
+    """조건부 IC용 — |score-50|(신호 강도) 상위 1/3 표본. 결과가 아니라 '결정 시점에 아는'
+    신호 강도로만 조건 → 선택편향 없음. '점수가 강할 때 더 예측적인가?'를 본다."""
+    if not triples:
+        return []
+    mags = sorted(abs(t[0] - 50.0) for t in triples)
+    thr = mags[min(int(len(mags) * STRONG_Q), len(mags) - 1)]
+    return [t for t in triples if abs(t[0] - 50.0) >= thr]
+
+
+def _walkforward_ics(triples: list[tuple[float, float, object]], k: int = WF_BLOCKS) -> list:
+    """asof 날짜를 연속 k블록으로 나눠 블록별 시장중립 IC. 한 구간(레짐)만 좋고 다른 구간에서
+    무너지는 아티팩트(DART 상승장 등)를 드러낸다 = 과거 데이터로 흉내낸 OOS."""
+    uniq = sorted({t[2] for t in triples})
+    if len(uniq) < k:
+        return []
+    size = len(uniq) / k
+    ics = []
+    for i in range(k):
+        block = set(uniq[int(i * size):int((i + 1) * size)])
+        ics.append(_neutral_ic([t for t in triples if t[2] in block]))
+    return ics
+
+
+def _source_metrics(triples: list[tuple[float, float, object]]) -> dict:
+    """raw IC + **시장중립 IC** + 조건부(강신호) IC + 워크포워드(블록별) IC.
+
+    raw IC 는 상승장 base-rate 에 속고(DART raw +0.35 → 중립 +0.03), 대표본에선 미미한 IC 도
+    유의로 뜬다. 그래서 (1) 시장중립(공통추세 제거), (2) 조건부(강신호일 때 예측적인가), (3)
+    워크포워드(여러 시간구간서 일관되게 살아남는가)를 함께 재 진짜 신호만 남긴다.
     """
     pairs = [(s, r) for s, r, _ in triples]
     m = dict(_metrics(pairs))  # n, ic(raw), hit_rate, tercile_lift, perm_p
@@ -154,6 +192,8 @@ def _source_metrics(triples: list[tuple[float, float, object]]) -> dict:
     r_dm = _demean([r for _, r, _ in triples], dates)
     m["ic_neutral"] = _pearson(s_dm, r_dm)
     m["perm_p_neutral"] = _perm_pvalue(list(zip(s_dm, r_dm)), PERM_ITERS)
+    m["ic_neutral_strong"] = _neutral_ic(_strong_subset(triples))  # 조건부 IC
+    m["wf_ics"] = _walkforward_ics(triples)  # 블록별 시장중립 IC(시간 일관성)
     return m
 
 
@@ -163,21 +203,26 @@ MIN_ABS_IC = 0.05
 
 
 def _recommend(src_res: dict, *, include_price: bool = False) -> dict:
-    """권장 가중은 **시장중립 IC** 기준(raw 아님). 자격: N≥MIN_N·중립IC≥MIN_ABS_IC·순열검정 통과.
+    """권장 가중 자격(전부 충족): N≥MIN_N · 시장중립 IC≥MIN_ABS_IC · 순열검정 통과 ·
+    **모든 워크포워드 블록에서 시장중립 IC>0**(시간 일관성=흉내낸 OOS).
 
-    유의성만이 아니라 효과크기 하한(MIN_ABS_IC)을 함께 요구해 대표본 노이즈를 배제한다.
+    시간 일관성 요건이 단일 레짐 아티팩트(DART 상승장 raw IC)를 배제한다 — 한 구간만 좋고
+    다른 구간에서 뒤집히면 탈락.
     """
     eligible = {}
     for src, m in src_res.items():
         if src == "PRICE" and not include_price:
             continue
         icn, n, p = m.get("ic_neutral"), m.get("n", 0), m.get("perm_p_neutral")
+        wf = m.get("wf_ics") or []
+        wf_ok = len(wf) >= 2 and all(x is not None and x > 0 for x in wf)
         if (icn is not None and icn >= MIN_ABS_IC and n >= MIN_N
-                and p is not None and p <= PERM_P_GATE):
+                and p is not None and p <= PERM_P_GATE and wf_ok):
             eligible[src] = icn
     if not eligible:
         return {"mode": "equal", "weights": {},
-                "rationale": f"시장중립 IC≥{MIN_ABS_IC}·유의 소스 없음 → 등가중 유지(대표본 노이즈 배제)."}
+                "rationale": (f"시장중립 IC≥{MIN_ABS_IC}·유의·전구간 일관 양수를 모두 만족하는 "
+                              "소스 없음 → 등가중 유지(단일레짐 아티팩트·대표본 노이즈 배제).")}
     total = sum(eligible.values())
     weights = {s: 0.0 for s in SCORING_SOURCES}
     for s, icn in eligible.items():
@@ -229,8 +274,9 @@ async def recompute(conn, *, asof_from, asof_to, universe) -> dict:
         src_res[src] = _source_metrics(triples)
         m = src_res[src]
         note = " (⚠️자기참조)" if src == "PRICE" else ""
-        print(f"  ▸ {src:8} N={m['n']:5}  raw-IC {_fmt(m['ic'])}  시장중립-IC {_fmt(m['ic_neutral'])}  "
-              f"hit {_fmt(m['hit_rate'], True)}  perm-p(중립) {m['perm_p_neutral']}{note}")
+        wf = "[" + ",".join(_fmt(x).strip() for x in (m.get("wf_ics") or [])) + "]"
+        print(f"  ▸ {src:8} N={m['n']:5}  중립-IC {_fmt(m['ic_neutral'])}  "
+              f"강신호-IC {_fmt(m['ic_neutral_strong'])}  워크포워드 {wf}  perm-p {m['perm_p_neutral']}{note}")
     return {"labels": len(labeled), "source_ic_20d": src_res}
 
 
