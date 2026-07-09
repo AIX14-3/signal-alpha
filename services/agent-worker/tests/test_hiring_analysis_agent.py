@@ -1,9 +1,9 @@
 """Hiring Tier-B agent: focus gate, LLM success/fallback, and the score-invariant
 round-trip through the orchestrator seam.
 
-The rule ``HiringAnalyzer`` is Phase 0 (direction="unknown", score=0.0), so the
-central assertion on every path is that the agent leaves score/direction untouched
-and only attaches focus *evidence*.
+채용 verdict 복원(2026-07) 후 규칙 ``HiringAnalyzer`` 는 실제 점수/방향을 낸다. 따라서 핵심
+불변식은 "score==0.0" 이 아니라 **LLM 포커스 보강이 규칙이 소유한 score/direction 을 움직이지
+않고 focus *근거*만 붙인다**는 것이다(각 테스트는 규칙-only 기준선과 비교한다).
 """
 
 import sys
@@ -70,6 +70,15 @@ def _input(rows):
     )
 
 
+async def _rules_baseline(rows):
+    """규칙 분석기(LLM classifier 없음)가 내는 (score, direction) — LLM 불변식 비교 기준선.
+
+    채용 verdict 복원 후 규칙이 실제 점수를 내므로, LLM 경로가 이 값을 그대로 보존하는지로
+    "LLM 은 점수를 안 움직인다" 불변식을 검증한다(옛 0.0 하드코딩 대체)."""
+    out = await HiringAnalysisAgent(config=CONFIG).analyze(_input(rows))
+    return out.score, out.direction
+
+
 class FakeClassifier:
     model = "fake-gemini"
 
@@ -96,8 +105,8 @@ class HiringAgentGateTest(unittest.IsolatedAsyncioTestCase):
         output = await agent.analyze(_input(_focus_rows()))
         self.assertEqual(output.analysis_source, "rules")
         self.assertIsNone(output.llm_model)
-        self.assertEqual(output.score, 0.0)
-        self.assertEqual(output.direction, "unknown")
+        # 채용 verdict 복원 후 규칙이 실제 점수를 낸다(LLM 없이도 결정론 산출) — 값은 존재.
+        self.assertIsInstance(output.score, float)
 
     async def test_empty_focus_skips_llm(self):
         # Rows with no classifiable title and no skills → focus empty → gate closed.
@@ -125,6 +134,7 @@ class HiringAgentGateTest(unittest.IsolatedAsyncioTestCase):
 
 class HiringAgentFocusTest(unittest.IsolatedAsyncioTestCase):
     async def test_llm_success_attaches_focus_without_moving_score(self):
+        base_score, base_dir = await _rules_baseline(_focus_rows())
         fake = FakeClassifier()
         agent = HiringAnalysisAgent(config=CONFIG, classifier=cast(HiringSkillClassifier, fake))
         output = await agent.analyze(_input(_focus_rows()))
@@ -134,8 +144,8 @@ class HiringAgentFocusTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(output.llm_model, "fake-gemini")
         self.assertEqual(output.prompt_ver, PROMPT_VERSION)
         # ★ score/direction owned by the rule analyzer — never moved by the LLM.
-        self.assertEqual(output.score, 0.0)
-        self.assertEqual(output.direction, "unknown")
+        self.assertEqual(output.score, base_score)
+        self.assertEqual(output.direction, base_dir)
         self.assertIsNone(output.llm_error)
         # Focus surfaces in the summary and as a round-trippable evidence item.
         self.assertIn("채용 포커스", output.summary)
@@ -146,6 +156,7 @@ class HiringAgentFocusTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(output.method_detail["hiring_focus"]["top_functions"])
 
     async def test_llm_failure_degrades_to_deterministic_focus(self):
+        base_score, base_dir = await _rules_baseline(_focus_rows())
         fake = FakeClassifier(fail=True)
         agent = HiringAnalysisAgent(config=CONFIG, classifier=cast(HiringSkillClassifier, fake))
         output = await agent.analyze(_input(_focus_rows()))
@@ -153,8 +164,8 @@ class HiringAgentFocusTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(output.analysis_source, "rules_fallback")
         self.assertIsNone(output.llm_model)
         self.assertIsNotNone(output.llm_error)
-        self.assertEqual(output.score, 0.0)
-        self.assertEqual(output.direction, "unknown")
+        self.assertEqual(output.score, base_score)  # LLM 실패해도 규칙 점수 불변
+        self.assertEqual(output.direction, base_dir)
         # Deterministic focus summary still present (skills / functions listed).
         self.assertIn("채용 포커스", output.summary)
         self.assertIn("요구 기술", output.summary)
@@ -177,12 +188,13 @@ class HiringAgentFocusTest(unittest.IsolatedAsyncioTestCase):
     async def test_focus_output_round_trips_score_invariant(self):
         # The orchestrator restores a SourceResult from the agent output; score and
         # direction must survive the round-trip unchanged (Alternative invariance).
+        base_score, base_dir = await _rules_baseline(_focus_rows())
         fake = FakeClassifier()
         agent = HiringAnalysisAgent(config=CONFIG, classifier=cast(HiringSkillClassifier, fake))
         output = await agent.analyze(_input(_focus_rows()))
         restored = _from_output(output)
-        self.assertEqual(restored.score, 0.0)
-        self.assertEqual(restored.direction, "unknown")
+        self.assertEqual(restored.score, base_score)  # 라운드트립에도 규칙 점수 불변
+        self.assertEqual(restored.direction, base_dir)
         self.assertEqual(restored.source, "HIRING")
         # The focus evidence item survives into the restored SourceResult.
         self.assertTrue(any(e.title == "채용 전략 포커스" for e in restored.evidence_items))
