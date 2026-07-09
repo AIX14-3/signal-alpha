@@ -86,10 +86,13 @@ test("watchlist page tracks change, not just bookmarks", () => {
     // 브리핑과 다른 정렬축: 절대 점수 세기가 아니라 변화량(Δ)이 큰 순.
     "getSignalsByStockIds(stockIds)",
     "Math.abs(a.item.change.score_delta ?? -1)",
-    // 소스별 게이지 — 브리핑 카드에 없는 정보(두 화면을 가르는 축).
-    "SourceGauges",
-    // 카드 그리드가 아니라 밀집 행.
-    'data-flow="watchlist-row"',
+    // 소스별 막대 그래프 — 브리핑 카드에 없는 정보(두 화면을 가르는 축).
+    "SourceBars",
+    // 막대는 0이 아니라 중립 50을 기준으로 갈린다. 50.0 을 방향색으로 칠하면 없는 방향이 생긴다.
+    "const NEUTRAL_SCORE = 50",
+    "const NEUTRAL_BAND = 0.5",
+    "Math.abs(offset) < NEUTRAL_BAND",
+    'data-flow="watchlist-card"',
   ].forEach((expected) => assertIncludes(source, expected, "watchlist page"));
 
   // Δ 가 null 이면 "변화 없음" 이 아니라 **비교 불가** 다 — 0 과 구분해야 한다.
