@@ -184,21 +184,35 @@ export function RetrospectiveBlock({
   }
 
   return (
-    <div className="mt-3 rounded-[12px] bg-surface-2 p-3" data-flow="journal-retrospective">
+    <div
+      className="mt-3.5 rounded-[14px] border p-3.5"
+      style={{ background: "#faf7ff", borderColor: "#eee7fb" }}
+      data-flow="journal-retrospective"
+    >
       <div className="flex items-center justify-between">
-        <span className="text-[13px] font-bold">
+        <span className="text-[13px] font-bold text-sky-deep">
           회고 <span className="font-normal text-muted">— 결과 확인 후 복기</span>
         </span>
-        {ready && !editing && (
-          <button
-            type="button"
-            data-flow="journal-retro-edit"
-            onClick={beginEdit}
-            className="text-[12.5px] font-semibold text-sky-deep"
-          >
-            {hasRetro ? "수정" : "회고 남기기"}
-          </button>
-        )}
+        <div className="flex items-center gap-2.5">
+          {hasRetro && !editing && journal.retro_outcome_class && (
+            <span
+              className={`pill flat text-[11px] font-bold ${RETRO_TONE[journal.retro_outcome_class] ?? ""}`}
+              style={{ padding: "2px 10px" }}
+            >
+              {RETRO_LABEL[journal.retro_outcome_class] ?? journal.retro_outcome_class}
+            </span>
+          )}
+          {ready && !editing && (
+            <button
+              type="button"
+              data-flow="journal-retro-edit"
+              onClick={beginEdit}
+              className="text-[12.5px] font-semibold text-sky-deep"
+            >
+              {hasRetro ? "수정" : "회고 남기기"}
+            </button>
+          )}
+        </div>
       </div>
 
       {!ready ? (
@@ -241,15 +255,7 @@ export function RetrospectiveBlock({
           <p className="text-[11px] text-muted">기록·학습을 위한 복기이며 성과 평가가 아닙니다.</p>
         </div>
       ) : hasRetro ? (
-        <div className="mt-1.5 space-y-1.5">
-          {journal.retro_outcome_class && (
-            <span
-              className={`pill flat text-[11.5px] font-bold ${RETRO_TONE[journal.retro_outcome_class] ?? ""}`}
-              style={{ padding: "2px 9px" }}
-            >
-              {RETRO_LABEL[journal.retro_outcome_class] ?? journal.retro_outcome_class}
-            </span>
-          )}
+        <div className="mt-1.5">
           {journal.retrospective_memo && (
             <p className="whitespace-pre-wrap text-[13px] text-navy-soft">{journal.retrospective_memo}</p>
           )}
