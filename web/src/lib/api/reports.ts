@@ -107,6 +107,23 @@ export type PatentDetail = {
   filing_trend: PatentFilingTrendPoint[]; // 장기 출원 추이(출원 연도별 건수)
 };
 
+// 채용 공고 1건(표시 전용, score_breakdown.HIRING.hiring.postings).
+// closing_date 는 수집기가 정규화한 ISO 날짜(없으면 null). is_always_open=true 는 마감일 없는
+// 상시채용 — 만료로 표시하면 안 된다. 경과일/만료 판정은 화면이 오늘 날짜로 계산한다.
+export type HiringPosting = {
+  job_title?: string | null;
+  posting_date?: string | null;
+  closing_date?: string | null;
+  closing_date_display?: string | null;
+  is_always_open?: boolean | null;
+  source_url?: string | null;
+};
+
+// 채용 표시 전용 구조화 데이터(score_breakdown.HIRING.hiring). HIRING 소스에만 존재.
+export type HiringDetail = {
+  postings: HiringPosting[];
+};
+
 export type SourceDetail = {
   stock: { stock_code: string; stock_name: string | null };
   source: SourceKey;
@@ -118,6 +135,7 @@ export type SourceDetail = {
   narrative_points?: string[] | null;
   valuation?: ReportValuation | null;
   patent?: PatentDetail | null;
+  hiring?: HiringDetail | null;
   items: SourceDetailItem[];
   notice: string;
 };

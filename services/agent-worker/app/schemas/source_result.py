@@ -50,6 +50,22 @@ class PatentMeta:
 
 
 @dataclass(frozen=True)
+class HiringMeta:
+    """HIRING 소스의 화면용 구조화 데이터(점수/방향에는 영향 없음, 표시 전용).
+
+    채용 공고는 게시 후 마감일까지만 유효하므로 두 날짜 축을 함께 보여준다:
+      - ``postings``: 최근 공고 목록(게시일 최신순, 표시용 상위 N건). 각 원소 =
+        {job_title, posting_date, closing_date, closing_date_display, is_always_open, source_url}.
+        ``closing_date`` 는 수집기가 정규화한 ISO 날짜(없으면 None), ``is_always_open`` 은
+        상시채용 여부(마감일이 없는 정상 상태 — "만료"로 표시하면 안 된다).
+    persistence 가 agent_results.method_detail.hiring 으로 실어 score_breakdown.HIRING
+    까지 흐른다(새 컬럼/마이그 없음). PATENT 의 patent_meta 선례와 동형.
+    """
+
+    postings: list[dict] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class SourceResult:
     """Per-source analysis result ``build_source_signal`` consumes.
 
@@ -78,6 +94,10 @@ class SourceResult:
     # every other source. score/direction 에는 영향 없음(표시 전용) — persistence 가
     # method_detail.patent 로 실어 score_breakdown.PATENT 까지 흐른다.
     patent_meta: "PatentMeta | None" = None
+    # HIRING 표시 전용 구조화 데이터(최근 공고의 게시일·마감일). None for every other
+    # source. score/direction 에는 영향 없음 — persistence 가 method_detail.hiring 으로
+    # 실어 score_breakdown.HIRING 까지 흘린다(patent_meta 동형).
+    hiring_meta: "HiringMeta | None" = None
     # LLM provenance: model name when an LLM contributed to this source's result
     # (e.g. DataLab polarity classification). None for pure-rule output. Flows to
     # agent_results.llm_model in persistence.

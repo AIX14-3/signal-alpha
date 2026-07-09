@@ -63,6 +63,9 @@ class NormalizedSourceResult:
     # PATENT 표시 전용 구조화 데이터(최근 공개 특허 + 장기 출원 추이). None for 그 외 소스.
     # score_breakdown.PATENT 에 그대로 실려 read API·웹으로 흐른다(valuation 동형).
     patent_meta: dict[str, Any] | None = None
+    # HIRING 표시 전용 구조화 데이터(최근 공고의 게시일·마감일). None for 그 외 소스.
+    # score_breakdown.HIRING 에 그대로 실린다(patent_meta 동형).
+    hiring_meta: dict[str, Any] | None = None
 
 
 class AggregateSignalTaskHandler:
@@ -408,6 +411,7 @@ def _normalize_source_result(row: dict[str, Any]) -> NormalizedSourceResult | No
         fine_source=_fine_source_from(row, detail) or source,
         data_age_days=_data_age_days(row.get("data_age_days")),
         patent_meta=_patent_meta_summary(detail),
+        hiring_meta=_hiring_meta_summary(detail),
     )
 
 
@@ -415,6 +419,12 @@ def _patent_meta_summary(detail: dict[str, Any]) -> dict[str, Any] | None:
     """method_detail.patent(최근 공개 특허 + 장기 출원 추이)를 그대로 노출. 없으면 None."""
     patent = detail.get("patent")
     return dict(patent) if isinstance(patent, dict) else None
+
+
+def _hiring_meta_summary(detail: dict[str, Any]) -> dict[str, Any] | None:
+    """method_detail.hiring(최근 공고의 게시일·마감일)을 그대로 노출. 없으면 None."""
+    hiring = detail.get("hiring")
+    return dict(hiring) if isinstance(hiring, dict) else None
 
 
 def _data_age_days(value: Any) -> int:
@@ -500,6 +510,7 @@ def _blend_group(
         # 묶인 행 중 가장 오래된 나이(가장 보수적인 신선도)를 대표값으로.
         data_age_days=max(r.data_age_days for r in group),
         patent_meta=next((r.patent_meta for r in group if r.patent_meta is not None), None),
+        hiring_meta=next((r.hiring_meta for r in group if r.hiring_meta is not None), None),
     )
 
 
@@ -709,6 +720,8 @@ def _score_breakdown(results: list[NormalizedSourceResult]) -> dict[str, dict[st
             **({"valuation": result.valuation} if result.valuation is not None else {}),
             # PATENT 표시 전용(최근 공개 특허 + 장기 출원 추이). None 이면 키 생략(그 외 소스).
             **({"patent": result.patent_meta} if result.patent_meta is not None else {}),
+            # HIRING 표시 전용(최근 공고의 게시일·마감일). None 이면 키 생략(그 외 소스).
+            **({"hiring": result.hiring_meta} if result.hiring_meta is not None else {}),
         }
     return breakdown
 

@@ -49,7 +49,13 @@ from app.orchestrator.queue.task_types import (
     ENRICH_HIRING,
     ENRICH_PATENT,
 )
-from app.schemas.source_result import EvidenceItem, ReportMeta, SourceResult
+from app.schemas.source_result import (
+    EvidenceItem,
+    HiringMeta,
+    PatentMeta,
+    ReportMeta,
+    SourceResult,
+)
 from app.utils.hash_utils import make_source_hash
 from signal_alpha_data_access.repositories import (
     NormalizationRepository,
@@ -899,7 +905,33 @@ def _from_output(output: SourceAgentOutput) -> SourceResult:
         prompt_ver=output.prompt_ver,
         llm_error=output.llm_error,
         needs_review=output.needs_review,
+        # 표시 전용 구조화 데이터(_to_output 이 method_detail 에 넣어둔 것). 복원하지 않으면
+        # persistence 가 보는 SourceResult 에서 사라져 score_breakdown 까지 못 간다.
+        patent_meta=_restore_patent_meta(detail),
+        hiring_meta=_restore_hiring_meta(detail),
     )
+
+
+def _restore_patent_meta(detail: dict[str, Any]) -> PatentMeta | None:
+    """method_detail.patent → PatentMeta. 없거나 모양이 다르면 None(점수 경로 무영향)."""
+    block = detail.get("patent")
+    if not isinstance(block, dict):
+        return None
+    recent = block.get("recent_publications")
+    trend = block.get("filing_trend")
+    return PatentMeta(
+        recent_publications=list(recent) if isinstance(recent, list) else [],
+        filing_trend=list(trend) if isinstance(trend, list) else [],
+    )
+
+
+def _restore_hiring_meta(detail: dict[str, Any]) -> HiringMeta | None:
+    """method_detail.hiring → HiringMeta. 없거나 모양이 다르면 None(점수 경로 무영향)."""
+    block = detail.get("hiring")
+    if not isinstance(block, dict):
+        return None
+    postings = block.get("postings")
+    return HiringMeta(postings=list(postings) if isinstance(postings, list) else [])
 
 
 def analysis_task_context(as_of: str) -> dict[str, Any]:

@@ -112,11 +112,13 @@ export const SOURCE_META: Record<
   price: { label: "주식정보", icon: "📈", hint: "시세·재무 지표" },
   dart: { label: "DART", icon: "📑", hint: "전자공시" },
   hiring: { label: "채용공고", icon: "🧑‍💼", hint: "채용 동향" },
-  datalab: { label: "네이버 키워드", icon: "🔎", hint: "검색 관심도" },
+  datalab: { label: "검색량", icon: "🔎", hint: "검색 관심도" },
   patent: { label: "특허", icon: "💡", hint: "특허 출원 동향" },
   report: { label: "증권사 리포트", icon: "🏦", hint: "애널리스트 의견" },
 };
 
+// 표시 순서 — 시장이 이미 반영한 것(주가·리포트·공시)을 앞에, 아직 가격에 덜 반영된
+// 대체데이터 흔적(검색량·특허·채용)을 뒤에 둔다.
 export const SOURCE_ORDER: (
   | "price"
   | "dart"
@@ -124,7 +126,7 @@ export const SOURCE_ORDER: (
   | "datalab"
   | "patent"
   | "report"
-)[] = ["price", "dart", "hiring", "datalab", "patent", "report"];
+)[] = ["price", "report", "dart", "datalab", "patent", "hiring"];
 
 export function sourceLabel(source: string): string {
   return SOURCE_META[source]?.label ?? source;
@@ -132,6 +134,61 @@ export function sourceLabel(source: string): string {
 
 export function won(amount: number): string {
   return `₩${amount.toLocaleString("ko-KR")}`;
+}
+
+// 요약 화면(리포트 헤더·서류철 카드)의 점수 표기 — 소수 첫째 자리에서 **버림**한다.
+// 반올림하지 않는 이유: 68.05 를 68.1 로 올리면 없는 정밀도를 만들어 낸다.
+// 상세 보고서는 원본 점수를 그대로 노출하므로 이 함수를 쓰지 않는다.
+//
+// toFixed 로 한 번 걸러 낸 뒤 버림하는 건 방어다. `score * 10` 이 정수 바로 아래로 떨어지면
+// (이진 부동소수점 표현 오차) 버림이 한 칸 내려간다. 0~100 을 0.001 간격으로 전수 확인한
+// 범위에서는 실제 반례가 없었지만, 점수 소수 자릿수는 집계기 구현에 달려 있어 고정하지 않는다.
+export function scoreText(score: number | null | undefined): string {
+  if (score == null || !Number.isFinite(score)) return "–";
+  const truncated = Math.floor(Number((score * 10).toFixed(6))) / 10;
+  // 정수는 소수점을 붙이지 않는다(70.0 → 70).
+  return Number.isInteger(truncated) ? String(truncated) : truncated.toFixed(1);
+}
+
+/** 오늘(KST) 자정 기준 Date. 경과일은 시각이 아니라 '날짜' 단위로 세야 한다. */
+function todayKST(): Date {
+  const now = new Date();
+  const kst = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Seoul" }));
+  return new Date(kst.getFullYear(), kst.getMonth(), kst.getDate());
+}
+
+/** "YYYY-MM-DD" → 로컬 자정 Date. 파싱 실패는 null. `new Date("2026-07-09")`는 UTC 자정이라 쓰지 않는다. */
+function parseISODate(value: string | null | undefined): Date | null {
+  if (!value) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  if (!m) return null;
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+const DAY_MS = 86_400_000;
+
+/** 기준일로부터 오늘까지 경과한 일수(음수 = 미래). 파싱 실패는 null. */
+export function daysSince(date: string | null | undefined): number | null {
+  const d = parseISODate(date);
+  if (!d) return null;
+  return Math.round((todayKST().getTime() - d.getTime()) / DAY_MS);
+}
+
+/** 경과일을 사람이 읽는 표기로. "오늘" / "어제" / "N일 전". 미래면 "D-N". */
+export function relativeDayLabel(date: string | null | undefined): string | null {
+  const n = daysSince(date);
+  if (n === null) return null;
+  if (n < 0) return `D${n}`; // 미래(예: 마감일) — D-3 형태
+  if (n === 0) return "오늘";
+  if (n === 1) return "어제";
+  return `${n}일 전`;
+}
+
+/** 마감일이 지났는지. 마감일 당일은 아직 유효(만료 아님). 날짜 없음/파싱실패는 false. */
+export function isExpired(closingDate: string | null | undefined): boolean {
+  const n = daysSince(closingDate);
+  return n !== null && n > 0;
 }
 
 // DB 타임스탬프(UTC ISO)를 KST 로 표기. 원문을 그대로 slice 하면 UTC 시각이 로컬처럼

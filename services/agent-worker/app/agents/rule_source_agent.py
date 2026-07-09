@@ -59,6 +59,14 @@ def _to_output(result: SourceResult, prompt_ver: str) -> SourceAgentOutput:
     }
     if any(value is not None for value in attention.values()):
         method_detail["attention"] = attention
+    # 표시 전용 구조화 데이터(PATENT 공개 특허·출원 추이 / HIRING 공고 게시일·마감일).
+    # 이 왕복(_to_output → _to_source_result)이 싣지 않으면 persistence 가 보는
+    # SourceResult 에서 사라져 score_breakdown 까지 절대 도달하지 못한다.
+    # 점수·방향과 무관하며, 값이 없는 소스는 키 자체를 남기지 않아 기존 모양이 그대로다.
+    if result.patent_meta is not None:
+        method_detail["patent"] = asdict(result.patent_meta)
+    if result.hiring_meta is not None:
+        method_detail["hiring"] = asdict(result.hiring_meta)
     return SourceAgentOutput(
         source=result.source,
         stock_code=result.stock_code,

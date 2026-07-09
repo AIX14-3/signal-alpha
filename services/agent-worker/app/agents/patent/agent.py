@@ -227,6 +227,11 @@ def _base_detail(rule: SourceResult) -> dict[str, Any]:
     detail: dict[str, Any] = {"data_status": rule.data_status}
     if rule.evidence_items:
         detail["evidence_items"] = [asdict(item) for item in rule.evidence_items]
+    # 표시 전용 특허 데이터(최근 공개 특허 + 장기 출원 추이). 이 왕복이 싣지 않으면
+    # 복원된 SourceResult 에서 사라져 score_breakdown.PATENT.patent 가 영영 비어 있다.
+    # 점수·방향과 무관(RuleSourceAgent._to_output 과 동일 규약).
+    if rule.patent_meta is not None:
+        detail["patent"] = asdict(rule.patent_meta)
     return detail
 
 

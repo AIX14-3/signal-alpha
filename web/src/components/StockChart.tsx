@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AreaSeries,
   CandlestickSeries,
   ColorType,
   createChart,
+  type IChartApi,
+  type ISeriesApi,
   LineSeries,
 } from "lightweight-charts";
 import { LineChart } from "lucide-react";
@@ -14,6 +16,9 @@ import { getReportPrices, type PriceSeries } from "@/lib/apiClient";
 // item 6 — 리포트 상단 주가 차트 + 시세. lightweight-charts. SSR 회피 위해 상위에서
 // next/dynamic(ssr:false)로 로드한다. 차트 모양(영역/라인/캔들)과 기간(분/일/월/년)을
 // 사용자가 버튼으로 유동적으로 바꿀 수 있다. 실패 시 결정론 합성 시세로 폴백(is_demo).
+//
+// 갱신: 서버는 호출 때마다 Yahoo 를 조회한다(캐시 없음). 장중에만 주기적으로 다시 받아
+// 마지막 봉과 현재가를 갱신한다. 차트 인스턴스는 재생성하지 않는다(확대/스크롤 보존).
 const TFS: [string, string][] = [
   ["min", "분"],
   ["day", "일"],
@@ -28,30 +33,103 @@ const CHART_TYPES: [ChartType, string][] = [
   ["candle", "캔들"],
 ];
 
-const VIOLET = "#7c3aed";
-// 캔들은 한국 시장 관례(상승=빨강, 하락=파랑)를 따른다.
+// 시세는 한국 시장 관례(상승=빨강, 하락=파랑)를 따른다. 캔들 색과 등락 표기에 함께 쓴다.
+// (제품 전반의 방향 의미색 up=초록/down=빨강과는 별개 — 여기는 '시세' 문맥이다.)
 const KR_UP = "#ef4444";
 const KR_DOWN = "#3b82f6";
+
+// 분봉은 자주, 그 외는 느슨하게. 장 종료 후에는 값이 안 변하므로 폴링 자체를 멈춘다.
+const REFRESH_MS: Record<string, number> = { min: 20_000, day: 60_000, month: 300_000, year: 300_000 };
+
+/** KRX 정규장(평일 09:00–15:35 KST) 여부. 장 밖에서는 폴링하지 않는다(무의미한 호출·쿼터 낭비). */
+function isMarketOpen(now = new Date()): boolean {
+  const kst = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Seoul" }));
+  const day = kst.getDay();
+  if (day === 0 || day === 6) return false;
+  const minutes = kst.getHours() * 60 + kst.getMinutes();
+  return minutes >= 9 * 60 && minutes <= 15 * 60 + 35;
+}
+
+function toSeriesData(bars: PriceSeries["bars"], chartType: ChartType) {
+  if (chartType === "candle") return bars as never;
+  return bars.map((b) => ({ time: b.time, value: b.close })) as never;
+}
 
 export function StockChart({ stockCode, stockName }: { stockCode: string; stockName?: string | null }) {
   const [tf, setTf] = useState("day");
   const [chartType, setChartType] = useState<ChartType>("area");
   const [data, setData] = useState<PriceSeries | null>(null);
+  const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
   const boxRef = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<IChartApi | null>(null);
+  const seriesRef = useRef<ISeriesApi<"Area" | "Line" | "Candlestick"> | null>(null);
+  // 기간·차트 모양을 바꾼 직후 한 번만 화면에 맞춘다. 폴링 갱신 때 맞추면 사용자의 확대가 풀린다.
+  const shouldFitRef = useRef(true);
 
+  const fetchPrices = useCallback(
+    async (signal?: { aborted: boolean }) => {
+      try {
+        const d = await getReportPrices(stockCode, tf);
+        if (signal?.aborted) return;
+        setData(d);
+        setUpdatedAt(new Date());
+      } catch {
+        if (!signal?.aborted) setData(null);
+      }
+    },
+    [stockCode, tf],
+  );
+
+  // 최초 로드 + 기간 변경 시 재조회.
   useEffect(() => {
-    let alive = true;
-    getReportPrices(stockCode, tf)
-      .then((d) => alive && setData(d))
-      .catch(() => alive && setData(null));
+    const token = { aborted: false };
+    shouldFitRef.current = true;
+    void fetchPrices(token);
     return () => {
-      alive = false;
+      token.aborted = true;
     };
-  }, [stockCode, tf]);
+  }, [fetchPrices]);
 
+  // 장중 주기 갱신. 탭이 백그라운드면 멈추고, 돌아오면 즉시 한 번 받아온다.
+  useEffect(() => {
+    const period = REFRESH_MS[tf] ?? 60_000;
+    let timer: number | undefined;
+
+    const tick = () => {
+      if (document.visibilityState !== "visible" || !isMarketOpen()) return;
+      void fetchPrices();
+    };
+    const start = () => {
+      window.clearInterval(timer);
+      timer = window.setInterval(tick, period);
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") {
+        tick();
+        start();
+      } else {
+        window.clearInterval(timer);
+      }
+    };
+
+    start();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [tf, fetchPrices]);
+
+  // 라인/영역도 시세 관례를 따라 등락 색으로 그린다(상승 빨강 / 하락 파랑).
+  // 생성 효과는 ref 로 읽는다 — 색을 의존성에 넣으면 등락이 뒤집힐 때마다 차트가 재생성된다.
+  const trendColor = (data?.change ?? 0) >= 0 ? KR_UP : KR_DOWN;
+  const trendColorRef = useRef(trendColor);
+  trendColorRef.current = trendColor;
+
+  // 차트 인스턴스 생성 — 기간/모양이 바뀔 때만. 데이터 갱신으로는 재생성하지 않는다.
   useEffect(() => {
     const el = boxRef.current;
-    if (!el || !data) return;
+    if (!el) return;
     const chart = createChart(el, {
       height: 260,
       autoSize: true,
@@ -67,42 +145,68 @@ export function StockChart({ stockCode, stockName }: { stockCode: string; stockN
 
     if (chartType === "candle") {
       // 캔들 — OHLC 전체. 한국 관례 색(상승 빨강 / 하락 파랑).
-      const series = chart.addSeries(CandlestickSeries, {
+      seriesRef.current = chart.addSeries(CandlestickSeries, {
         upColor: KR_UP,
         downColor: KR_DOWN,
         borderVisible: false,
         wickUpColor: KR_UP,
         wickDownColor: KR_DOWN,
       });
-      series.setData(data.bars as never);
     } else if (chartType === "line") {
-      // 라인 — 브랜드 바이올렛 종가 라인(채움 없음).
-      const series = chart.addSeries(LineSeries, {
-        color: VIOLET,
+      // 라인 — 등락 색 종가 라인(채움 없음).
+      seriesRef.current = chart.addSeries(LineSeries, {
+        color: trendColorRef.current,
         lineWidth: 2,
         priceLineVisible: false,
-        crosshairMarkerBorderColor: VIOLET,
-        crosshairMarkerBackgroundColor: "#a855f7",
       });
-      series.setData(data.bars.map((b) => ({ time: b.time, value: b.close })) as never);
     } else {
-      // 영역(기본) — 토스식. 바이올렛 종가 라인 + 상단→하단 그라데이션 채움.
-      const series = chart.addSeries(AreaSeries, {
-        lineColor: VIOLET,
-        topColor: "rgba(124,58,237,.28)",
-        bottomColor: "rgba(124,58,237,.02)",
+      // 영역(기본) — 등락 색 종가 라인 + 상단→하단 그라데이션 채움.
+      const rgb = trendColorRef.current === KR_UP ? "239,68,68" : "59,130,246";
+      seriesRef.current = chart.addSeries(AreaSeries, {
+        lineColor: trendColorRef.current,
+        topColor: `rgba(${rgb},.28)`,
+        bottomColor: `rgba(${rgb},.02)`,
         lineWidth: 2,
         priceLineVisible: false,
-        crosshairMarkerBorderColor: VIOLET,
-        crosshairMarkerBackgroundColor: "#a855f7",
       });
-      series.setData(data.bars.map((b) => ({ time: b.time, value: b.close })) as never);
     }
-    chart.timeScale().fitContent();
-    return () => chart.remove();
-  }, [data, tf, chartType]);
+
+    chartRef.current = chart;
+    shouldFitRef.current = true;
+    return () => {
+      chart.remove();
+      chartRef.current = null;
+      seriesRef.current = null;
+    };
+  }, [tf, chartType]);
+
+  // 데이터 주입 — 시리즈만 갱신한다(차트 재생성 없음 → 확대/스크롤 유지).
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!series || !data) return;
+    series.setData(toSeriesData(data.bars, chartType));
+
+    // 등락 방향에 따라 선/채움 색을 시세 관례로 맞춘다(캔들은 봉마다 색이 달라 제외).
+    if (chartType === "line") {
+      series.applyOptions({ color: trendColor, crosshairMarkerBorderColor: trendColor } as never);
+    } else if (chartType === "area") {
+      const rgb = trendColor === KR_UP ? "239,68,68" : "59,130,246";
+      series.applyOptions({
+        lineColor: trendColor,
+        topColor: `rgba(${rgb},.28)`,
+        bottomColor: `rgba(${rgb},.02)`,
+        crosshairMarkerBorderColor: trendColor,
+      } as never);
+    }
+
+    if (shouldFitRef.current) {
+      chartRef.current?.timeScale().fitContent();
+      shouldFitRef.current = false;
+    }
+  }, [data, chartType, trendColor]);
 
   const up = (data?.change ?? 0) >= 0;
+  const live = isMarketOpen();
 
   return (
     <section className="glass relative mt-6 p-5" data-section="stock-chart">
@@ -111,14 +215,21 @@ export function StockChart({ stockCode, stockName }: { stockCode: string; stockN
       </span>
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <div className="text-[13px] text-muted">{stockName ?? stockCode} 시세</div>
+          <div className="flex items-center gap-2 text-[13px] text-muted">
+            {stockName ?? stockCode} 시세
+            {live && !data?.is_demo && (
+              <span className="inline-flex items-center gap-1 text-[11.5px] font-semibold text-[#10b981]">
+                <span className="live-dot" aria-hidden="true" /> 장중 갱신
+              </span>
+            )}
+          </div>
           <div className="mt-0.5 flex items-baseline gap-2">
             <span className="text-[28px] font-extrabold leading-none">
               {data ? data.last_price.toLocaleString("ko-KR") : "–"}
               <span className="ml-1 text-[13px] font-semibold text-muted">원</span>
             </span>
             {data && (
-              <span className={`text-[14px] font-bold ${up ? "text-[#10b981]" : "text-[#ef4444]"}`}>
+              <span className="text-[14px] font-bold" style={{ color: up ? KR_UP : KR_DOWN }}>
                 {up ? "▲" : "▼"} {Math.abs(data.change).toLocaleString("ko-KR")} (
                 {Math.abs(data.change_pct)}%)
               </span>
@@ -164,7 +275,11 @@ export function StockChart({ stockCode, stockName }: { stockCode: string; stockN
       {data?.is_demo ? (
         <p className="mt-2 text-[11.5px] text-muted">* 데모용 예시 시세입니다(실데이터 아님).</p>
       ) : data ? (
-        <p className="mt-2 text-[11.5px] text-muted">출처: Yahoo Finance · 지연 시세</p>
+        <p className="mt-2 text-[11.5px] text-muted">
+          출처: Yahoo Finance · 지연 시세
+          {updatedAt && ` · ${updatedAt.toLocaleTimeString("ko-KR")} 갱신`}
+          {!live && " · 장 마감(갱신 중지)"}
+        </p>
       ) : null}
     </section>
   );
