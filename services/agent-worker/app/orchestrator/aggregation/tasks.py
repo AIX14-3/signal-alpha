@@ -503,6 +503,18 @@ def _blended_summaries(summaries: list[str]) -> list[str]:
     return unique[:_MAX_BLENDED_SUMMARIES]
 
 
+def _join_sentences(summaries: list[str]) -> str | None:
+    """완결된 문장들을 글로 읽히게 잇는다.
+
+    예전엔 " / " 로 이어 붙여 사람이 읽는 글이 아니라 로그처럼 보였다. 마침표로 끝나는
+    문장은 그대로 이어 붙이고, 그렇지 않은 조각만 마침표를 붙인다.
+    """
+    if not summaries:
+        return None
+    sentences = [text if text.endswith((".", "!", "?", "다", "요")) else f"{text}." for text in summaries]
+    return " ".join(sentences)
+
+
 def _blend_group(
     source: str,
     group: list[NormalizedSourceResult],
@@ -515,6 +527,7 @@ def _blend_group(
         risk_flags.extend(r.risk_flags)
         event_ids.extend(r.source_signal_event_ids)
     summaries = _blended_summaries([r.summary for r in group if r.summary])
+    blended_summary = _join_sentences(summaries)
     return NormalizedSourceResult(
         source=source,
         analysis_result_id=group[0].analysis_result_id,
@@ -525,7 +538,7 @@ def _blend_group(
         data_status=_blend_status([r.data_status for r in group]),
         needs_review=any(r.needs_review for r in group),
         risk_flags=_dedupe(risk_flags),
-        summary=" / ".join(summaries) if summaries else None,
+        summary=blended_summary,
         source_signal_event_ids=sorted(set(event_ids)),
         valuation=next((r.valuation for r in group if r.valuation is not None), None),
         fine_source=source,
@@ -880,10 +893,18 @@ def _evidence_point(results: list[NormalizedSourceResult], direction: str) -> st
 
 
 def _evidence_items(results: list[NormalizedSourceResult], direction: str) -> list[dict[str, Any]]:
+    """해당 방향으로 판정된 소스만. 위험 플래그는 함께 실어 보낸다.
+
+    긍정 근거로 실린 소스에도 데이터 품질 주의(예: 관측 기간이 짧음)가 붙을 수 있다.
+    그 플래그를 여기서 함께 노출해야, 같은 소스를 '주의 근거' 에 또 싣지 않아도 된다.
+    """
     return [
         {
             "source": result.source,
+            # 방향은 표시 계층이 문장을 만들 때 필요하다("… 긍정 방향으로 읽힙니다").
+            "direction": result.direction,
             "summary": result.summary,
+            "risk_flags": result.risk_flags,
             "agent_result_id": result.agent_result_id,
             "source_signal_event_ids": result.source_signal_event_ids,
         }
@@ -897,16 +918,24 @@ def _caution_items(
     failed: list[NormalizedSourceResult],
     missing_sources: list[str],
 ) -> list[dict[str, Any]]:
+    """주의 근거 — **긍정 근거에 실린 소스는 제외**한다(한 소스는 한쪽에만).
+
+    예전에는 방향이 positive 여도 risk_flags 나 needs_review 가 있으면 여기에도 실려,
+    같은 소스가 '긍정 방향 근거' 와 '주의 근거' 에 동시에 나타났다. 읽는 사람은 이 소스가
+    호재인지 악재인지 알 수 없다. 방향이 판정을 소유하고, 품질 주의는 그 카드에 따라간다.
+    """
     items = [
         {
             "source": result.source,
+            "direction": result.direction,
             "summary": result.summary,
             "risk_flags": result.risk_flags,
             "agent_result_id": result.agent_result_id,
             **({"valuation": result.valuation} if result.valuation is not None else {}),
         }
         for result in [*available, *failed]
-        if result.needs_review or result.risk_flags or result.direction in {"negative", "mixed"}
+        if result.direction != "positive"
+        and (result.needs_review or result.risk_flags or result.direction in {"negative", "mixed"})
     ]
     items.extend({"source": source, "risk_flags": ["missing_source"]} for source in missing_sources)
     return items

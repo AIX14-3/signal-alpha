@@ -431,7 +431,16 @@ _RISK_FLAG_KO = {
     # 증권사 리포트(REPORT)
     "no_valuation_signal": "밸류에이션 수치를 추출할 만한 리포트가 없습니다.",
     "valuation_review_required": "일부 리포트는 밸류에이션 검토가 필요해 원문과 함께 확인이 권장됩니다.",
+    "implied_multiple_missing": "리포트에서 적용 배수를 확인하지 못해 목표주가의 근거가 불완전합니다.",
+    # 파이프라인 품질
+    "failed_source": "해당 데이터를 분석하지 못해 이번 집계에서 제외했습니다.",
+    "analyzer_error": "분석 중 오류가 발생해 이번 집계에서 제외했습니다.",
+    "score_out_of_range": "점수 규약을 벗어난 값이라 이번 집계에서 제외했습니다.",
 }
+
+# 같은 뜻을 다른 코드로 두 번 알리는 조합. 문구를 하나로 맞추면 중복 제거에서 함께 접힌다.
+# (DART 는 정정공시를 `correction_disclosure` 와 `review_required:correction` 둘 다로 표시한다.)
+_CORRECTION_TEXT = _RISK_FLAG_KO["correction_disclosure"]
 
 # DART 는 검토 필요 공시를 `review_required:{event_type}` 형태로 표시한다(접두형).
 _REVIEW_REQUIRED_PREFIX = "review_required:"
@@ -460,11 +469,34 @@ def _risk_flag_ko(flag: Any) -> str:
     known = _RISK_FLAG_KO.get(text)
     if known:
         return known
+    if text == "review_required":  # DART LLM 경로가 접미사 없이 내보내는 경우
+        return "확인이 필요한 공시가 있어 원문을 함께 보시는 것이 좋습니다."
     if text.startswith(_REVIEW_REQUIRED_PREFIX):
         event_type = text[len(_REVIEW_REQUIRED_PREFIX) :]
+        if event_type == "correction":
+            # `correction_disclosure` 와 같은 사실을 가리킨다 → 같은 문장으로 접는다.
+            return _CORRECTION_TEXT
         label = _DART_EVENT_TYPE_KO.get(event_type, event_type)
         return f"{label} 중 확인이 필요한 항목이 있어 원문을 함께 보시는 것이 좋습니다."
     return "확인이 필요한 항목이 있습니다."
+
+
+def _risk_flags_ko(flags: Any) -> list[str]:
+    """플래그 목록 → 한국어 문장 목록. **중복 문장은 한 번만** 노출한다(순서 유지).
+
+    같은 카드에 "정정 공시가 포함되어…" 가 두 번, 밸류에이션 검토 문구가 두 번 뜨는 일이 있었다
+    (분석기가 이벤트마다 같은 플래그를 쌓고, 서로 다른 코드가 같은 뜻을 가리킨다).
+    """
+    if not isinstance(flags, list):
+        return []
+    seen: set[str] = set()
+    texts: list[str] = []
+    for flag in flags:
+        text = _risk_flag_ko(flag)
+        if text and text not in seen:
+            seen.add(text)
+            texts.append(text)
+    return texts
 
 # 기계식 PRICE 요약("… 방향 positive, 점수 +0.400.") 판별용.
 _PRICE_TERSE_RE = re.compile(r"방향\s+\w+\s*,\s*점수")
@@ -472,6 +504,14 @@ _PRICE_TERSE_RE = re.compile(r"방향\s+\w+\s*,\s*점수")
 _DART_TERSE_RE = re.compile(r"피처\s*산출|학습형\s*메타러너")
 # 기계식 REPORT 요약("… 밸류에이션 fact 기준 … 소스 간 일치도와 원문 근거 확인이 필요합니다.") 판별용.
 _REPORT_TERSE_RE = re.compile(r"밸류에이션\s*fact|소스\s*간\s*일치도")
+# 기계식 DATALAB 요약("… 검색 트렌드 382건 분석: 방향 positive, 점수 +0.569 (모멘텀 …)") 판별용.
+_DATALAB_TERSE_RE = re.compile(r"검색\s*트렌드.*방향\s+\w+|스파이크\s")
+# 기계식 PATENT 요약("… 최근 900일 공개 특허 13305건 분석: 방향 mixed, 점수 -0.067.") 판별용.
+_PATENT_TERSE_RE = re.compile(r"공개\s*특허\s*\d+건\s*분석|출원\s*지표\s*산출")
+# 기계식 HIRING 요약("활성 채용공고 4건(유효창 180일·대기업, 감쇠활동 1.66) → 방향 negative, 점수 -0.217.")
+_HIRING_TERSE_RE = re.compile(r"활성\s*채용공고|유효창|감쇠활동|방향\s+\w+,\s*점수")
+# 내부 테이블명이 그대로 노출되던 no-data 문구.
+_HIRING_NO_DATA_RE = re.compile(r"hiring_raw_details|분석할\s*채용\s*데이터가\s*없습니다")
 
 
 def _humanize_price_summary(detail: dict[str, Any]) -> str | None:
@@ -487,16 +527,92 @@ def _humanize_price_summary(detail: dict[str, Any]) -> str | None:
         "negative": "하락 쪽에 무게가 실리는 ‘부정’",
         "neutral": "뚜렷한 방향이 없는 ‘중립’",
         "mixed": "신호가 엇갈리는 ‘혼조’",
-    }.get(str(detail.get("direction") or "").lower(), "방향성 판단")
-    date_match = re.match(r"\s*(\d{4}-\d{2}-\d{2})", summary)
-    prefix = f"{date_match.group(1)} 기준 " if date_match else ""
-    return f"{prefix}최근 약 6개월(120영업일)간 주가 흐름과 거래 수급을 종합한 결과 {phrase} 신호입니다."
+    }.get(str(detail.get("direction") or "").lower())
+    prefix = _leading_date(summary)
+    body = "최근 약 6개월(120영업일)간 주가 흐름과 거래 수급을 종합했습니다."
+    if phrase:
+        body = f"최근 약 6개월(120영업일)간 주가 흐름과 거래 수급을 종합한 결과 {phrase} 신호입니다."
+    return f"{prefix}{body}"
+
+
+_DIRECTION_PHRASE = {
+    "positive": "긍정",
+    "negative": "주의",
+    "neutral": "중립",
+    "mixed": "엇갈리는",
+}
+
+
+def _leading_date(summary: str) -> str:
+    match = re.match(r"\s*(\d{4}-\d{2}-\d{2})", summary)
+    return f"{match.group(1)} 기준 " if match else ""
+
+
+def _direction_phrase(detail: dict[str, Any]) -> str | None:
+    """방향 라벨. 알 수 없으면 None — 호출부가 방향 절을 통째로 빼서 비문을 막는다."""
+    return _DIRECTION_PHRASE.get(str(detail.get("direction") or "").lower())
+
+
+def _humanize_datalab_summary(detail: dict[str, Any]) -> str | None:
+    """"… 방향 positive, 점수 +0.569 (모멘텀 +0.211, 스파이크 0.21)." 같은 기계식 요약을 풀어 쓴다."""
+    summary = detail.get("summary")
+    if not isinstance(summary, str) or not summary.strip():
+        return summary if isinstance(summary, str) else None
+    if not _DATALAB_TERSE_RE.search(summary):
+        return summary
+    phrase = _direction_phrase(detail)
+    head = (
+        f"최근 한 달간 이 종목의 검색 관심도를 살펴본 결과 {phrase} 방향으로 읽힙니다."
+        if phrase
+        else "최근 한 달간 이 종목의 검색 관심도를 살펴봤습니다."
+    )
+    return f"{_leading_date(summary)}{head} 검색량은 사람들의 관심이 어디로 쏠리는지를 보여 줍니다."
+
+
+def _humanize_patent_summary(detail: dict[str, Any]) -> str | None:
+    """"… 최근 900일 공개 특허 13305건 분석: 방향 mixed, 점수 -0.067." 을 풀어 쓴다."""
+    summary = detail.get("summary")
+    if not isinstance(summary, str) or not summary.strip():
+        return summary if isinstance(summary, str) else None
+    if not _PATENT_TERSE_RE.search(summary):
+        return summary
+    phrase = _direction_phrase(detail)
+    head = (
+        f"최근 공개된 특허의 양과 기술 분야를 살펴본 결과 연구개발 흐름은 {phrase} 방향으로 읽힙니다."
+        if phrase
+        else "최근 공개된 특허의 양과 기술 분야를 살펴봤습니다."
+    )
+    return f"{_leading_date(summary)}{head} 특허는 출원 후 약 18개월 뒤에 공개됩니다."
+
+
+def _humanize_hiring_summary(detail: dict[str, Any]) -> str | None:
+    """채용 요약에서 내부 표현(테이블명·점수 코드)을 걷어 낸다."""
+    summary = detail.get("summary")
+    if not isinstance(summary, str) or not summary.strip():
+        return summary if isinstance(summary, str) else None
+    if _HIRING_NO_DATA_RE.search(summary):
+        return "아직 이 회사의 채용 공고가 모이지 않아 채용 흐름을 판단하지 못했습니다."
+    if not _HIRING_TERSE_RE.search(summary):
+        return summary
+    phrase = _direction_phrase(detail)
+    head = (
+        f"현재 올라와 있는 채용 공고의 수와 최근 변화를 살펴본 결과 채용 흐름은 {phrase} 방향으로 읽힙니다."
+        if phrase
+        else "현재 올라와 있는 채용 공고의 수와 최근 변화를 살펴봤습니다."
+    )
+    return f"{head} 채용은 회사가 사업을 넓히는지 줄이는지를 비춥니다."
 
 
 def _humanize_summary(source: str, detail: dict[str, Any]) -> str | None:
     """소스별 기계식 요약을 사람이 읽기 쉬운 문장으로 풀어 쓰는 디스패처(그 외엔 원문 통과)."""
     if source == "price":
         return _humanize_price_summary(detail)
+    if source == "datalab":
+        return _humanize_datalab_summary(detail)
+    if source == "patent":
+        return _humanize_patent_summary(detail)
+    if source == "hiring":
+        return _humanize_hiring_summary(detail)
     if source == "dart":
         return _humanize_dart_summary(detail)
     if source == "report":
@@ -813,11 +929,20 @@ def _evidence_list(value: Any) -> list[dict[str, Any]]:
         if isinstance(entry, dict):
             source = entry.get("source")
             flags = entry.get("risk_flags")
-            risk = [text for text in (_risk_flag_ko(f) for f in flags) if text] if isinstance(flags, list) else []
+            risk = _risk_flags_ko(flags)
             source_key = str(source).lower() if source else None
             summary = entry.get("summary")
             if source_key:
-                summary = _humanize_summary(source_key, {"summary": summary, "risk_flags": flags})
+                # direction 이 있어야 "… 긍정 방향으로 읽힙니다" 같은 문장을 만들 수 있다.
+                # (구버전 발행 행에는 없다 → humanizer 가 방향 없는 문장으로 폴백한다.)
+                summary = _humanize_summary(
+                    source_key,
+                    {
+                        "summary": summary,
+                        "risk_flags": flags,
+                        "direction": entry.get("direction"),
+                    },
+                )
             items.append({
                 "source": source_key,
                 "summary": summary,
