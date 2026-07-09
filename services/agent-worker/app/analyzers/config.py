@@ -33,18 +33,26 @@ def _float_opt(name: str, default: float | None) -> float | None:
 class PatentRuleConfig:
     """Scoring parameters for the Patent analyzer."""
 
-    # 특허는 출원 후 ~18개월(≈540일) 뒤에야 공개된다. 방금 공개되어 지금 처음
-    # 보이는 특허도 application_date(출원일) 기준으로는 이미 ~1.5년 전이라, 365일
-    # 창으로는 창 밖으로 떨어져 no_signal 이 된다. 아래 값은 그 공개 지연을 덮도록
-    # 넓힌 **임시(stopgap)** 조치다 — 여전히 출원일 기준이라 recent/prior 버킷의
-    # "최근성" 의미가 부정확하다. 정식 해법은 publication_date(공개일) 기준 전환이며
-    # 그 PR에서 이 값들을 정상 창으로 되돌린다. (env 로 언제든 오버라이드 가능)
-    lookback_days: int = 900  # stopgap: 540(공개지연) + ~1년 관측창
+    # lookback_days 는 recent/prior 모멘텀 버킷과 로더의 행 수집 창을 결정한다.
+    # 특허는 출원 후 ~18개월 뒤 공개되지만 이벤트 시점을 공개일 기준으로 잡으므로
+    # (indicators._event_date) 여기서는 "관측하고 싶은 공개 이력의 길이"만 의미한다.
+    # 신선도 판정(오래된 신호 감쇠·만료)은 lookback 과 독립적으로 아래
+    # decay_onset_days / signal_max_age_days 가 담당한다.
+    lookback_days: int = 900  # 모멘텀·행수집 창(공개 이력 관측 길이). 신선도 컷과 무관.
     min_count: int = 3
     momentum_threshold: float = 0.5  # retained for legacy reference
     momentum_scale: float = 0.5  # tanh knee: momentum of 50% → 0.76*weight
     new_category_scale: float = 0.3  # tanh knee: 30% new-category ratio → 0.76*weight
-    stale_days: int = 720  # stopgap: 공개 지연 감안, 정식(공개일) 전환 시 축소
+    # --- 신선도 생애주기(freshness lifecycle) ------------------------------------
+    # 가장 최근 공개 특허의 나이(days_since_latest, 공개일 기준)로 신호의 신선도를
+    # 판정한다. 특허의 단기 이벤트 반응은 며칠뿐이라 잡을 수 없고 방향성 알파도
+    # 없으므로, 이 값들은 알파 최적값이 아니라 "이 회사가 지금도 R&D 활발한가"를
+    # 재는 신선도·정직성 기준이다.
+    #   0 ~ decay_onset_days      : 신선 → 점수 ×1.0
+    #   onset ~ signal_max_age    : 감쇠 → 점수를 선형으로 ×1.0→×0.0 (부호 유지)
+    #   signal_max_age 초과        : 만료 → no_signal(집계 제외, "데이터 없음")
+    decay_onset_days: int = 90  # 이 나이부터 신선도 페이드 시작(그 전엔 100%)
+    signal_max_age_days: int = 365  # 이 나이 초과 시 만료 → no_signal(하드 컷오프)
     momentum_weight: float = 0.5
     new_category_weight: float = 0.3
     activity_weight: float = 0.2
@@ -65,7 +73,8 @@ class PatentRuleConfig:
             momentum_threshold=_float("PATENT_MOMENTUM_THRESHOLD", cls.momentum_threshold),
             momentum_scale=_float("PATENT_MOMENTUM_SCALE", cls.momentum_scale),
             new_category_scale=_float("PATENT_NEW_CATEGORY_SCALE", cls.new_category_scale),
-            stale_days=_int("PATENT_STALE_DAYS", cls.stale_days),
+            decay_onset_days=_int("PATENT_DECAY_ONSET_DAYS", cls.decay_onset_days),
+            signal_max_age_days=_int("PATENT_SIGNAL_MAX_AGE_DAYS", cls.signal_max_age_days),
             momentum_weight=_float("PATENT_MOMENTUM_WEIGHT", cls.momentum_weight),
             new_category_weight=_float("PATENT_NEW_CATEGORY_WEIGHT", cls.new_category_weight),
             activity_weight=_float("PATENT_ACTIVITY_WEIGHT", cls.activity_weight),
