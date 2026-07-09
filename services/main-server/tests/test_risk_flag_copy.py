@@ -14,7 +14,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "packages" / "data-access"))
 
-from app.api.routes.reports import _evidence_list, _humanize_summary, _risk_flag_ko
+from app.api.routes.reports import (
+    _evidence_list,
+    _humanize_point,
+    _humanize_summary,
+    _report_response,
+    _risk_flag_ko,
+)
 
 # 분석기 6종이 실제로 내보내는 값 전부(analyzers/*/rules.py 의 risk_flags.append).
 _ALL_FLAGS = [
@@ -238,6 +244,66 @@ class SummaryHumanizerTest(unittest.TestCase):
                     _humanize_summary(source, {"summary": narrative, "direction": "positive"}),
                     narrative,
                 )
+
+
+class BullBearPointTest(unittest.TestCase):
+    """리포트 헤드라인 한 줄(bull_point/bear_point)도 근거 카드와 같은 문장이어야 한다.
+
+    집계기는 여기에 첫 긍정/부정 소스의 요약 **원문**을 그대로 넣는다(_evidence_point).
+    그래서 "… 방향 positive, 점수 +0.311 (모멘텀 +0.052, 스파이크 0.21)" 이 그대로 노출됐다.
+    """
+
+    RAW = "2026-07-08 기준 최근 30일 검색 트렌드 456건 분석: 방향 positive, 점수 +0.311 (모멘텀 +0.052, 스파이크 0.21)."
+
+    def _evidence(self):
+        return [{"source": "DATALAB", "direction": "positive", "data_status": "ok",
+                 "summary": self.RAW, "risk_flags": []}]
+
+    def test_machine_point_is_rewritten_using_its_source(self):
+        text = _humanize_point(self.RAW, self._evidence(), [])
+
+        self.assertIn("검색 관심도", text)
+        self.assertIn("긍정 방향으로 읽힙니다", text)
+        self.assertNotIn("positive", text)
+        self.assertNotIn("스파이크", text)
+
+    def test_llm_narrative_point_is_left_alone(self):
+        # LLM 이 서술로 덮어쓴 경우엔 evidence 에 같은 문자열이 없다 → 원문 통과.
+        narrative = "반도체 수요 회복 기대가 검색 관심 증가로 나타났습니다."
+
+        self.assertEqual(_humanize_point(narrative, self._evidence(), []), narrative)
+
+    def test_excluded_source_point_explains_the_exclusion(self):
+        raw = "분석할 채용 데이터가 없습니다 (hiring_raw_details 미적재)."
+        evidence = [{"source": "HIRING", "direction": "unknown", "data_status": "no_signal",
+                     "summary": raw, "risk_flags": ["no_data"]}]
+
+        text = _humanize_point(raw, evidence, [])
+
+        self.assertIn("나머지 소스로 계산했습니다", text)
+        self.assertNotIn("hiring_raw_details", text)
+
+    def test_missing_point_stays_none(self):
+        self.assertIsNone(_humanize_point(None, [], []))
+
+    def test_report_response_wires_the_humanizer(self):
+        """배선 검증 — 응답이 실제로 다듬어진 문장을 싣는가(함수만 고치고 안 붙이면 실패)."""
+        evidence = [{"source": "DATALAB", "direction": "positive", "data_status": "ok",
+                     "summary": self.RAW, "risk_flags": []}]
+        row = {
+            "id": 1, "run_key": "AGGREGATED",
+            "ticker": "005930", "name": "삼성전자", "market": "KOSPI",
+            "final_score": 60, "signal": "positive", "confidence": 50,
+            "consensus_score": 50, "warning_level": "NORMAL", "summary": "요약",
+            "bull_point": self.RAW, "bear_point": None,
+            "positive_evidence": evidence, "caution_evidence": [],
+            "score_breakdown": {}, "source_predictions": {},
+        }
+
+        body = _report_response(row)
+
+        self.assertIn("검색 관심도", body["bull_point"])
+        self.assertNotIn("스파이크", body["bull_point"])
 
 
 if __name__ == "__main__":
