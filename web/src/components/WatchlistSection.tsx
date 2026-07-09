@@ -6,7 +6,7 @@ import { useAuthStore } from "@/stores/authStore";
 import { useHomeStore } from "@/stores/homeStore";
 import { useWatchlistStore } from "@/stores/watchlistStore";
 
-// 우① 관심종목 — 로그인 시 내 워치리스트, 비로그인 시 로그인 유도(NFR-1).
+// 관심종목 — 대시보드 상단 가로 밴드. 로그인 시 내 워치리스트, 비로그인 시 로그인 유도(NFR-1).
 // 항목 클릭은 "실시간 분석 종목" 아코디언을 그 종목으로 연다(select).
 export function WatchlistSection() {
   const user = useAuthStore((s) => s.user);
@@ -45,34 +45,33 @@ export function WatchlistSection() {
           </Link>
         </div>
       ) : loading ? (
-        <ul className="animate-pulse space-y-2">
-          {[0, 1, 2].map((i) => (
-            <li key={i} className="h-10 rounded-[10px] bg-surface-2" />
+        <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="h-[52px] animate-pulse rounded-[12px] bg-surface-2" />
           ))}
-        </ul>
+        </div>
       ) : items.length === 0 ? (
         <p className="px-1 py-6 text-center text-[12.5px] text-muted">
           아직 등록한 관심종목이 없습니다.
         </p>
       ) : (
-        <ul className="space-y-1">
+        <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
           {items.map((w) => (
-            <li key={w.stock.stock_code}>
-              <button
-                type="button"
-                onClick={() => void select(w.stock.stock_code)}
-                className={`flex w-full items-center justify-between rounded-[10px] px-3 py-2.5 text-left transition hover:bg-surface-2 ${
-                  selectedCode === w.stock.stock_code ? "bg-surface-2" : ""
-                }`}
-              >
-                <span className="min-w-0 truncate text-[13.5px] font-semibold text-navy-soft">
-                  {w.stock.stock_name ?? w.stock.stock_code}
-                </span>
-                <span className="shrink-0 text-[11.5px] text-muted">{w.stock.stock_code}</span>
-              </button>
-            </li>
+            <button
+              key={w.stock.stock_code}
+              type="button"
+              onClick={() => void select(w.stock.stock_code)}
+              className={`flex min-w-0 items-center justify-between gap-2 rounded-[12px] border px-3.5 py-2.5 text-left transition hover:bg-surface-2 ${
+                selectedCode === w.stock.stock_code ? "border-sky bg-surface-2" : "border-line"
+              }`}
+            >
+              <span className="min-w-0 truncate text-[13.5px] font-semibold text-navy-soft">
+                {w.stock.stock_name ?? w.stock.stock_code}
+              </span>
+              <span className="shrink-0 text-[11.5px] text-muted">{w.stock.stock_code}</span>
+            </button>
           ))}
-        </ul>
+        </div>
       )}
     </section>
   );
