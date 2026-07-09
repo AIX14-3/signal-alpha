@@ -27,8 +27,11 @@ async def get_brief(
     """
     from signal_alpha_data_access.backend import SignalRepository
 
+    # limit 은 **종목** 수 — 리포지토리가 (종목, run_key) 최신 1행으로 접어 주므로 여기서
+    # 그대로 넘긴다. 예전엔 인자 없이 불러 기본값 50이 **행**에 걸렸고, 한 종목의 과거
+    # 이력이 창을 다 먹어 브리핑에 몇 종목만 뜨는 원인이었다.
     async with pool.acquire() as connection:
-        rows = await SignalRepository(connection).list_current_published()
+        rows = await SignalRepository(connection).list_current_published(limit)
 
     grouped: "OrderedDict[int, list[dict[str, Any]]]" = OrderedDict()
     for row in rows:

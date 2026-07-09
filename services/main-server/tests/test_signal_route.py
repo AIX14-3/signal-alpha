@@ -393,5 +393,86 @@ def _signal_detail_row():
     }
 
 
+class SignalListItemLatestPerSourceTest(unittest.TestCase):
+    """종목 카드의 점수/소스별 값은 **각 소스의 최신 행**만으로 만들어야 한다.
+
+    ``api.signals_current`` 가 과거 signal_date 행도 함께 들고 있어(is_current 는
+    (stock_id, signal_date, run_key) 유일), 순서에 기대면 오래된 행이 남고 점수는
+    날짜를 가로질러 평균돼 "어느 날짜의 값도 아닌 수"가 나온다.
+    """
+
+    @staticmethod
+    def _row(run_key: str, signal_date: str, score: float, signal: str = "neutral") -> dict:
+        from datetime import date as _date
+
+        year, month, day = (int(p) for p in signal_date.split("-"))
+        return {
+            "stock_id": 1,
+            "run_key": run_key,
+            "signal_date": _date(year, month, day),
+            "published_at": None,
+            "created_at": None,
+            "final_score": Decimal(str(score)),
+            "signal": signal,
+            "warning_level": "NORMAL",
+            "source_agreement": "HIGH",
+            "consensus_score": None,
+            "confidence": None,
+            "needs_review": False,
+            "ticker": "005930",
+            "name": "삼성전자",
+            "market": "KOSPI",
+            "summary": "요약",
+        }
+
+    def test_per_source_value_is_the_newest_row_not_the_last_one_seen(self):
+        from app.api.routes.signals import _signal_list_item
+
+        # 오래된 행이 뒤에 오도록 섞어 넣는다(예전 구현은 마지막 행으로 덮어써 78.05 를 남겼다).
+        rows = [
+            self._row("HIRING", "2026-07-09", 50.0),
+            self._row("HIRING", "2026-07-07", 78.05),
+            self._row("DATALAB", "2026-07-09", 78.45),
+            self._row("DATALAB", "2026-07-07", 86.65),
+            self._row("PATENT", "2026-07-09", 46.65),
+        ]
+
+        item = _signal_list_item(1, rows)
+        alternative = item["score_breakdown"]["alternative"]
+
+        self.assertEqual(alternative["hiring"]["score"], 50.0)
+        self.assertEqual(alternative["datalab"]["score"], 78.45)
+        self.assertEqual(alternative["patent"]["score"], 46.65)
+
+    def test_score_averages_only_the_newest_row_of_each_source(self):
+        from app.api.routes.signals import _signal_list_item
+
+        rows = [
+            self._row("HIRING", "2026-07-09", 50.0),
+            self._row("HIRING", "2026-07-07", 78.05),
+            self._row("DATALAB", "2026-07-09", 78.45),
+            self._row("DATALAB", "2026-07-07", 86.65),
+            self._row("PATENT", "2026-07-09", 46.65),
+        ]
+
+        item = _signal_list_item(1, rows)
+
+        # (50.00 + 78.45 + 46.65) / 3 = 58.37 — 이력을 섞으면 62.83 같은 무의미한 수가 나온다.
+        self.assertEqual(item["score"], 58.37)
+
+    def test_aggregated_run_key_is_not_folded_into_the_alternative_average(self):
+        from app.api.routes.signals import _signal_list_item
+
+        rows = [
+            self._row("AGGREGATED", "2026-07-09", 48.35),
+            self._row("PATENT", "2026-07-09", 46.65),
+        ]
+
+        item = _signal_list_item(1, rows)
+
+        self.assertEqual(item["score"], 46.65)
+        self.assertIsNone(item["score_breakdown"]["alternative"]["hiring"])
+
+
 if __name__ == "__main__":
     unittest.main()

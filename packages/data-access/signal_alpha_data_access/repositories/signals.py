@@ -42,14 +42,47 @@ class SignalRepository:
             signal_id,
         )
 
+    # ``api.signals_current`` 는 이름과 달리 종목당 한 행이 아니다. is_current 는
+    # (stock_id, signal_date, run_key) 단위로만 유일하므로 **과거 signal_date 의 행도 계속
+    # is_current=TRUE** 로 남는다(analysis.py 상단 주석). 목록 API 가 이 view 를 그대로 읽으면
+    # 한 종목의 수십~수백 일치 이력이 딸려 와, 호출부의 종목별 그룹핑이 날짜를 가로질러
+    # 점수를 평균내 버린다(=어느 날짜의 값도 아닌 수).
+    #
+    # 그래서 목록 조회는 여기서 **(종목, run_key) 별 최신 1행**으로 접어 준다. 최신 기준은
+    # signal_date(신호가 가리키는 날) → published_at → created_at 순. 종목당 행 수는
+    # run_key 개수(AGGREGATED + 소스별)로 묶인다.
+    _LATEST_PER_SOURCE = """
+        SELECT DISTINCT ON (stock_id, run_key) *
+        FROM api.signals_current
+        {where}
+        ORDER BY stock_id,
+                 run_key,
+                 signal_date DESC,
+                 published_at DESC NULLS LAST,
+                 created_at DESC
+    """
+
     async def list_current_published(self, limit: int = 50) -> list[Any]:
+        """최근 발행된 상위 ``limit`` **종목**의 현재 신호(종목×run_key 최신 1행).
+
+        ``limit`` 은 행이 아니라 **종목** 수다. 행에 걸면 한 종목의 이력이 창을 다 먹어
+        나머지 종목이 잘려 나간다(브리핑이 종목 몇 개만 보이던 원인).
+        """
         return await self._connection.fetch(
-            """
-            SELECT *
-            FROM api.signals_current
-            ORDER BY published_at DESC NULLS LAST,
-                     created_at DESC
-            LIMIT $1
+            f"""
+            WITH latest AS ({self._LATEST_PER_SOURCE.format(where="")}),
+            recent_stocks AS (
+                SELECT stock_id
+                FROM latest
+                GROUP BY stock_id
+                ORDER BY MAX(published_at) DESC NULLS LAST, MAX(created_at) DESC
+                LIMIT $1
+            )
+            SELECT latest.*
+            FROM latest
+            INNER JOIN recent_stocks USING (stock_id)
+            ORDER BY latest.published_at DESC NULLS LAST,
+                     latest.created_at DESC
             """,
             limit,
         )
@@ -58,10 +91,12 @@ class SignalRepository:
         if not stock_ids:
             return []
         return await self._connection.fetch(
-            """
+            f"""
+            WITH latest AS (
+                {self._LATEST_PER_SOURCE.format(where="WHERE stock_id = ANY($1::BIGINT[])")}
+            )
             SELECT *
-            FROM api.signals_current
-            WHERE stock_id = ANY($1::BIGINT[])
+            FROM latest
             ORDER BY stock_id ASC,
                      published_at DESC NULLS LAST,
                      created_at DESC

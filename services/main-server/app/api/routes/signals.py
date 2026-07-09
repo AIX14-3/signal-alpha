@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter, OrderedDict
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -141,6 +142,33 @@ async def list_signals(
     return [_signal_list_item(stock_id, source_rows) for stock_id, source_rows in grouped.items()]
 
 
+def _recency_key(row: dict[str, Any]) -> tuple[Any, Any, Any]:
+    """행의 최신도. 리포지토리 정렬과 같은 축(signal_date → published_at → created_at)."""
+    return (
+        row.get("signal_date") or date.min,
+        row.get("published_at") or datetime.min.replace(tzinfo=UTC),
+        row.get("created_at") or datetime.min.replace(tzinfo=UTC),
+    )
+
+
+def _latest_row_per_run_key(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """run_key 별 **가장 최신** 행만 남긴다.
+
+    ``api.signals_current`` 는 과거 signal_date 행도 is_current=TRUE 로 들고 있어(리포지토리
+    주석 참조) 한 종목에 같은 run_key 가 여러 날짜로 들어올 수 있다. 입력 순서에 기대어
+    덮어쓰면 오래된 행이 남는다 — 최신도를 명시적으로 비교한다.
+    """
+    latest: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        run_key = (row.get("run_key") or "").lower()
+        if run_key not in ALT_RUN_KEYS:
+            continue
+        current = latest.get(run_key)
+        if current is None or _recency_key(row) > _recency_key(current):
+            latest[run_key] = row
+    return latest
+
+
 def _signal_list_item(stock_id: int, rows: list[dict[str, Any]]) -> dict[str, Any]:
     base = rows[0]
     alternative: dict[str, Any] = {key: None for key in ALT_RUN_KEYS}
@@ -151,10 +179,7 @@ def _signal_list_item(stock_id: int, rows: list[dict[str, Any]]) -> dict[str, An
     consensus_values: list[float] = []
     needs_review = False
 
-    for row in rows:
-        run_key = (row.get("run_key") or "").lower()
-        if run_key not in alternative:
-            continue
+    for run_key, row in _latest_row_per_run_key(rows).items():
         signal = row.get("signal") or "neutral"
         alternative[run_key] = {"direction": _to_direction(signal), "score": _number(row.get("final_score"))}
         directions.append(signal)
