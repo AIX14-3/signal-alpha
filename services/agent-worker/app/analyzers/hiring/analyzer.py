@@ -126,8 +126,19 @@ class HiringAnalyzer:
         window = self._config.cycle_days_large if is_large else self._config.cycle_days_default
         half_life = max(1.0, window * self._config.decay_half_life_ratio)
         scale = self._config.activity_scale_large if is_large else self._config.activity_scale
+        # 옵션3(long_term_avg)일 때만 장기창을 넘겨 회사 장기 채용률 baseline 을 산출한다.
+        # 기본(prior_window)이면 None → 기존 반분할 급감 감지 그대로(회귀 보장).
+        long_term = (
+            self._config.long_term_window_days
+            if self._config.baseline_mode == "long_term_avg"
+            else None
+        )
         indicators = compute_decayed_activity(
-            postings, as_of=as_of, window_days=window, half_life_days=half_life
+            postings,
+            as_of=as_of,
+            window_days=window,
+            half_life_days=half_life,
+            long_term_window_days=long_term,
         )
         assessment = evaluate_decayed(indicators, self._config, activity_scale=scale)
 

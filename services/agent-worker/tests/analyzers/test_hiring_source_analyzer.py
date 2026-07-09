@@ -268,3 +268,96 @@ class HiringDeclineDetectionTest(unittest.TestCase):
         self.assertNotEqual(a.direction, "negative")
         self.assertGreater(a.score, 0)
         self.assertNotIn("hiring_decline", a.risk_flags)
+
+
+# long_term_avg(옵션3): 급감 기준을 유효창 반분할이 아닌 회사 장기 채용률 평균 대비로 판정.
+LONG_TERM_CONFIG = HiringRuleConfig(
+    posting_decay_enabled=True,
+    cycle_days_default=30,
+    cycle_days_large=180,
+    decay_half_life_ratio=0.5,
+    activity_scale=3.0,
+    activity_scale_large=3.0,
+    min_observations=1,
+    positive_threshold=0.2,
+    negative_threshold=-0.2,
+    baseline_mode="long_term_avg",
+    long_term_window_days=365,
+    min_baseline_buckets=2,
+    large_cap_tickers=frozenset({"005930"}),
+)
+
+
+class HiringLongTermBaselineTest(unittest.TestCase):
+    """옵션3: 회사 과거 활성공고율(트레일링 장기창 버킷 평균) 대비 현재창 급감 감지."""
+
+    def test_baseline_computed_only_when_window_given(self):
+        # 장기창 미전달(기본) → baseline 필드 0(=경로 비활성, prior_window 와 무관).
+        postings = [_posting(40), _posting(45), _posting(70), _posting(75)]
+        i = compute_decayed_activity(postings, as_of=AS_OF, window_days=30, half_life_days=15)
+        self.assertEqual(i.long_term_avg_decayed, 0.0)
+        self.assertEqual(i.long_term_baseline_buckets, 0)
+
+    def test_baseline_averages_nonempty_past_buckets(self):
+        # 현재창(age<30)엔 공고 0, 과거 버킷 2개(30~59, 60~89)에 각 공고 → baseline>0·버킷2.
+        postings = [_posting(40), _posting(45), _posting(70), _posting(75)]
+        i = compute_decayed_activity(
+            postings, as_of=AS_OF, window_days=30, half_life_days=15, long_term_window_days=365
+        )
+        self.assertEqual(i.long_term_baseline_buckets, 2)
+        self.assertGreater(i.long_term_avg_decayed, 0.0)
+        self.assertEqual(i.decayed_activity, 0.0)  # 현재창엔 활성 공고 없음
+
+    def test_decline_vs_long_term_avg_flips_negative(self):
+        # 과거 2버킷엔 채용활동, 현재창엔 거의 없음(1건·오래됨) → 장기평균 대비 급감 → negative.
+        postings = [
+            _posting(40), _posting(45), _posting(48),   # 버킷1 (30~59)
+            _posting(70), _posting(75), _posting(78),   # 버킷2 (60~89)
+            _posting(28),                               # 현재창 끝자락 1건(약한 활동)
+        ]
+        i = compute_decayed_activity(
+            postings, as_of=AS_OF, window_days=30, half_life_days=15, long_term_window_days=365
+        )
+        a = evaluate_decayed(i, LONG_TERM_CONFIG, activity_scale=3.0)
+        self.assertGreaterEqual(i.long_term_baseline_buckets, 2)
+        self.assertLess(i.decayed_activity, i.long_term_avg_decayed * 0.5)
+        self.assertEqual(a.direction, "negative")
+        self.assertIn("hiring_decline", a.risk_flags)
+        self.assertIn("장기평균", a.highlights[-1])
+
+    def test_current_matches_long_term_stays_positive(self):
+        # 현재창 활동이 장기평균과 비슷 → 급감 아님 → positive 유지.
+        postings = [
+            _posting(2), _posting(5), _posting(8),      # 현재창 (활발)
+            _posting(40), _posting(45),                 # 버킷1
+            _posting(70), _posting(75),                 # 버킷2
+        ]
+        i = compute_decayed_activity(
+            postings, as_of=AS_OF, window_days=30, half_life_days=15, long_term_window_days=365
+        )
+        a = evaluate_decayed(i, LONG_TERM_CONFIG, activity_scale=3.0)
+        self.assertNotEqual(a.direction, "negative")
+        self.assertNotIn("hiring_decline", a.risk_flags)
+        self.assertGreater(a.score, 0)
+
+    def test_insufficient_baseline_suppresses_decline(self):
+        # 과거 버킷 1개뿐(min_baseline_buckets=2 미달) → 이력 부족으로 급감 판정 보류.
+        # 현재창 공고 없고 과거 1버킷만 있어도 negative 로 뒤집지 않는다(유령 negative 방지).
+        postings = [_posting(40), _posting(45), _posting(48)]  # 버킷1(30~59)만
+        i = compute_decayed_activity(
+            postings, as_of=AS_OF, window_days=30, half_life_days=15, long_term_window_days=365
+        )
+        a = evaluate_decayed(i, LONG_TERM_CONFIG, activity_scale=3.0)
+        self.assertEqual(i.long_term_baseline_buckets, 1)
+        self.assertNotIn("hiring_decline", a.risk_flags)
+
+    def test_prior_window_default_unaffected(self):
+        # 회귀 가드: 기본 baseline_mode(prior_window)는 장기평균 필드를 무시한다.
+        postings = [_posting(18), _posting(20), _posting(22), _posting(24)]  # 직전절반만
+        i = compute_decayed_activity(
+            postings, as_of=AS_OF, window_days=30, half_life_days=15, long_term_window_days=365
+        )
+        a = evaluate_decayed(i, DECAY_CONFIG, activity_scale=3.0)  # prior_window
+        self.assertEqual(a.direction, "negative")  # 반분할 급감 그대로
+        self.assertIn("hiring_decline", a.risk_flags)
+        self.assertIn("최근절반", a.highlights[-1])  # prior_window 문구

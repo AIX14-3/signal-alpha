@@ -151,9 +151,11 @@ _NEUTRAL_FACTORS: dict[int, float] = {1: 1.0, 2: 1.0, 3: 1.0, 4: 1.0}
 # 통과시키되, HYBE 공식사이트 첫 전체 스크랩(20→164)처럼 범위 급변만 거른다.
 WARMUP_PRIOR_DAYS = 5
 
-# 공고별 감쇠 경로가 대기업 유효창(cycle_days_large 기본 180d)까지 볼 수 있도록 확보하는
-# fetch 하한(버퍼 포함). momentum 경로 fetch 는 lookback_days 로 별도 컷된다.
-_DECAY_FETCH_DAYS = 200
+# 공고별 감쇠 경로가 (a)대기업 유효창(cycle_days_large 기본 180d)과 (b)long_term_avg(옵션3)
+# 장기 baseline 창(HIRING_DECAY_LONG_TERM_WINDOW_DAYS 기본 365d)까지 볼 수 있도록 확보하는
+# fetch 하한(버퍼 포함). 스코어러가 유효창/장기창으로 다시 컷하므로 넉넉히 가져와도 무해하다
+# (prior_window 경로는 window_days 로 컷 → 동작 불변). momentum fetch 는 lookback_days 별도 컷.
+_DECAY_FETCH_DAYS = 400
 
 
 def _warming_up_pairs(rows: list[dict[str, Any]]) -> set[tuple[str, str]]:

@@ -227,7 +227,12 @@ class HiringRuleConfig:
     # 이 비율 미만이면 채용 급감으로 보고 negative 로 뒤집는다. baseline_mode 로 추후
     # "long_term_avg"(옵션3, 회사 장기평균 대비)로 교체 가능(데이터 누적 후).
     decline_ratio_threshold: float = 0.5
-    baseline_mode: str = "prior_window"  # "prior_window"(옵션1) | "long_term_avg"(옵션3, 후속)
+    baseline_mode: str = "prior_window"  # "prior_window"(옵션1) | "long_term_avg"(옵션3)
+    # long_term_avg(옵션3) 재료: 트레일링 이 창(기본 1년)을 유효창 크기 버킷으로 나눠 회사
+    # 장기 채용률 평균을 낸다. min_baseline_buckets 미만이면 이력 부족으로 급감 판정 보류
+    # (sparse 데이터가 유령 negative 를 내지 않게 하는 가드).
+    long_term_window_days: int = 365
+    min_baseline_buckets: int = 2
     # 대기업 분류(시가총액 미적재 → 큐레이션 티커셋; 추후 market_cap 임계값 전환).
     large_cap_tickers: frozenset[str] = frozenset(
         {
@@ -263,6 +268,8 @@ class HiringRuleConfig:
             activity_scale_large=_float("HIRING_ACTIVITY_SCALE_LARGE", cls.activity_scale_large),
             decline_ratio_threshold=_float("HIRING_DECLINE_RATIO_THRESHOLD", cls.decline_ratio_threshold),
             baseline_mode=getenv("HIRING_DECAY_BASELINE_MODE", cls.baseline_mode).strip() or cls.baseline_mode,
+            long_term_window_days=_int("HIRING_DECAY_LONG_TERM_WINDOW_DAYS", cls.long_term_window_days),
+            min_baseline_buckets=_int("HIRING_DECAY_MIN_BASELINE_BUCKETS", cls.min_baseline_buckets),
             large_cap_tickers=_ticker_set("HIRING_LARGE_CAP_TICKERS", cls.large_cap_tickers),
         )
 
