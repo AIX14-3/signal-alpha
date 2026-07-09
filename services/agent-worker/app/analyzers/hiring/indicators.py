@@ -117,6 +117,66 @@ def compute_indicators(
     )
 
 
+@dataclass(frozen=True)
+class DecayedHiringIndicators:
+    """공고별 시간감쇠 집계(opt-in 경로). 채용을 이벤트로 보고 게시일 나이에 지수 반감기
+    가중한 활동강도. 유효창을 넘거나 마감된 공고는 산입에서 빠진다(로드/DB 보존은 별개)."""
+
+    active_count: int  # 유효창 내(비만료) 공고 수
+    total_postings: int  # 로드된 전체 공고 수(참고용)
+    decayed_activity: float  # Σ 0.5^(age/half_life)
+    latest_posting_date: str | None
+    days_since_latest: int | None
+    distinct_skills: int = 0
+    top_skills: tuple[str, ...] = ()
+
+
+def compute_decayed_activity(
+    postings: list[dict],
+    *,
+    as_of: date,
+    window_days: int,
+    half_life_days: float,
+) -> DecayedHiringIndicators:
+    """공고 리스트(각 posting_date·선택 closing_date_parsed·ocr_skills) → 감쇠활동 지표.
+
+    - 유효창: ``age > window_days`` 또는 ``age < 0``(미래) → 제외.
+    - 마감: ``closing_date_parsed < as_of`` → 제외.
+    - 가중치: ``0.5 ** (age / half_life_days)`` — 반감기마다 절반(지수 감쇠).
+    """
+    half_life = half_life_days if half_life_days and half_life_days > 0 else 1.0
+    decayed = 0.0
+    active = 0
+    latest: date | None = None
+    skill_counter: Counter[str] = Counter()
+    for posting in postings:
+        posted = _parse_date(posting.get("posting_date"))
+        if posted is None:
+            continue
+        age = (as_of - posted).days
+        if age < 0 or age > window_days:
+            continue
+        closing = _parse_date(posting.get("closing_date_parsed"))
+        if closing is not None and closing < as_of:
+            continue
+        active += 1
+        decayed += 0.5 ** (age / half_life)
+        if latest is None or posted > latest:
+            latest = posted
+        for skill in posting.get("ocr_skills") or []:
+            if skill:
+                skill_counter[str(skill)] += 1
+    return DecayedHiringIndicators(
+        active_count=active,
+        total_postings=len(postings),
+        decayed_activity=round(decayed, 4),
+        latest_posting_date=latest.isoformat() if latest else None,
+        days_since_latest=(as_of - latest).days if latest else None,
+        distinct_skills=len(skill_counter),
+        top_skills=tuple(s for s, _ in skill_counter.most_common(5)),
+    )
+
+
 def _sector(sector_demand: dict | None) -> tuple[float | None, float]:
     if not sector_demand:
         return None, 0.0

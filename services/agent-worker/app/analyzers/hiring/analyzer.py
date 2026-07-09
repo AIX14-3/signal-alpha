@@ -10,8 +10,8 @@ from collections import Counter
 from datetime import date
 
 from app.analyzers.config import HiringRuleConfig
-from app.analyzers.hiring.indicators import compute_indicators
-from app.analyzers.hiring.rules import evaluate_indicators
+from app.analyzers.hiring.indicators import compute_decayed_activity, compute_indicators
+from app.analyzers.hiring.rules import evaluate_decayed, evaluate_indicators
 from app.schemas.evidence import RawEvidence
 from app.schemas.source_result import EvidenceItem, SourceResult
 
@@ -41,6 +41,11 @@ class HiringAnalyzer:
 
         metadata = evidence[0].metadata
         as_of = _as_of(metadata)
+        # opt-in: 공고별 시간감쇠 경로(로더가 metadata["postings"] 제공 시). 게이트 off 이거나
+        # per-posting 목록이 없으면 아래 현행 momentum 경로 그대로(회귀 보장).
+        postings = metadata.get("postings")
+        if self._config.posting_decay_enabled and postings:
+            return self._analyze_decayed(stock_code, postings, as_of)
         indicators = compute_indicators(
             rows,
             as_of=as_of,
@@ -108,6 +113,52 @@ class HiringAnalyzer:
             summary=summary,
             evidence_items=evidence_items,
             risk_flags=risk_flags,
+            data_status=data_status,
+        )
+
+    def _analyze_decayed(
+        self, stock_code: str, postings: list[dict], as_of: date
+    ) -> SourceResult:
+        """공고별 지수 시간감쇠 경로: 게시일 나이에 반감기 가중한 활동강도 → verdict.
+        유효창은 대기업/일반 차등. 창 밖·마감 공고는 산입에서 빠진다(DB raw 는 보존)."""
+        is_large = stock_code in self._config.large_cap_tickers
+        window = self._config.cycle_days_large if is_large else self._config.cycle_days_default
+        half_life = max(1.0, window * self._config.decay_half_life_ratio)
+        indicators = compute_decayed_activity(
+            postings, as_of=as_of, window_days=window, half_life_days=half_life
+        )
+        assessment = evaluate_decayed(indicators, self._config)
+
+        data_status = "ok"
+        if assessment.direction == "unknown":
+            data_status = "no_signal"  # 유효창 내 활성 공고 없음 → 집계 제외·FE 만료
+        elif "insufficient_history" in assessment.risk_flags:
+            data_status = "partial"
+
+        tier = "대기업" if is_large else "일반"
+        latest = indicators.latest_posting_date or as_of.isoformat()
+        summary = (
+            f"활성 채용공고 {indicators.active_count}건"
+            f"(유효창 {window}일·{tier}, 감쇠활동 {indicators.decayed_activity:.2f}) → "
+            f"방향 {assessment.direction}, 점수 {assessment.score:+.3f}."
+        )
+        evidence_items = [
+            EvidenceItem(
+                title=highlight,
+                summary=f"{latest} 기준 채용 활동(시간감쇠) 산출 결과",
+                published_at=latest,
+                source_name="HIRING",
+            )
+            for highlight in assessment.highlights
+        ]
+        return SourceResult(
+            source="HIRING",
+            stock_code=stock_code,
+            direction=assessment.direction,
+            score=assessment.score,
+            summary=summary,
+            evidence_items=evidence_items,
+            risk_flags=list(assessment.risk_flags),
             data_status=data_status,
         )
 

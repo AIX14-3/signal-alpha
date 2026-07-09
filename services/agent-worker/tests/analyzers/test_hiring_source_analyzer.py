@@ -3,6 +3,8 @@ from datetime import date, timedelta
 
 from app.analyzers.config import HiringRuleConfig
 from app.analyzers.hiring import HiringAnalyzer
+from app.analyzers.hiring.indicators import compute_decayed_activity
+from app.analyzers.hiring.rules import evaluate_decayed
 from app.schemas.evidence import RawEvidence
 
 AS_OF = date(2026, 6, 11)
@@ -110,3 +112,106 @@ def _plain(rows):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---------------------------------------------------------------------------
+# 공고별 시간감쇠 스코어러(opt-in) — 지수 반감기 + 유효창(대기업/일반 차등)
+# ---------------------------------------------------------------------------
+
+DECAY_CONFIG = HiringRuleConfig(
+    posting_decay_enabled=True,
+    cycle_days_default=30,
+    cycle_days_large=180,
+    decay_half_life_ratio=0.5,
+    activity_scale=3.0,
+    min_observations=3,
+    positive_threshold=0.2,
+    negative_threshold=-0.2,
+    large_cap_tickers=frozenset({"005930"}),
+)
+
+
+def _posting(days_ago, *, closing=None, skills=None):
+    return {
+        "posting_date": (AS_OF - timedelta(days=days_ago)).isoformat(),
+        "closing_date_parsed": closing,
+        "ocr_skills": skills or [],
+    }
+
+
+def _decay_evidence(postings):
+    return [
+        RawEvidence(
+            source="HIRING", stock_code="005930", title="t", content="",
+            metadata={
+                "rows": [{"observed_date": AS_OF.isoformat(), "job_count": 1}],  # _extract_rows 가드 통과용
+                "postings": postings,
+                "as_of": AS_OF.isoformat(),
+            },
+        )
+    ]
+
+
+class DecayedHiringIndicatorsTest(unittest.TestCase):
+    def test_weight_halves_at_half_life(self):
+        i0 = compute_decayed_activity([_posting(0)], as_of=AS_OF, window_days=30, half_life_days=15)
+        i15 = compute_decayed_activity([_posting(15)], as_of=AS_OF, window_days=30, half_life_days=15)
+        self.assertAlmostEqual(i0.decayed_activity, 1.0, places=3)
+        self.assertAlmostEqual(i15.decayed_activity, 0.5, places=3)  # 반감기 → 절반
+
+    def test_out_of_window_excluded_but_still_counted(self):
+        i = compute_decayed_activity([_posting(40)], as_of=AS_OF, window_days=30, half_life_days=15)
+        self.assertEqual(i.active_count, 0)      # 유효창 밖 → 점수 산입 제외
+        self.assertEqual(i.total_postings, 1)    # 로드/DB 보존은 별개(카운트는 됨)
+        self.assertEqual(i.decayed_activity, 0.0)
+
+    def test_closed_posting_excluded(self):
+        closed = _posting(2, closing=(AS_OF - timedelta(days=1)).isoformat())
+        i = compute_decayed_activity([closed], as_of=AS_OF, window_days=30, half_life_days=15)
+        self.assertEqual(i.active_count, 0)  # 이미 마감 → 제외
+
+    def test_decays_over_calendar_time(self):
+        posting = [_posting(2)]
+        early = compute_decayed_activity(posting, as_of=AS_OF, window_days=30, half_life_days=15)
+        late = compute_decayed_activity(
+            posting, as_of=AS_OF + timedelta(days=20), window_days=30, half_life_days=15
+        )
+        self.assertGreater(early.decayed_activity, late.decayed_activity)  # 시간 지날수록 감소
+
+
+class EvaluateDecayedTest(unittest.TestCase):
+    def test_no_active_postings_is_unknown(self):
+        i = compute_decayed_activity([_posting(40)], as_of=AS_OF, window_days=30, half_life_days=15)
+        a = evaluate_decayed(i, DECAY_CONFIG)
+        self.assertEqual(a.direction, "unknown")
+        self.assertEqual(a.score, 0.0)
+        self.assertIn("no_active_postings", a.risk_flags)
+
+    def test_fresh_postings_positive(self):
+        postings = [_posting(1), _posting(2), _posting(3), _posting(4)]
+        i = compute_decayed_activity(postings, as_of=AS_OF, window_days=30, half_life_days=15)
+        a = evaluate_decayed(i, DECAY_CONFIG)
+        self.assertEqual(a.direction, "positive")
+        self.assertGreater(a.score, 0.2)
+
+
+class HiringAnalyzerDecayPathTest(unittest.IsolatedAsyncioTestCase):
+    async def test_decay_path_scores_and_labels(self):
+        postings = [_posting(1), _posting(3), _posting(5)]
+        result = await HiringAnalyzer(DECAY_CONFIG).analyze("005930", _decay_evidence(postings))
+        self.assertEqual(result.direction, "positive")
+        self.assertEqual(result.data_status, "ok")
+        self.assertIn("감쇠활동", result.summary)
+
+    async def test_large_vs_default_window_differentiation(self):
+        # 60일 된 공고: 대기업(005930·창180d)=활성, 일반(창30d)=만료(no_signal→FE 만료).
+        postings = [_posting(60), _posting(61), _posting(62)]
+        large = await HiringAnalyzer(DECAY_CONFIG).analyze("005930", _decay_evidence(postings))
+        small = await HiringAnalyzer(DECAY_CONFIG).analyze("999999", _decay_evidence(postings))
+        self.assertNotEqual(large.data_status, "no_signal")
+        self.assertEqual(small.data_status, "no_signal")
+
+    async def test_gate_off_uses_momentum_path(self):
+        cfg_off = HiringRuleConfig(posting_decay_enabled=False, large_cap_tickers=frozenset({"005930"}))
+        result = await HiringAnalyzer(cfg_off).analyze("005930", _decay_evidence([_posting(1)]))
+        self.assertNotIn("감쇠활동", result.summary)  # 게이트 off → 현행 momentum 경로

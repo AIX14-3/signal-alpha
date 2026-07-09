@@ -53,6 +53,9 @@ class HiringEvidenceLoader:
             "lookback_days": self._lookback_days,
             "count": len(rows),          # number of active days (indicators 기준)
             "posting_count": posting_count,  # total individual postings
+            # per-posting 목록(warmup 가드·창 적용). 공고별 시간감쇠 스코어러가 소비한다.
+            # momentum 경로는 무시하므로 순수 추가(회귀 없음).
+            "postings": windowed,
             "source_name": "HIRING",
             "sector_demand": sector_demand,
         }
@@ -266,6 +269,10 @@ def _row(record: Any, factors: dict[int, float]) -> dict[str, Any]:
         "previous_job_count": _to_int(record["previous_job_count"]),
         "change_pct": _to_float(record["change_pct"]),
         "observed_date": observed_date,
+        # 공고별 시간감쇠 경로용: 게시일(= published_at) + 공고 만료일(closing_date_parsed).
+        # momentum 경로는 observed_date 만 쓰므로 이 두 키는 순수 추가(무해).
+        "posting_date": observed_date,
+        "closing_date_parsed": payload.get("closing_date_parsed"),
         "seasonal_factor": _factor_for(observed_date, factors),
         "source_url": record["source_url"],
         # 소스 식별자(Warming-up 가드용). 포털 공고는 extra_payload에 source_type이 없어

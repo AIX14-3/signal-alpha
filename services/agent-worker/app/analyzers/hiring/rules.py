@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from app.analyzers.config import HiringRuleConfig
-from app.analyzers.hiring.indicators import HiringIndicators
+from app.analyzers.hiring.indicators import DecayedHiringIndicators, HiringIndicators
 from app.analyzers.scoring import graded
 
 Direction = Literal["positive", "neutral", "negative", "mixed", "unknown"]
@@ -182,3 +182,49 @@ def _direction(score: float, config: HiringRuleConfig) -> Direction:
     if score <= config.negative_threshold:
         return "negative"
     return "neutral"
+
+
+def evaluate_decayed(
+    indicators: DecayedHiringIndicators,
+    config: HiringRuleConfig | None = None,
+) -> HiringAssessment:
+    """공고별 시간감쇠 활동강도 → verdict(opt-in 경로).
+
+    유효창 내 활성 공고가 없으면 no_signal(집계 제외 → per-source 미발행 → FE 만료).
+    있으면 감쇠활동합을 graded(tanh)로 one-sided 양수 매핑(채용활동 강도). 하락(감소)
+    → negative 는 per-company 베이스라인이 필요해 후속으로 남긴다.
+    """
+    config = config or HiringRuleConfig.from_env()
+
+    if indicators.active_count == 0:
+        return HiringAssessment(
+            direction="unknown",
+            score=0.0,
+            risk_flags=["no_active_postings"],
+            highlights=["유효창 내 활성 채용공고가 없습니다."],
+        )
+
+    risk_flags: list[str] = []
+    highlights: list[str] = []
+    score = graded(indicators.decayed_activity, scale=config.activity_scale, weight=1.0)
+    score = round(max(0.0, min(1.0, score)), 3)
+
+    if indicators.active_count < config.min_observations:
+        risk_flags.append("insufficient_history")
+        highlights.append(
+            f"활성 공고 {indicators.active_count}건 — 분석 최소치({config.min_observations}) 미만"
+        )
+    if indicators.top_skills:
+        highlights.append(f"채용 기술스택: {', '.join(indicators.top_skills)}")
+    highlights.append(
+        f"감쇠 채용활동 {indicators.decayed_activity:.2f}"
+        f"(활성 {indicators.active_count}건, 최근 {indicators.days_since_latest}일 전) → 점수 {score:+.2f}"
+    )
+
+    direction: Direction = "positive" if score >= config.positive_threshold else "neutral"
+    return HiringAssessment(
+        direction=direction,
+        score=score,
+        risk_flags=risk_flags,
+        highlights=highlights,
+    )

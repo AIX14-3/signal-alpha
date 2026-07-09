@@ -29,6 +29,21 @@ def _float_opt(name: str, default: float | None) -> float | None:
     return float(raw) if raw not in (None, "") else default
 
 
+def _bool(name: str, default: bool) -> bool:
+    raw = getenv(name)
+    if raw in (None, ""):
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _ticker_set(name: str, default: "frozenset[str]") -> "frozenset[str]":
+    """쉼표구분 티커 목록 env → frozenset. 미설정이면 default 유지."""
+    raw = getenv(name)
+    if raw in (None, ""):
+        return default
+    return frozenset(t.strip() for t in raw.split(",") if t.strip())
+
+
 @dataclass(frozen=True)
 class PatentRuleConfig:
     """Scoring parameters for the Patent analyzer."""
@@ -197,6 +212,21 @@ class HiringRuleConfig:
     skill_min_enriched: int = 1  # need this many enriched observations to apply
     positive_threshold: float = 0.2
     negative_threshold: float = -0.2
+    # --- 공고별 시간감쇠 스코어러(opt-in) — 게이트 off 면 위 momentum 경로 그대로 ---
+    # 채용을 "이벤트(공고 게시)"로 보고 게시일 나이에 지수 반감기 가중해 활동강도를 낸다.
+    # 유효창(평균 채용주기)을 넘은 공고는 점수 산입에서 빠진다(백엔드 raw 는 보존).
+    posting_decay_enabled: bool = False
+    cycle_days_default: int = 30  # 일반기업 수시채용 유효창(공고 2~3주 + 여유)
+    cycle_days_large: int = 180  # 대기업 공채 유효창(반기 주기)
+    decay_half_life_ratio: float = 0.5  # 반감기 = 유효창 × ratio (일반 15d / 대기업 90d)
+    activity_scale: float = 3.0  # 감쇠활동합(Σ weight) → graded tanh knee
+    # 대기업 분류(시가총액 미적재 → 큐레이션 티커셋; 추후 market_cap 임계값 전환).
+    large_cap_tickers: frozenset[str] = frozenset(
+        {
+            "005930", "000660", "005380", "000270", "066570", "051910", "005490",
+            "006400", "012330", "035420", "035720", "068270", "028260", "009830", "011170",
+        }
+    )
 
     @classmethod
     def from_env(cls) -> "HiringRuleConfig":
@@ -217,6 +247,12 @@ class HiringRuleConfig:
             skill_min_enriched=_int("HIRING_SKILL_MIN_ENRICHED", cls.skill_min_enriched),
             positive_threshold=_float("HIRING_POSITIVE_THRESHOLD", cls.positive_threshold),
             negative_threshold=_float("HIRING_NEGATIVE_THRESHOLD", cls.negative_threshold),
+            posting_decay_enabled=_bool("HIRING_POSTING_DECAY_ENABLED", cls.posting_decay_enabled),
+            cycle_days_default=_int("HIRING_CYCLE_DAYS", cls.cycle_days_default),
+            cycle_days_large=_int("HIRING_CYCLE_DAYS_LARGE", cls.cycle_days_large),
+            decay_half_life_ratio=_float("HIRING_DECAY_HALF_LIFE_RATIO", cls.decay_half_life_ratio),
+            activity_scale=_float("HIRING_ACTIVITY_SCALE", cls.activity_scale),
+            large_cap_tickers=_ticker_set("HIRING_LARGE_CAP_TICKERS", cls.large_cap_tickers),
         )
 
 
