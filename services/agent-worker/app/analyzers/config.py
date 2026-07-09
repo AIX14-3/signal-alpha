@@ -293,6 +293,12 @@ class AggregatorConfig:
     """
 
     weights: dict[str, float]
+    # 소스별 블렌드 가중 모드. 기본 equal = 전원 1.0(등가중 1/N, 현행과 정확히 동일).
+    #   ic            = weights 정적 테이블(IC 진단 scripts/ic_diagnostic.py 가 채움)
+    #   confidence    = data_status/risk_flags 로 재계산한 신뢰도 배수
+    #   ic_confidence = 둘의 곱
+    # 가중은 IC 진단으로 근거가 설 때만 켠다(신호 미확정 시 등가중이 소표본에 강건).
+    weight_mode: str = "equal"
     positive_threshold: float = 0.2
     negative_threshold: float = -0.2
     # confidence = (base + per_source * available_sources) * data-quality multipliers,
@@ -314,19 +320,15 @@ class AggregatorConfig:
 
     @classmethod
     def from_env(cls) -> "AggregatorConfig":
+        # 6소스 정적 가중 테이블. 기본 1.0(=등가중) → ALT_WEIGHT_<SRC> 로 소스별 오버라이드.
+        # weight_mode 가 "ic"/"ic_confidence" 일 때만 실제로 곱해진다(equal 은 전원 1.0 취급).
         weights = {
-            "HIRING": _float("ALT_WEIGHT_HIRING", 0.34),
-            "PATENT": _float("ALT_WEIGHT_PATENT", 0.33),
-            "DATALAB": _float("ALT_WEIGHT_DATALAB", 0.33),
+            src: _float(f"ALT_WEIGHT_{src}", 1.0)
+            for src in ("PRICE", "DART", "REPORT", "HIRING", "PATENT", "DATALAB")
         }
-        # Optional sources a teammate may register later. Only picked up when an
-        # explicit weight env var is set, so the default 3-source run is intact.
-        for optional in ("DART", "REPORT", "PRICE"):
-            raw = getenv(f"ALT_WEIGHT_{optional}")
-            if raw not in (None, ""):
-                weights[optional] = float(raw)
         return cls(
             weights=weights,
+            weight_mode=(getenv("ALT_WEIGHT_MODE") or cls.weight_mode).strip().lower(),
             positive_threshold=_float("ALT_POSITIVE_THRESHOLD", cls.positive_threshold),
             negative_threshold=_float("ALT_NEGATIVE_THRESHOLD", cls.negative_threshold),
             confidence_base=_float("ALT_CONFIDENCE_BASE", cls.confidence_base),

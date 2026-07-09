@@ -527,7 +527,15 @@ def _aggregate(
     ]
     failed = [result for result in results if result.data_status == "failed"]
     missing_sources = [source for source in SOURCE_ORDER if not any(result.source == source for result in results)]
-    aggregate_score = round(sum(result.score for result in scoring) / len(scoring), 3) if scoring else 0.0
+    # 소스별 가중 평균(기본 equal 이면 전원 1.0 → 등가중 1/N 과 정확히 동일). weighted 를
+    # _blend_basis 와 공유해 헤드라인과 기여 렌더가 같은 가중치를 쓰게 한다(단일 진실원).
+    weighted = [(result, _source_weight(result, config)) for result in scoring]
+    weight_total = sum(weight for _, weight in weighted)
+    aggregate_score = (
+        round(sum(weight * result.score for result, weight in weighted) / weight_total, 3)
+        if weight_total > 0
+        else 0.0
+    )
     signal = _resolve_signal(available, aggregate_score, config)
     agreement_rate = _agreement_rate(available)
     source_agreement = _source_agreement(available, agreement_rate)
@@ -560,7 +568,7 @@ def _aggregate(
         "scoring_count": len(scoring),
         # 헤드라인↔소스 기여 렌더 근거(설명가능성). scoring 소스별 부호 점수·등가중 지분과 블렌드
         # 원점수. 별도 설명 모듈 없이 "점수가 X인 이유"를 persisted data 로 렌더(신규 계산 없음).
-        "blend_basis": _blend_basis(scoring, aggregate_score),
+        "blend_basis": _blend_basis(weighted, aggregate_score),
         "source_agreement": source_agreement,
         "consensus_score": consensus_score,
         # Detect inputs (deterministic re-query trigger) — meta only, not persisted.
@@ -579,18 +587,62 @@ def _aggregate(
     }
 
 
-def _blend_basis(scoring: list[NormalizedSourceResult], aggregate_score: float) -> dict[str, Any]:
-    """결정론 블렌드의 소스별 기여(부호 점수·등가중 지분)와 블렌드 원점수.
+def _source_weight(result: NormalizedSourceResult, config: AggregatorConfig) -> float:
+    """소스별 블렌드 가중치(>= 0). 단일 진실원 — 가중 평균과 blend_basis 가 공용한다.
 
-    ``scoring`` 은 점수에 실제 들어간 소스(SCORING_SOURCES ∩ 비 no_signal/failed). 등가중 평균이라
-    지분은 1/N 균일. UI/LLM 이 "HIRING +0.30·PATENT +0.10 → 평균 +0.20" 식으로 헤드라인 근거를
-    렌더할 수 있게 한다.
+    - equal(기본): 전원 1.0 → 등가중 1/N (현행과 정확히 동일).
+    - ic: config.weights 정적 테이블(IC 진단이 채움). 미등록 소스는 1.0 폴백.
+    - confidence: data_status/risk_flags 로 재계산한 신뢰도 배수(소스 레인 불건드림).
+    - ic_confidence: 둘의 곱.
     """
-    share = round(1.0 / len(scoring), 4) if scoring else 0.0
+    mode = config.weight_mode
+    weight = 1.0
+    if mode in ("ic", "ic_confidence"):
+        weight *= max(0.0, config.weights.get(result.source, 1.0))
+    if mode in ("confidence", "ic_confidence"):
+        weight *= _confidence_weight(result, config)
+    return weight
+
+
+def _confidence_weight(result: NormalizedSourceResult, config: AggregatorConfig) -> float:
+    """집계 시점 신뢰도 배수(0..1). per_source._confidence 의 데이터-품질 페널티만 재사용한다
+    (base/per_source 절대수준은 정규화에서 상쇄되므로 상대 배수만 필요). 소스 레인을 건드리지
+    않고 이미 전달된 data_status/risk_flags 로만 산출 → 스코프 안전.
+    """
+    factor = 1.0
+    flags = set(result.risk_flags)
+    if result.data_status == "partial":
+        factor *= config.partial_penalty
+    if "stale_data" in flags:
+        factor *= config.stale_penalty
+    if "low_base" in flags or "insufficient_history" in flags:
+        factor *= config.sparse_penalty
+    return factor
+
+
+def _blend_basis(
+    weighted: list[tuple[NormalizedSourceResult, float]],
+    aggregate_score: float,
+) -> dict[str, Any]:
+    """블렌드의 소스별 기여(부호 점수·가중·정규화 지분·기여도)와 블렌드 원점수.
+
+    ``weighted`` 는 (scoring 소스, 가중치) 쌍. equal 모드면 가중 1.0 전원이라 share 는 1/N 로
+    현행과 동일. ic/confidence 모드면 share 가 실제 비중을 반영한다. UI/LLM 이
+    "HIRING 40%·PATENT 25% → +0.20" 식으로 헤드라인 근거를 렌더할 수 있게 한다.
+    """
+    weight_total = sum(weight for _, weight in weighted)
+    if weight_total <= 0:
+        return {"sources": [], "blend_score": round(aggregate_score, 3)}
     return {
         "sources": [
-            {"source": result.source, "signed_score": result.score, "share": share}
-            for result in scoring
+            {
+                "source": result.source,
+                "signed_score": result.score,
+                "weight": round(weight, 4),
+                "share": round(weight / weight_total, 4),
+                "contribution": round(weight / weight_total * result.score, 4),
+            }
+            for result, weight in weighted
         ],
         "blend_score": round(aggregate_score, 3),
     }
