@@ -129,6 +129,9 @@ class DecayedHiringIndicators:
     days_since_latest: int | None
     distinct_skills: int = 0
     top_skills: tuple[str, ...] = ()
+    # FE age 표시 재료: 활성 공고의 (게시일, 마감일) — 게시일 최신순. FE 가 렌더 시
+    # (오늘 − 게시일)로 "N일 전"을 계산한다(절대날짜만 노출, age 숫자는 박제 금지).
+    active_postings: tuple[tuple[str, str | None], ...] = ()
 
 
 def compute_decayed_activity(
@@ -149,6 +152,7 @@ def compute_decayed_activity(
     active = 0
     latest: date | None = None
     skill_counter: Counter[str] = Counter()
+    active_rows: list[tuple[date, str | None]] = []
     for posting in postings:
         posted = _parse_date(posting.get("posting_date"))
         if posted is None:
@@ -156,16 +160,19 @@ def compute_decayed_activity(
         age = (as_of - posted).days
         if age < 0 or age > window_days:
             continue
-        closing = _parse_date(posting.get("closing_date_parsed"))
+        closing_raw = posting.get("closing_date_parsed")
+        closing = _parse_date(closing_raw)
         if closing is not None and closing < as_of:
             continue
         active += 1
         decayed += 0.5 ** (age / half_life)
+        active_rows.append((posted, closing.isoformat() if closing else None))
         if latest is None or posted > latest:
             latest = posted
         for skill in posting.get("ocr_skills") or []:
             if skill:
                 skill_counter[str(skill)] += 1
+    active_rows.sort(key=lambda pc: pc[0], reverse=True)  # 게시일 최신순
     return DecayedHiringIndicators(
         active_count=active,
         total_postings=len(postings),
@@ -174,6 +181,7 @@ def compute_decayed_activity(
         days_since_latest=(as_of - latest).days if latest else None,
         distinct_skills=len(skill_counter),
         top_skills=tuple(s for s, _ in skill_counter.most_common(5)),
+        active_postings=tuple((d.isoformat(), c) for d, c in active_rows[:20]),
     )
 
 

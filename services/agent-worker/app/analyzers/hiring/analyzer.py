@@ -124,10 +124,11 @@ class HiringAnalyzer:
         is_large = stock_code in self._config.large_cap_tickers
         window = self._config.cycle_days_large if is_large else self._config.cycle_days_default
         half_life = max(1.0, window * self._config.decay_half_life_ratio)
+        scale = self._config.activity_scale_large if is_large else self._config.activity_scale
         indicators = compute_decayed_activity(
             postings, as_of=as_of, window_days=window, half_life_days=half_life
         )
-        assessment = evaluate_decayed(indicators, self._config)
+        assessment = evaluate_decayed(indicators, self._config, activity_scale=scale)
 
         data_status = "ok"
         if assessment.direction == "unknown":
@@ -142,6 +143,8 @@ class HiringAnalyzer:
             f"(유효창 {window}일·{tier}, 감쇠활동 {indicators.decayed_activity:.2f}) → "
             f"방향 {assessment.direction}, 점수 {assessment.score:+.3f}."
         )
+        # 집계 근거(감쇠 하이라이트) + 공고별 근거(게시일=published_at, 마감일). FE 는 published_at
+        # 으로 "N일 전"을 렌더 시 계산한다(절대날짜만 노출, age 숫자 박제 금지).
         evidence_items = [
             EvidenceItem(
                 title=highlight,
@@ -151,6 +154,15 @@ class HiringAnalyzer:
             )
             for highlight in assessment.highlights
         ]
+        evidence_items.extend(
+            EvidenceItem(
+                title="채용공고",
+                summary=(f"마감 {closing}" if closing else "상시/마감일 미상"),
+                published_at=posted,  # 게시일(절대날짜) — FE 가 오늘−게시일로 age 계산
+                source_name="HIRING",
+            )
+            for posted, closing in indicators.active_postings
+        )
         return SourceResult(
             source="HIRING",
             stock_code=stock_code,

@@ -124,6 +124,7 @@ DECAY_CONFIG = HiringRuleConfig(
     cycle_days_large=180,
     decay_half_life_ratio=0.5,
     activity_scale=3.0,
+    activity_scale_large=3.0,  # 테스트 결정론화(캘리브레이션은 별도 테스트에서 검증)
     min_observations=3,
     positive_threshold=0.2,
     negative_threshold=-0.2,
@@ -215,3 +216,31 @@ class HiringAnalyzerDecayPathTest(unittest.IsolatedAsyncioTestCase):
         cfg_off = HiringRuleConfig(posting_decay_enabled=False, large_cap_tickers=frozenset({"005930"}))
         result = await HiringAnalyzer(cfg_off).analyze("005930", _decay_evidence([_posting(1)]))
         self.assertNotIn("감쇠활동", result.summary)  # 게이트 off → 현행 momentum 경로
+
+
+class HiringDecayCalibrationAndExposureTest(unittest.IsolatedAsyncioTestCase):
+    def test_larger_scale_lowers_score_for_same_activity(self):
+        # 캘리브레이션: 대기업용 큰 scale → 같은 활동합이 더 낮은 점수(포화 늦춤).
+        postings = [_posting(1), _posting(2), _posting(3)]
+        i = compute_decayed_activity(postings, as_of=AS_OF, window_days=180, half_life_days=90)
+        small = evaluate_decayed(i, DECAY_CONFIG, activity_scale=3.0).score
+        large = evaluate_decayed(i, DECAY_CONFIG, activity_scale=15.0).score
+        self.assertGreater(small, large)
+
+    def test_active_postings_exposed_for_fe_age(self):
+        # FE age 재료: active_postings 는 게시일(절대날짜) 최신순. age 숫자 저장 아님.
+        i = compute_decayed_activity(
+            [_posting(5, closing="2026-07-31"), _posting(1)], as_of=AS_OF, window_days=30, half_life_days=15
+        )
+        self.assertEqual(len(i.active_postings), 2)
+        dates = [d for d, _c in i.active_postings]
+        self.assertEqual(dates, sorted(dates, reverse=True))  # 최신순
+        self.assertTrue(all(len(d) == 10 for d in dates))     # ISO 날짜(박제 age 아님)
+
+    async def test_analyzer_emits_per_posting_evidence_with_posting_date(self):
+        postings = [_posting(1), _posting(3), _posting(5)]
+        result = await HiringAnalyzer(DECAY_CONFIG).analyze("005930", _decay_evidence(postings))
+        posting_ev = [e for e in result.evidence_items if e.title == "채용공고"]
+        self.assertEqual(len(posting_ev), 3)  # 공고별 근거 노출
+        # 각 근거는 게시일(절대날짜)을 published_at 으로 실어 FE 가 "N일 전"을 계산할 수 있다.
+        self.assertTrue(all(e.published_at for e in posting_ev))

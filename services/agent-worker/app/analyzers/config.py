@@ -219,7 +219,10 @@ class HiringRuleConfig:
     cycle_days_default: int = 30  # 일반기업 수시채용 유효창(공고 2~3주 + 여유)
     cycle_days_large: int = 180  # 대기업 공채 유효창(반기 주기)
     decay_half_life_ratio: float = 0.5  # 반감기 = 유효창 × ratio (일반 15d / 대기업 90d)
-    activity_scale: float = 3.0  # 감쇠활동합(Σ weight) → graded tanh knee
+    # 감쇠활동합(Σ weight) → graded tanh knee. 대기업은 공고량이 많아 쉽게 포화되므로
+    # scale 을 크게 둬(더 많은 활동이 있어야 같은 점수) 포화점을 늦춘다(tier 별 캘리브레이션).
+    activity_scale: float = 3.0
+    activity_scale_large: float = 15.0
     # 대기업 분류(시가총액 미적재 → 큐레이션 티커셋; 추후 market_cap 임계값 전환).
     large_cap_tickers: frozenset[str] = frozenset(
         {
@@ -252,6 +255,7 @@ class HiringRuleConfig:
             cycle_days_large=_int("HIRING_CYCLE_DAYS_LARGE", cls.cycle_days_large),
             decay_half_life_ratio=_float("HIRING_DECAY_HALF_LIFE_RATIO", cls.decay_half_life_ratio),
             activity_scale=_float("HIRING_ACTIVITY_SCALE", cls.activity_scale),
+            activity_scale_large=_float("HIRING_ACTIVITY_SCALE_LARGE", cls.activity_scale_large),
             large_cap_tickers=_ticker_set("HIRING_LARGE_CAP_TICKERS", cls.large_cap_tickers),
         )
 

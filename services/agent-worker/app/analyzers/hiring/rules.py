@@ -187,6 +187,8 @@ def _direction(score: float, config: HiringRuleConfig) -> Direction:
 def evaluate_decayed(
     indicators: DecayedHiringIndicators,
     config: HiringRuleConfig | None = None,
+    *,
+    activity_scale: float | None = None,
 ) -> HiringAssessment:
     """공고별 시간감쇠 활동강도 → verdict(opt-in 경로).
 
@@ -206,7 +208,8 @@ def evaluate_decayed(
 
     risk_flags: list[str] = []
     highlights: list[str] = []
-    score = graded(indicators.decayed_activity, scale=config.activity_scale, weight=1.0)
+    scale = activity_scale if activity_scale is not None else config.activity_scale
+    score = graded(indicators.decayed_activity, scale=scale, weight=1.0)
     score = round(max(0.0, min(1.0, score)), 3)
 
     if indicators.active_count < config.min_observations:
