@@ -51,8 +51,8 @@ test("home dashboard wires market-indices/watchlist bands and the two-column lay
   assert.match(rightPane, /LiveAnalysisSection/);
   assert.match(rightPane, /CommunityPopularSection/);
   assert.doesNotMatch(rightPane, /WatchlistSection/);
-  // 실시간 분석 아코디언: 차트 + 리포트(useReportStore) + 전체 리포트 링크 배선.
-  assert.match(liveAnalysis, /StockPriceChart/);
+  // 실시간 분석 아코디언: 캔들 차트 + 리포트(useReportStore) + 전체 리포트 링크 배선.
+  assert.match(liveAnalysis, /StockCandleChart/);
   assert.match(liveAnalysis, /useReportStore/);
   assert.match(liveAnalysis, /\/report\//);
   // 관심종목 로그인 분기 + 시장 지수 밴드 variant + 커뮤니티 인기순위 소스.
