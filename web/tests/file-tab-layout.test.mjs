@@ -108,7 +108,7 @@ test("the sheet is pulled out tail-last, and stays smooth", () => {
     assert.ok(stages.length >= 8, `${name}: 곡선 샘플이 최소 8단계 (지금 ${stages.length})`);
     // 옆선을 두 점으로만 그으면 사다리꼴처럼 각진다. 높이 방향으로 쪼개야 휜다.
     for (const s of stages) {
-      assert.ok(s.points >= 12, `${name}: 옆선 샘플이 부족하다(점 ${s.points}) — 각져 보인다`);
+      assert.ok(s.points >= 16, `${name}: 옆선 샘플이 부족하다(점 ${s.points}) — 각져 보인다`);
     }
 
     const opening = name === "panel-in" ? stages : [...stages].reverse();
@@ -124,7 +124,16 @@ test("the sheet is pulled out tail-last, and stays smooth", () => {
     }
     // 머리가 거의 제자리에 왔을 때(윗변 y < 5%) 꼬리는 아직 한참 좁아야 '뒤늦게 따라 나온다'.
     const headHome = opening.find((s) => s.topY < 5);
-    assert.ok(headHome && headHome.bottomWidth < 85, `${name}: 머리가 다 나왔는데 꼬리도 같이 끝난다`);
+    assert.ok(headHome && headHome.bottomWidth < 60, `${name}: 머리가 다 나왔는데 꼬리도 같이 끝난다`);
+
+    // 삼각형 → 사다리꼴 → 직사각형. 아랫변/윗변 비로 읽는다.
+    const pinch = opening.map((s) => s.bottomWidth / s.topWidth);
+    assert.ok(pinch[0] < 0.15, `${name}: 처음엔 아랫변이 거의 한 점(삼각형)이어야 한다 — ${pinch[0].toFixed(2)}`);
+    assert.ok(
+      pinch.some((r) => r > 0.2 && r < 0.9),
+      `${name}: 삼각형과 직사각형 사이에 사다리꼴 구간이 없다`,
+    );
+    assert.ok(pinch.at(-1) > 0.99, `${name}: 끝은 반듯한 직사각형이어야 한다`);
 
     // 목이 잘록해야 종이가 옆으로 늘었다 줄어드는 것처럼 보인다. 직선이면 sideBow ≈ 0.
     const bow = Math.max(...opening.slice(1, -1).map((s) => s.sideBow));
