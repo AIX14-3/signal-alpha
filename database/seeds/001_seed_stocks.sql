@@ -5,6 +5,21 @@
 -- 재실행 안전(idempotent): ON CONFLICT 기반.
 -- universe 확장(15→27): jasoseol 커버리지 ≥15 기준 Tier-1 12종목 추가(2026-06-25, A 결정).
 
+-- 0. id 시퀀스 재동기화.
+-- 백엔드 DB 의 stocks 는 발행 러너가 수집 DB 의 id 를 '명시 id' 로 복사한다(양쪽 stock_id 일치).
+-- 명시 id INSERT 는 시퀀스를 전진시키지 않으므로 시퀀스가 max(id) 뒤에 남는다. 그 상태에서
+-- 아래 INSERT 가 미등재 티커를 새로 넣으면 nextval 이 이미 점유된 id 를 뽑아 stocks_pkey 를
+-- 위반한다(#863 배포 시 db-migrate-backend Job 이 이걸로 반복 실패 → Argo Sync 훅 무한 대기).
+-- ON CONFLICT (ticker) 는 티커 중복만 잡고 pkey 충돌은 못 잡으므로, 시퀀스를 먼저 맞춘다.
+DO $$
+DECLARE
+    seq text := pg_get_serial_sequence('stocks', 'id');
+BEGIN
+    IF seq IS NOT NULL THEN
+        PERFORM setval(seq, COALESCE((SELECT max(id) FROM stocks), 0) + 1, false);
+    END IF;
+END $$;
+
 -- 1. 27개 핵심 기업 기본 정보 주입 (이미 테이블에 있으면 sector만 최신화)
 INSERT INTO stocks (ticker, name, market, sector) VALUES
     ('005930', '삼성전자',         'KOSPI',  '반도체'),
