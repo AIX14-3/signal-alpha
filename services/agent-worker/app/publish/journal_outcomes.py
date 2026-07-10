@@ -281,3 +281,56 @@ async def sync_stock_prices(backend_conn: Any, source_conn: Any) -> ChartSyncSta
             stats.errors.append(f"stock={stock_id}: {exc}")
             logger.warning("stock price sync failed for stock=%s: %s", stock_id, exc)
     return stats
+
+
+# ---------------------------------------------------------------------------
+# 종목 회사 로고 동기화 (stock_logos → stock_logo_published) — 공개 홈/리포트 로고
+# ---------------------------------------------------------------------------
+
+# 수집 DB 원본에서 로고 PNG(+mime/source)를 읽는다. 종목당 1행.
+_LOGO_SOURCE_SQL = """
+SELECT image, mime_type, source
+FROM stock_logos
+WHERE stock_id = $1
+"""
+
+_LOGO_UPSERT_SQL = """
+INSERT INTO stock_logo_published (stock_id, image, mime_type, source)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (stock_id) DO UPDATE SET
+    image = EXCLUDED.image,
+    mime_type = EXCLUDED.mime_type,
+    source = EXCLUDED.source,
+    updated_at = NOW()
+"""
+
+
+async def sync_stock_logos(backend_conn: Any, source_conn: Any) -> ChartSyncStats:
+    """분석 종목 전체의 회사 로고를 백엔드로 멱등 upsert 한다.
+
+    백엔드 활성 종목(stocks)을 순회하며 수집 DB stock_logos 에서 로고를 읽어 backend
+    stock_logo_published 로 발행한다(백엔드는 수집 DB 에 접속하지 않음 — sync_stock_prices
+    와 같은 워커→백엔드 계약). 백엔드 활성 종목 기준이라 FK(stock_logo_published→stocks)가
+    항상 유효하고, 로고 미보유 종목은 조용히 건너뛴다. stats.rows = 발행한 로고 수.
+    """
+    stats = ChartSyncStats()
+    for row in await backend_conn.fetch(_ACTIVE_STOCKS_SQL):
+        stock_id = int(row["id"])
+        try:
+            logo = await source_conn.fetchrow(_LOGO_SOURCE_SQL, stock_id)
+            if logo is None:
+                continue
+            await backend_conn.execute(
+                _LOGO_UPSERT_SQL,
+                stock_id,
+                logo["image"],
+                logo["mime_type"],
+                logo["source"],
+            )
+            stats.stocks += 1
+            stats.rows += 1
+        except Exception as exc:  # noqa: BLE001 - 종목 1개 실패가 전체를 막지 않음
+            stats.failed += 1
+            stats.errors.append(f"stock={stock_id}: {exc}")
+            logger.warning("stock logo sync failed for stock=%s: %s", stock_id, exc)
+    return stats

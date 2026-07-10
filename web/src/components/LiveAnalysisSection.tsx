@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo } from "react";
+import { StockLogo } from "@/components/StockLogo";
 import { StockPriceChart } from "@/components/StockPriceChart";
 import { WatchlistButton } from "@/components/WatchlistButton";
 import type { Stock } from "@/lib/apiClient";
@@ -67,17 +68,20 @@ export function LiveAnalysisSection() {
                     open ? "bg-surface-2" : ""
                   }`}
                 >
-                  <span className="min-w-0">
-                    <span className="block truncate text-[14px] font-semibold text-navy">
-                      {s.stock_name ?? s.stock_code}
-                    </span>
-                    <span className="text-[11.5px] text-muted">{s.stock_code}</span>
-                    {/* 접힌 행 뉴스 흐름 한 줄 미리보기(LLM, display-only). 펼치면 아코디언이 전체를 보여줘 생략. */}
-                    {!open && digestPreview && (
-                      <span className="mt-0.5 block truncate text-[11.5px] text-navy-soft">
-                        📰 {digestPreview}
+                  <span className="flex min-w-0 items-center gap-2.5">
+                    <StockLogo code={s.stock_code} name={s.stock_name} size={24} />
+                    <span className="min-w-0">
+                      <span className="block truncate text-[14px] font-semibold text-navy">
+                        {s.stock_name ?? s.stock_code}
                       </span>
-                    )}
+                      <span className="text-[11.5px] text-muted">{s.stock_code}</span>
+                      {/* 접힌 행 뉴스 흐름 한 줄 미리보기(LLM, display-only). 펼치면 아코디언이 전체를 보여줘 생략. */}
+                      {!open && digestPreview && (
+                        <span className="mt-0.5 block truncate text-[11.5px] text-navy-soft">
+                          📰 {digestPreview}
+                        </span>
+                      )}
+                    </span>
                   </span>
                   <span className={`text-[13px] text-muted transition ${open ? "rotate-180" : ""}`}>
                     ▾

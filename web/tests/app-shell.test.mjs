@@ -212,3 +212,22 @@ test("admin UI exposes split schedule rows and schedule run history", async () =
   assert.match(page, /\\uc6b4\\uc601 \\uc774\\ubca4\\ud2b8/);
   assert.match(page, /dead_letter_pending/);
 });
+
+test("home surfaces company logos with an initials fallback across watchlist/feed/analysis", async () => {
+  const stockLogo = await readFile(new URL("../src/components/StockLogo.tsx", import.meta.url), "utf8");
+  const stocksApi = await readFile(new URL("../src/lib/api/stocks.ts", import.meta.url), "utf8");
+  const watchlistSection = await readFile(new URL("../src/components/WatchlistSection.tsx", import.meta.url), "utf8");
+  const homeLeftPane = await readFile(new URL("../src/components/HomeLeftPane.tsx", import.meta.url), "utf8");
+  const liveAnalysis = await readFile(new URL("../src/components/LiveAnalysisSection.tsx", import.meta.url), "utf8");
+
+  // 로고 URL 은 절대 URL(<img src>)로 백엔드 발행 사본을 부른다.
+  assert.match(stocksApi, /export function stockLogoUrl/);
+  assert.match(stocksApi, /\/api\/stocks\/.+\/logo/);
+  // StockLogo 는 <img> + onError 폴백(미발행/실패 시 이니셜)을 그린다.
+  assert.match(stockLogo, /stockLogoUrl/);
+  assert.match(stockLogo, /onError/);
+  // 홈 3곳(관심종목·뉴스 피드·실시간 분석)이 로고를 배선한다.
+  assert.match(watchlistSection, /StockLogo/);
+  assert.match(homeLeftPane, /StockLogo/);
+  assert.match(liveAnalysis, /StockLogo/);
+});

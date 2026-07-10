@@ -26,6 +26,7 @@ from signal_alpha_data_access.repositories.collection_schedules import (
 )
 from signal_alpha_data_access.repositories.community import CommunityRepository
 from signal_alpha_data_access.repositories.signals import SignalRepository
+from signal_alpha_data_access.repositories.stock_logos import StockLogoRepository
 from signal_alpha_data_access.repositories.stock_prices import StockPriceRepository
 from signal_alpha_data_access.repositories.user_sessions import UserSessionRepository
 from signal_alpha_data_access.repositories.user_trade_fills import UserTradeFillsRepository
@@ -43,6 +44,7 @@ __all__ = [
     "CommunityRepository",
     "ProcessingQueueRepository",
     "SignalRepository",
+    "StockLogoRepository",
     "StockNewsRepository",
     "StockPriceRepository",
     "StockRepository",
