@@ -148,15 +148,28 @@ def parse_report_deterministic(text: str) -> dict:
     }
 
 
+# 목표주가로 받아들일 범위(원/주). 국내 상장주는 이 밖으로 나가지 않는다 —
+# 벗어나면 파싱이 엉킨 것이므로 값을 버린다(잘못된 숫자보다 없는 편이 낫다).
+MIN_TARGET_PRICE = 100
+MAX_TARGET_PRICE = 10_000_000
+
+# 숫자 토큰: "480,000" / "48" / "48.5". 예전 `[0-9][0-9,.]*` 는 마침표를 무한히 삼켜
+# 뒤따르는 날짜까지 붙였다("166,000" + ".2026" → 166000.2026 → ×만원 = 16.6억).
+_NUMBER = r"\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?"
+
+_TARGET_PRICE_PATTERNS = (
+    rf"(?:목표\s*주가|목표주가|목표가|Target\s*Price|TP)(?:\s*\([^)]*\))?\D{{0,80}}({_NUMBER})\s*(만원|원|KRW)?",
+    rf"({_NUMBER})\s*(만원|원|KRW)?\D{{0,30}}(?:목표\s*주가|목표주가|목표가|Target\s*Price|TP)",
+)
+
+
 def _extract_target_price(text: str) -> int | None:
-    patterns = [
-        r"(?:목표\s*주가|목표주가|목표가|Target\s*Price|TP)(?:\s*\([^)]*\))?\D{0,80}([0-9][0-9,.]*)\s*(만원|원|KRW)?",
-        r"([0-9][0-9,.]*)\s*(만원|원|KRW)?\D{0,30}(?:목표\s*주가|목표주가|목표가|Target\s*Price|TP)",
-    ]
-    for pattern in patterns:
+    for pattern in _TARGET_PRICE_PATTERNS:
         match = re.search(pattern, text, flags=re.IGNORECASE | re.DOTALL)
         if match:
-            return _parse_price(match.group(1), match.group(2) if len(match.groups()) > 1 else None)
+            price = _parse_price(match.group(1), match.group(2))
+            if price is not None:
+                return price
     return None
 
 
@@ -181,13 +194,27 @@ def _extract_opinion(text: str) -> str:
 
 
 def _parse_price(raw_number: str, unit: str | None) -> int | None:
+    """숫자+단위 → 원/주. 말이 안 되는 값은 None(저장하지 않는다).
+
+    이전 구현은 두 가지로 깨졌다.
+      1) "만원" 배수를 **이미 원 단위인 수**에도 곱했다. "목표주가 480,000원 ... 만원"
+         → 480,000 × 10,000 = 48억 → target_price(integer) 삽입이 int32 오버플로로 실패.
+      2) 범위 검증이 없어 0원이나 수십억이 그대로 적재됐다.
+    """
     try:
         value = float(raw_number.replace(",", ""))
     except ValueError:
         return None
 
-    multiplier = 10000 if unit == "만원" else 1
-    return int(value * multiplier)
+    # "만원" 은 값이 만원 미만일 때만 단위로 성립한다("48만원" → 480,000).
+    # 이미 원 단위로 적힌 수(480,000)에 곱하면 48억이 된다.
+    if unit == "만원" and value < 10_000:
+        value *= 10_000
+
+    price = int(value)
+    if not (MIN_TARGET_PRICE <= price <= MAX_TARGET_PRICE):
+        return None
+    return price
 
 
 def _extract_key_rationale(text: str) -> str:
