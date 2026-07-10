@@ -220,32 +220,60 @@ html {
    출발점은 화면 하단이 아니라 **그 서류철의 입구**다. 패널이 열릴 때 클릭한 카드의 위치를 재서
    `--slot-dx/dy/scale` 로 넘겨준다(없으면 화면 아래에서 올라오는 폴백).
 
-   키프레임은 from/to **두 개뿐**이다. 중간 키프레임을 두면 이징이 구간마다 다시 적용돼
-   감속→가속이 반복되고, 그게 "끊긴다"로 읽힌다. 궤적은 이징 곡선 하나에 맡긴다.
-   종이의 꼬리 느낌은 clip-path 사다리꼴 하나로 낸다 — 아래로 갈수록 좁아, 펴지는 동안
-   꼬리가 뒤늦게 따라 나온다(꼭짓점 순서 좌상·우상·우하·좌하 고정, 개수가 같아야 보간된다). */
+   꼬리를 보이게 하려면 clip-path 가 transform 보다 **늦게** 펴져야 한다. from/to 한 구간이면
+   둘이 동시에 끝나 그냥 '작은 게 커지는' 것으로만 보인다. 그래서 중간 단계를 둔다.
+
+   ⚠️끊김의 원인은 중간 키프레임 자체가 아니라, 이징이 **구간마다 다시 적용**되는 것이다
+   (감속→가속의 반복). 그러니 애니메이션 전체를 linear 로 돌리고, 감속·가속은 키프레임
+   **간격**으로 만든다 — 열림은 앞이 성글고 뒤가 촘촘(감속), 닫힘은 그 반대(가속).
+   꼭짓점 순서는 좌상·우상·우하·좌하 고정(개수가 같아야 보간된다). */
 @keyframes panel-in {
-  from {
+  0% {
     opacity: 0;
-    transform: translate(var(--slot-dx, 0px), var(--slot-dy, 56px)) scale(var(--slot-scale, 0.8));
-    clip-path: polygon(32% 0%, 68% 0%, 58% 100%, 42% 100%);
+    transform: translate(var(--slot-dx, 0px), var(--slot-dy, 120px)) scale(var(--slot-scale, 0.34));
+    clip-path: polygon(44% 90%, 56% 90%, 54% 100%, 46% 100%); /* 입구에 삐죽 나온 머리 */
   }
-  to {
+  6% { opacity: 1; }
+  30% {
+    transform: translate(calc(var(--slot-dx, 0px) * 0.6), calc(var(--slot-dy, 120px) * 0.6)) scale(0.52);
+    clip-path: polygon(18% 36%, 82% 36%, 60% 100%, 40% 100%); /* 머리는 나왔고 꼬리는 아직 물림 */
+  }
+  58% {
+    transform: translate(calc(var(--slot-dx, 0px) * 0.28), calc(var(--slot-dy, 120px) * 0.28)) scale(0.78);
+    clip-path: polygon(6% 12%, 94% 12%, 74% 100%, 26% 100%);
+  }
+  80% {
+    transform: translate(calc(var(--slot-dx, 0px) * 0.08), calc(var(--slot-dy, 120px) * 0.08)) scale(0.95);
+    clip-path: polygon(0% 0%, 100% 0%, 88% 100%, 12% 100%); /* 꼬리 끝만 남았다 */
+  }
+  100% {
     opacity: 1;
     transform: translate(0, 0) scale(1);
     clip-path: polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%);
   }
 }
 @keyframes panel-out {
-  from {
+  0% {
     opacity: 1;
     transform: translate(0, 0) scale(1);
     clip-path: polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%);
   }
-  to {
+  20% {
+    transform: translate(calc(var(--slot-dx, 0px) * 0.08), calc(var(--slot-dy, 120px) * 0.08)) scale(0.95);
+    clip-path: polygon(0% 0%, 100% 0%, 88% 100%, 12% 100%);
+  }
+  45% {
+    transform: translate(calc(var(--slot-dx, 0px) * 0.28), calc(var(--slot-dy, 120px) * 0.28)) scale(0.78);
+    clip-path: polygon(6% 12%, 94% 12%, 74% 100%, 26% 100%);
+  }
+  75% {
+    transform: translate(calc(var(--slot-dx, 0px) * 0.6), calc(var(--slot-dy, 120px) * 0.6)) scale(0.52);
+    clip-path: polygon(18% 36%, 82% 36%, 60% 100%, 40% 100%);
+  }
+  100% {
     opacity: 0;
-    transform: translate(var(--slot-dx, 0px), var(--slot-dy, 56px)) scale(var(--slot-scale, 0.8));
-    clip-path: polygon(32% 0%, 68% 0%, 58% 100%, 42% 100%);
+    transform: translate(var(--slot-dx, 0px), var(--slot-dy, 120px)) scale(var(--slot-scale, 0.34));
+    clip-path: polygon(44% 90%, 56% 90%, 54% 100%, 46% 100%);
   }
 }
 @keyframes scrim-in {
@@ -390,7 +418,7 @@ html {
   box-shadow: 0 40px 90px rgba(15, 27, 51, 0.28), 0 8px 24px rgba(15, 27, 51, 0.12);
   /* 축소는 종이 한가운데를 기준으로 — 위치는 translate 가 서류철 입구로 옮긴다. */
   transform-origin: center;
-  will-change: transform, opacity;
+  will-change: transform, opacity, clip-path;
 }
 /* 종이 상단의 접힘/제본 자국 */
 .doc-sheet::before {

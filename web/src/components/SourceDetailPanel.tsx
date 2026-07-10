@@ -12,13 +12,13 @@ import { SOURCE_META } from "@/lib/format";
 
 // 퇴장 애니메이션 길이. globals.css 의 panel-out 지속시간과 맞춘다(짧으면 종이 꼬리가 서류철에
 // 다 빨려 들어가기 전에 언마운트돼 툭 끊긴다).
-const PANEL_EXIT_MS = 320;
+const PANEL_EXIT_MS = 340;
 // 종이가 서류철 틈에서 뽑혀 나오는 시간. 꼬리가 마지막까지 물려 있어야 해서 퇴장보다 길다.
-const PANEL_ENTER_MS = 520;
-// 뽑힘은 감속(ease-out), 빨려듦은 가속(ease-in) — 물리적으로 반대 방향의 힘이다.
-// 키프레임이 from/to 둘뿐이라 이 곡선 하나가 궤적 전체를 그린다(구간마다 재적용되지 않는다).
-const PULL_OUT = "cubic-bezier(0.22, 1, 0.36, 1)";
-const SUCK_IN = "cubic-bezier(0.55, 0, 0.85, 0.35)";
+const PANEL_ENTER_MS = 560;
+// 이징은 linear 다. 꼬리를 보이게 하려면 clip-path 가 transform 보다 늦게 펴져야 해서 중간
+// 키프레임이 필요한데, 이징 곡선을 주면 그게 구간마다 재적용돼 감속→가속이 되풀이된다(끊김).
+// 감속(뽑힘)·가속(빨려듦)은 globals.css 의 키프레임 간격이 만든다.
+const PAPER_MOTION = "linear";
 
 // 종이가 출발/도착하는 서류철 입구. 클릭한 카드(`[data-source]`)의 윗변 한가운데다.
 // 카드를 못 찾으면(딥링크로 바로 열린 경우) 화면 아래에서 올라오는 폴백을 쓴다.
@@ -149,8 +149,8 @@ export function SourceDetailPanel({
               slot === undefined
                 ? "none"
                 : closing
-                  ? `panel-out ${PANEL_EXIT_MS}ms ${SUCK_IN} forwards`
-                  : `panel-in ${PANEL_ENTER_MS}ms ${PULL_OUT}`,
+                  ? `panel-out ${PANEL_EXIT_MS}ms ${PAPER_MOTION} forwards`
+                  : `panel-in ${PANEL_ENTER_MS}ms ${PAPER_MOTION}`,
             ...(slot
               ? {
                   "--slot-dx": `${Math.round(slot.dx)}px`,

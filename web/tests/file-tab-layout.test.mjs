@@ -61,28 +61,34 @@ test("the report sheet keeps one paper size across sources", () => {
   assert.match(panel, /doc-body[^"]*overflow-y-auto/, "넘치는 본문은 종이 안에서 스크롤");
 });
 
-test("the sheet animation is one continuous segment, not a stack of keyframes", () => {
+test("the sheet is pulled out tail-last, and stays smooth", () => {
   const css = readFileSync(join(ROOT, "src/app/globals.css"), "utf8");
+  const panel = readFileSync(join(ROOT, "src/components/SourceDetailPanel.tsx"), "utf8");
   const frames = (name) => {
     const start = css.indexOf(`@keyframes ${name} {`);
-    return css.slice(start, css.indexOf("\n}", start));
+    return css.slice(start, css.indexOf("\n}\n", start));
   };
+
+  // 이징 곡선을 주면 구간마다 재적용돼 감속→가속이 되풀이된다(끊김). 감속·가속은 키프레임 간격이 만든다.
+  assert.match(panel, /const PAPER_MOTION = "linear"/, "궤적은 linear + 간격으로 만든다");
+  assert.ok(!/cubic-bezier/.test(panel), "패널에 이징 곡선을 다시 넣으면 끊긴다");
 
   for (const name of ["panel-in", "panel-out"]) {
     const body = frames(name);
-    // 중간 키프레임을 두면 이징이 구간마다 재적용돼 감속→가속이 반복된다("끊긴다").
-    assert.ok(!/^\s*\d+% \{/m.test(body), `${name}: 중간 키프레임(%)이 있으면 궤적이 끊긴다`);
-    assert.match(body, /from \{/, `${name}: from`);
-    assert.match(body, /to \{/, `${name}: to`);
-    // 출발/도착은 클릭한 서류철 입구 — 좌표는 JS 가 재서 var 로 넘긴다.
+    // 꼬리가 보이려면 clip-path 가 transform 보다 늦게 펴져야 한다 = 중간 단계가 필요하다.
+    const stages = [...body.matchAll(/clip-path: polygon\(/g)];
+    assert.ok(stages.length >= 4, `${name}: 꼬리 단계가 최소 4개 (지금 ${stages.length})`);
+    // 입구(머리만 삐죽) → 꼬리 물림 → 꼬리 끝 → 직사각형
+    assert.ok(body.includes("polygon(44% 90%, 56% 90%, 54% 100%, 46% 100%)"), `${name}: 서류철 입구`);
+    assert.ok(body.includes("polygon(18% 36%, 82% 36%, 60% 100%, 40% 100%)"), `${name}: 꼬리 물림`);
+    assert.ok(body.includes("polygon(0% 0%, 100% 0%, 88% 100%, 12% 100%)"), `${name}: 꼬리 끝`);
+    assert.ok(body.includes("polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%)"), `${name}: 다 펴진 종이`);
+    // 출발/도착은 클릭한 서류철 입구 — 좌표는 JS 가 재서 var 로 넘긴다(폴백=화면 아래).
     assert.match(body, /var\(--slot-dx, 0px\)/, `${name}: 입구 x`);
-    assert.match(body, /var\(--slot-dy, 56px\)/, `${name}: 입구 y (폴백=화면 아래)`);
-    assert.match(body, /var\(--slot-scale, 0\.8\)/, `${name}: 입구 크기`);
-    // 꼬리 = 아래로 갈수록 좁은 사다리꼴.
-    assert.ok(
-      body.includes("polygon(32% 0%, 68% 0%, 58% 100%, 42% 100%)"),
-      `${name}: 꼬리 사다리꼴`,
-    );
+    assert.match(body, /var\(--slot-dy, 120px\)/, `${name}: 입구 y`);
+    assert.match(body, /var\(--slot-scale, 0\.34\)/, `${name}: 입구 크기`);
+    // 중간 단계의 이동량은 입구 좌표에 비례한다 — 카드마다 궤적이 달라야 한다.
+    assert.match(body, /calc\(var\(--slot-dx, 0px\) \* 0\.6\)/, `${name}: 비례 이동`);
   }
 });
 
