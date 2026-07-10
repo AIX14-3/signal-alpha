@@ -26,6 +26,12 @@ on:
       tag:
         description: "이미지 태그(비우면 커밋 SHA)"
         required: false
+      # 브랜치에서 인증·빌드·푸시까지 실제로 시험하되 main 은 건드리지 않는다. 이미지 태그는
+      # 커밋 SHA 라 불변이므로 시험 빌드를 밀어 넣어도 기존 배포에 영향이 없다.
+      dry_run:
+        description: "빌드·푸시만 하고 매니페스트 핀 커밋은 건너뛴다"
+        type: boolean
+        default: false
 
 # 배포가 겹치면 나중 것이 먼저 끝나 옛 이미지로 핀될 수 있다. 앞선 실행은 취소한다.
 concurrency:
@@ -44,6 +50,7 @@ jobs:
     if: github.actor != 'github-actions[bot]'
     permissions:
       contents: write # kustomization 태그 핀 커밋을 main 에 되돌려 푸시한다.
+      id-token: write # GCP 에 낼 OIDC 토큰을 발급받는다(Workload Identity Federation).
     steps:
       - uses: actions/checkout@v4
         with:
@@ -58,9 +65,16 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "registry=${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}" >> "$GITHUB_OUTPUT"
 
+      # 키 없는 인증(Workload Identity Federation). 이 조직은 조직 정책
+      # `constraints/iam.disableServiceAccountKeyCreation` 으로 SA JSON 키 발급을 막아 두었고,
+      # 그게 옳다 — 만료 없는 장기 키는 유출되면 그대로 뚫린다. 대신 GitHub 이 발급한 단명 OIDC
+      # 토큰을 GCP 가 직접 신뢰한다. 저장되는 비밀이 없다.
+      # 공급자에 `assertion.repository=='AIX14-3/signal-alpha'` 조건이 걸려 있어 다른 레포는
+      # 이 서비스 계정을 빌려 쓸 수 없다.
       - uses: google-github-actions/auth@v2
         with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
 
       - uses: google-github-actions/setup-gcloud@v2
 
@@ -136,9 +150,11 @@ jobs:
       # 여기까지 왔으면 다섯 이미지가 모두 레지스트리에 있다. 이제서야 매니페스트를 옮긴다 —
       # 먼저 핀하면 아직 없는 이미지를 가리켜 ImagePullBackOff 가 난다.
       - name: kustomization 이미지 태그 핀
+        if: ${{ !inputs.dry_run }}
         run: python deploy/scripts/pin_image_tags.py deploy/k8s/kustomization.yaml "${{ steps.meta.outputs.tag }}"
 
       - name: 핀 커밋을 main 에 되돌려 푸시
+        if: ${{ !inputs.dry_run }}
         run: |
           if git diff --quiet -- deploy/k8s/kustomization.yaml; then
             echo "태그가 이미 ${{ steps.meta.outputs.tag }} — 커밋할 게 없다"
