@@ -22,7 +22,11 @@ const PAPER_MOTION = "linear";
 
 // 종이가 출발/도착하는 서류철 입구. 클릭한 카드(`[data-source]`)의 윗변 한가운데다.
 // 카드를 못 찾으면(딥링크로 바로 열린 경우) 화면 아래에서 올라오는 폴백을 쓴다.
-type Slot = { dx: number; dy: number; scale: number };
+type Slot = { dx: number; dy: number; scale: number; lean: number };
+
+// 종이의 뾰족한 끝이 슬롯 쪽으로 쏠리는 정도(%). 화면 가장자리 카드에서 최대.
+// 왼쪽 카드면 음수 → 꼬리가 왼쪽으로 끌려가고, 그만큼 오른쪽 옆선이 길게 휜다.
+const MAX_LEAN_PCT = 16;
 
 function slotOf(source: string, sheet: HTMLElement): Slot | null {
   const card = document.querySelector<HTMLElement>(`[data-source="${source}"]`);
@@ -35,11 +39,14 @@ function slotOf(source: string, sheet: HTMLElement): Slot | null {
   if (!sheetW || !sheetH) return null;
 
   const from = card.getBoundingClientRect();
+  // 서류가 솟아 나오는 곳은 표지 위쪽이다 — 카드 윗변에서 살짝 안쪽.
+  const dx = from.left + from.width / 2 - window.innerWidth / 2;
   return {
-    // 서류가 솟아 나오는 곳은 표지 위쪽이다 — 카드 윗변에서 살짝 안쪽.
-    dx: from.left + from.width / 2 - window.innerWidth / 2,
+    dx,
     dy: from.top + 12 - window.innerHeight / 2,
     scale: Math.min(from.width / sheetW, 0.34),
+    // 슬롯이 화면 한가운데서 얼마나 치우쳤나(-1 왼쪽 … +1 오른쪽).
+    lean: Math.max(-1, Math.min(1, dx / (window.innerWidth / 2))) * MAX_LEAN_PCT,
   };
 }
 
@@ -156,6 +163,7 @@ export function SourceDetailPanel({
                   "--slot-dx": `${Math.round(slot.dx)}px`,
                   "--slot-dy": `${Math.round(slot.dy)}px`,
                   "--slot-scale": slot.scale.toFixed(3),
+                  "--tail-lean": `${slot.lean.toFixed(1)}%`,
                 }
               : null),
           } as CSSProperties

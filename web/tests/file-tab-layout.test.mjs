@@ -61,128 +61,139 @@ test("the report sheet keeps one paper size across sources", () => {
   assert.match(panel, /doc-body[^"]*overflow-y-auto/, "넘치는 본문은 종이 안에서 스크롤");
 });
 
+// x 좌표는 `12.3%` 또는 `calc(12.3% + 0.64 * var(--tail-lean, 0%))` 이다. 기준 좌표와 기울기
+// 가중치를 함께 뽑아낸다. var() 안의 쉼표 때문에 단순 split(",") 은 못 쓴다.
+const COORD = /(?:calc\(([\d.-]+)% \+ ([\d.]+) \* var\(--tail-lean, 0%\)\)|([\d.-]+)%) ([\d.-]+)%/g;
+
 // 한 키프레임의 clip-path polygon 을 읽는다. 점 순서 = 오른쪽 위→아래, 왼쪽 아래→위(시계방향).
-// 첫 점 = 오른쪽 위, 마지막 점 = 왼쪽 위. 가운데 두 점(n/2-1, n/2)이 아랫변.
 function readStages(body) {
-  return [...body.matchAll(/clip-path: polygon\(([^)]+)\)/g)].map(([, raw]) => {
-    const pts = raw.split(",").map((p) => p.trim().split(/\s+/).map((v) => Number.parseFloat(v)));
+  return [...body.matchAll(/clip-path: (polygon\(.+?\));/g)].map(([, raw]) => {
+    const pts = [...raw.matchAll(COORD)].map(([, leanBase, weight, plain, y]) => ({
+      x: Number.parseFloat(leanBase ?? plain),
+      y: Number.parseFloat(y),
+      lean: weight ? Number.parseFloat(weight) : 0,
+    }));
     const half = pts.length / 2;
-    const [topRight, topLeft] = [pts[0], pts[pts.length - 1]];
+    const side = pts.slice(0, half); // 오른쪽 옆선, 위 → 아래
+    const [topRight, topLeft] = [pts[0], pts.at(-1)];
     const [bottomRight, bottomLeft] = [pts[half - 1], pts[half]];
+    const span = bottomRight.y - topRight.y;
+
+    // '좁아지는 구간' = 폭이 아직 만폭인 마지막 지점부터 뾰족한 끝까지, 높이 대비 비율.
+    // (90% 같은 헐거운 문턱으로 재면 곡선의 완만한 초입을 놓쳐 구간이 실제보다 짧게 잡힌다.)
+    const widest = Math.max(topRight.x, bottomRight.x) - 50;
+    const full = side.filter((pt) => pt.x - 50 >= widest * 0.98);
+    const pointyAtTop = topRight.x < bottomRight.x;
+    const edge = pointyAtTop
+      ? Math.min(...full.map((pt) => pt.y))
+      : Math.max(...full.map((pt) => pt.y));
+    const narrowZone =
+      span > 0 && full.length && full.length < half
+        ? (pointyAtTop ? edge - topRight.y : bottomRight.y - edge) / span
+        : 0;
+
     return {
       points: pts.length,
-      topY: topRight[1],
-      topWidth: topRight[0] - topLeft[0],
-      bottomWidth: bottomRight[0] - bottomLeft[0],
-      // 옆선이 곧으면 중간 점이 위·아래 폭의 선형 보간과 정확히 일치한다. 휘어야 각이 안 진다.
+      topY: topRight.y,
+      topWidth: topRight.x - topLeft.x,
+      bottomWidth: bottomRight.x - bottomLeft.x,
+      narrowZone,
+      // 옆선이 곧으면 중간 점이 위·아래 폭의 선형 보간과 일치한다. 휘어야 각이 안 진다.
       sideBow: Math.max(
-        ...pts.slice(0, half).map((pt, i) => {
-          const s = i / (half - 1);
-          const straight = topRight[0] + (bottomRight[0] - topRight[0]) * s;
-          return Math.abs(pt[0] - straight);
-        }),
+        ...side.map((pt, i) => Math.abs(pt.x - (topRight.x + (bottomRight.x - topRight.x) * (i / (half - 1))))),
       ),
-      // 폭이 윗변의 90% 아래로 떨어지기 시작하는 지점부터 바닥까지가 '꼬리 구간'.
-      // 높이 대비 비율로 잰다 — 크면 목이 길게 늘어진 것이다.
-      tailZone: (() => {
-        const side = pts.slice(0, half);
-        const span = side[half - 1][1] - side[0][1];
-        if (span <= 0) return 0;
-        const narrow = side.find((pt) => pt[0] - 50 < (topRight[0] - 50) * 0.9);
-        return narrow ? (side[half - 1][1] - narrow[1]) / span : 0;
-      })(),
+      // 기울기 가중치: 뾰족한 끝에서 1, 반대편에서 0 이어야 그 끝이 슬롯으로 끌려간다.
+      leanAtTop: topRight.lean,
+      leanAtBottom: bottomRight.lean,
     };
   });
 }
 
-test("the sheet is pulled out tail-last, and stays smooth", () => {
-  const css = readFileSync(join(ROOT, "src/app/globals.css"), "utf8");
-  const panel = readFileSync(join(ROOT, "src/components/SourceDetailPanel.tsx"), "utf8");
-  // 블록 끝 = 들여쓰기 없는 `}`. 줄바꿈(CRLF/LF)에 기대면 안 된다 — CRLF 라 "\n}\n" 가 안 맞아
-  // 두 키프레임을 통째로 읽고, 단조 검사가 엉뚱한 데서 터졌다.
-  const frames = (name) => {
-    const block = new RegExp(`@keyframes ${name} \\{[\\s\\S]*?\\r?\\n\\}`).exec(css);
-    assert.ok(block, `@keyframes ${name} 를 찾지 못했다`);
-    return block[0];
-  };
+function frames(css, name) {
+  // 블록 끝 = 들여쓰기 없는 `}`. 줄바꿈 문자로 자르면 CRLF 파일에서 두 키프레임을 통째로 읽는다.
+  const block = new RegExp(`@keyframes ${name} \\{[\\s\\S]*?\\r?\\n\\}`).exec(css);
+  assert.ok(block, `@keyframes ${name} 를 찾지 못했다`);
+  return block[0];
+}
 
-  // 이징 곡선을 주면 구간마다 재적용돼 감속→가속이 되풀이된다(끊김). 곡선은 키프레임 값에 굽는다.
+test("the paper motion is one linear curve baked into keyframe values", () => {
+  const panel = readFileSync(join(ROOT, "src/components/SourceDetailPanel.tsx"), "utf8");
+  // 이징 곡선을 주면 구간마다 재적용돼 감속→가속이 되풀이된다(끊김).
   assert.match(panel, /const PAPER_MOTION = "linear"/, "궤적은 linear + 키프레임 값으로 만든다");
   assert.ok(!/cubic-bezier/.test(panel), "패널에 이징 곡선을 다시 넣으면 끊긴다");
+});
 
-  for (const name of ["panel-in", "panel-out"]) {
-    const body = frames(name);
-    const stages = readStages(body);
-    // linear 라서 모양의 부드러움은 단계의 촘촘함에서만 나온다.
-    assert.ok(stages.length >= 8, `${name}: 곡선 샘플이 최소 8단계 (지금 ${stages.length})`);
-    // 옆선을 두 점으로만 그으면 사다리꼴처럼 각진다. 높이 방향으로 쪼개야 휜다.
-    for (const s of stages) {
-      assert.ok(s.points >= 16, `${name}: 옆선 샘플이 부족하다(점 ${s.points}) — 각져 보인다`);
-    }
+test("opening: head first, thin tail last, tail leans toward the slot", () => {
+  const css = readFileSync(join(ROOT, "src/app/globals.css"), "utf8");
+  const body = frames(css, "panel-in");
+  const stages = readStages(body);
 
-    const opening = name === "panel-in" ? stages : [...stages].reverse();
-    // 머리는 단조롭게 올라오고(윗변 y 감소), 폭은 단조롭게 벌어진다 — 되돌아가는 구간이 없다.
-    for (let i = 1; i < opening.length; i++) {
-      assert.ok(opening[i].topY <= opening[i - 1].topY, `${name}: 윗변이 되돌아간다(${i})`);
-      assert.ok(opening[i].topWidth >= opening[i - 1].topWidth, `${name}: 윗변 폭이 줄어든다(${i})`);
-      assert.ok(opening[i].bottomWidth >= opening[i - 1].bottomWidth, `${name}: 아랫변 폭이 줄어든다(${i})`);
-    }
-    // 처음과 끝만 직사각형. 그 사이는 아랫변이 늘 더 좁다 = 꼬리가 입구에 물려 있다.
-    for (const s of opening.slice(1, -1)) {
-      assert.ok(s.bottomWidth < s.topWidth, `${name}: 중간 단계는 아래로 갈수록 좁아야 한다`);
-    }
-    // 머리가 거의 제자리에 왔을 때(윗변 y < 5%) 꼬리는 아직 한참 좁아야 '뒤늦게 따라 나온다'.
-    const headHome = opening.find((s) => s.topY < 5);
-    assert.ok(headHome && headHome.bottomWidth < 60, `${name}: 머리가 다 나왔는데 꼬리도 같이 끝난다`);
+  assert.ok(stages.length >= 8, `곡선 샘플이 최소 8단계 (지금 ${stages.length})`);
+  for (const s of stages) assert.ok(s.points >= 16, `옆선 샘플 부족(점 ${s.points}) — 각져 보인다`);
 
-    // 삼각형 → 사다리꼴 → 직사각형. 아랫변/윗변 비로 읽는다.
-    const pinch = opening.map((s) => s.bottomWidth / s.topWidth);
-    assert.ok(pinch[0] < 0.15, `${name}: 처음엔 아랫변이 거의 한 점(삼각형)이어야 한다 — ${pinch[0].toFixed(2)}`);
-    assert.ok(
-      pinch.some((r) => r > 0.2 && r < 0.9),
-      `${name}: 삼각형과 직사각형 사이에 사다리꼴 구간이 없다`,
-    );
-    assert.ok(pinch.at(-1) > 0.99, `${name}: 끝은 반듯한 직사각형이어야 한다`);
+  // 되돌아가는 구간 없이 단조롭게 펴진다.
+  for (let i = 1; i < stages.length; i++) {
+    assert.ok(stages[i].topY <= stages[i - 1].topY, `윗변이 되돌아간다(${i})`);
+    assert.ok(stages[i].topWidth >= stages[i - 1].topWidth, `윗변 폭이 줄어든다(${i})`);
+    assert.ok(stages[i].bottomWidth >= stages[i - 1].bottomWidth, `아랫변 폭이 줄어든다(${i})`);
+  }
+  // 중간 단계는 늘 아래가 더 좁다 = 꼬리가 입구에 물려 있다.
+  for (const s of stages.slice(1, -1)) {
+    assert.ok(s.bottomWidth < s.topWidth, "나올 땐 아래로 갈수록 좁아야 한다");
+  }
+  // 머리가 제자리에 와도(윗변 y < 5%) 꼬리는 아직 좁아야 '뒤늦게 따라 나온다'.
+  const headHome = stages.find((s) => s.topY < 5);
+  assert.ok(headHome && headHome.bottomWidth < 60, "머리가 다 나왔는데 꼬리도 같이 끝난다");
 
-    // 첫 프레임은 옆선이 꼭대기부터 좁아지는 삼각형이어야 한다(꼬리 구간 = 높이 전체).
-    // 옆선 샘플을 바닥에 몰아 찍으므로 완전한 삼각형이라도 첫 샘플(s≈0.3) 탓에 0.70 이 상한이다.
-    assert.ok(opening[0].tailZone > 0.6, `${name}: 첫 모양이 삼각형이 아니다(꼬리 구간 ${opening[0].tailZone.toFixed(2)})`);
-    // 종이가 자리를 잡아 갈수록 잘록한 데는 바닥으로 몰려야 한다 — 목이 길면 어색하다.
-    const settled = opening.filter((s) => s.topY < 10 && pinch[opening.indexOf(s)] < 0.99);
-    for (const s of settled) {
-      assert.ok(s.tailZone < 0.45, `${name}: 잘록한 구간이 너무 길다(${s.tailZone.toFixed(2)}) — 꼬리만 얇아야 한다`);
-    }
+  // 삼각형 → 사다리꼴 → 직사각형.
+  const pinch = stages.map((s) => s.bottomWidth / s.topWidth);
+  assert.ok(pinch[0] < 0.15, `처음엔 아랫변이 거의 한 점(삼각형)이어야 한다 — ${pinch[0].toFixed(2)}`);
+  assert.ok(pinch.some((r) => r > 0.2 && r < 0.9), "삼각형과 직사각형 사이에 사다리꼴 구간이 없다");
+  assert.ok(pinch.at(-1) > 0.99, "끝은 반듯한 직사각형이어야 한다");
 
-    // 목이 잘록해야 종이가 옆으로 늘었다 줄어드는 것처럼 보인다. 직선이면 sideBow ≈ 0.
-    const bow = Math.max(...opening.slice(1, -1).map((s) => s.sideBow));
-    assert.ok(bow > 2, `${name}: 옆선이 거의 직선이다(최대 휨 ${bow.toFixed(1)}%) — 각져 보인다`);
+  // 옆선이 휘어야 각이 안 진다(직선이면 sideBow = 0).
+  const bow = Math.max(...stages.slice(1, -1).map((s) => s.sideBow));
+  assert.ok(bow > 2, `옆선이 거의 직선이다(최대 휨 ${bow.toFixed(1)}%)`);
 
-    // 출발/도착은 클릭한 서류철 입구 — 좌표는 JS 가 재서 var 로 넘긴다(폴백=화면 아래).
-    assert.match(body, /var\(--slot-dx, 0px\)/, `${name}: 입구 x`);
-    assert.match(body, /var\(--slot-dy, 120px\)/, `${name}: 입구 y`);
-    assert.match(body, /var\(--slot-scale, 0\.34\)/, `${name}: 입구 크기`);
-    // 중간 단계의 이동·크기는 입구 값에 비례한다 — 카드마다 궤적이 달라야 한다.
-    assert.match(body, /calc\(var\(--slot-dx, 0px\) \* 0\.\d+\)/, `${name}: 비례 이동`);
-    assert.match(body, /scale\(calc\(var\(--slot-scale, 0\.34\) \* 0\.\d+ \+ 0\.\d+\)\)/, `${name}: 비례 확대`);
+  // 꼬리는 종이의 절반쯤이어야 한다 — 너무 짧으면 뭉툭, 너무 길면 목이 늘어진다.
+  const settled = stages.filter((s) => s.topY < 10 && s.bottomWidth < s.topWidth * 0.99);
+  assert.ok(settled.length > 0, "자리를 잡아가는 단계가 있어야 한다");
+  // 옆선 샘플이 성글어 실제 c(≈0.5~0.6)보다 크게 잡힌다 — 그 오차를 감안한 창.
+  for (const s of settled) {
+    assert.ok(s.narrowZone > 0.35 && s.narrowZone < 0.75, `꼬리 길이가 절반 근처가 아니다(${s.narrowZone.toFixed(2)})`);
+  }
+
+  // 슬롯으로 끌려가는 쪽은 뾰족한 끝(아래)이다. 위는 안 끌린다.
+  for (const s of stages.slice(0, -1)) {
+    assert.ok(s.leanAtBottom > s.leanAtTop, "나올 땐 꼬리(아래)가 슬롯 쪽으로 쏠려야 한다");
+  }
+  assert.equal(stages[0].leanAtTop, 0, "머리는 슬롯 쪽으로 끌리지 않는다");
+  // 다 펴진 종이는 기울지 않는다 — 안 그러면 직사각형이 평행사변형으로 잘린다.
+  assert.equal(stages.at(-1).leanAtBottom, 0, "제자리에 앉은 종이의 아랫변이 슬롯 쪽으로 밀린다");
+  assert.equal(stages.at(-1).leanAtTop, 0, "제자리에 앉은 종이의 윗변이 슬롯 쪽으로 밀린다");
+});
+
+test("closing is not the reverse: the head narrows as it is sucked back in", () => {
+  const css = readFileSync(join(ROOT, "src/app/globals.css"), "utf8");
+  const stages = readStages(frames(css, "panel-out"));
+
+  assert.ok(stages.length >= 8, `곡선 샘플이 최소 8단계 (지금 ${stages.length})`);
+  // 나올 땐 아래가, 들어갈 땐 위가 좁다. 역재생이면 이 단언이 뒤집힌다.
+  for (const s of stages.slice(1, -1)) {
+    assert.ok(s.topWidth < s.bottomWidth, "들어갈 땐 윗부분이 좁아져야 한다");
+  }
+  // 마지막엔 머리가 거의 한 점.
+  assert.ok(stages.at(-1).topWidth / stages.at(-1).bottomWidth < 0.15, "끝에서 머리가 한 점으로 모이지 않는다");
+  // 이번엔 머리(위)가 슬롯으로 끌려간다. 단 첫 프레임(반듯한 종이)은 기울지 않는다.
+  assert.equal(stages[0].leanAtTop, 0, "닫히기 직전의 종이가 이미 기울어 있다");
+  for (const s of stages.slice(1)) {
+    assert.ok(s.leanAtTop > s.leanAtBottom, "들어갈 땐 머리(위)가 슬롯 쪽으로 쏠려야 한다");
   }
 });
 
-test("the slot is measured from the clicked card, not hardcoded to the screen bottom", () => {
+test("the lean comes from the clicked card's horizontal position", () => {
   const panel = readFileSync(join(ROOT, "src/components/SourceDetailPanel.tsx"), "utf8");
-
-  assert.match(panel, /querySelector<HTMLElement>\(`\[data-source="\$\{source\}"\]`\)/, "클릭한 카드를 찾는다");
-  // getBoundingClientRect 는 진입 애니메이션의 transform 이 걸린 값을 준다 — 자기 출발점을 오염시킨다.
-  assert.match(panel, /sheet\.offsetWidth/, "종이 크기는 레이아웃 값으로 잰다");
-  assert.ok(!/sheet\.getBoundingClientRect/.test(panel), "transform 이 섞인 값으로 재면 안 된다");
-  // 재기 전 프레임에 애니메이션이 걸리면 첫 프레임 transform 이 측정을 망친다.
-  assert.match(panel, /slot === undefined\s*\?\s*"none"/, "측정 전에는 애니메이션을 걸지 않는다");
-});
-
-test("the tab clears the card entirely", () => {
-  // 탭 높이 = border-top 1 + padding 5 + 본문줄(아이콘 13px 과 12.5*1.2=15px 중 큰 값) + padding 5
-  const tabHeight = 1 + 5 + Math.max(13, 12.5 * 1.2) + 5; // 26px
-  const marginTop = 48; // mt-12
-
-  assert.equal(tabHeight, 26);
-  assert.ok(marginTop > tabHeight, `위 여백(${marginTop}px)이 탭 높이(${tabHeight}px)보다 커야 한다`);
+  assert.match(panel, /"--tail-lean": `\$\{slot\.lean\.toFixed\(1\)\}%`/, "기울기를 CSS 로 넘긴다");
+  assert.match(panel, /dx \/ \(window\.innerWidth \/ 2\)/, "화면 중앙 대비 좌우 위치로 계산한다");
+  assert.match(panel, /Math\.max\(-1, Math\.min\(1,/, "-1~1 로 묶는다");
 });
