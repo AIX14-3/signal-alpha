@@ -10,8 +10,14 @@ import { SOURCE_META } from "@/lib/format";
 // 소스 상세 우측 슬라이드오버. 열림 여부는 리포트 페이지가 URL 쿼리(?source=dart)로 소유하고,
 // 이 컴포넌트는 열린 소스의 상세를 받아 그리는 일만 한다(뒤로가기=닫기, 새로고침 시 유지).
 
-// 퇴장 애니메이션 길이. globals.css 의 panel-out 지속시간과 맞춘다.
-const PANEL_EXIT_MS = 190;
+// 퇴장 애니메이션 길이. globals.css 의 panel-out 지속시간과 맞춘다(짧으면 종이 꼬리가 서류철에
+// 다 빨려 들어가기 전에 언마운트돼 툭 끊긴다).
+const PANEL_EXIT_MS = 320;
+// 종이가 서류철 틈에서 뽑혀 나오는 시간. 꼬리가 마지막까지 물려 있어야 해서 퇴장보다 길다.
+const PANEL_ENTER_MS = 520;
+// 뽑힘은 감속(ease-out), 빨려듦은 가속(ease-in) — 물리적으로 반대 방향의 힘이다.
+const PULL_OUT = "cubic-bezier(0.16, 0.84, 0.32, 1)";
+const SUCK_IN = "cubic-bezier(0.55, 0, 0.85, 0.35)";
 
 export function SourceDetailPanel({
   ticker,
@@ -93,7 +99,7 @@ export function SourceDetailPanel({
         style={{
           animation: closing
             ? `scrim-out ${PANEL_EXIT_MS}ms ease-in forwards`
-            : "scrim-in 220ms ease-out",
+            : "scrim-in 240ms ease-out",
         }}
       />
 
@@ -103,11 +109,11 @@ export function SourceDetailPanel({
         aria-modal="true"
         aria-label={`${meta.label} 상세`}
         tabIndex={-1}
-        className="doc-sheet relative flex max-h-[86vh] w-full max-w-[840px] flex-col outline-none"
+        className="doc-sheet relative flex h-[86vh] w-full max-w-[840px] flex-col outline-none"
         style={{
           animation: closing
-            ? `panel-out ${PANEL_EXIT_MS}ms ease-in forwards`
-            : "panel-in 260ms var(--ease-out)",
+            ? `panel-out ${PANEL_EXIT_MS}ms ${SUCK_IN} forwards`
+            : `panel-in ${PANEL_ENTER_MS}ms ${PULL_OUT}`,
         }}
       >
         <header className="flex shrink-0 items-center gap-3 border-b border-line px-6 pb-4 pt-6">

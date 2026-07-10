@@ -45,8 +45,8 @@ export function PrecedentSection({ stockCode }: { stockCode: string }) {
   const hasAny = data.groups.length > 0 || data.recent.length > 0;
 
   return (
-    <section className="glass relative mt-6 p-5 pt-7" data-section="precedents">
-      <span className="file-tab absolute -top-[13px] left-5">
+    <section className="glass relative mt-12 p-5" data-section="precedents">
+      <span className="file-tab">
         <FileText size={13} /> 사례
       </span>
       <h2 className="text-[18px] font-bold">과거 유사 사례 · 이후 {data.horizon_days}일 실측</h2>

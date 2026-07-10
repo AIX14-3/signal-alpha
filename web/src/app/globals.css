@@ -117,11 +117,15 @@ html {
     radial-gradient(46% 40% at 6% 10%, rgba(99, 102, 241, 0.1), transparent 60%);
 }
 
-/* 파일(폴더) 탭 라벨 — 카드 상단에 얹어 '파일' 느낌.
-   탭은 카드 위로 13px 솟고 나머지는 카드 안쪽을 파고든다. body 의 line-height(1.55)를 그대로
-   물려받으면 탭이 30px 까지 자라 카드 본문 첫 줄을 덮으므로, 행간을 여기서 끊어 높이를 고정한다.
-   탭을 쓰는 카드는 파고든 만큼 상단 여백을 더 준다(pt-7). */
+/* 파일(폴더) 탭 라벨 — 카드 위쪽 바깥에 얹어 '파일' 느낌.
+   탭 바닥을 카드 상단에 정확히 맞춘다(bottom: 100%). 예전처럼 -13px 로 걸치면 탭이 카드 안을
+   파고들어 본문 첫 줄을 덮는다 — 탭 높이는 글꼴·행간에 따라 변하므로 상단 여백으로 막을 수 없다.
+   높이에 상관없이 겹치지 않도록 위치로 못박고, 행간도 body(1.55) 상속을 끊어 고정한다.
+   부모 카드는 `relative` + 탭 높이만큼의 위 여백(mt-12)을 갖는다. */
 .file-tab {
+  position: absolute;
+  bottom: 100%;
+  left: 20px;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -212,15 +216,56 @@ html {
   70% { box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
   100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
 }
-/* 소스 상세 = 서류철에서 꺼낸 종이 한 장. 화면 중앙에서 솟아오르듯 펼쳐지고,
-   닫으면 서류철로 되돌아가듯 가라앉는다(카드의 서류 애니메이션과 짝). */
+/* 소스 상세 = 서류철에서 뽑혀 나온 종이 한 장.
+   아래 한가운데에 좁은 '서류철 입구'가 있다고 보고, 종이를 그 틈으로 통과시킨다. 이동·축소만으로는
+   틈을 통과하는 느낌이 안 난다 — 종이 윤곽 자체를 clip-path 로 사다리꼴→직사각형으로 편다.
+   꼭짓점 순서는 좌상·우상·우하·좌하 고정(개수가 같아야 보간된다).
+   열림: 머리부터 빠져나오고 꼬리가 마지막까지 틈에 물려 있다(아래로 갈수록 좁은 사다리꼴).
+   닫힘: 역순으로 꼬리부터 다시 빨려 들어가 틈 크기로 수렴한다(가속). */
 @keyframes panel-in {
-  from { transform: translateY(28px) scale(0.94); opacity: 0; }
-  to { transform: translateY(0) scale(1); opacity: 1; }
+  0% {
+    opacity: 0;
+    transform: translateY(56px);
+    clip-path: polygon(46% 100%, 54% 100%, 54% 100%, 46% 100%);
+  }
+  10% { opacity: 1; }
+  35% {
+    transform: translateY(34px);
+    clip-path: polygon(22% 44%, 78% 44%, 58% 100%, 42% 100%);
+  }
+  65% {
+    transform: translateY(14px);
+    clip-path: polygon(5% 10%, 95% 10%, 76% 100%, 24% 100%);
+  }
+  86% {
+    transform: translateY(-6px);
+    clip-path: polygon(0% 0%, 100% 0%, 93% 100%, 7% 100%);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+    clip-path: polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%);
+  }
 }
 @keyframes panel-out {
-  from { transform: translateY(0) scale(1); opacity: 1; }
-  to { transform: translateY(22px) scale(0.95); opacity: 0; }
+  0% {
+    opacity: 1;
+    transform: translateY(-4px);
+    clip-path: polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%);
+  }
+  30% {
+    transform: translateY(10px);
+    clip-path: polygon(4% 8%, 96% 8%, 78% 100%, 22% 100%);
+  }
+  70% {
+    transform: translateY(34px);
+    clip-path: polygon(22% 46%, 78% 46%, 58% 100%, 42% 100%);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(58px);
+    clip-path: polygon(46% 100%, 54% 100%, 54% 100%, 46% 100%);
+  }
 }
 @keyframes scrim-in {
   from { opacity: 0; }
@@ -354,12 +399,17 @@ html {
 /* 열린 동안 표지는 젖혀둔 채로 유지 */
 .folder.is-open .glass.folder-front { transform: rotateX(9deg); }
 
-/* 꺼낸 서류(중앙 보고서) — 글래스가 아니라 종이. 흰 바탕 + 얕은 모서리 + 깊은 그림자. */
+/* 꺼낸 서류(중앙 보고서) — 글래스가 아니라 종이. 흰 바탕 + 얕은 모서리 + 깊은 그림자.
+   소스마다 내용 길이가 달라도 종이 규격은 같다(A4 를 바꿔 끼우지 않는다). 높이를 고정하고
+   넘치는 본문만 안에서 스크롤한다 — 안 그러면 소스를 바꿀 때마다 종이 크기가 널뛴다. */
 .doc-sheet {
   background: #fff;
   border: 1px solid var(--color-line);
   border-radius: 10px;
   box-shadow: 0 40px 90px rgba(15, 27, 51, 0.28), 0 8px 24px rgba(15, 27, 51, 0.12);
+  /* 서류철 입구는 아래에 있다 — 아랫변을 축으로 뽑히고 삼켜진다. */
+  transform-origin: bottom center;
+  will-change: transform, opacity, clip-path;
 }
 /* 종이 상단의 접힘/제본 자국 */
 .doc-sheet::before {

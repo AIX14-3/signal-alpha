@@ -29,8 +29,8 @@ export function EvidenceTimeline({ stockCode }: { stockCode: string }) {
   if (items === null) return null; // 로딩 중엔 조용히(레이아웃 흔들림 방지)
 
   return (
-    <section className="glass relative mt-6 p-5 pt-7" data-section="evidence-timeline">
-      <span className="file-tab absolute -top-[13px] left-5">
+    <section className="glass relative mt-12 p-5" data-section="evidence-timeline">
+      <span className="file-tab">
         <Clock size={13} /> 근거 타임라인
       </span>
       <div className="flex flex-wrap items-start justify-between gap-2">

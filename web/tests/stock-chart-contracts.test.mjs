@@ -39,3 +39,19 @@ test("KST offset math lands on the Korean trading session", () => {
   assert.equal(utcHour, 1, "보정 전에는 새벽 1시대로 찍힌다");
   assert.equal(shifted, 10, "보정 후에는 장중 10시대");
 });
+
+test("market indices follow the Korean quote convention: up red, down blue", () => {
+  const source = readFileSync(join(ROOT, "src/components/MarketIndices.tsx"), "utf8");
+
+  // 지수도 '시세'다 — StockChart 와 같은 색을 쓴다. 제품의 방향 의미색(up=초록)과 섞으면
+  // 같은 화면에서 빨강이 상승도 되고 하락도 된다.
+  assert.match(source, /const KR_UP = "#ef4444"/, "상승 = 빨강");
+  assert.match(source, /const KR_DOWN = "#3b82f6"/, "하락 = 파랑");
+  assert.ok(!source.includes("#16a34a"), "상승 초록(의미색)을 시세에 쓰지 않는다");
+  assert.ok(!source.includes("#dc2626"), "하락 빨강(의미색)을 시세에 쓰지 않는다");
+
+  const chart = readFileSync(join(ROOT, "src/components/StockChart.tsx"), "utf8");
+  for (const color of ['const KR_UP = "#ef4444"', 'const KR_DOWN = "#3b82f6"']) {
+    assert.ok(chart.includes(color), `StockChart 와 색이 갈라지면 안 된다: ${color}`);
+  }
+});
