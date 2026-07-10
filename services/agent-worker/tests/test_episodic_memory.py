@@ -163,6 +163,35 @@ class EpisodeRoundTripTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(episodes, [])
 
 
+class WriterSkipsNoSignalTest(unittest.IsolatedAsyncioTestCase):
+    """무신호(중립) 상황은 임베딩 전에 skip — recall 오염·임베딩 낭비 방지.
+    방향(positive/negative/mixed)만 저장한다(headline 발행엔 영향 없음)."""
+
+    async def test_neutral_situation_is_not_written_and_not_embedded(self):
+        embedder = FakeEmbedder()
+        repo = FakeEpisodeRepository()
+        ok = await EpisodeWriter(embedder=embedder, repository=repo).write(
+            stock_id=1, signal_date=date(2026, 6, 18), run_key="AGGREGATED",
+            signal="neutral", final_score=50.0,
+            breakdown={"HIRING": {"direction": "neutral", "score": 0.0, "data_status": "ok"}},
+        )
+        self.assertFalse(ok)                 # skipped (no episode)
+        self.assertEqual(len(repo.upserts), 0)
+        self.assertEqual(len(embedder.calls), 0)  # no embedding call = no cost
+
+    async def test_directional_situations_are_still_written(self):
+        for direction in ("positive", "negative", "mixed"):
+            embedder = FakeEmbedder()
+            repo = FakeEpisodeRepository()
+            ok = await EpisodeWriter(embedder=embedder, repository=repo).write(
+                stock_id=1, signal_date=date(2026, 6, 18), run_key="AGGREGATED",
+                signal=direction, final_score=62.0,
+                breakdown={"HIRING": {"direction": direction, "score": 0.4, "data_status": "ok"}},
+            )
+            self.assertTrue(ok, direction)
+            self.assertEqual(len(repo.upserts), 1, direction)
+
+
 class JudgeMemoryTest(unittest.TestCase):
     def test_memory_reference_never_changes_numbers(self):
         aggregate = {
