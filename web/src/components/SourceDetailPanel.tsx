@@ -12,9 +12,9 @@ import { SOURCE_META } from "@/lib/format";
 
 // 퇴장 애니메이션 길이. globals.css 의 panel-out 지속시간과 맞춘다(짧으면 종이 꼬리가 서류철에
 // 다 빨려 들어가기 전에 언마운트돼 툭 끊긴다).
-const PANEL_EXIT_MS = 340;
+const PANEL_EXIT_MS = 380;
 // 종이가 서류철 틈에서 뽑혀 나오는 시간. 꼬리가 마지막까지 물려 있어야 해서 퇴장보다 길다.
-const PANEL_ENTER_MS = 560;
+const PANEL_ENTER_MS = 620;
 // 이징은 linear 다. 꼬리를 보이게 하려면 clip-path 가 transform 보다 늦게 펴져야 해서 중간
 // 키프레임이 필요한데, 이징 곡선을 주면 그게 구간마다 재적용돼 감속→가속이 되풀이된다(끊김).
 // 감속(뽑힘)·가속(빨려듦)은 globals.css 의 키프레임 간격이 만든다.

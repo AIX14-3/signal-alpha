@@ -61,34 +61,61 @@ test("the report sheet keeps one paper size across sources", () => {
   assert.match(panel, /doc-body[^"]*overflow-y-auto/, "넘치는 본문은 종이 안에서 스크롤");
 });
 
+// 한 키프레임의 clip-path polygon 을 (윗변 y, 윗변 폭, 아랫변 폭) 으로 읽는다.
+// 꼭짓점 순서는 좌상·우상·우하·좌하.
+function readStages(body) {
+  return [...body.matchAll(/clip-path: polygon\(([\d.]+)% ([\d.]+)%, ([\d.]+)% [\d.]+%, ([\d.]+)% 100%, ([\d.]+)% 100%\)/g)].map(
+    ([, tl, ty, tr, br, bl]) => ({
+      topY: Number(ty),
+      topWidth: Number(tr) - Number(tl),
+      bottomWidth: Number(br) - Number(bl),
+    }),
+  );
+}
+
 test("the sheet is pulled out tail-last, and stays smooth", () => {
   const css = readFileSync(join(ROOT, "src/app/globals.css"), "utf8");
   const panel = readFileSync(join(ROOT, "src/components/SourceDetailPanel.tsx"), "utf8");
+  // 블록 끝 = 들여쓰기 없는 `}`. 줄바꿈(CRLF/LF)에 기대면 안 된다 — CRLF 라 "\n}\n" 가 안 맞아
+  // 두 키프레임을 통째로 읽고, 단조 검사가 엉뚱한 데서 터졌다.
   const frames = (name) => {
-    const start = css.indexOf(`@keyframes ${name} {`);
-    return css.slice(start, css.indexOf("\n}\n", start));
+    const block = new RegExp(`@keyframes ${name} \\{[\\s\\S]*?\\r?\\n\\}`).exec(css);
+    assert.ok(block, `@keyframes ${name} 를 찾지 못했다`);
+    return block[0];
   };
 
-  // 이징 곡선을 주면 구간마다 재적용돼 감속→가속이 되풀이된다(끊김). 감속·가속은 키프레임 간격이 만든다.
-  assert.match(panel, /const PAPER_MOTION = "linear"/, "궤적은 linear + 간격으로 만든다");
+  // 이징 곡선을 주면 구간마다 재적용돼 감속→가속이 되풀이된다(끊김). 곡선은 키프레임 값에 굽는다.
+  assert.match(panel, /const PAPER_MOTION = "linear"/, "궤적은 linear + 키프레임 값으로 만든다");
   assert.ok(!/cubic-bezier/.test(panel), "패널에 이징 곡선을 다시 넣으면 끊긴다");
 
   for (const name of ["panel-in", "panel-out"]) {
     const body = frames(name);
-    // 꼬리가 보이려면 clip-path 가 transform 보다 늦게 펴져야 한다 = 중간 단계가 필요하다.
-    const stages = [...body.matchAll(/clip-path: polygon\(/g)];
-    assert.ok(stages.length >= 4, `${name}: 꼬리 단계가 최소 4개 (지금 ${stages.length})`);
-    // 입구(머리만 삐죽) → 꼬리 물림 → 꼬리 끝 → 직사각형
-    assert.ok(body.includes("polygon(44% 90%, 56% 90%, 54% 100%, 46% 100%)"), `${name}: 서류철 입구`);
-    assert.ok(body.includes("polygon(18% 36%, 82% 36%, 60% 100%, 40% 100%)"), `${name}: 꼬리 물림`);
-    assert.ok(body.includes("polygon(0% 0%, 100% 0%, 88% 100%, 12% 100%)"), `${name}: 꼬리 끝`);
-    assert.ok(body.includes("polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%)"), `${name}: 다 펴진 종이`);
+    const stages = readStages(body);
+    // linear 라서 모양의 부드러움은 단계의 촘촘함에서만 나온다.
+    assert.ok(stages.length >= 8, `${name}: 곡선 샘플이 최소 8단계 (지금 ${stages.length})`);
+
+    const opening = name === "panel-in" ? stages : [...stages].reverse();
+    // 머리는 단조롭게 올라오고(윗변 y 감소), 폭은 단조롭게 벌어진다 — 되돌아가는 구간이 없다.
+    for (let i = 1; i < opening.length; i++) {
+      assert.ok(opening[i].topY <= opening[i - 1].topY, `${name}: 윗변이 되돌아간다(${i})`);
+      assert.ok(opening[i].topWidth >= opening[i - 1].topWidth, `${name}: 윗변 폭이 줄어든다(${i})`);
+      assert.ok(opening[i].bottomWidth >= opening[i - 1].bottomWidth, `${name}: 아랫변 폭이 줄어든다(${i})`);
+    }
+    // 처음과 끝만 직사각형. 그 사이는 아랫변이 늘 더 좁다 = 꼬리가 입구에 물려 있다.
+    for (const s of opening.slice(1, -1)) {
+      assert.ok(s.bottomWidth < s.topWidth, `${name}: 중간 단계는 아래로 갈수록 좁아야 한다`);
+    }
+    // 머리가 거의 제자리에 왔을 때(윗변 y < 5%) 꼬리는 아직 한참 좁아야 '뒤늦게 따라 나온다'.
+    const headHome = opening.find((s) => s.topY < 5);
+    assert.ok(headHome && headHome.bottomWidth < 70, `${name}: 머리가 다 나왔는데 꼬리도 같이 끝난다`);
+
     // 출발/도착은 클릭한 서류철 입구 — 좌표는 JS 가 재서 var 로 넘긴다(폴백=화면 아래).
     assert.match(body, /var\(--slot-dx, 0px\)/, `${name}: 입구 x`);
     assert.match(body, /var\(--slot-dy, 120px\)/, `${name}: 입구 y`);
     assert.match(body, /var\(--slot-scale, 0\.34\)/, `${name}: 입구 크기`);
-    // 중간 단계의 이동량은 입구 좌표에 비례한다 — 카드마다 궤적이 달라야 한다.
-    assert.match(body, /calc\(var\(--slot-dx, 0px\) \* 0\.6\)/, `${name}: 비례 이동`);
+    // 중간 단계의 이동·크기는 입구 값에 비례한다 — 카드마다 궤적이 달라야 한다.
+    assert.match(body, /calc\(var\(--slot-dx, 0px\) \* 0\.\d+\)/, `${name}: 비례 이동`);
+    assert.match(body, /scale\(calc\(var\(--slot-scale, 0\.34\) \* 0\.\d+ \+ 0\.\d+\)\)/, `${name}: 비례 확대`);
   }
 });
 
