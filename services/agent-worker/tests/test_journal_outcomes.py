@@ -10,7 +10,6 @@ from app.publish.journal_outcomes import (
     record_journal_outcomes,
     resolve_outcome,
     sync_journal_chart_prices,
-    sync_stock_logos,
     sync_stock_prices,
 )
 
@@ -304,81 +303,6 @@ def test_stock_price_sync_noop_without_active_stocks():
     source = _FakeWindowlessSource({})
 
     stats = asyncio.run(sync_stock_prices(backend, source))
-
-    assert (stats.stocks, stats.rows, stats.failed) == (0, 0, 0)
-    assert source.fetch_calls == 0
-
-
-class _FakeLogoBackend:
-    """활성 종목 목록(stocks) + stock_logo_published upsert 기록 대역."""
-
-    def __init__(self, stock_ids):
-        self._stock_ids = stock_ids
-        self.upserts = []  # (stock_id, image, mime, source)
-
-    async def fetch(self, sql):
-        assert "FROM stocks" in sql and "is_active" in sql
-        return [{"id": sid} for sid in self._stock_ids]
-
-    async def execute(self, sql, *args):
-        assert "INSERT INTO stock_logo_published" in sql
-        assert "ON CONFLICT (stock_id) DO UPDATE" in sql
-        if args[0] == 666:
-            raise RuntimeError("boom")
-        self.upserts.append(args)
-        return "INSERT 0 1"
-
-
-class _FakeLogoSource:
-    """종목별 로고 원본(stock_logos) 대역. 미보유 종목은 None 반환."""
-
-    def __init__(self, logos_by_stock):
-        self._logos = logos_by_stock  # {stock_id: (image, mime, source)}
-        self.fetch_calls = 0
-
-    async def fetchrow(self, sql, stock_id):
-        assert "FROM stock_logos" in sql
-        self.fetch_calls += 1
-        row = self._logos.get(stock_id)
-        if row is None:
-            return None
-        image, mime, source = row
-        return {"image": image, "mime_type": mime, "source": source}
-
-
-def test_stock_logo_sync_publishes_available_logos_and_skips_missing():
-    backend = _FakeLogoBackend([10, 20, 30])
-    # 30 은 로고 미보유 → upsert 건너뜀.
-    source = _FakeLogoSource(
-        {10: (b"png10", "image/png", "toss"), 20: (b"png20", "image/png", "favicon")}
-    )
-
-    stats = asyncio.run(sync_stock_logos(backend, source))
-
-    assert stats.failed == 0
-    assert stats.stocks == 2 and stats.rows == 2
-    assert {u[0] for u in backend.upserts} == {10, 20}
-    assert dict((u[0], u[1]) for u in backend.upserts) == {10: b"png10", 20: b"png20"}
-
-
-def test_stock_logo_sync_isolates_per_stock_failure():
-    backend = _FakeLogoBackend([666, 10])
-    source = _FakeLogoSource(
-        {666: (b"boom", "image/png", None), 10: (b"png10", "image/png", "toss")}
-    )
-
-    stats = asyncio.run(sync_stock_logos(backend, source))
-
-    assert stats.failed == 1 and stats.stocks == 1
-    assert any("stock=666" in e for e in stats.errors)
-    assert all(u[0] == 10 for u in backend.upserts)
-
-
-def test_stock_logo_sync_noop_without_active_stocks():
-    backend = _FakeLogoBackend([])
-    source = _FakeLogoSource({})
-
-    stats = asyncio.run(sync_stock_logos(backend, source))
 
     assert (stats.stocks, stats.rows, stats.failed) == (0, 0, 0)
     assert source.fetch_calls == 0

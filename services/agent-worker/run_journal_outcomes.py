@@ -36,7 +36,6 @@ async def main() -> None:
     from app.publish.journal_outcomes import (
         record_journal_outcomes,
         sync_journal_chart_prices,
-        sync_stock_logos,
         sync_stock_prices,
     )
 
@@ -49,22 +48,18 @@ async def main() -> None:
             stats = await record_journal_outcomes(backend_conn, source_conn)
             chart = await sync_journal_chart_prices(backend_conn, source_conn)
             prices = await sync_stock_prices(backend_conn, source_conn)
-            logos = await sync_stock_logos(backend_conn, source_conn)
         print(
             f"[JOURNAL-OUTCOMES] stored={stats.stored} pending={stats.pending} "
             f"skipped={stats.skipped} failed={stats.failed}"
         )
         print(f"[JOURNAL-CHART] stocks={chart.stocks} rows={chart.rows} failed={chart.failed}")
         print(f"[STOCK-PRICES] stocks={prices.stocks} rows={prices.rows} failed={prices.failed}")
-        print(f"[STOCK-LOGOS] stocks={logos.stocks} rows={logos.rows} failed={logos.failed}")
         if stats.errors:
             print("errors:", stats.errors[:10])
         if chart.errors:
             print("chart errors:", chart.errors[:10])
         if prices.errors:
             print("price errors:", prices.errors[:10])
-        if logos.errors:
-            print("logo errors:", logos.errors[:10])
     finally:
         await backend_pool.close()
         await source_pool.close()

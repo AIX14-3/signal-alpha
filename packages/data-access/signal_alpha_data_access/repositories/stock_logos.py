@@ -6,9 +6,11 @@ from typing import Any
 class StockLogoRepository:
     """종목 회사 로고(public.stock_logo_published) 접근.
 
-    backend 는 읽기(get_by_stock_id) 전용 — 공개 로고 API 가 PNG 바이트를 서빙한다.
-    worker 발행 러너는 upsert 로 수집 DB(stock_logos)에서 읽은 로고를 backend DB 로
-    동기화한다(stock_price_daily 와 같은 워커→백엔드 계약).
+    backend DB 가 로고 원본을 직접 보유한다(수집 DB 복사·발행 없음). 정적 참조 데이터라
+    적재 툴(database/tools/load_stock_logos.py)이 backend DB 로 1회성 upsert 하고,
+    공개 로고 API 는 여기서 읽기(get_by_stock_id)만 한다. 테이블 이름은 과거 발행 사본
+    마이그(20260710_1100)의 이름을 그대로 유지한다(db_partition check_targets 의 과거
+    마이그 locality 재검증과 충돌하지 않게 이름을 바꾸지 않는다).
     """
 
     def __init__(self, connection: Any) -> None:
@@ -23,30 +25,4 @@ class StockLogoRepository:
             WHERE stock_id = $1
             """,
             stock_id,
-        )
-
-    async def upsert(
-        self,
-        *,
-        stock_id: int,
-        image: bytes,
-        mime_type: str,
-        source: str | None,
-    ) -> None:
-        """종목 1행 멱등 upsert(worker 발행 러너 전용)."""
-        await self._connection.execute(
-            """
-            INSERT INTO stock_logo_published (stock_id, image, mime_type, source)
-            VALUES ($1, $2, $3, $4)
-            ON CONFLICT (stock_id)
-            DO UPDATE SET
-                image = EXCLUDED.image,
-                mime_type = EXCLUDED.mime_type,
-                source = EXCLUDED.source,
-                updated_at = now()
-            """,
-            stock_id,
-            image,
-            mime_type,
-            source,
         )

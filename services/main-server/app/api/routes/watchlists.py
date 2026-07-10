@@ -138,9 +138,9 @@ async def get_stock_logo(
 ) -> Response:
     """종목 회사 로고 PNG(공개) — 홈/관심종목/리포트의 종목 옆 로고.
 
-    발행 러너(sync_stock_logos)가 수집 DB stock_logos 에서 backend stock_logo_published 로
-    동기화한 이미지를 그대로 서빙한다(백엔드는 수집 DB 에 접속하지 않음). 로고 미보유 종목은
-    404 → 프론트는 이니셜 폴백을 그린다. 아직 발행 전이면 전 종목이 404(폴백)이다.
+    로고는 정적 참조 데이터라 backend DB(stock_logo_published)가 직접 보유한다 — 적재 툴
+    load_stock_logos.py 가 backend 로 1회성 upsert 한 이미지를 그대로 서빙한다. 로고 미보유
+    종목은 404 → 프론트는 이니셜 폴백을 그린다. 아직 미적재면 전 종목이 404(폴백)이다.
     """
     ticker = stock_code.strip()
     async with pool.acquire() as connection:
