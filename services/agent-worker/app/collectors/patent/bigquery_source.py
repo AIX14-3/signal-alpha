@@ -68,6 +68,21 @@ TICKER_BQ_PATTERNS: dict[str, list[str]] = {
     "228850": ["%RAYENCE%"],               # 레이언스
     "299030": ["%HANATECH%"],              # 하나기술
     "036690": ["%COMMAX%"],                # 코맥스
+    # 2026-07-10 확대(BigQuery assignee_harmonized 실측 검증): 미보유 대형 특허 출원인 12종목 추가.
+    # 계열사 오염 회피 위해 정확 부분문자열로 좁힘(POSCO=퓨처엠/DX/인터/E&C 제외, KT=KT&G/DKT 제외,
+    # 한국전력=산업개발 제외, 삼성전기=삼성전자와 구분).
+    "373220": ["%LG ENERGY SOLUTION%"],        # LG에너지솔루션
+    "015760": ["%KOREA ELECTRIC POWER CORP%"], # 한국전력(KEPCO)
+    "010140": ["%SAMSUNG HEAVY%"],             # 삼성중공업
+    "009150": ["%SAMSUNG ELECTRO MECH%"],      # 삼성전기
+    "005490": ["POSCO", "%POSCO CO LTD%", "%POSCO HOLDINGS%"],  # 포스코홀딩스(계열사 제외)
+    "030200": ["KT CORP%"],                    # KT
+    "033780": ["%KT & G%"],                    # KT&G
+    "004020": ["%HYUNDAI STEEL%"],             # 현대제철
+    "272210": ["%HANWHA SYSTEMS%"],            # 한화시스템
+    "042660": ["%HANWHA OCEAN%", "%DAEWOO SHIPBUILDING%"],  # 한화오션(구 대우조선해양)
+    "017670": ["%SK TELECOM%"],                # SK텔레콤
+    "010120": ["%LS ELECTRIC%"],               # LS ELECTRIC
 }
 
 
