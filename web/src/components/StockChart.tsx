@@ -9,6 +9,7 @@ import {
   type IChartApi,
   type ISeriesApi,
   LineSeries,
+  LineStyle,
 } from "lightweight-charts";
 import { LineChart } from "lucide-react";
 import { getReportPrices, type PriceSeries } from "@/lib/apiClient";
@@ -50,13 +51,26 @@ function isMarketOpen(now = new Date()): boolean {
   return minutes >= 9 * 60 && minutes <= 15 * 60 + 35;
 }
 
+// 현재가 수평선 + 우측 축 라벨. 폴링 갱신 때 눈에 띄게 움직이는 요소가 이것뿐이다(일봉에서는
+// 오늘 봉 하나가 y축의 0.2% 남짓 움직여 사실상 안 보인다). 캔들은 라이브러리 기본값으로 이미 켜져 있다.
+function priceLineOptions(color: string) {
+  return {
+    priceLineVisible: true,
+    priceLineColor: color,
+    priceLineStyle: LineStyle.Dashed,
+    lastValueVisible: true,
+  };
+}
+
 function toSeriesData(bars: PriceSeries["bars"], chartType: ChartType) {
   if (chartType === "candle") return bars as never;
   return bars.map((b) => ({ time: b.time, value: b.close })) as never;
 }
 
 export function StockChart({ stockCode, stockName }: { stockCode: string; stockName?: string | null }) {
-  const [tf, setTf] = useState("day");
+  // 장중에는 오늘 흐름(분봉)을 먼저 보여 준다. 일봉 6개월에서는 오늘 봉 하나가 움직여 봐야
+  // y축 범위의 0.2% 남짓이라, "장중 갱신"이라 써 놓고도 차트는 멈춘 것처럼 보인다.
+  const [tf, setTf] = useState(() => (isMarketOpen() ? "min" : "day"));
   const [chartType, setChartType] = useState<ChartType>("area");
   const [data, setData] = useState<PriceSeries | null>(null);
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
@@ -157,7 +171,7 @@ export function StockChart({ stockCode, stockName }: { stockCode: string; stockN
       seriesRef.current = chart.addSeries(LineSeries, {
         color: trendColorRef.current,
         lineWidth: 2,
-        priceLineVisible: false,
+        ...priceLineOptions(trendColorRef.current),
       });
     } else {
       // 영역(기본) — 등락 색 종가 라인 + 상단→하단 그라데이션 채움.
@@ -167,7 +181,7 @@ export function StockChart({ stockCode, stockName }: { stockCode: string; stockN
         topColor: `rgba(${rgb},.28)`,
         bottomColor: `rgba(${rgb},.02)`,
         lineWidth: 2,
-        priceLineVisible: false,
+        ...priceLineOptions(trendColorRef.current),
       });
     }
 
@@ -188,7 +202,11 @@ export function StockChart({ stockCode, stockName }: { stockCode: string; stockN
 
     // 등락 방향에 따라 선/채움 색을 시세 관례로 맞춘다(캔들은 봉마다 색이 달라 제외).
     if (chartType === "line") {
-      series.applyOptions({ color: trendColor, crosshairMarkerBorderColor: trendColor } as never);
+      series.applyOptions({
+        color: trendColor,
+        crosshairMarkerBorderColor: trendColor,
+        priceLineColor: trendColor,
+      } as never);
     } else if (chartType === "area") {
       const rgb = trendColor === KR_UP ? "239,68,68" : "59,130,246";
       series.applyOptions({
@@ -196,6 +214,7 @@ export function StockChart({ stockCode, stockName }: { stockCode: string; stockN
         topColor: `rgba(${rgb},.28)`,
         bottomColor: `rgba(${rgb},.02)`,
         crosshairMarkerBorderColor: trendColor,
+        priceLineColor: trendColor,
       } as never);
     }
 
