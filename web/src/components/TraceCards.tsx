@@ -21,7 +21,7 @@ export function TraceCards({ sources }: { sources: ReportSource[] }) {
   if (cards.length === 0) return null;
 
   return (
-    <section className="glass relative mt-6 p-5" data-section="trace-cards">
+    <section className="glass relative mt-6 p-5 pt-7" data-section="trace-cards">
       <span className="file-tab absolute -top-[13px] left-5">
         <Search size={13} /> 수요·확장 흔적
       </span>

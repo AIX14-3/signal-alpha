@@ -45,7 +45,7 @@ export function PrecedentSection({ stockCode }: { stockCode: string }) {
   const hasAny = data.groups.length > 0 || data.recent.length > 0;
 
   return (
-    <section className="glass relative mt-6 p-5" data-section="precedents">
+    <section className="glass relative mt-6 p-5 pt-7" data-section="precedents">
       <span className="file-tab absolute -top-[13px] left-5">
         <FileText size={13} /> 사례
       </span>

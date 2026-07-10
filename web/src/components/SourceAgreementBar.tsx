@@ -32,7 +32,7 @@ export function SourceAgreementBar({
   const topLabel = DIRECTIONS.find((x) => x.key === top?.[0])?.label ?? "중립";
 
   return (
-    <section className="glass relative mt-6 p-5" data-section="source-agreement">
+    <section className="glass relative mt-6 p-5 pt-7" data-section="source-agreement">
       <span className="file-tab absolute -top-[13px] left-5">
         <Compass size={13} /> 소스 간 일치도
       </span>

@@ -236,7 +236,7 @@ export function StockChart({ stockCode, stockName }: { stockCode: string; stockN
   const live = isMarketOpen();
 
   return (
-    <section className="glass relative mt-6 p-5" data-section="stock-chart">
+    <section className="glass relative mt-6 p-5 pt-7" data-section="stock-chart">
       <span className="file-tab absolute -top-[13px] left-5">
         <LineChart size={13} /> 시세
       </span>
