@@ -6,8 +6,10 @@ Yahoo Finance 차트 API(무키·JSON)를 서버사이드에서 조회한다(브
 
 from __future__ import annotations
 
+import asyncio
 import datetime
 import random
+import time
 from typing import Any
 
 import httpx
@@ -23,36 +25,88 @@ _INDICES = [
 ]
 _UA = "Mozilla/5.0 (compatible; SignalAlpha/1.0)"
 
+_DAILY = ("1d", "1mo")
+_HOURLY = ("1h", "1mo")
+
+# Yahoo 는 호출이 잦으면 429 를 준다. 실패할 때마다 합성 시계열로 떨어지면 실데이터가 있는데도
+# 화면이 "예시"로 뒤덮인다. 짧게 캐시해 호출 수를 줄이고(프론트는 45초마다 폴링), 일시적 실패
+# 때는 마지막 실측값을 계속 쓴다. 합성값은 한 번도 못 받아 온 지수에만 쓰는 최후 수단이다.
+_CACHE_TTL_SEC = 60.0
+_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+
 
 @router.get("/indices")
 async def get_indices() -> dict[str, Any]:
-    out: list[dict[str, Any]] = []
     async with httpx.AsyncClient(timeout=8.0) as client:
-        for idx in _INDICES:
-            try:
-                bars = await _fetch_yahoo(client, idx["symbol"])
-                if len(bars) < 2:
-                    raise ValueError("insufficient")
-                out.append(_summarize(idx, bars, is_demo=False))
-            except Exception:
-                out.append(_demo_index(idx))
-    return {"indices": out}
+        series = await asyncio.gather(*(_bars_for(client, idx) for idx in _INDICES))
+    return {
+        "indices": [
+            _summarize(idx, bars, is_demo=False) if bars else _demo_index(idx)
+            for idx, bars in zip(_INDICES, series)
+        ]
+    }
+
+
+async def _bars_for(client: httpx.AsyncClient, idx: dict[str, Any]) -> list[dict[str, Any]] | None:
+    symbol = idx["symbol"]
+    cached = _cache.get(symbol)
+    if cached and time.monotonic() - cached[0] < _CACHE_TTL_SEC:
+        return cached[1]
+    try:
+        bars = await _fetch_yahoo(client, symbol)
+        if len(bars) < 2:
+            raise ValueError("insufficient")
+    except Exception:
+        return cached[1] if cached else None
+    _cache[symbol] = (time.monotonic(), bars)
+    return bars
 
 
 async def _fetch_yahoo(client: httpx.AsyncClient, symbol: str) -> list[dict[str, Any]]:
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
-    resp = await client.get(
-        url, params={"interval": "1d", "range": "1mo"}, headers={"User-Agent": _UA}
-    )
-    resp.raise_for_status()
-    result = resp.json()["chart"]["result"][0]
-    stamps = result.get("timestamp") or []
-    closes = result["indicators"]["quote"][0].get("close") or []
+    stamps, closes = await _fetch_closes(client, symbol, *_DAILY)
+    # Yahoo 는 멀쩡한 거래일의 일봉 종가를 이따금 비워 둔다(관측: 2026-07-09 의 ^KQ11·KRW=X).
+    # 빈 봉을 그냥 버리면 "전일 대비"가 이틀 전 종가와 비교돼 등락률이 부풀려진다(코스닥 +5.66%
+    # ← 실제 +3.9%). 끝쪽에 구멍이 났을 때만 시간봉으로 그날 마지막 체결가를 메운다.
+    if any(c is None for c in closes[-2:]):
+        closes = _fill_gaps(stamps, closes, await _fetch_closes(client, symbol, *_HOURLY))
     return [
         {"time": int(t), "close": round(float(c), 2)}
         for t, c in zip(stamps, closes)
         if c is not None
     ]
+
+
+async def _fetch_closes(
+    client: httpx.AsyncClient, symbol: str, interval: str, rng: str
+) -> tuple[list[int], list[float | None]]:
+    """(타임스탬프, 종가) — 종가에는 Yahoo 가 비워 둔 None 이 그대로 남는다."""
+    resp = await client.get(
+        f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}",
+        params={"interval": interval, "range": rng},
+        headers={"User-Agent": _UA},
+    )
+    resp.raise_for_status()
+    result = resp.json()["chart"]["result"][0]
+    stamps = [int(t) for t in (result.get("timestamp") or [])]
+    closes = list(result["indicators"]["quote"][0].get("close") or [])
+    return stamps, closes[: len(stamps)]
+
+
+def _fill_gaps(
+    stamps: list[int],
+    closes: list[float | None],
+    hourly: tuple[list[int], list[float | None]],
+) -> list[float | None]:
+    """빈 일봉 종가를 같은 날 시간봉의 마지막 값으로 메운다."""
+    last_of_day: dict[str, float] = {}
+    for t, c in zip(*hourly):
+        if c is not None:
+            last_of_day[_utc_day(t)] = float(c)
+    return [c if c is not None else last_of_day.get(_utc_day(t)) for t, c in zip(stamps, closes)]
+
+
+def _utc_day(stamp: int) -> str:
+    return datetime.datetime.fromtimestamp(stamp, datetime.timezone.utc).date().isoformat()
 
 
 def _summarize(idx: dict[str, Any], bars: list[dict[str, Any]], *, is_demo: bool) -> dict[str, Any]:

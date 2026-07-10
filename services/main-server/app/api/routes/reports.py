@@ -252,45 +252,72 @@ _YF_UA = "Mozilla/5.0 (compatible; SignalAlpha/1.0)"
 
 
 async def _yahoo_prices(code: str, tf: str) -> list[dict[str, Any]] | None:
-    """Yahoo Finance 실시세(한국). 코스피 .KS → 코스닥 .KQ 순서로 시도. 실패 시 None."""
+    """Yahoo Finance 실시세(한국). 코스피 .KS / 코스닥 .KQ 중 실제 시세인 쪽을 고른다. 실패 시 None."""
     interval, rng = _YF_TF[tf]
     intraday = tf == "min"
+    fallback: list[dict[str, Any]] | None = None
     try:
         async with httpx.AsyncClient(timeout=8.0) as client:
             for suffix in (".KS", ".KQ"):
                 try:
-                    resp = await client.get(
-                        f"https://query1.finance.yahoo.com/v8/finance/chart/{code}{suffix}",
-                        params={"interval": interval, "range": rng},
-                        headers={"User-Agent": _YF_UA},
+                    bars, market_price = await _yahoo_candidate(
+                        client, f"{code}{suffix}", interval, rng, intraday=intraday
                     )
-                    resp.raise_for_status()
-                    result = resp.json()["chart"]["result"][0]
-                    stamps = result.get("timestamp") or []
-                    q = result["indicators"]["quote"][0]
-                    o, h, low, c = q.get("open"), q.get("high"), q.get("low"), q.get("close")
-                    bars: list[dict[str, Any]] = []
-                    for i, t in enumerate(stamps):
-                        vals = (o[i], h[i], low[i], c[i])
-                        if any(v is None for v in vals):
-                            continue
-                        when = (
-                            int(t)
-                            if intraday
-                            else datetime.datetime.fromtimestamp(t, datetime.timezone.utc)
-                            .date()
-                            .isoformat()
-                        )
-                        bars.append(
-                            {"time": when, "open": round(o[i]), "high": round(h[i]), "low": round(low[i]), "close": round(c[i])}
-                        )
-                    if len(bars) >= 2:
-                        return bars
                 except Exception:
                     continue
+                if len(bars) < 2:
+                    continue
+                if _quote_agrees(market_price, bars[-1]["close"]):
+                    return bars
+                # 시세와 어긋나는 후보(=엉뚱한 종목)라도, 양쪽 다 검증에 실패하면 쓴다.
+                fallback = fallback or bars
     except Exception:
         return None
-    return None
+    return fallback
+
+
+async def _yahoo_candidate(
+    client: httpx.AsyncClient, symbol: str, interval: str, rng: str, *, intraday: bool
+) -> tuple[list[dict[str, Any]], float | None]:
+    """한 심볼의 OHLC 봉과 현재가(meta.regularMarketPrice). 값이 빈 봉은 건너뛴다."""
+    resp = await client.get(
+        f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}",
+        params={"interval": interval, "range": rng},
+        headers={"User-Agent": _YF_UA},
+    )
+    resp.raise_for_status()
+    result = resp.json()["chart"]["result"][0]
+    stamps = result.get("timestamp") or []
+    q = result["indicators"]["quote"][0]
+    o, h, low, c = q.get("open"), q.get("high"), q.get("low"), q.get("close")
+    bars: list[dict[str, Any]] = []
+    for i, t in enumerate(stamps):
+        vals = (o[i], h[i], low[i], c[i])
+        if any(v is None for v in vals):
+            continue
+        when = (
+            int(t)
+            if intraday
+            else datetime.datetime.fromtimestamp(t, datetime.timezone.utc).date().isoformat()
+        )
+        bars.append(
+            {"time": when, "open": round(o[i]), "high": round(h[i]), "low": round(low[i]), "close": round(c[i])}
+        )
+    market_price = (result.get("meta") or {}).get("regularMarketPrice")
+    return bars, float(market_price) if market_price is not None else None
+
+
+def _quote_agrees(market_price: float | None, last_close: float) -> bool:
+    """이 심볼의 봉이 정말 이 종목 것인지.
+
+    Yahoo 는 접미사가 틀려도 404 가 아니라 200 을 준다: `247540.KS`(실제는 코스닥)는 과거 봉은
+    그럴듯하게 주면서 당일 봉을 비우고 현재가로 엉뚱한 값(19.4만원, 실제 12.1만원)을 얹는다.
+    그대로 첫 응답을 믿으면 코스닥 종목이 늘 어제 종가를 "현재가"로 달게 된다. 현재가와 마지막
+    종가는 같은 종목이라면 (장중이든 마감 뒤든) 일치하므로, 이 어긋남으로 가짜를 걸러낸다.
+    """
+    if market_price is None or last_close <= 0:
+        return False
+    return abs(market_price - last_close) / last_close < 0.15
 
 
 def _demo_price_series(ticker: str, tf: str) -> tuple[list[dict[str, Any]], int, int, float]:
