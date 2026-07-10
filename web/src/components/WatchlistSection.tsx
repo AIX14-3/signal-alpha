@@ -4,18 +4,15 @@ import Link from "next/link";
 import { useEffect } from "react";
 import { StockLogo } from "@/components/StockLogo";
 import { useAuthStore } from "@/stores/authStore";
-import { useHomeStore } from "@/stores/homeStore";
 import { useWatchlistStore } from "@/stores/watchlistStore";
 
 // 관심종목 — 대시보드 상단 가로 밴드. 로그인 시 내 워치리스트, 비로그인 시 로그인 유도(NFR-1).
-// 항목 클릭은 "실시간 분석 종목" 아코디언을 그 종목으로 연다(select).
+// 항목 클릭은 해당 종목 리포트 상세페이지(/report/[code])로 이동한다.
 export function WatchlistSection() {
   const user = useAuthStore((s) => s.user);
   const items = useWatchlistStore((s) => s.items);
   const loading = useWatchlistStore((s) => s.loading);
   const load = useWatchlistStore((s) => s.load);
-  const select = useHomeStore((s) => s.select);
-  const selectedCode = useHomeStore((s) => s.selectedCode);
 
   useEffect(() => {
     if (user) void load();
@@ -58,13 +55,10 @@ export function WatchlistSection() {
       ) : (
         <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
           {items.map((w) => (
-            <button
+            <Link
               key={w.stock.stock_code}
-              type="button"
-              onClick={() => void select(w.stock.stock_code)}
-              className={`flex min-w-0 items-center gap-2.5 rounded-[12px] border px-3.5 py-2.5 text-left transition hover:bg-surface-2 ${
-                selectedCode === w.stock.stock_code ? "border-sky bg-surface-2" : "border-line"
-              }`}
+              href={`/report/${encodeURIComponent(w.stock.stock_code)}`}
+              className="flex min-w-0 items-center gap-2.5 rounded-[12px] border border-line px-3.5 py-2.5 text-left transition hover:bg-surface-2"
             >
               <StockLogo code={w.stock.stock_code} name={w.stock.stock_name} size={32} />
               <span className="flex min-w-0 flex-col">
@@ -73,7 +67,7 @@ export function WatchlistSection() {
                 </span>
                 <span className="text-[11px] text-muted">{w.stock.stock_code}</span>
               </span>
-            </button>
+            </Link>
           ))}
         </div>
       )}
