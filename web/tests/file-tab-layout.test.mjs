@@ -61,16 +61,29 @@ test("the report sheet keeps one paper size across sources", () => {
   assert.match(panel, /doc-body[^"]*overflow-y-auto/, "넘치는 본문은 종이 안에서 스크롤");
 });
 
-// 한 키프레임의 clip-path polygon 을 (윗변 y, 윗변 폭, 아랫변 폭) 으로 읽는다.
-// 꼭짓점 순서는 좌상·우상·우하·좌하.
+// 한 키프레임의 clip-path polygon 을 읽는다. 점 순서 = 오른쪽 위→아래, 왼쪽 아래→위(시계방향).
+// 첫 점 = 오른쪽 위, 마지막 점 = 왼쪽 위. 가운데 두 점(n/2-1, n/2)이 아랫변.
 function readStages(body) {
-  return [...body.matchAll(/clip-path: polygon\(([\d.]+)% ([\d.]+)%, ([\d.]+)% [\d.]+%, ([\d.]+)% 100%, ([\d.]+)% 100%\)/g)].map(
-    ([, tl, ty, tr, br, bl]) => ({
-      topY: Number(ty),
-      topWidth: Number(tr) - Number(tl),
-      bottomWidth: Number(br) - Number(bl),
-    }),
-  );
+  return [...body.matchAll(/clip-path: polygon\(([^)]+)\)/g)].map(([, raw]) => {
+    const pts = raw.split(",").map((p) => p.trim().split(/\s+/).map((v) => Number.parseFloat(v)));
+    const half = pts.length / 2;
+    const [topRight, topLeft] = [pts[0], pts[pts.length - 1]];
+    const [bottomRight, bottomLeft] = [pts[half - 1], pts[half]];
+    return {
+      points: pts.length,
+      topY: topRight[1],
+      topWidth: topRight[0] - topLeft[0],
+      bottomWidth: bottomRight[0] - bottomLeft[0],
+      // 옆선이 곧으면 중간 점이 위·아래 폭의 선형 보간과 정확히 일치한다. 휘어야 각이 안 진다.
+      sideBow: Math.max(
+        ...pts.slice(0, half).map((pt, i) => {
+          const s = i / (half - 1);
+          const straight = topRight[0] + (bottomRight[0] - topRight[0]) * s;
+          return Math.abs(pt[0] - straight);
+        }),
+      ),
+    };
+  });
 }
 
 test("the sheet is pulled out tail-last, and stays smooth", () => {
@@ -93,6 +106,10 @@ test("the sheet is pulled out tail-last, and stays smooth", () => {
     const stages = readStages(body);
     // linear 라서 모양의 부드러움은 단계의 촘촘함에서만 나온다.
     assert.ok(stages.length >= 8, `${name}: 곡선 샘플이 최소 8단계 (지금 ${stages.length})`);
+    // 옆선을 두 점으로만 그으면 사다리꼴처럼 각진다. 높이 방향으로 쪼개야 휜다.
+    for (const s of stages) {
+      assert.ok(s.points >= 12, `${name}: 옆선 샘플이 부족하다(점 ${s.points}) — 각져 보인다`);
+    }
 
     const opening = name === "panel-in" ? stages : [...stages].reverse();
     // 머리는 단조롭게 올라오고(윗변 y 감소), 폭은 단조롭게 벌어진다 — 되돌아가는 구간이 없다.
@@ -107,7 +124,11 @@ test("the sheet is pulled out tail-last, and stays smooth", () => {
     }
     // 머리가 거의 제자리에 왔을 때(윗변 y < 5%) 꼬리는 아직 한참 좁아야 '뒤늦게 따라 나온다'.
     const headHome = opening.find((s) => s.topY < 5);
-    assert.ok(headHome && headHome.bottomWidth < 70, `${name}: 머리가 다 나왔는데 꼬리도 같이 끝난다`);
+    assert.ok(headHome && headHome.bottomWidth < 85, `${name}: 머리가 다 나왔는데 꼬리도 같이 끝난다`);
+
+    // 목이 잘록해야 종이가 옆으로 늘었다 줄어드는 것처럼 보인다. 직선이면 sideBow ≈ 0.
+    const bow = Math.max(...opening.slice(1, -1).map((s) => s.sideBow));
+    assert.ok(bow > 2, `${name}: 옆선이 거의 직선이다(최대 휨 ${bow.toFixed(1)}%) — 각져 보인다`);
 
     // 출발/도착은 클릭한 서류철 입구 — 좌표는 JS 가 재서 var 로 넘긴다(폴백=화면 아래).
     assert.match(body, /var\(--slot-dx, 0px\)/, `${name}: 입구 x`);
