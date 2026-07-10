@@ -361,8 +361,15 @@ def _report_response(row: dict[str, Any]) -> dict[str, Any]:
         "data_status": "ok",
         "summary": row.get("summary"),
         # 긍정/주의 한 줄 핵심 + 소스별 근거 배열(근거 중심 재구성 §5.3 3·4 섹션).
-        "bull_point": row.get("bull_point"),
-        "bear_point": row.get("bear_point"),
+        # 집계기는 이 두 필드에 소스 요약 **원문**을 그대로 넣는다(`_evidence_point`) —
+        # 근거 카드와 같은 humanizer 를 태워야 "방향 positive, 점수 +0.311" 같은 기계식
+        # 문장이 리포트 헤드라인에 그대로 나가지 않는다.
+        "bull_point": _humanize_point(
+            row.get("bull_point"), row.get("positive_evidence"), row.get("caution_evidence")
+        ),
+        "bear_point": _humanize_point(
+            row.get("bear_point"), row.get("caution_evidence"), row.get("positive_evidence")
+        ),
         "positive_evidence": _evidence_list(row.get("positive_evidence")),
         "caution_evidence": _evidence_list(row.get("caution_evidence")),
         "sources": sources,
@@ -974,6 +981,38 @@ def _precedent_example(r: dict[str, Any]) -> dict[str, Any]:
         "fwd_return": _pct(r.get("fwd_return_20d")),
         "abnormal_return": _pct(r.get("abnormal_return_20d")),
     }
+
+
+def _humanize_point(point: Any, *evidence_values: Any) -> str | None:
+    """bull_point/bear_point 를 근거 카드와 같은 문장으로 바꾼다.
+
+    집계기(`_evidence_point`)는 이 필드에 **첫 긍정/부정 소스의 요약 원문**을 그대로 넣는다.
+    그래서 리포트 헤드라인에 "… 방향 positive, 점수 +0.311 (모멘텀 +0.052, 스파이크 0.21)"
+    같은 기계식 문장이 그대로 나갔다.
+
+    원문이 어느 소스의 것인지는 evidence 배열이 안다(같은 문자열 + source/direction/
+    data_status). 거기서 소스를 찾아 ``_humanize_summary`` 를 태운다. 못 찾으면(예: LLM 이
+    서술로 덮어쓴 경우) 원문을 그대로 돌려준다 — 이미 자연어이므로 손대지 않는다.
+    """
+    if not isinstance(point, str) or not point.strip():
+        return point if isinstance(point, str) else None
+    for value in evidence_values:
+        for entry in _json_array(value):
+            if not isinstance(entry, dict) or entry.get("summary") != point:
+                continue
+            source = entry.get("source")
+            if not source:
+                continue
+            return _humanize_summary(
+                str(source).lower(),
+                {
+                    "summary": point,
+                    "risk_flags": entry.get("risk_flags"),
+                    "direction": entry.get("direction"),
+                    "data_status": entry.get("data_status"),
+                },
+            )
+    return point
 
 
 def _evidence_list(value: Any) -> list[dict[str, Any]]:
