@@ -107,6 +107,10 @@ class FakeConnection:
                 {"trade_date": date(2026, 7, 7), "close_price": 71500.0},
             ],
         }
+        # 종목 로고(stock_logo_published). 10(005930)만 보유, 나머지는 미발행(404 폴백).
+        self.logos_by_stock = {
+            10: {"image": b"\x89PNG\r\n\x1a\nFAKE", "mime_type": "image/png"},
+        }
 
     async def fetchrow(self, sql, *args):
         if "FROM api.stock_news" in sql and "total_articles" in sql:
@@ -118,6 +122,8 @@ class FakeConnection:
             return self.users_by_id.get(args[0])
         if "FROM api.stocks" in sql and "WHERE ticker = $1" in sql:
             return self.stocks_by_ticker.get(args[0])
+        if "FROM stock_logo_published" in sql:
+            return self.logos_by_stock.get(args[0])
         if "FROM watchlists" in sql and "INNER JOIN api.stocks" in sql:
             watchlist = next(
                 (
@@ -374,6 +380,28 @@ class WatchlistRoutesTest(unittest.TestCase):
 
     def test_stock_prices_unknown_stock_returns_404(self):
         response = self.client.get("/api/stocks/999999/prices")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["detail"]["code"], "STOCK_NOT_FOUND")
+
+    def test_stock_logo_returns_image_publicly(self):
+        # 공개 엔드포인트 — 토큰 없이 200, PNG 바이트 + 캐시 헤더.
+        response = self.client.get("/api/stocks/005930/logo")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["content-type"], "image/png")
+        self.assertIn("max-age", response.headers.get("cache-control", ""))
+        self.assertTrue(response.content.startswith(b"\x89PNG"))
+
+    def test_stock_logo_missing_returns_404(self):
+        # 로고 미발행 종목 — 404 → 프론트는 이니셜 폴백.
+        response = self.client.get("/api/stocks/000660/logo")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["detail"]["code"], "LOGO_NOT_FOUND")
+
+    def test_stock_logo_unknown_stock_returns_404(self):
+        response = self.client.get("/api/stocks/999999/logo")
 
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.json()["detail"]["code"], "STOCK_NOT_FOUND")

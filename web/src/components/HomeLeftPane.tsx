@@ -1,5 +1,6 @@
 "use client";
 
+import { StockLogo } from "@/components/StockLogo";
 import { dateTimeShortKST } from "@/lib/format";
 import { useHomeStore } from "@/stores/homeStore";
 
@@ -51,9 +52,12 @@ export function HomeLeftPane() {
                     {n.press && <span className="text-[11px] text-muted">{n.press}</span>}
                   </span>
                   <span
-                    className="pill flat shrink-0 justify-self-end text-[11.5px] font-semibold"
-                    style={{ padding: "3px 10px" }}
+                    className="pill flat shrink-0 justify-self-end gap-1.5 text-[11.5px] font-semibold"
+                    style={{ padding: "3px 10px 3px 4px" }}
                   >
+                    {n.stock_code && (
+                      <StockLogo code={n.stock_code} name={n.stock_name} size={16} />
+                    )}
                     {n.stock_name ?? n.stock_code}
                   </span>
                   <span className="shrink-0 justify-self-end text-[11px] text-muted">

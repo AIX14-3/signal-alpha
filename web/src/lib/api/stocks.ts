@@ -1,6 +1,6 @@
 // 종목/관심종목(무제한).
 
-import { apiFetch } from "./core";
+import { apiFetch, MAIN_API_BASE_URL } from "./core";
 
 export type Stock = {
   id: number;
@@ -14,6 +14,13 @@ export type WatchlistItem = { stock: Stock; created_at: string | null };
 
 export async function searchStocks(query: string): Promise<{ items: Stock[] }> {
   return apiFetch(`/api/stocks/search?query=${encodeURIComponent(query)}`, { auth: "none" });
+}
+
+// 종목 회사 로고 이미지 URL(공개, <img src> 용). 발행 러너(sync_stock_logos)가 backend
+// stock_logo_published 로 동기화한 PNG 를 서빙한다. 미발행 종목은 404 → StockLogo 가
+// 이니셜 폴백을 그린다. apiFetch(JSON) 가 아니라 <img> 가 직접 부르므로 절대 URL 이 필요하다.
+export function stockLogoUrl(stockCode: string): string {
+  return `${MAIN_API_BASE_URL}/api/stocks/${encodeURIComponent(stockCode)}/logo`;
 }
 
 export async function listStocks(limit = 100): Promise<{ items: Stock[] }> {

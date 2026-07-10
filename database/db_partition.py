@@ -48,6 +48,10 @@ BACKEND_TABLES: frozenset[str] = frozenset(
         # 종목별 일봉 종가 시리즈(공개 홈 차트) — 발행 러너가 분석 종목 전체를 동기화
         # (signal_journal_chart_prices 와 같은 워커→백엔드 계약, 저널 유무와 무관).
         "stock_price_daily",
+        # 종목 회사 로고 발행 사본(공개 홈/리포트 로고) — 발행 러너 sync_stock_logos 가
+        # 수집 DB stock_logos 원본에서 백엔드로 동기화(stock_price_daily 와 같은 워커→백엔드
+        # 계약). 수집 소유 원본(stock_logos)과 이름이 달라 버킷 충돌이 없다.
+        "stock_logo_published",
         "user_signal_reads",
         "report_issuances",
         # 수집 스케줄 제어 평면 (어드민/MCP 가 쓰고 워커 스케줄러가 폴링). 백엔드 DB 보유.

@@ -4,12 +4,13 @@ from datetime import date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 
 from app.api.routes.auth import NOTICE, get_current_user
 from app.core.database import get_database_pool
 from signal_alpha_data_access.backend import (
+    StockLogoRepository,
     StockNewsRepository,
     StockPriceRepository,
     StockRepository,
@@ -124,6 +125,36 @@ async def list_stock_prices(
         "latest_price": latest["close"] if latest else None,
         "notice": NOTICE,
     }
+
+
+# 로고는 회사 브랜드 이미지라 사실상 정적 — 브라우저/CDN 캐시를 길게 허용(1일).
+_LOGO_CACHE_CONTROL = "public, max-age=86400"
+
+
+@stocks_router.get("/{stock_code}/logo")
+async def get_stock_logo(
+    stock_code: str,
+    pool: Any = Depends(get_database_pool),
+) -> Response:
+    """종목 회사 로고 PNG(공개) — 홈/관심종목/리포트의 종목 옆 로고.
+
+    발행 러너(sync_stock_logos)가 수집 DB stock_logos 에서 backend stock_logo_published 로
+    동기화한 이미지를 그대로 서빙한다(백엔드는 수집 DB 에 접속하지 않음). 로고 미보유 종목은
+    404 → 프론트는 이니셜 폴백을 그린다. 아직 발행 전이면 전 종목이 404(폴백)이다.
+    """
+    ticker = stock_code.strip()
+    async with pool.acquire() as connection:
+        stock = await StockRepository(connection).get_by_ticker(ticker)
+        if stock is None:
+            raise _api_error(404, "STOCK_NOT_FOUND", "종목을 찾을 수 없습니다.")
+        row = await StockLogoRepository(connection).get_by_stock_id(stock_id=int(stock["id"]))
+    if row is None or row["image"] is None:
+        raise _api_error(404, "LOGO_NOT_FOUND", "이 종목의 로고가 아직 없습니다.")
+    return Response(
+        content=bytes(row["image"]),
+        media_type=row["mime_type"] or "image/png",
+        headers={"Cache-Control": _LOGO_CACHE_CONTROL},
+    )
 
 
 @news_router.get("/summary")

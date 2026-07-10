@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect } from "react";
+import { StockLogo } from "@/components/StockLogo";
 import { useAuthStore } from "@/stores/authStore";
 import { useHomeStore } from "@/stores/homeStore";
 import { useWatchlistStore } from "@/stores/watchlistStore";
@@ -61,14 +62,17 @@ export function WatchlistSection() {
               key={w.stock.stock_code}
               type="button"
               onClick={() => void select(w.stock.stock_code)}
-              className={`flex min-w-0 items-center justify-between gap-2 rounded-[12px] border px-3.5 py-2.5 text-left transition hover:bg-surface-2 ${
+              className={`flex min-w-0 items-center gap-2.5 rounded-[12px] border px-3.5 py-2.5 text-left transition hover:bg-surface-2 ${
                 selectedCode === w.stock.stock_code ? "border-sky bg-surface-2" : "border-line"
               }`}
             >
-              <span className="min-w-0 truncate text-[13.5px] font-semibold text-navy-soft">
-                {w.stock.stock_name ?? w.stock.stock_code}
+              <StockLogo code={w.stock.stock_code} name={w.stock.stock_name} size={32} />
+              <span className="flex min-w-0 flex-col">
+                <span className="truncate text-[13.5px] font-semibold text-navy-soft">
+                  {w.stock.stock_name ?? w.stock.stock_code}
+                </span>
+                <span className="text-[11px] text-muted">{w.stock.stock_code}</span>
               </span>
-              <span className="shrink-0 text-[11.5px] text-muted">{w.stock.stock_code}</span>
             </button>
           ))}
         </div>
