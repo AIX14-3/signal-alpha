@@ -44,6 +44,7 @@ jobs:
     if: github.actor != 'github-actions[bot]'
     permissions:
       contents: write # kustomization 태그 핀 커밋을 main 에 되돌려 푸시한다.
+      id-token: write # GCP 에 낼 OIDC 토큰을 발급받는다(Workload Identity Federation).
     steps:
       - uses: actions/checkout@v4
         with:
@@ -58,9 +59,16 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "registry=${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}" >> "$GITHUB_OUTPUT"
 
+      # 키 없는 인증(Workload Identity Federation). 이 조직은 조직 정책
+      # `constraints/iam.disableServiceAccountKeyCreation` 으로 SA JSON 키 발급을 막아 두었고,
+      # 그게 옳다 — 만료 없는 장기 키는 유출되면 그대로 뚫린다. 대신 GitHub 이 발급한 단명 OIDC
+      # 토큰을 GCP 가 직접 신뢰한다. 저장되는 비밀이 없다.
+      # 공급자에 `assertion.repository=='AIX14-3/signal-alpha'` 조건이 걸려 있어 다른 레포는
+      # 이 서비스 계정을 빌려 쓸 수 없다.
       - uses: google-github-actions/auth@v2
         with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
 
       - uses: google-github-actions/setup-gcloud@v2
 

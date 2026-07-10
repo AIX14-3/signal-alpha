@@ -37,16 +37,50 @@ sync 한다(폴링 ~3분). 아래 §1·§2 수동 절차는 이제 폴백/최초
 > diff 가 없다 → Argo 는 "바뀐 게 없다"고 보고 아무것도 하지 않고, 파드는 옛 이미지를 계속 돌린다.
 > 커밋 SHA 태그는 불변이라 **롤백·추적**도 된다.
 
-**사람이 한 번 해 둘 것** (없으면 워크플로가 인증 단계에서 실패한다):
+### GCP 인증 — 키 없이(Workload Identity Federation)
 
-| 종류 | 이름 | 값 |
-|---|---|---|
-| Secret | `GCP_SA_KEY` | Artifact Registry 쓰기 권한(`roles/artifactregistry.writer`)이 있는 서비스 계정의 JSON 키 |
-| Variable | `NEXT_PUBLIC_MAIN_API_BASE_URL` | 예: `https://api.signal-alpha.cloud` |
-| Variable | `NEXT_PUBLIC_PORTONE_STORE_ID` 등 | `web/Dockerfile` 의 `ARG NEXT_PUBLIC_*` 와 1:1 |
+이 조직은 조직 정책 `constraints/iam.disableServiceAccountKeyCreation` 으로 **서비스 계정 JSON 키
+발급을 금지**한다(옳은 정책 — 만료 없는 장기 키는 유출되면 그대로 뚫린다). 그래서 GitHub 이 발급한
+단명 OIDC 토큰을 GCP 가 직접 신뢰하게 한다. **저장되는 비밀이 없다.**
+
+구성(1회, 이미 적용됨):
+
+```bash
+PROJECT=signal-alpha-demo; PROJECT_NUMBER=133341272598; REPO=AIX14-3/signal-alpha
+SA=gha-deployer@$PROJECT.iam.gserviceaccount.com
+
+gcloud iam service-accounts create gha-deployer --project=$PROJECT
+# 프로젝트 전체가 아니라 **그 저장소 하나에만** 쓰기 권한(최소 권한).
+gcloud artifacts repositories add-iam-policy-binding signal-alpha \
+  --location=asia-northeast3 --project=$PROJECT \
+  --member="serviceAccount:$SA" --role=roles/artifactregistry.writer
+
+gcloud services enable sts.googleapis.com --project=$PROJECT
+gcloud iam workload-identity-pools create github --location=global --project=$PROJECT
+gcloud iam workload-identity-pools providers create-oidc github-oidc \
+  --location=global --workload-identity-pool=github --project=$PROJECT \
+  --issuer-uri=https://token.actions.githubusercontent.com \
+  --attribute-mapping=google.subject=assertion.sub,attribute.repository=assertion.repository \
+  --attribute-condition="assertion.repository=='$REPO'"   # ← 이게 없으면 아무 레포나 이 SA 를 빌려 쓴다
+gcloud iam service-accounts add-iam-policy-binding $SA --project=$PROJECT \
+  --role=roles/iam.workloadIdentityUser \
+  --member="principalSet://iam.googleapis.com/projects/$PROJECT_NUMBER/locations/global/workloadIdentityPools/github/attribute.repository/$REPO"
+```
+
+### GitHub Variables (Settings → Secrets and variables → Actions → Variables)
+
+Secret 은 하나도 필요 없다. 아래는 전부 공개 값이다.
+
+| 이름 | 값 |
+|---|---|
+| `GCP_WORKLOAD_IDENTITY_PROVIDER` | `projects/133341272598/locations/global/workloadIdentityPools/github/providers/github-oidc` |
+| `GCP_SERVICE_ACCOUNT` | `gha-deployer@signal-alpha-demo.iam.gserviceaccount.com` |
+| `NEXT_PUBLIC_MAIN_API_BASE_URL` | `https://api.signal-alpha.cloud` |
+| `NEXT_PUBLIC_*` (나머지 6개) | `web/Dockerfile` 의 `ARG NEXT_PUBLIC_*` 와 1:1 |
 
 `NEXT_PUBLIC_*` 은 **빌드 타임에 번들로 인라인**된다. 런타임 env 로는 안 바뀌므로 도메인이 바뀌면
-반드시 Variable 을 고치고 재빌드해야 한다.
+반드시 Variable 을 고치고 재빌드해야 한다. 하나라도 빠지면 빈 문자열이 되어 그 기능만 배포본에서
+조용히 죽는다 — `web/tests/deploy-build-args.test.mjs` 가 Dockerfile 의 ARG 목록과 대조해 막는다.
 
 **루프 방지**: 워크플로가 `main` 에 미는 핀 커밋은 `kustomization.yaml` 한 파일만 건드리는데,
 `on.push.paths` 가 그 파일을 제외하므로 자신을 다시 트리거하지 않는다(게다가 `GITHUB_TOKEN` 으로
