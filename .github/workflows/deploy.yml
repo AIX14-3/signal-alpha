@@ -128,6 +128,7 @@ jobs:
             NEXT_PUBLIC_PORTONE_CHANNEL_KEY_PAYMENT=${{ vars.NEXT_PUBLIC_PORTONE_CHANNEL_KEY_PAYMENT }}
             NEXT_PUBLIC_NAVER_CLIENT_ID=${{ vars.NEXT_PUBLIC_NAVER_CLIENT_ID }}
             NEXT_PUBLIC_GOOGLE_CLIENT_ID=${{ vars.NEXT_PUBLIC_GOOGLE_CLIENT_ID }}
+            NEXT_PUBLIC_KAKAO_CLIENT_ID=${{ vars.NEXT_PUBLIC_KAKAO_CLIENT_ID }}
           tags: ${{ steps.meta.outputs.registry }}/web:${{ steps.meta.outputs.tag }}
           cache-from: type=gha,scope=web
           cache-to: type=gha,scope=web,mode=max
