@@ -3089,19 +3089,6 @@ CREATE TABLE public.stock_logo_published (
 
 
 --
--- Name: stock_logos; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.stock_logos (
-    stock_id bigint NOT NULL,
-    image bytea NOT NULL,
-    mime_type character varying(30) DEFAULT 'image/png'::character varying NOT NULL,
-    source character varying(40),
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-
---
 -- Name: stock_price_daily; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -4792,14 +4779,6 @@ ALTER TABLE ONLY public.stock_news
 
 ALTER TABLE ONLY public.stock_logo_published
     ADD CONSTRAINT stock_logo_published_pkey PRIMARY KEY (stock_id);
-
-
---
--- Name: stock_logos stock_logos_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.stock_logos
-    ADD CONSTRAINT stock_logos_pkey PRIMARY KEY (stock_id);
 
 
 --
@@ -7126,14 +7105,6 @@ ALTER TABLE ONLY public.social_accounts
 
 ALTER TABLE ONLY public.stock_logo_published
     ADD CONSTRAINT stock_logo_published_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
-
-
---
--- Name: stock_logos stock_logos_stock_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.stock_logos
-    ADD CONSTRAINT stock_logos_stock_id_fkey FOREIGN KEY (stock_id) REFERENCES public.stocks(id);
 
 
 --

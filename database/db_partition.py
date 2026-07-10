@@ -48,9 +48,11 @@ BACKEND_TABLES: frozenset[str] = frozenset(
         # 종목별 일봉 종가 시리즈(공개 홈 차트) — 발행 러너가 분석 종목 전체를 동기화
         # (signal_journal_chart_prices 와 같은 워커→백엔드 계약, 저널 유무와 무관).
         "stock_price_daily",
-        # 종목 회사 로고 발행 사본(공개 홈/리포트 로고) — 발행 러너 sync_stock_logos 가
-        # 수집 DB stock_logos 원본에서 백엔드로 동기화(stock_price_daily 와 같은 워커→백엔드
-        # 계약). 수집 소유 원본(stock_logos)과 이름이 달라 버킷 충돌이 없다.
+        # 종목 회사 로고(공개 홈/리포트 로고) — 정적 참조 데이터라 backend DB 가 직접 보유한다
+        # (수집 DB 복사·발행 크론잡 없음). 적재 툴 load_stock_logos.py 가 백엔드 DB 로 1회성
+        # upsert 하고 main-server 가 여기서 직접 SELECT. 테이블 이름은 과거 발행 사본
+        # 마이그(20260710_1100)의 이름을 유지한다(check_targets 과거 마이그 locality 재검증과
+        # 충돌 않게 backend 에 stock_logos 를 새로 만들지 않는다 — 수집 원본은 별도 마이그로 DROP).
         "stock_logo_published",
         "user_signal_reads",
         "report_issuances",

@@ -1,17 +1,20 @@
 #!/usr/bin/env python
-"""코스피 상위 200 회사 로고 PNG 를 stock_logos 테이블에 적재(upsert)한다.
+"""코스피 상위 200 회사 로고 PNG 를 stock_logo_published 테이블에 적재(upsert)한다.
+
+로고는 정적 참조 데이터라 수집 DB 복사·발행 크론잡 없이 **백엔드 DB 가 직접 보유**한다.
+이 툴이 백엔드 DB 로 1회성 upsert 하고, main-server 공개 로고 API 가 그대로 읽는다.
 
 전제:
-  - 20260710_1000_stock_logos.sql 마이그레이션이 대상(워커/수집) DB 에 적용되어 있을 것.
+  - 20260710_1100_stock_logo_published.sql 마이그레이션이 대상(백엔드) DB 에 적용돼 있을 것.
   - assets/stock_logos/{ticker}.png + logos_manifest.csv 가 존재할 것.
 
 매칭: 파일명(ticker) → stocks.ticker → stocks.id(stock_id) 조인. stocks 에 없는
 종목(ETF 잔여·미등록 우선주 등)은 SKIP 하고 목록으로 보고한다(테이블은 그대로 유지).
 
-연결: --database-url 또는 DATABASE_URL (수집/워커 DB DSN). migrate.py 와 동일 규칙.
+연결: --database-url 또는 BACKEND_DATABASE_URL / DATABASE_URL (백엔드 DB DSN).
 
 사용:
-    python database/tools/load_stock_logos.py                 # 실제 적재
+    BACKEND_DATABASE_URL=postgres://... python database/tools/load_stock_logos.py
     python database/tools/load_stock_logos.py --dry-run       # 매칭만 점검
     python database/tools/load_stock_logos.py --database-url postgres://...
 """
@@ -33,16 +36,21 @@ MANIFEST = LOGO_DIR / "logos_manifest.csv"
 def resolve_dsn(cli_url: str | None) -> str:
     if cli_url:
         return cli_url
-    if os.environ.get("DATABASE_URL"):
-        return os.environ["DATABASE_URL"]
+    # 로고는 백엔드 DB 소유 → BACKEND_DATABASE_URL 우선, 없으면 DATABASE_URL 폴백.
+    for var in ("BACKEND_DATABASE_URL", "DATABASE_URL"):
+        if os.environ.get(var):
+            return os.environ[var]
     # 루트 .env 폴백(간단 파서)
     env_path = ROOT / ".env"
     if env_path.exists():
         for line in env_path.read_text(encoding="utf-8").splitlines():
             line = line.strip()
-            if line.startswith("DATABASE_URL="):
-                return line.split("=", 1)[1].strip().strip('"').strip("'")
-    sys.exit("DATABASE_URL 을 찾을 수 없습니다. --database-url 또는 환경변수로 지정하세요.")
+            for var in ("BACKEND_DATABASE_URL=", "DATABASE_URL="):
+                if line.startswith(var):
+                    return line.split("=", 1)[1].strip().strip('"').strip("'")
+    sys.exit(
+        "DB DSN 을 찾을 수 없습니다. --database-url 또는 BACKEND_DATABASE_URL 로 지정하세요."
+    )
 
 
 def load_manifest() -> list[dict]:
@@ -51,7 +59,7 @@ def load_manifest() -> list[dict]:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="stock_logos 적재")
+    ap = argparse.ArgumentParser(description="stock_logo_published(백엔드 DB) 적재")
     ap.add_argument("--database-url", dest="database_url", default=None)
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
@@ -81,7 +89,7 @@ def main() -> None:
                 continue
             cur.execute(
                 """
-                INSERT INTO stock_logos (stock_id, image, mime_type, source, updated_at)
+                INSERT INTO stock_logo_published (stock_id, image, mime_type, source, updated_at)
                 VALUES (%s, %s, 'image/png', %s, now())
                 ON CONFLICT (stock_id) DO UPDATE
                     SET image = EXCLUDED.image,
