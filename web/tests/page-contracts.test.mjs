@@ -47,6 +47,17 @@ test("report page keeps ticker loading and watchlist wired (full public report)"
   ].forEach((expected) => assertIncludes(source, expected, "report page"));
 });
 
+test("report segment layout emits per-ticker SEO metadata (client page untouched)", () => {
+  // SEO 는 세그먼트 layout(서버)에서만 생성 — 화면 page.tsx 는 건드리지 않는다.
+  const layout = read("src/app/report/[ticker]/layout.tsx");
+  [
+    "export async function generateMetadata",
+    "openGraph",
+    "twitter",
+    "return children",
+  ].forEach((expected) => assertIncludes(layout, expected, "report layout SEO"));
+});
+
 test("report wires the S6 precedent section to the forward-return outcome API", () => {
   const page = read("src/app/report/[ticker]/page.tsx");
   [
