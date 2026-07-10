@@ -61,7 +61,7 @@ test("the report sheet keeps one paper size across sources", () => {
   assert.match(panel, /doc-body[^"]*overflow-y-auto/, "넘치는 본문은 종이 안에서 스크롤");
 });
 
-test("the sheet is pulled through a slot: clip-path tapers, tail leaves last", () => {
+test("the sheet animation is one continuous segment, not a stack of keyframes", () => {
   const css = readFileSync(join(ROOT, "src/app/globals.css"), "utf8");
   const frames = (name) => {
     const start = css.indexOf(`@keyframes ${name} {`);
@@ -70,15 +70,31 @@ test("the sheet is pulled through a slot: clip-path tapers, tail leaves last", (
 
   for (const name of ["panel-in", "panel-out"]) {
     const body = frames(name);
-    assert.ok(body.includes("clip-path: polygon("), `${name}: 윤곽을 펴야 틈을 통과해 보인다`);
-    // 틈 = 아래 한가운데의 좁은 사각형. 들고 날 때 이 모양으로 수렴한다.
+    // 중간 키프레임을 두면 이징이 구간마다 재적용돼 감속→가속이 반복된다("끊긴다").
+    assert.ok(!/^\s*\d+% \{/m.test(body), `${name}: 중간 키프레임(%)이 있으면 궤적이 끊긴다`);
+    assert.match(body, /from \{/, `${name}: from`);
+    assert.match(body, /to \{/, `${name}: to`);
+    // 출발/도착은 클릭한 서류철 입구 — 좌표는 JS 가 재서 var 로 넘긴다.
+    assert.match(body, /var\(--slot-dx, 0px\)/, `${name}: 입구 x`);
+    assert.match(body, /var\(--slot-dy, 56px\)/, `${name}: 입구 y (폴백=화면 아래)`);
+    assert.match(body, /var\(--slot-scale, 0\.8\)/, `${name}: 입구 크기`);
+    // 꼬리 = 아래로 갈수록 좁은 사다리꼴.
     assert.ok(
-      body.includes("polygon(46% 100%, 54% 100%, 54% 100%, 46% 100%)"),
-      `${name}: 서류철 입구(틈) 모양이 있어야 한다`,
+      body.includes("polygon(32% 0%, 68% 0%, 58% 100%, 42% 100%)"),
+      `${name}: 꼬리 사다리꼴`,
     );
-    // 중간 프레임은 아래로 갈수록 좁은 사다리꼴 — 꼬리가 아직 틈에 물려 있다.
-    assert.match(body, /polygon\(2[0-9]% 4[0-9]%, 7[0-9]% 4[0-9]%, 5[0-9]% 100%, 4[0-9]% 100%\)/, `${name}: 꼬리 사다리꼴`);
   }
+});
+
+test("the slot is measured from the clicked card, not hardcoded to the screen bottom", () => {
+  const panel = readFileSync(join(ROOT, "src/components/SourceDetailPanel.tsx"), "utf8");
+
+  assert.match(panel, /querySelector<HTMLElement>\(`\[data-source="\$\{source\}"\]`\)/, "클릭한 카드를 찾는다");
+  // getBoundingClientRect 는 진입 애니메이션의 transform 이 걸린 값을 준다 — 자기 출발점을 오염시킨다.
+  assert.match(panel, /sheet\.offsetWidth/, "종이 크기는 레이아웃 값으로 잰다");
+  assert.ok(!/sheet\.getBoundingClientRect/.test(panel), "transform 이 섞인 값으로 재면 안 된다");
+  // 재기 전 프레임에 애니메이션이 걸리면 첫 프레임 transform 이 측정을 망친다.
+  assert.match(panel, /slot === undefined\s*\?\s*"none"/, "측정 전에는 애니메이션을 걸지 않는다");
 });
 
 test("the tab clears the card entirely", () => {
