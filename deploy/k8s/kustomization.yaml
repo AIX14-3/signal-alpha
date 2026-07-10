@@ -26,18 +26,18 @@ resources:
 images:
   - name: signal-alpha-agent-worker
     newName: asia-northeast3-docker.pkg.dev/signal-alpha-demo/signal-alpha/agent-worker
-    newTag: latest
+    newTag: sha-7878e182785b
   # hiring 크롤러 전용(agent-worker + chromium). Dockerfile.crawler 로 별도 빌드/푸시 필요 —
   # 이 핀이 없거나 이미지 미푸시면 hiring-crawl CronJob 이 ImagePullBackOff.
   - name: signal-alpha-hiring-crawler
     newName: asia-northeast3-docker.pkg.dev/signal-alpha-demo/signal-alpha/hiring-crawler
-    newTag: latest
+    newTag: sha-7878e182785b
   - name: signal-alpha-main-server
     newName: asia-northeast3-docker.pkg.dev/signal-alpha-demo/signal-alpha/main-server
-    newTag: latest
+    newTag: sha-7878e182785b
   - name: signal-alpha-web
     newName: asia-northeast3-docker.pkg.dev/signal-alpha-demo/signal-alpha/web
-    newTag: latest
+    newTag: sha-7878e182785b
   - name: signal-alpha-db-migrate
     newName: asia-northeast3-docker.pkg.dev/signal-alpha-demo/signal-alpha/db-migrate
-    newTag: latest
+    newTag: sha-7878e182785b
