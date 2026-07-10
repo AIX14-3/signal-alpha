@@ -34,10 +34,10 @@ export default function MyPage() {
   const journalItems = useJournalStore((s) => s.items);
   const loadJournals = useJournalStore((s) => s.load);
 
-  // 복기 알림 배지용 — 변동이 확정됐는데 아직 회고가 없는 저널 수.
+  // 복기 알림 배지용 — 변동이 확정됐는데 아직 회고가 없는 저널 수. 저널은 전 회원 무료라 구독 여부와 무관하게 로드.
   useEffect(() => {
-    if (status === "authenticated" && user?.subscription_active) void loadJournals();
-  }, [status, user?.subscription_active, loadJournals]);
+    if (status === "authenticated" && user) void loadJournals();
+  }, [status, user, loadJournals]);
   const pendingRetro = journalItems.filter(isRetroPending).length;
 
   useEffect(() => {
@@ -247,11 +247,10 @@ function JournalTab() {
   const [filterView, setFilterView] = useState<string | null>(null);
   const [filterTag, setFilterTag] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<"latest" | "change">("latest");
-  const subscribed = user?.subscription_active === true;
 
   useEffect(() => {
-    if (subscribed) void load();
-  }, [subscribed, load]);
+    if (user) void load();
+  }, [user, load]);
 
   // ⋯ 메뉴가 열려 있으면 ESC 로 닫는다(포커스 위치와 무관하게 동작).
   useEffect(() => {
@@ -262,23 +261,6 @@ function JournalTab() {
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [menuId]);
-
-  // 저널은 구독 전용 — 비구독자는 구독 유도.
-  if (!subscribed)
-    return (
-      <div className="card px-6 py-8 text-center" data-panel="journal" data-flow="journal-subscribe">
-        <p className="font-bold">저널은 구독 회원 전용 기능입니다.</p>
-        <p className="mt-2 text-[13.5px] text-muted">
-          발행한 리포트에 데이터 방향성 메모를 기록하고, 이후 실제 주가 변동(7·30거래일)을 함께 복기할 수 있습니다.
-        </p>
-        <Link
-          href="/pricing"
-          className="brand-grad mt-4 inline-block rounded-full px-6 py-2.5 text-[14px] font-bold text-white"
-        >
-          구독 안내 보기
-        </Link>
-      </div>
-    );
 
   if (loading) return <p className="text-muted" data-panel="journal">불러오는 중…</p>;
   if (error) return <p className="text-red" data-panel="journal">{error}</p>;

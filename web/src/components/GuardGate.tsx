@@ -89,12 +89,6 @@ function GuardBlockedScreen({
       </div>
       <div className="mt-8 flex gap-3">
         <Link
-          href="/pricing"
-          className="rounded-full border border-line px-5 py-[10px] text-[14px] font-semibold text-navy-soft hover:border-navy hover:text-navy"
-        >
-          요금제 보기
-        </Link>
-        <Link
           href="/login"
           className="brand-grad rounded-full px-5 py-[10px] text-[14px] font-bold text-white hover:opacity-90"
         >

@@ -1,7 +1,7 @@
 """매매 의사결정 부검 — 수기 체결 입력 + 계획 + 단건/패턴 부검 라우트.
 
 유저가 체결 내역(side=buy/sell, 일자·수량·가격)을 직접 입력하면 그걸 라운드트립으로 묶어
-부검한다. 부검은 저널 강화 기능이라 **구독 전용**(저널과 동일 402 게이트). 사후확신 없이
+부검한다. 부검은 로그인 회원이면 누구나 이용한다(구독 게이트 없음). 사후확신 없이
 "그때 관측 가능했던 신호"로만 판단한다.
 """
 
@@ -17,7 +17,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from app.api.routes.auth import _subscription_active, get_current_user
+from app.api.routes.auth import get_current_user
 from app.core.config import Settings, get_settings
 from app.core.database import get_database_pool
 from app.postmortem.analysis import (
@@ -102,7 +102,6 @@ async def create_fill(
         raise _api_error(400, "INVALID_SIDE", "체결 구분은 buy/sell 만 가능합니다.")
     ticker = payload.stock_code.strip()
     async with pool.acquire() as connection:
-        await _require_subscription(connection, int(current_user["id"]))
         row = await UserTradeFillsRepository(connection).insert_fill(
             user_id=int(current_user["id"]),
             stock_id=await _optional_stock_id(connection, ticker),
@@ -125,7 +124,6 @@ async def list_fills(
 ) -> dict[str, Any]:
     clean_code = stock_code.strip() if stock_code else None
     async with pool.acquire() as connection:
-        await _require_subscription(connection, int(current_user["id"]))
         stock_id: int | None = None
         if clean_code:
             stock = await StockRepository(connection).get_by_ticker(clean_code)
@@ -149,7 +147,6 @@ async def delete_fill(
 ) -> dict[str, Any]:
     """오입력한 체결 삭제. 본인 소유 행만 삭제된다."""
     async with pool.acquire() as connection:
-        await _require_subscription(connection, int(current_user["id"]))
         deleted = await UserTradeFillsRepository(connection).delete_fill(
             user_id=int(current_user["id"]), fill_id=fill_id
         )
@@ -180,11 +177,6 @@ def _iso(value: Any) -> str | None:
     return value.isoformat() if value is not None else None
 
 
-async def _require_subscription(connection: Any, user_id: int) -> None:
-    if not await _subscription_active(connection, user_id):
-        raise _api_error(402, "SUBSCRIPTION_REQUIRED", "구독 시 매매 부검을 이용할 수 있습니다.")
-
-
 def _api_error(status_code: int, code: str, message: str) -> HTTPException:
     return HTTPException(status_code=status_code, detail={"code": code, "message": message})
 
@@ -213,7 +205,6 @@ async def upsert_plan(
 ) -> dict[str, Any]:
     ticker = payload.stock_code.strip()
     async with pool.acquire() as connection:
-        await _require_subscription(connection, int(current_user["id"]))
         row = await UserTradePlanRepository(connection).upsert_plan(
             user_id=int(current_user["id"]),
             stock_id=await _optional_stock_id(connection, ticker),
@@ -232,7 +223,6 @@ async def list_plans(
     pool: Any = Depends(get_database_pool),
 ) -> dict[str, Any]:
     async with pool.acquire() as connection:
-        await _require_subscription(connection, int(current_user["id"]))
         rows = await UserTradePlanRepository(connection).list_plans(
             user_id=int(current_user["id"])
         )
@@ -247,7 +237,6 @@ async def delete_plan(
     pool: Any = Depends(get_database_pool),
 ) -> dict[str, Any]:
     async with pool.acquire() as connection:
-        await _require_subscription(connection, int(current_user["id"]))
         deleted = await UserTradePlanRepository(connection).delete_plan(
             user_id=int(current_user["id"]), ticker=stock_code.strip()
         )
@@ -265,7 +254,6 @@ async def trade_postmortem(
 ) -> dict[str, Any]:
     ticker = stock_code.strip()
     async with pool.acquire() as connection:
-        await _require_subscription(connection, int(current_user["id"]))
         stock = await StockRepository(connection).get_by_ticker(ticker)
         if stock is None:
             raise _api_error(404, "STOCK_NOT_FOUND", "종목을 찾을 수 없습니다.")
@@ -315,7 +303,6 @@ async def pattern_postmortem(
     settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
     async with pool.acquire() as connection:
-        await _require_subscription(connection, int(current_user["id"]))
         fill_rows = await UserTradeFillsRepository(connection).list_fills(
             user_id=int(current_user["id"]), limit=1000
         )

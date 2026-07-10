@@ -80,7 +80,6 @@ test("mypage exposes stable tab panels (no subscription/billing tab)", () => {
     'data-panel="profile"',
     'data-flow="profile-save"',
     'data-flow="profile-withdraw"',
-    'data-flow="journal-subscribe"',
     'data-flow="journal-edit"',
     'data-flow="journal-delete"',
     'data-flow="journal-timeline"',

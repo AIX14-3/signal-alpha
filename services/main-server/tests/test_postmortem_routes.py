@@ -93,7 +93,6 @@ class PostmortemRoutesTest(unittest.TestCase):
         app.dependency_overrides[get_current_user] = lambda: {"id": 1}
         app.dependency_overrides[get_database_pool] = lambda: _FakePool()
         self._patchers = [
-            patch(f"{_MODULE}._subscription_active", new=AsyncMock(return_value=True)),
             patch(f"{_MODULE}.StockRepository", new=_FakeStockRepo),
             patch(f"{_MODULE}.UserTradeFillsRepository", new=_FakeFillsRepo),
             patch(f"{_MODULE}.UserTradePlanRepository", new=_FakePlanRepo),
@@ -188,7 +187,6 @@ class ManualFillRoutesTest(unittest.TestCase):
         app.dependency_overrides[get_current_user] = lambda: {"id": 1}
         app.dependency_overrides[get_database_pool] = lambda: _FakePool()
         self._patchers = [
-            patch(f"{_MODULE}._subscription_active", new=AsyncMock(return_value=True)),
             patch(f"{_MODULE}.StockRepository", new=_FakeStockRepo),
             patch(f"{_MODULE}.UserTradeFillsRepository", new=_FakeCreateFillsRepo),
         ]

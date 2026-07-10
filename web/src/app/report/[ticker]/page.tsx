@@ -300,7 +300,7 @@ function JournalSaveCard({ stockCode, finalSignalId }: { stockCode: string; fina
   const [history, setHistory] = useState<JournalType[]>([]);
 
   useEffect(() => {
-    // 이 카드가 렌더링되는 시점 = 구독자 언락 상태라 저널 API 호출 가능.
+    // 저널은 로그인 회원 누구나 이용 — 로그인 상태면 이력 조회. 비로그인은 401 → 빈 이력.
     listJournals({ stock_code: stockCode })
       .then((d) => setHistory(d.items))
       .catch(() => setHistory([]));

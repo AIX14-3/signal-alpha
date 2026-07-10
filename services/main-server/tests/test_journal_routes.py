@@ -236,30 +236,16 @@ class JournalRoutesTest(unittest.TestCase):
         self.assertEqual(response.status_code, 401)
         self.assertEqual(response.json()["detail"]["code"], "AUTH_REQUIRED")
 
-    def test_journals_require_subscription_on_every_endpoint(self):
+    def test_journals_available_without_subscription(self):
+        # 저널은 더 이상 구독 전용이 아니다 — 로그인만 하면 비구독자도 이용할 수 있다.
         self.connection.subscribed_user_ids.discard(1)
 
-        cases = [
-            ("get", "/api/journals", None),
-            (
-                "post",
-                "/api/journals",
-                {"stock_code": "005930", "final_signal_id": 200, "user_view": "watch"},
-            ),
-            ("get", "/api/journals/20", None),
-            ("get", "/api/journals/20/chart", None),
-            ("get", "/api/journals/timeline/005930", None),
-            ("patch", "/api/journals/20", {"user_view": "watch"}),
-            ("delete", "/api/journals/20", None),
-        ]
-        for method, url, body in cases:
-            with self.subTest(method=method, url=url):
-                kwargs = {"headers": self.auth_headers()}
-                if body is not None:
-                    kwargs["json"] = body
-                response = getattr(self.client, method)(url, **kwargs)
-                self.assertEqual(response.status_code, 402)
-                self.assertEqual(response.json()["detail"]["code"], "SUBSCRIPTION_REQUIRED")
+        create_response = self.create_journal()
+        self.assertEqual(create_response.status_code, 200)
+
+        list_response = self.client.get("/api/journals", headers=self.auth_headers())
+        self.assertEqual(list_response.status_code, 200)
+        self.assertEqual(list_response.json()["count"], 1)
 
     def test_create_list_detail_update_and_delete_journal(self):
         create_response = self.create_journal()
