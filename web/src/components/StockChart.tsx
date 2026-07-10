@@ -62,9 +62,17 @@ function priceLineOptions(color: string) {
   };
 }
 
-function toSeriesData(bars: PriceSeries["bars"], chartType: ChartType) {
-  if (chartType === "candle") return bars as never;
-  return bars.map((b) => ({ time: b.time, value: b.close })) as never;
+// lightweight-charts 에는 타임존 개념이 없다. 숫자 time 은 UTCTimestamp 로 보고 그대로 UTC 로
+// 눈금을 찍는다. 분봉은 유닉스 초를 그대로 넘기므로 10:50 장중이 01:50 로 보였다. 한국 증시
+// 시간을 읽히게 하려고 KST(고정 +9h, 서머타임 없음) 만큼 옮겨서 넘긴다. 일/월/년 봉은 서버가
+// 'YYYY-MM-DD' 문자열을 주므로 해당 없음.
+const KST_OFFSET_SEC = 9 * 60 * 60;
+
+function toSeriesData(bars: PriceSeries["bars"], chartType: ChartType, intraday: boolean) {
+  const at = (bar: PriceSeries["bars"][number]) =>
+    intraday && typeof bar.time === "number" ? bar.time + KST_OFFSET_SEC : bar.time;
+  if (chartType === "candle") return bars.map((b) => ({ ...b, time: at(b) })) as never;
+  return bars.map((b) => ({ time: at(b), value: b.close })) as never;
 }
 
 export function StockChart({ stockCode, stockName }: { stockCode: string; stockName?: string | null }) {
@@ -198,7 +206,7 @@ export function StockChart({ stockCode, stockName }: { stockCode: string; stockN
   useEffect(() => {
     const series = seriesRef.current;
     if (!series || !data) return;
-    series.setData(toSeriesData(data.bars, chartType));
+    series.setData(toSeriesData(data.bars, chartType, tf === "min"));
 
     // 등락 방향에 따라 선/채움 색을 시세 관례로 맞춘다(캔들은 봉마다 색이 달라 제외).
     if (chartType === "line") {
@@ -222,7 +230,7 @@ export function StockChart({ stockCode, stockName }: { stockCode: string; stockN
       chartRef.current?.timeScale().fitContent();
       shouldFitRef.current = false;
     }
-  }, [data, chartType, trendColor]);
+  }, [data, chartType, trendColor, tf]);
 
   const up = (data?.change ?? 0) >= 0;
   const live = isMarketOpen();
