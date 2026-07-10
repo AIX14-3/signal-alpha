@@ -82,6 +82,15 @@ function readStages(body) {
           return Math.abs(pt[0] - straight);
         }),
       ),
+      // 폭이 윗변의 90% 아래로 떨어지기 시작하는 지점부터 바닥까지가 '꼬리 구간'.
+      // 높이 대비 비율로 잰다 — 크면 목이 길게 늘어진 것이다.
+      tailZone: (() => {
+        const side = pts.slice(0, half);
+        const span = side[half - 1][1] - side[0][1];
+        if (span <= 0) return 0;
+        const narrow = side.find((pt) => pt[0] - 50 < (topRight[0] - 50) * 0.9);
+        return narrow ? (side[half - 1][1] - narrow[1]) / span : 0;
+      })(),
     };
   });
 }
@@ -134,6 +143,15 @@ test("the sheet is pulled out tail-last, and stays smooth", () => {
       `${name}: 삼각형과 직사각형 사이에 사다리꼴 구간이 없다`,
     );
     assert.ok(pinch.at(-1) > 0.99, `${name}: 끝은 반듯한 직사각형이어야 한다`);
+
+    // 첫 프레임은 옆선이 꼭대기부터 좁아지는 삼각형이어야 한다(꼬리 구간 = 높이 전체).
+    // 옆선 샘플을 바닥에 몰아 찍으므로 완전한 삼각형이라도 첫 샘플(s≈0.3) 탓에 0.70 이 상한이다.
+    assert.ok(opening[0].tailZone > 0.6, `${name}: 첫 모양이 삼각형이 아니다(꼬리 구간 ${opening[0].tailZone.toFixed(2)})`);
+    // 종이가 자리를 잡아 갈수록 잘록한 데는 바닥으로 몰려야 한다 — 목이 길면 어색하다.
+    const settled = opening.filter((s) => s.topY < 10 && pinch[opening.indexOf(s)] < 0.99);
+    for (const s of settled) {
+      assert.ok(s.tailZone < 0.45, `${name}: 잘록한 구간이 너무 길다(${s.tailZone.toFixed(2)}) — 꼬리만 얇아야 한다`);
+    }
 
     // 목이 잘록해야 종이가 옆으로 늘었다 줄어드는 것처럼 보인다. 직선이면 sideBow ≈ 0.
     const bow = Math.max(...opening.slice(1, -1).map((s) => s.sideBow));
