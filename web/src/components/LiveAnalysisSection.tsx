@@ -2,13 +2,21 @@
 
 import Link from "next/link";
 import { useEffect, useMemo } from "react";
+import { StockCandleChart } from "@/components/StockCandleChart";
 import { StockLogo } from "@/components/StockLogo";
-import { StockPriceChart } from "@/components/StockPriceChart";
 import { WatchlistButton } from "@/components/WatchlistButton";
 import type { Stock } from "@/lib/apiClient";
 import { directionLabel, safeHttpUrl, SOURCE_META, SOURCE_ORDER } from "@/lib/format";
 import { useHomeStore } from "@/stores/homeStore";
 import { useReportStore } from "@/stores/reportStore";
+
+// 데이터 방향성 표시색 — 앱 기존 방향 컨벤션(up=초록/down=빨강/flat=네이비). 시세 캔들의
+// 국내관례색(상승=빨강)과는 별개 체계다(디자인 결정: 캔들만 빨강/파랑, 방향 배지는 기존 유지).
+const DIR_COLOR: Record<"up" | "down" | "flat", string> = {
+  up: "var(--color-green)",
+  down: "var(--color-red)",
+  flat: "var(--color-navy-soft)",
+};
 
 // 우② 실시간 분석 종목 — 종목 리스트. 행 클릭 시 인라인 아코디언으로 펼쳐
 // 실시간 차트 · 분석 점수 · 분석 내용 · 관련 뉴스를 보여준다(FR-5/6/7).
@@ -97,10 +105,8 @@ export function LiveAnalysisSection() {
   );
 }
 
-// 아코디언 펼침 내용 — 차트(homeStore.stockPrices) + 점수/분석(reportStore) + 뉴스(homeStore.stockNews).
+// 아코디언 펼침 내용 — 캔들 차트(getReportPrices OHLC) + 점수/분석(reportStore) + 뉴스(homeStore.stockNews).
 function AnalysisDetail({ stockCode }: { stockCode: string }) {
-  const stockPrices = useHomeStore((s) => s.stockPrices);
-  const stockPricesLoading = useHomeStore((s) => s.stockPricesLoading);
   const stockNews = useHomeStore((s) => s.stockNews);
   const stockNewsLoading = useHomeStore((s) => s.stockNewsLoading);
 
@@ -116,7 +122,6 @@ function AnalysisDetail({ stockCode }: { stockCode: string }) {
   const fresh = report && report.stock.stock_code === stockCode ? report : null;
   const dir = directionLabel(fresh?.direction);
   const byKey = new Map((fresh?.sources ?? []).map((s) => [s.source, s] as const));
-  const series = stockPrices && stockPrices.stock.stock_code === stockCode ? stockPrices.series : [];
 
   return (
     <div data-flow="analysis-detail" className="space-y-4 border-t border-line bg-surface-2/30 p-4">
@@ -125,19 +130,21 @@ function AnalysisDetail({ stockCode }: { stockCode: string }) {
         <WatchlistButton key={stockCode} stockCode={stockCode} />
       </div>
 
-      {/* 실시간 차트 */}
-      <StockPriceChart series={series} loading={stockPricesLoading} />
+      {/* 실시간 캔들 차트(일봉 OHLC) */}
+      <StockCandleChart stockCode={stockCode} />
 
-      {/* 분석 점수 + 데이터 방향 */}
-      <div className="grid grid-cols-2 gap-3">
-        <div className="brand-grad rounded-[12px] p-3 text-white">
-          <div className="text-[11px] opacity-90">종합 점수</div>
-          <div className="mt-1 text-[24px] font-extrabold leading-none">{fresh?.score ?? "–"}</div>
-          <div className="mt-1 text-[10px] opacity-80">0–100</div>
+      {/* 종합 점수 + 데이터 방향성 — 한 줄짜리 컴팩트 카드 2개(홈 1a "오로라 글래스" 시안 §6) */}
+      <div className="grid grid-cols-2 gap-2">
+        <div className="flex items-center justify-between gap-2 rounded-[10px] border border-line bg-surface px-3 py-2.5">
+          <span className="text-[12px] font-semibold text-muted">종합 점수</span>
+          <span className="text-[15px] font-extrabold text-navy">
+            {fresh?.score != null ? `${fresh.score}점` : "–"}
+          </span>
         </div>
-        <div className="glass-card grid place-items-center p-3">
-          <span className={`pill ${dir.tone}`} style={{ padding: "5px 13px" }}>
-            {dir.label}
+        <div className="flex items-center justify-between gap-2 rounded-[10px] border border-line bg-surface px-3 py-2.5">
+          <span className="text-[12px] font-semibold text-muted">데이터 방향성</span>
+          <span className="text-[13px] font-bold" style={{ color: DIR_COLOR[dir.tone] }}>
+            ● {dir.label}
           </span>
         </div>
       </div>
