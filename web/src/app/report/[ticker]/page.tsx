@@ -1,5 +1,6 @@
 "use client";
 
+import { NotebookPen } from "lucide-react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -171,7 +172,9 @@ function ReportPageInner() {
       {/* 소스별 상세 근거 — 소스 간 일치도보다 위에 배치(사용자 요청) */}
       <div id="sec-sources" className="scroll-mt-28">
         <h2 className="mt-8 text-[18px] font-bold">소스별 상세 근거</h2>
-        <div className="mt-4 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+        {/* auto-rows-fr: 서류철 높이를 행끼리도 맞춘다. h-full 만으로는 같은 행 안에서만 맞아
+            두 번째 줄 서류철이 첫 줄보다 납작해진다. */}
+        <div className="mt-4 grid auto-rows-fr grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
           {SOURCE_ORDER.map((key) => {
             const src = byKey.get(key);
             return (
@@ -325,7 +328,10 @@ function JournalSaveCard({ stockCode, finalSignalId }: { stockCode: string; fina
 
   if (saved)
     return (
-      <div className="card mt-6 p-5" data-flow="journal-save">
+      <div className="card relative mt-12 p-5" data-flow="journal-save">
+        <span className="file-tab">
+          <NotebookPen size={13} /> 저널
+        </span>
         <JournalHistory items={history} />
         <div className="flex items-center justify-between">
           <p className="text-[14px] font-semibold">이 리포트를 저널에 저장했습니다.</p>
@@ -337,7 +343,10 @@ function JournalSaveCard({ stockCode, finalSignalId }: { stockCode: string; fina
     );
 
   return (
-    <section className="card mt-6 p-5" data-flow="journal-save">
+    <section className="card relative mt-12 p-5" data-flow="journal-save">
+      <span className="file-tab">
+        <NotebookPen size={13} /> 저널
+      </span>
       <JournalHistory items={history} />
       <h2 className="text-[16px] font-bold">이 리포트를 저널에 저장</h2>
       <p className="mt-1 text-[12.5px] text-muted">

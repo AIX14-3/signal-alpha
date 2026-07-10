@@ -117,8 +117,15 @@ html {
     radial-gradient(46% 40% at 6% 10%, rgba(99, 102, 241, 0.1), transparent 60%);
 }
 
-/* 파일(폴더) 탭 라벨 — 카드 상단에 얹어 '파일' 느낌 */
+/* 파일(폴더) 탭 라벨 — 카드 위쪽 바깥에 얹어 '파일' 느낌.
+   탭 바닥을 카드 상단에 정확히 맞춘다(bottom: 100%). 예전처럼 -13px 로 걸치면 탭이 카드 안을
+   파고들어 본문 첫 줄을 덮는다 — 탭 높이는 글꼴·행간에 따라 변하므로 상단 여백으로 막을 수 없다.
+   높이에 상관없이 겹치지 않도록 위치로 못박고, 행간도 body(1.55) 상속을 끊어 고정한다.
+   부모 카드는 `relative` + 탭 높이만큼의 위 여백(mt-12)을 갖는다. */
 .file-tab {
+  position: absolute;
+  bottom: 100%;
+  left: 20px;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -129,6 +136,7 @@ html {
   border-bottom: none;
   font-weight: 700;
   font-size: 12.5px;
+  line-height: 1.2;
   color: var(--color-navy-soft);
   box-shadow: 0 -2px 10px rgba(15, 27, 51, 0.04);
 }
@@ -208,15 +216,139 @@ html {
   70% { box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
   100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
 }
-/* 소스 상세 = 서류철에서 꺼낸 종이 한 장. 화면 중앙에서 솟아오르듯 펼쳐지고,
-   닫으면 서류철로 되돌아가듯 가라앉는다(카드의 서류 애니메이션과 짝). */
+/* 소스 상세 = 클릭한 서류철에서 뽑혀 나온 종이 한 장.
+   출발점은 화면 하단이 아니라 **그 서류철의 입구**다. 패널이 열릴 때 클릭한 카드의 위치를 재서
+   `--slot-dx/dy/scale` 로 넘겨준다(없으면 화면 아래에서 올라오는 폴백).
+
+   꼬리를 보이게 하려면 clip-path 가 transform 보다 **늦게** 펴져야 한다. from/to 한 구간이면
+   둘이 동시에 끝나 그냥 '작은 게 커지는' 것으로만 보인다. 그래서 중간 단계를 둔다.
+
+   ⚠️끊김의 원인은 중간 키프레임 자체가 아니라, 이징이 **구간마다 다시 적용**되는 것이다
+   (감속→가속의 반복). 그러니 애니메이션 전체를 linear 로 돌리고, 곡선은 키프레임 값에 굽는다.
+   linear 라서 모양의 부드러움은 전적으로 단계의 촘촘함에서 나온다 — 8단계로 곡선을 샘플링한다.
+
+   모양(h = 1-(1-p)², s = 위 0 ~ 아래 1):
+     머리 y      = 74(1-h)          … 2차 감속. 입구에서 빠르게 솟았다가 제자리에서 느긋해진다.
+     넓은 쪽 반폭 = 8 + 42h
+     뾰족한 쪽 반폭 = 0.4 + 49.6·p⁶  … 6차 지연. 거의 한 점에서 시작해 아주 오래 얇게 남는다.
+     좁아지는 구간 c = 1 - 0.5·√p    … 그 비율. 1(전체=삼각형) → 0.5(종이의 절반이 꼬리).
+     반폭(s) = 뾰족 + (넓음-뾰족)·min(1, 거리/c)^0.75    (거리 = 뾰족한 끝에서 잰 값)
+
+   핵심은 c 다. 이게 없으면 굽힘이 높이 전체에 걸려 목이 길게 늘어진다. c 가 줄면서 몸통은
+   만폭을 유지하고 종이 아래 절반만 꼬리로 빠진다. 실측(아랫변/윗변): 0.05 → 0.02(삼각형)
+   → 0.12 → 0.32 → 0.61 → 1.00(직사각형).
+   transform 도 같은 h 를 쓴다: 이동은 (1-h) 배로 줄고, 크기는 var(--slot-scale)→1 로 h 만큼 간다.
+
+   ⚠️닫힘은 열림의 역재생이 **아니다**. 나올 땐 꼬리(아래)가 좁고, 들어갈 땐 머리(위)가 좁아지며
+   빨려 든다. 좁아지는 쪽이 곧 입구로 물리는 쪽이다.
+
+   좌우 휨은 클릭한 카드 위치를 따른다. 뾰족한 끝이 `--tail-lean`(JS 가 카드의 좌우 위치에서
+   계산한 %) 만큼 슬롯 쪽으로 끌려간다. 가중치 = 뾰족한 끝에서 1, 반대편 0, 그리고 (1-p) 배.
+   그래서 카드가 왼쪽이면 종이가 왼쪽으로 쏠려 **오른쪽 옆선이 더 길게 휜다**(반대도 마찬가지).
+   ⚠️(1-p) 를 빠뜨리면 다 펴진 종이의 아랫변까지 슬롯 쪽으로 밀려 직사각형이 평행사변형이 된다.
+
+   옆선은 직선이 아니다. polygon 의 변은 곧게 이어지므로 네 점만 쓰면 어떤 값이든 사다리꼴로
+   각져 보인다(path() 는 % 를 못 써서 가변 크기 시트에 못 쓴다). 옆선을 높이 방향 10점으로
+   샘플링하되(좌우 합쳐 20점) s=(i/9)^0.55 로 **바닥 쪽을 촘촘히** 찍는다 — 꼬리가 꺾이는 곳에
+   점이 몰려야 가늘고 매끈하다. 점 개수·순서는 모든 키프레임에서 같아야 보간된다
+   (오른쪽 위→아래, 왼쪽 아래→위, 시계방향).
+   ⚠️손으로 고치지 말 것. 값은 위 공식의 샘플이라, 바꾸려면 공식을 바꾸고 다시 뽑아야 한다. */
 @keyframes panel-in {
-  from { transform: translateY(28px) scale(0.94); opacity: 0; }
-  to { transform: translateY(0) scale(1); opacity: 1; }
+  0% {
+    opacity: 0;
+    transform: translate(var(--slot-dx, 0px), var(--slot-dy, 120px)) scale(var(--slot-scale, 0.34));
+    clip-path: polygon(58.0% 74.0%, calc(56.2% + 0.09 * var(--tail-lean, 0%)) 81.8%, calc(55.3% + 0.19 * var(--tail-lean, 0%)) 85.4%, calc(54.6% + 0.3 * var(--tail-lean, 0%)) 88.2%, calc(53.9% + 0.41 * var(--tail-lean, 0%)) 90.6%, calc(53.3% + 0.52 * var(--tail-lean, 0%)) 92.8%, calc(52.7% + 0.64 * var(--tail-lean, 0%)) 94.8%, calc(52.0% + 0.76 * var(--tail-lean, 0%)) 96.6%, calc(51.4% + 0.88 * var(--tail-lean, 0%)) 98.4%, calc(50.4% + 1.0 * var(--tail-lean, 0%)) 100.0%, calc(49.6% + 1.0 * var(--tail-lean, 0%)) 100.0%, calc(48.6% + 0.88 * var(--tail-lean, 0%)) 98.4%, calc(48.0% + 0.76 * var(--tail-lean, 0%)) 96.6%, calc(47.3% + 0.64 * var(--tail-lean, 0%)) 94.8%, calc(46.7% + 0.52 * var(--tail-lean, 0%)) 92.8%, calc(46.1% + 0.41 * var(--tail-lean, 0%)) 90.6%, calc(45.4% + 0.3 * var(--tail-lean, 0%)) 88.2%, calc(44.7% + 0.19 * var(--tail-lean, 0%)) 85.4%, calc(43.8% + 0.09 * var(--tail-lean, 0%)) 81.8%, 42.0% 74.0%); /* 입구에서 막 나온 머리 = 삼각형 */
+  }
+  6% { opacity: 1; }
+  10% {
+    transform: translate(calc(var(--slot-dx, 0px) * 0.81), calc(var(--slot-dy, 120px) * 0.81))
+      scale(calc(var(--slot-scale, 0.34) * 0.81 + 0.19));
+    clip-path: polygon(66.0% 59.9%, calc(64.0% + 0.08 * var(--tail-lean, 0%)) 71.9%, calc(61.9% + 0.17 * var(--tail-lean, 0%)) 77.5%, calc(60.2% + 0.27 * var(--tail-lean, 0%)) 81.8%, calc(58.6% + 0.37 * var(--tail-lean, 0%)) 85.6%, calc(57.2% + 0.47 * var(--tail-lean, 0%)) 88.9%, calc(55.7% + 0.58 * var(--tail-lean, 0%)) 92.0%, calc(54.2% + 0.68 * var(--tail-lean, 0%)) 94.8%, calc(52.6% + 0.79 * var(--tail-lean, 0%)) 97.5%, calc(50.4% + 0.9 * var(--tail-lean, 0%)) 100.0%, calc(49.6% + 0.9 * var(--tail-lean, 0%)) 100.0%, calc(47.4% + 0.79 * var(--tail-lean, 0%)) 97.5%, calc(45.8% + 0.68 * var(--tail-lean, 0%)) 94.8%, calc(44.3% + 0.58 * var(--tail-lean, 0%)) 92.0%, calc(42.8% + 0.47 * var(--tail-lean, 0%)) 88.9%, calc(41.4% + 0.37 * var(--tail-lean, 0%)) 85.6%, calc(39.8% + 0.27 * var(--tail-lean, 0%)) 81.8%, calc(38.1% + 0.17 * var(--tail-lean, 0%)) 77.5%, calc(36.0% + 0.08 * var(--tail-lean, 0%)) 71.9%, 34.0% 59.9%);
+  }
+  22% {
+    transform: translate(calc(var(--slot-dx, 0px) * 0.608), calc(var(--slot-dy, 120px) * 0.608))
+      scale(calc(var(--slot-scale, 0.34) * 0.608 + 0.392));
+    clip-path: polygon(74.4% 45.0%, calc(72.9% + 0.07 * var(--tail-lean, 0%)) 61.4%, calc(69.5% + 0.15 * var(--tail-lean, 0%)) 69.1%, calc(66.6% + 0.23 * var(--tail-lean, 0%)) 75.1%, calc(64.1% + 0.32 * var(--tail-lean, 0%)) 80.2%, calc(61.6% + 0.41 * var(--tail-lean, 0%)) 84.8%, calc(59.2% + 0.5 * var(--tail-lean, 0%)) 89.0%, calc(56.7% + 0.59 * var(--tail-lean, 0%)) 92.9%, calc(54.1% + 0.69 * var(--tail-lean, 0%)) 96.6%, calc(50.4% + 0.78 * var(--tail-lean, 0%)) 100.0%, calc(49.6% + 0.78 * var(--tail-lean, 0%)) 100.0%, calc(45.9% + 0.69 * var(--tail-lean, 0%)) 96.6%, calc(43.3% + 0.59 * var(--tail-lean, 0%)) 92.9%, calc(40.8% + 0.5 * var(--tail-lean, 0%)) 89.0%, calc(38.4% + 0.41 * var(--tail-lean, 0%)) 84.8%, calc(35.9% + 0.32 * var(--tail-lean, 0%)) 80.2%, calc(33.4% + 0.23 * var(--tail-lean, 0%)) 75.1%, calc(30.5% + 0.15 * var(--tail-lean, 0%)) 69.1%, calc(27.1% + 0.07 * var(--tail-lean, 0%)) 61.4%, 25.6% 45.0%);
+  }
+  36% {
+    transform: translate(calc(var(--slot-dx, 0px) * 0.41), calc(var(--slot-dy, 120px) * 0.41))
+      scale(calc(var(--slot-scale, 0.34) * 0.41 + 0.59));
+    clip-path: polygon(82.8% 30.3%, calc(82.8% + 0.06 * var(--tail-lean, 0%)) 51.1%, calc(77.9% + 0.12 * var(--tail-lean, 0%)) 60.8%, calc(73.8% + 0.19 * var(--tail-lean, 0%)) 68.4%, calc(70.1% + 0.26 * var(--tail-lean, 0%)) 74.9%, calc(66.6% + 0.34 * var(--tail-lean, 0%)) 80.7%, calc(63.1% + 0.41 * var(--tail-lean, 0%)) 86.1%, calc(59.6% + 0.49 * var(--tail-lean, 0%)) 91.0%, calc(55.8% + 0.56 * var(--tail-lean, 0%)) 95.6%, calc(50.5% + 0.64 * var(--tail-lean, 0%)) 100.0%, calc(49.5% + 0.64 * var(--tail-lean, 0%)) 100.0%, calc(44.2% + 0.56 * var(--tail-lean, 0%)) 95.6%, calc(40.4% + 0.49 * var(--tail-lean, 0%)) 91.0%, calc(36.9% + 0.41 * var(--tail-lean, 0%)) 86.1%, calc(33.4% + 0.34 * var(--tail-lean, 0%)) 80.7%, calc(29.9% + 0.26 * var(--tail-lean, 0%)) 74.9%, calc(26.2% + 0.19 * var(--tail-lean, 0%)) 68.4%, calc(22.1% + 0.12 * var(--tail-lean, 0%)) 60.8%, calc(17.2% + 0.06 * var(--tail-lean, 0%)) 51.1%, 17.2% 30.3%); /* 몸통은 만폭, 아래 절반이 꼬리 */
+  }
+  52% {
+    transform: translate(calc(var(--slot-dx, 0px) * 0.23), calc(var(--slot-dy, 120px) * 0.23))
+      scale(calc(var(--slot-scale, 0.34) * 0.23 + 0.77));
+    clip-path: polygon(90.3% 17.0%, calc(90.3% + 0.04 * var(--tail-lean, 0%)) 41.8%, calc(86.8% + 0.09 * var(--tail-lean, 0%)) 53.3%, calc(81.5% + 0.14 * var(--tail-lean, 0%)) 62.4%, calc(76.7% + 0.2 * var(--tail-lean, 0%)) 70.2%, calc(72.1% + 0.25 * var(--tail-lean, 0%)) 77.1%, calc(67.7% + 0.31 * var(--tail-lean, 0%)) 83.4%, calc(63.1% + 0.36 * var(--tail-lean, 0%)) 89.3%, calc(58.2% + 0.42 * var(--tail-lean, 0%)) 94.8%, calc(51.4% + 0.48 * var(--tail-lean, 0%)) 100.0%, calc(48.6% + 0.48 * var(--tail-lean, 0%)) 100.0%, calc(41.8% + 0.42 * var(--tail-lean, 0%)) 94.8%, calc(36.9% + 0.36 * var(--tail-lean, 0%)) 89.3%, calc(32.3% + 0.31 * var(--tail-lean, 0%)) 83.4%, calc(27.9% + 0.25 * var(--tail-lean, 0%)) 77.1%, calc(23.3% + 0.2 * var(--tail-lean, 0%)) 70.2%, calc(18.5% + 0.14 * var(--tail-lean, 0%)) 62.4%, calc(13.2% + 0.09 * var(--tail-lean, 0%)) 53.3%, calc(9.7% + 0.04 * var(--tail-lean, 0%)) 41.8%, 9.7% 17.0%);
+  }
+  68% {
+    transform: translate(calc(var(--slot-dx, 0px) * 0.102), calc(var(--slot-dy, 120px) * 0.102))
+      scale(calc(var(--slot-scale, 0.34) * 0.102 + 0.898));
+    clip-path: polygon(95.7% 7.6%, calc(95.7% + 0.03 * var(--tail-lean, 0%)) 35.2%, calc(94.4% + 0.06 * var(--tail-lean, 0%)) 48.0%, calc(88.6% + 0.1 * var(--tail-lean, 0%)) 58.1%, calc(83.3% + 0.13 * var(--tail-lean, 0%)) 66.7%, calc(78.2% + 0.17 * var(--tail-lean, 0%)) 74.5%, calc(73.3% + 0.2 * var(--tail-lean, 0%)) 81.5%, calc(68.3% + 0.24 * var(--tail-lean, 0%)) 88.1%, calc(62.8% + 0.28 * var(--tail-lean, 0%)) 94.2%, calc(55.3% + 0.32 * var(--tail-lean, 0%)) 100.0%, calc(44.7% + 0.32 * var(--tail-lean, 0%)) 100.0%, calc(37.2% + 0.28 * var(--tail-lean, 0%)) 94.2%, calc(31.7% + 0.24 * var(--tail-lean, 0%)) 88.1%, calc(26.7% + 0.2 * var(--tail-lean, 0%)) 81.5%, calc(21.8% + 0.17 * var(--tail-lean, 0%)) 74.5%, calc(16.7% + 0.13 * var(--tail-lean, 0%)) 66.7%, calc(11.4% + 0.1 * var(--tail-lean, 0%)) 58.1%, calc(5.6% + 0.06 * var(--tail-lean, 0%)) 48.0%, calc(4.3% + 0.03 * var(--tail-lean, 0%)) 35.2%, 4.3% 7.6%);
+  }
+  82% {
+    transform: translate(calc(var(--slot-dx, 0px) * 0.032), calc(var(--slot-dy, 120px) * 0.032))
+      scale(calc(var(--slot-scale, 0.34) * 0.032 + 0.968));
+    clip-path: polygon(98.6% 2.4%, 98.6% 31.5%, calc(98.6% + 0.03 * var(--tail-lean, 0%)) 45.1%, calc(94.3% + 0.05 * var(--tail-lean, 0%)) 55.7%, calc(89.7% + 0.07 * var(--tail-lean, 0%)) 64.9%, calc(85.3% + 0.09 * var(--tail-lean, 0%)) 73.0%, calc(81.1% + 0.12 * var(--tail-lean, 0%)) 80.5%, calc(76.7% + 0.14 * var(--tail-lean, 0%)) 87.4%, calc(72.0% + 0.16 * var(--tail-lean, 0%)) 93.9%, calc(65.5% + 0.18 * var(--tail-lean, 0%)) 100.0%, calc(34.5% + 0.18 * var(--tail-lean, 0%)) 100.0%, calc(28.0% + 0.16 * var(--tail-lean, 0%)) 93.9%, calc(23.3% + 0.14 * var(--tail-lean, 0%)) 87.4%, calc(18.9% + 0.12 * var(--tail-lean, 0%)) 80.5%, calc(14.7% + 0.09 * var(--tail-lean, 0%)) 73.0%, calc(10.3% + 0.07 * var(--tail-lean, 0%)) 64.9%, calc(5.7% + 0.05 * var(--tail-lean, 0%)) 55.7%, calc(1.4% + 0.03 * var(--tail-lean, 0%)) 45.1%, 1.4% 31.5%, 1.4% 2.4%); /* 머리는 제자리, 꼬리는 아직 물림 */
+  }
+  92% {
+    transform: translate(calc(var(--slot-dx, 0px) * 0.006), calc(var(--slot-dy, 120px) * 0.006))
+      scale(calc(var(--slot-scale, 0.34) * 0.006 + 0.994));
+    clip-path: polygon(99.7% 0.5%, 99.7% 30.2%, 99.7% 44.0%, calc(97.8% + 0.02 * var(--tail-lean, 0%)) 54.9%, calc(95.1% + 0.03 * var(--tail-lean, 0%)) 64.2%, calc(92.4% + 0.04 * var(--tail-lean, 0%)) 72.5%, calc(89.9% + 0.05 * var(--tail-lean, 0%)) 80.1%, calc(87.2% + 0.06 * var(--tail-lean, 0%)) 87.2%, calc(84.4% + 0.07 * var(--tail-lean, 0%)) 93.8%, calc(80.5% + 0.08 * var(--tail-lean, 0%)) 100.0%, calc(19.5% + 0.08 * var(--tail-lean, 0%)) 100.0%, calc(15.6% + 0.07 * var(--tail-lean, 0%)) 93.8%, calc(12.8% + 0.06 * var(--tail-lean, 0%)) 87.2%, calc(10.1% + 0.05 * var(--tail-lean, 0%)) 80.1%, calc(7.6% + 0.04 * var(--tail-lean, 0%)) 72.5%, calc(4.9% + 0.03 * var(--tail-lean, 0%)) 64.2%, calc(2.2% + 0.02 * var(--tail-lean, 0%)) 54.9%, 0.3% 44.0%, 0.3% 30.2%, 0.3% 0.5%);
+  }
+  100% {
+    opacity: 1;
+    transform: translate(0, 0) scale(1);
+    clip-path: polygon(100.0% 0.0%, 100.0% 29.9%, 100.0% 43.7%, 100.0% 54.6%, 100.0% 64.0%, 100.0% 72.4%, 100.0% 80.0%, 100.0% 87.1%, 100.0% 93.7%, 100.0% 100.0%, 0.0% 100.0%, 0.0% 93.7%, 0.0% 87.1%, 0.0% 80.0%, 0.0% 72.4%, 0.0% 64.0%, 0.0% 54.6%, 0.0% 43.7%, 0.0% 29.9%, 0.0% 0.0%); /* 다 펴진 직사각형 · 기울기 0 */
+  }
 }
+/* 닫힘은 열림의 역재생이 아니다. 나올 땐 꼬리(아래)가, 들어갈 땐 머리(위)가 좁아진다.
+   좁아지는 쪽이 곧 입구로 빨려 드는 쪽이라, 같은 --tail-lean 이 그쪽을 슬롯으로 끌어당긴다. */
 @keyframes panel-out {
-  from { transform: translateY(0) scale(1); opacity: 1; }
-  to { transform: translateY(22px) scale(0.95); opacity: 0; }
+  0% {
+    opacity: 1;
+    transform: translate(0, 0) scale(1);
+    clip-path: polygon(100.0% 0.0%, 100.0% 29.9%, 100.0% 43.7%, 100.0% 54.6%, 100.0% 64.0%, 100.0% 72.4%, 100.0% 80.0%, 100.0% 87.1%, 100.0% 93.7%, 100.0% 100.0%, 0.0% 100.0%, 0.0% 93.7%, 0.0% 87.1%, 0.0% 80.0%, 0.0% 72.4%, 0.0% 64.0%, 0.0% 54.6%, 0.0% 43.7%, 0.0% 29.9%, 0.0% 0.0%); /* 반듯한 종이 · 기울기 0 */
+  }
+  8% {
+    transform: translate(calc(var(--slot-dx, 0px) * 0.006), calc(var(--slot-dy, 120px) * 0.006))
+      scale(calc(var(--slot-scale, 0.34) * 0.006 + 0.994));
+    clip-path: polygon(calc(80.5% + 0.08 * var(--tail-lean, 0%)) 0.5%, calc(93.2% + 0.04 * var(--tail-lean, 0%)) 30.2%, calc(97.4% + 0.03 * var(--tail-lean, 0%)) 44.0%, 99.7% 54.9%, 99.7% 64.2%, 99.7% 72.5%, 99.7% 80.1%, 99.7% 87.2%, 99.7% 93.8%, 99.7% 100.0%, 0.3% 100.0%, 0.3% 93.8%, 0.3% 87.2%, 0.3% 80.1%, 0.3% 72.5%, 0.3% 64.2%, 0.3% 54.9%, calc(2.6% + 0.03 * var(--tail-lean, 0%)) 44.0%, calc(6.8% + 0.04 * var(--tail-lean, 0%)) 30.2%, calc(19.5% + 0.08 * var(--tail-lean, 0%)) 0.5%);
+  }
+  18% {
+    transform: translate(calc(var(--slot-dx, 0px) * 0.032), calc(var(--slot-dy, 120px) * 0.032))
+      scale(calc(var(--slot-scale, 0.34) * 0.032 + 0.968));
+    clip-path: polygon(calc(65.5% + 0.18 * var(--tail-lean, 0%)) 2.4%, calc(86.5% + 0.09 * var(--tail-lean, 0%)) 31.5%, calc(93.5% + 0.06 * var(--tail-lean, 0%)) 45.1%, calc(98.6% + 0.04 * var(--tail-lean, 0%)) 55.7%, calc(98.6% + 0.02 * var(--tail-lean, 0%)) 64.9%, 98.6% 73.0%, 98.6% 80.5%, 98.6% 87.4%, 98.6% 93.9%, 98.6% 100.0%, 1.4% 100.0%, 1.4% 93.9%, 1.4% 87.4%, 1.4% 80.5%, 1.4% 73.0%, calc(1.4% + 0.02 * var(--tail-lean, 0%)) 64.9%, calc(1.4% + 0.04 * var(--tail-lean, 0%)) 55.7%, calc(6.5% + 0.06 * var(--tail-lean, 0%)) 45.1%, calc(13.5% + 0.09 * var(--tail-lean, 0%)) 31.5%, calc(34.5% + 0.18 * var(--tail-lean, 0%)) 2.4%);
+  }
+  32% {
+    transform: translate(calc(var(--slot-dx, 0px) * 0.102), calc(var(--slot-dy, 120px) * 0.102))
+      scale(calc(var(--slot-scale, 0.34) * 0.102 + 0.898));
+    clip-path: polygon(calc(55.3% + 0.32 * var(--tail-lean, 0%)) 7.6%, calc(79.6% + 0.16 * var(--tail-lean, 0%)) 35.2%, calc(87.7% + 0.1 * var(--tail-lean, 0%)) 48.0%, calc(93.6% + 0.07 * var(--tail-lean, 0%)) 58.1%, calc(95.7% + 0.04 * var(--tail-lean, 0%)) 66.7%, calc(95.7% + 0.02 * var(--tail-lean, 0%)) 74.5%, 95.7% 81.5%, 95.7% 88.1%, 95.7% 94.2%, 95.7% 100.0%, 4.3% 100.0%, 4.3% 94.2%, 4.3% 88.1%, 4.3% 81.5%, calc(4.3% + 0.02 * var(--tail-lean, 0%)) 74.5%, calc(4.3% + 0.04 * var(--tail-lean, 0%)) 66.7%, calc(6.4% + 0.07 * var(--tail-lean, 0%)) 58.1%, calc(12.3% + 0.1 * var(--tail-lean, 0%)) 48.0%, calc(20.4% + 0.16 * var(--tail-lean, 0%)) 35.2%, calc(44.7% + 0.32 * var(--tail-lean, 0%)) 7.6%); /* 윗부분이 좁아지기 시작 */
+  }
+  48% {
+    transform: translate(calc(var(--slot-dx, 0px) * 0.23), calc(var(--slot-dy, 120px) * 0.23))
+      scale(calc(var(--slot-scale, 0.34) * 0.23 + 0.77));
+    clip-path: polygon(calc(51.4% + 0.48 * var(--tail-lean, 0%)) 17.0%, calc(73.4% + 0.24 * var(--tail-lean, 0%)) 41.8%, calc(80.7% + 0.15 * var(--tail-lean, 0%)) 53.3%, calc(86.0% + 0.1 * var(--tail-lean, 0%)) 62.4%, calc(90.3% + 0.06 * var(--tail-lean, 0%)) 70.2%, calc(90.3% + 0.04 * var(--tail-lean, 0%)) 77.1%, 90.3% 83.4%, 90.3% 89.3%, 90.3% 94.8%, 90.3% 100.0%, 9.7% 100.0%, 9.7% 94.8%, 9.7% 89.3%, 9.7% 83.4%, calc(9.7% + 0.04 * var(--tail-lean, 0%)) 77.1%, calc(9.7% + 0.06 * var(--tail-lean, 0%)) 70.2%, calc(14.0% + 0.1 * var(--tail-lean, 0%)) 62.4%, calc(19.3% + 0.15 * var(--tail-lean, 0%)) 53.3%, calc(26.6% + 0.24 * var(--tail-lean, 0%)) 41.8%, calc(48.6% + 0.48 * var(--tail-lean, 0%)) 17.0%);
+  }
+  64% {
+    transform: translate(calc(var(--slot-dx, 0px) * 0.41), calc(var(--slot-dy, 120px) * 0.41))
+      scale(calc(var(--slot-scale, 0.34) * 0.41 + 0.59));
+    clip-path: polygon(calc(50.5% + 0.64 * var(--tail-lean, 0%)) 30.3%, calc(67.6% + 0.31 * var(--tail-lean, 0%)) 51.1%, calc(73.2% + 0.2 * var(--tail-lean, 0%)) 60.8%, calc(77.3% + 0.13 * var(--tail-lean, 0%)) 68.4%, calc(80.7% + 0.08 * var(--tail-lean, 0%)) 74.9%, calc(82.8% + 0.05 * var(--tail-lean, 0%)) 80.7%, calc(82.8% + 0.03 * var(--tail-lean, 0%)) 86.1%, 82.8% 91.0%, 82.8% 95.6%, 82.8% 100.0%, 17.2% 100.0%, 17.2% 95.6%, 17.2% 91.0%, calc(17.2% + 0.03 * var(--tail-lean, 0%)) 86.1%, calc(17.2% + 0.05 * var(--tail-lean, 0%)) 80.7%, calc(19.3% + 0.08 * var(--tail-lean, 0%)) 74.9%, calc(22.7% + 0.13 * var(--tail-lean, 0%)) 68.4%, calc(26.8% + 0.2 * var(--tail-lean, 0%)) 60.8%, calc(32.4% + 0.31 * var(--tail-lean, 0%)) 51.1%, calc(49.5% + 0.64 * var(--tail-lean, 0%)) 30.3%);
+  }
+  78% {
+    transform: translate(calc(var(--slot-dx, 0px) * 0.608), calc(var(--slot-dy, 120px) * 0.608))
+      scale(calc(var(--slot-scale, 0.34) * 0.608 + 0.392));
+    clip-path: polygon(calc(50.4% + 0.78 * var(--tail-lean, 0%)) 45.0%, calc(62.3% + 0.38 * var(--tail-lean, 0%)) 61.4%, calc(66.2% + 0.25 * var(--tail-lean, 0%)) 69.1%, calc(69.1% + 0.16 * var(--tail-lean, 0%)) 75.1%, calc(71.4% + 0.1 * var(--tail-lean, 0%)) 80.2%, calc(73.5% + 0.06 * var(--tail-lean, 0%)) 84.8%, calc(74.4% + 0.03 * var(--tail-lean, 0%)) 89.0%, 74.4% 92.9%, 74.4% 96.6%, 74.4% 100.0%, 25.6% 100.0%, 25.6% 96.6%, 25.6% 92.9%, calc(25.6% + 0.03 * var(--tail-lean, 0%)) 89.0%, calc(26.5% + 0.06 * var(--tail-lean, 0%)) 84.8%, calc(28.6% + 0.1 * var(--tail-lean, 0%)) 80.2%, calc(30.9% + 0.16 * var(--tail-lean, 0%)) 75.1%, calc(33.8% + 0.25 * var(--tail-lean, 0%)) 69.1%, calc(37.7% + 0.38 * var(--tail-lean, 0%)) 61.4%, calc(49.6% + 0.78 * var(--tail-lean, 0%)) 45.0%);
+  }
+  90% {
+    transform: translate(calc(var(--slot-dx, 0px) * 0.81), calc(var(--slot-dy, 120px) * 0.81))
+      scale(calc(var(--slot-scale, 0.34) * 0.81 + 0.19));
+    clip-path: polygon(calc(50.4% + 0.9 * var(--tail-lean, 0%)) 59.9%, calc(57.6% + 0.44 * var(--tail-lean, 0%)) 71.9%, calc(59.9% + 0.29 * var(--tail-lean, 0%)) 77.5%, calc(61.7% + 0.19 * var(--tail-lean, 0%)) 81.8%, calc(63.1% + 0.12 * var(--tail-lean, 0%)) 85.6%, calc(64.3% + 0.07 * var(--tail-lean, 0%)) 88.9%, calc(65.4% + 0.04 * var(--tail-lean, 0%)) 92.0%, 66.0% 94.8%, 66.0% 97.5%, 66.0% 100.0%, 34.0% 100.0%, 34.0% 97.5%, 34.0% 94.8%, calc(34.6% + 0.04 * var(--tail-lean, 0%)) 92.0%, calc(35.7% + 0.07 * var(--tail-lean, 0%)) 88.9%, calc(36.9% + 0.12 * var(--tail-lean, 0%)) 85.6%, calc(38.3% + 0.19 * var(--tail-lean, 0%)) 81.8%, calc(40.1% + 0.29 * var(--tail-lean, 0%)) 77.5%, calc(42.4% + 0.44 * var(--tail-lean, 0%)) 71.9%, calc(49.6% + 0.9 * var(--tail-lean, 0%)) 59.9%);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(var(--slot-dx, 0px), var(--slot-dy, 120px)) scale(var(--slot-scale, 0.34));
+    clip-path: polygon(calc(50.4% + 1.0 * var(--tail-lean, 0%)) 74.0%, calc(53.5% + 0.49 * var(--tail-lean, 0%)) 81.8%, calc(54.5% + 0.32 * var(--tail-lean, 0%)) 85.4%, calc(55.2% + 0.21 * var(--tail-lean, 0%)) 88.2%, calc(55.8% + 0.13 * var(--tail-lean, 0%)) 90.6%, calc(56.4% + 0.08 * var(--tail-lean, 0%)) 92.8%, calc(56.8% + 0.04 * var(--tail-lean, 0%)) 94.8%, 57.3% 96.6%, 57.6% 98.4%, 58.0% 100.0%, 42.0% 100.0%, 42.4% 98.4%, 42.7% 96.6%, calc(43.2% + 0.04 * var(--tail-lean, 0%)) 94.8%, calc(43.6% + 0.08 * var(--tail-lean, 0%)) 92.8%, calc(44.2% + 0.13 * var(--tail-lean, 0%)) 90.6%, calc(44.8% + 0.21 * var(--tail-lean, 0%)) 88.2%, calc(45.5% + 0.32 * var(--tail-lean, 0%)) 85.4%, calc(46.5% + 0.49 * var(--tail-lean, 0%)) 81.8%, calc(49.6% + 1.0 * var(--tail-lean, 0%)) 74.0%); /* 입구로 다 들어갔다 */
+  }
 }
 @keyframes scrim-in {
   from { opacity: 0; }
@@ -350,12 +482,17 @@ html {
 /* 열린 동안 표지는 젖혀둔 채로 유지 */
 .folder.is-open .glass.folder-front { transform: rotateX(9deg); }
 
-/* 꺼낸 서류(중앙 보고서) — 글래스가 아니라 종이. 흰 바탕 + 얕은 모서리 + 깊은 그림자. */
+/* 꺼낸 서류(중앙 보고서) — 글래스가 아니라 종이. 흰 바탕 + 얕은 모서리 + 깊은 그림자.
+   소스마다 내용 길이가 달라도 종이 규격은 같다(A4 를 바꿔 끼우지 않는다). 높이를 고정하고
+   넘치는 본문만 안에서 스크롤한다 — 안 그러면 소스를 바꿀 때마다 종이 크기가 널뛴다. */
 .doc-sheet {
   background: #fff;
   border: 1px solid var(--color-line);
   border-radius: 10px;
   box-shadow: 0 40px 90px rgba(15, 27, 51, 0.28), 0 8px 24px rgba(15, 27, 51, 0.12);
+  /* 축소는 종이 한가운데를 기준으로 — 위치는 translate 가 서류철 입구로 옮긴다. */
+  transform-origin: center;
+  will-change: transform, opacity, clip-path;
 }
 /* 종이 상단의 접힘/제본 자국 */
 .doc-sheet::before {

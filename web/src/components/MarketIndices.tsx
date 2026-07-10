@@ -3,6 +3,11 @@
 import { useEffect, useState } from "react";
 import { getMarketIndices, type IndexBar, type MarketIndex } from "@/lib/apiClient";
 
+// 지수도 '시세'라 한국 시장 관례를 따른다(상승=빨강, 하락=파랑). StockChart 의 KR_UP/KR_DOWN 과
+// 같은 색 — 제품 전반의 방향 의미색(up=초록/down=빨강)과는 문맥이 다르다.
+const KR_UP = "#ef4444";
+const KR_DOWN = "#3b82f6";
+
 // item 7 — 리포트 상단 시장 지수 미니차트(코스피·코스닥·원/달러·VIX). 인라인 SVG 스파크라인.
 function Sparkline({ bars, up }: { bars: IndexBar[]; up: boolean }) {
   if (bars.length < 2) return null;
@@ -16,7 +21,7 @@ function Sparkline({ bars, up }: { bars: IndexBar[]; up: boolean }) {
     .join(" ");
   return (
     <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} aria-hidden="true">
-      <polyline points={pts} fill="none" stroke={up ? "#16a34a" : "#dc2626"} strokeWidth={1.5} />
+      <polyline points={pts} fill="none" stroke={up ? KR_UP : KR_DOWN} strokeWidth={1.5} />
     </svg>
   );
 }
@@ -44,9 +49,8 @@ function IndexCard({ idx, tone = "glass" }: { idx: MarketIndex; tone?: "glass" |
           {idx.last.toLocaleString("ko-KR")}
         </div>
         <div
-          className={`text-[11.5px] font-bold ${
-            demo ? "text-muted" : up ? "text-[#16a34a]" : "text-[#dc2626]"
-          }`}
+          className={`text-[11.5px] font-bold ${demo ? "text-muted" : ""}`}
+          style={demo ? undefined : { color: up ? KR_UP : KR_DOWN }}
         >
           {up ? "▲" : "▼"} {Math.abs(idx.change_pct)}%
         </div>

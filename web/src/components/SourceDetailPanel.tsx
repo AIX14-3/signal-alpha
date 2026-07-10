@@ -1,7 +1,7 @@
 "use client";
 
 import { X } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type CSSProperties, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { SourceDetailBody } from "@/components/SourceDetailBody";
 import { SourceIcon } from "@/components/SourceIcon";
 import { getSourceDetail, type SourceDetail, type SourceKey } from "@/lib/apiClient";
@@ -10,8 +10,45 @@ import { SOURCE_META } from "@/lib/format";
 // 소스 상세 우측 슬라이드오버. 열림 여부는 리포트 페이지가 URL 쿼리(?source=dart)로 소유하고,
 // 이 컴포넌트는 열린 소스의 상세를 받아 그리는 일만 한다(뒤로가기=닫기, 새로고침 시 유지).
 
-// 퇴장 애니메이션 길이. globals.css 의 panel-out 지속시간과 맞춘다.
-const PANEL_EXIT_MS = 190;
+// 퇴장 애니메이션 길이. globals.css 의 panel-out 지속시간과 맞춘다(짧으면 종이 꼬리가 서류철에
+// 다 빨려 들어가기 전에 언마운트돼 툭 끊긴다).
+const PANEL_EXIT_MS = 380;
+// 종이가 서류철 틈에서 뽑혀 나오는 시간. 꼬리가 마지막까지 물려 있어야 해서 퇴장보다 길다.
+const PANEL_ENTER_MS = 620;
+// 이징은 linear 다. 꼬리를 보이게 하려면 clip-path 가 transform 보다 늦게 펴져야 해서 중간
+// 키프레임이 필요한데, 이징 곡선을 주면 그게 구간마다 재적용돼 감속→가속이 되풀이된다(끊김).
+// 감속(뽑힘)·가속(빨려듦)은 globals.css 의 키프레임 간격이 만든다.
+const PAPER_MOTION = "linear";
+
+// 종이가 출발/도착하는 서류철 입구. 클릭한 카드(`[data-source]`)의 윗변 한가운데다.
+// 카드를 못 찾으면(딥링크로 바로 열린 경우) 화면 아래에서 올라오는 폴백을 쓴다.
+type Slot = { dx: number; dy: number; scale: number; lean: number };
+
+// 종이의 뾰족한 끝이 슬롯 쪽으로 쏠리는 정도(%). 화면 가장자리 카드에서 최대.
+// 왼쪽 카드면 음수 → 꼬리가 왼쪽으로 끌려가고, 그만큼 오른쪽 옆선이 길게 휜다.
+const MAX_LEAN_PCT = 16;
+
+function slotOf(source: string, sheet: HTMLElement): Slot | null {
+  const card = document.querySelector<HTMLElement>(`[data-source="${source}"]`);
+  if (!card) return null;
+  // 종이의 제자리는 화면 한가운데다(오버레이가 좌우·상하 대칭 패딩으로 중앙 정렬).
+  // 크기는 offsetWidth/Height 로 읽는다 — getBoundingClientRect 는 진입 애니메이션의
+  // transform 이 이미 걸린 값을 돌려줘 출발점 계산이 스스로 오염된다.
+  const sheetW = sheet.offsetWidth;
+  const sheetH = sheet.offsetHeight;
+  if (!sheetW || !sheetH) return null;
+
+  const from = card.getBoundingClientRect();
+  // 서류가 솟아 나오는 곳은 표지 위쪽이다 — 카드 윗변에서 살짝 안쪽.
+  const dx = from.left + from.width / 2 - window.innerWidth / 2;
+  return {
+    dx,
+    dy: from.top + 12 - window.innerHeight / 2,
+    scale: Math.min(from.width / sheetW, 0.34),
+    // 슬롯이 화면 한가운데서 얼마나 치우쳤나(-1 왼쪽 … +1 오른쪽).
+    lean: Math.max(-1, Math.min(1, dx / (window.innerWidth / 2))) * MAX_LEAN_PCT,
+  };
+}
 
 export function SourceDetailPanel({
   ticker,
@@ -26,7 +63,14 @@ export function SourceDetailPanel({
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [message, setMessage] = useState<string | null>(null);
   const [closing, setClosing] = useState(false);
+  // undefined = 아직 안 잼. 재기 전에는 애니메이션을 걸지 않는다 — 걸어 두면 첫 프레임의
+  // transform 이 측정을 오염시키고, 종이가 엉뚱한 데서 출발한다. null = 카드 없음(폴백).
+  const [slot, setSlot] = useState<Slot | null | undefined>(undefined);
   const panelRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    if (panelRef.current) setSlot(slotOf(source, panelRef.current));
+  }, [source]);
 
   // 닫기는 퇴장 애니메이션을 먼저 재생하고 언마운트한다 — 서류가 서류철로 되돌아가는 동안
   // 패널이 즉시 사라지면 동작이 끊겨 보인다. 카드의 서류는 is-open 해제로 함께 되돌아온다.
@@ -93,7 +137,7 @@ export function SourceDetailPanel({
         style={{
           animation: closing
             ? `scrim-out ${PANEL_EXIT_MS}ms ease-in forwards`
-            : "scrim-in 220ms ease-out",
+            : "scrim-in 240ms ease-out",
         }}
       />
 
@@ -103,12 +147,27 @@ export function SourceDetailPanel({
         aria-modal="true"
         aria-label={`${meta.label} 상세`}
         tabIndex={-1}
-        className="doc-sheet relative flex max-h-[86vh] w-full max-w-[840px] flex-col outline-none"
-        style={{
-          animation: closing
-            ? `panel-out ${PANEL_EXIT_MS}ms ease-in forwards`
-            : "panel-in 260ms var(--ease-out)",
-        }}
+        className="doc-sheet relative flex h-[86vh] w-full max-w-[840px] flex-col outline-none"
+        style={
+          {
+            // 측정 전 한 프레임은 숨긴다(제자리에 뜬 종이가 번쩍이지 않게).
+            opacity: slot === undefined ? 0 : undefined,
+            animation:
+              slot === undefined
+                ? "none"
+                : closing
+                  ? `panel-out ${PANEL_EXIT_MS}ms ${PAPER_MOTION} forwards`
+                  : `panel-in ${PANEL_ENTER_MS}ms ${PAPER_MOTION}`,
+            ...(slot
+              ? {
+                  "--slot-dx": `${Math.round(slot.dx)}px`,
+                  "--slot-dy": `${Math.round(slot.dy)}px`,
+                  "--slot-scale": slot.scale.toFixed(3),
+                  "--tail-lean": `${slot.lean.toFixed(1)}%`,
+                }
+              : null),
+          } as CSSProperties
+        }
       >
         <header className="flex shrink-0 items-center gap-3 border-b border-line px-6 pb-4 pt-6">
           <span
