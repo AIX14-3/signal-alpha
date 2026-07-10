@@ -15,6 +15,16 @@ from app.memory.situation import SituationInput, build_situation_text
 
 logger = logging.getLogger(__name__)
 
+# Directions that carry no directional stance — a "no-signal" episode. Remembering
+# these is pointless (recall neighbors would be dominated by near-identical
+# no-signal days) and wasteful (every one still costs an embedding call), so the
+# writer skips them entirely. Only positive/negative/mixed situations are stored.
+_NO_SIGNAL_DIRECTIONS = frozenset({"", "neutral", "no_signal", "none", "unknown"})
+
+
+def _is_no_signal(signal: str | None) -> bool:
+    return str(signal or "").strip().lower() in _NO_SIGNAL_DIRECTIONS
+
 
 class EpisodeWriter:
     def __init__(self, *, embedder: Any, repository: Any) -> None:
@@ -47,6 +57,11 @@ class EpisodeWriter:
         is unaffected — episodic memory is an optional reference layer.
         """
         if self._embedder is None or self._repository is None:
+            return False
+        # No-signal situations are not worth remembering — skip before embedding so
+        # a batch replay over historical no-signal days neither pollutes recall nor
+        # burns embedding calls. The headline is still published; only memory skips.
+        if _is_no_signal(signal):
             return False
         try:
             text = build_situation_text(
