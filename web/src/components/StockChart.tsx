@@ -9,6 +9,7 @@ import {
   type IChartApi,
   type ISeriesApi,
   LineSeries,
+  LineStyle,
 } from "lightweight-charts";
 import { LineChart } from "lucide-react";
 import { getReportPrices, type PriceSeries } from "@/lib/apiClient";
@@ -50,13 +51,34 @@ function isMarketOpen(now = new Date()): boolean {
   return minutes >= 9 * 60 && minutes <= 15 * 60 + 35;
 }
 
-function toSeriesData(bars: PriceSeries["bars"], chartType: ChartType) {
-  if (chartType === "candle") return bars as never;
-  return bars.map((b) => ({ time: b.time, value: b.close })) as never;
+// 현재가 수평선 + 우측 축 라벨. 폴링 갱신 때 눈에 띄게 움직이는 요소가 이것뿐이다(일봉에서는
+// 오늘 봉 하나가 y축의 0.2% 남짓 움직여 사실상 안 보인다). 캔들은 라이브러리 기본값으로 이미 켜져 있다.
+function priceLineOptions(color: string) {
+  return {
+    priceLineVisible: true,
+    priceLineColor: color,
+    priceLineStyle: LineStyle.Dashed,
+    lastValueVisible: true,
+  };
+}
+
+// lightweight-charts 에는 타임존 개념이 없다. 숫자 time 은 UTCTimestamp 로 보고 그대로 UTC 로
+// 눈금을 찍는다. 분봉은 유닉스 초를 그대로 넘기므로 10:50 장중이 01:50 로 보였다. 한국 증시
+// 시간을 읽히게 하려고 KST(고정 +9h, 서머타임 없음) 만큼 옮겨서 넘긴다. 일/월/년 봉은 서버가
+// 'YYYY-MM-DD' 문자열을 주므로 해당 없음.
+const KST_OFFSET_SEC = 9 * 60 * 60;
+
+function toSeriesData(bars: PriceSeries["bars"], chartType: ChartType, intraday: boolean) {
+  const at = (bar: PriceSeries["bars"][number]) =>
+    intraday && typeof bar.time === "number" ? bar.time + KST_OFFSET_SEC : bar.time;
+  if (chartType === "candle") return bars.map((b) => ({ ...b, time: at(b) })) as never;
+  return bars.map((b) => ({ time: at(b), value: b.close })) as never;
 }
 
 export function StockChart({ stockCode, stockName }: { stockCode: string; stockName?: string | null }) {
-  const [tf, setTf] = useState("day");
+  // 장중에는 오늘 흐름(분봉)을 먼저 보여 준다. 일봉 6개월에서는 오늘 봉 하나가 움직여 봐야
+  // y축 범위의 0.2% 남짓이라, "장중 갱신"이라 써 놓고도 차트는 멈춘 것처럼 보인다.
+  const [tf, setTf] = useState(() => (isMarketOpen() ? "min" : "day"));
   const [chartType, setChartType] = useState<ChartType>("area");
   const [data, setData] = useState<PriceSeries | null>(null);
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
@@ -157,7 +179,7 @@ export function StockChart({ stockCode, stockName }: { stockCode: string; stockN
       seriesRef.current = chart.addSeries(LineSeries, {
         color: trendColorRef.current,
         lineWidth: 2,
-        priceLineVisible: false,
+        ...priceLineOptions(trendColorRef.current),
       });
     } else {
       // 영역(기본) — 등락 색 종가 라인 + 상단→하단 그라데이션 채움.
@@ -167,7 +189,7 @@ export function StockChart({ stockCode, stockName }: { stockCode: string; stockN
         topColor: `rgba(${rgb},.28)`,
         bottomColor: `rgba(${rgb},.02)`,
         lineWidth: 2,
-        priceLineVisible: false,
+        ...priceLineOptions(trendColorRef.current),
       });
     }
 
@@ -184,11 +206,15 @@ export function StockChart({ stockCode, stockName }: { stockCode: string; stockN
   useEffect(() => {
     const series = seriesRef.current;
     if (!series || !data) return;
-    series.setData(toSeriesData(data.bars, chartType));
+    series.setData(toSeriesData(data.bars, chartType, tf === "min"));
 
     // 등락 방향에 따라 선/채움 색을 시세 관례로 맞춘다(캔들은 봉마다 색이 달라 제외).
     if (chartType === "line") {
-      series.applyOptions({ color: trendColor, crosshairMarkerBorderColor: trendColor } as never);
+      series.applyOptions({
+        color: trendColor,
+        crosshairMarkerBorderColor: trendColor,
+        priceLineColor: trendColor,
+      } as never);
     } else if (chartType === "area") {
       const rgb = trendColor === KR_UP ? "239,68,68" : "59,130,246";
       series.applyOptions({
@@ -196,6 +222,7 @@ export function StockChart({ stockCode, stockName }: { stockCode: string; stockN
         topColor: `rgba(${rgb},.28)`,
         bottomColor: `rgba(${rgb},.02)`,
         crosshairMarkerBorderColor: trendColor,
+        priceLineColor: trendColor,
       } as never);
     }
 
@@ -203,7 +230,7 @@ export function StockChart({ stockCode, stockName }: { stockCode: string; stockN
       chartRef.current?.timeScale().fitContent();
       shouldFitRef.current = false;
     }
-  }, [data, chartType, trendColor]);
+  }, [data, chartType, trendColor, tf]);
 
   const up = (data?.change ?? 0) >= 0;
   const live = isMarketOpen();
