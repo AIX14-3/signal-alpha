@@ -12,6 +12,7 @@ import {
   type SourceKey,
 } from "@/lib/apiClient";
 import { WatchlistButton } from "@/components/WatchlistButton";
+import { CountUpScore } from "@/components/CountUpScore";
 import { EvidenceList } from "@/components/EvidenceList";
 import { EvidenceTimeline } from "@/components/EvidenceTimeline";
 import { MarketIndices } from "@/components/MarketIndices";
@@ -135,7 +136,7 @@ function ReportPageInner() {
       <div id="sec-summary" className="glass mt-5 flex scroll-mt-28 flex-wrap items-center gap-6 p-6">
         <div className="grid h-[120px] w-[120px] place-items-center rounded-full brand-grad text-white">
           <div className="text-center">
-            <div className="text-[34px] font-extrabold leading-none">{scoreText(report.score)}</div>
+            <CountUpScore value={report.score} className="block text-[34px] font-extrabold leading-none" />
             <div className="text-[12px] opacity-90">종합 점수</div>
           </div>
         </div>
