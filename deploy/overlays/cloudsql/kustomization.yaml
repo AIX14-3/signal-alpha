@@ -103,6 +103,11 @@ patches:
         COOKIE_SECURE: "true"
         COOKIE_SAMESITE: "lax"
         COOKIE_DOMAIN: ".signal-alpha.cloud"                   # 맨 앞 점 → www·api 서브도메인 쿠키 공유
+        # 종목별 뉴스 수집 데몬(agent-worker) 활성 — 기본 false 라 프로덕션에서 데몬이 안 떠서
+        # 홈 뉴스가 비어 있었다. 인증은 Secret 의 NAVER_CLIENT_ID/SECRET(데이터랩과 공용 키 쌍).
+        # BACKEND_DATABASE_URL(발행 대상)이 있어야 기동한다(database.py 가드). LLM 요약 카드는
+        # 별도 게이트(NEWS_LLM_ENABLED + ANTHROPIC_API_KEY)라 여기선 켜지 않는다.
+        NEWS_ENABLED: "true"
 
   # ④ main-server 헬스체크 TCP 전환 — /health 는 TrustedHostMiddleware(ALLOWED_HOSTS)로 Host 를
   #    강제하는데(설계·services/main-server/tests/test_security.py), 쿠버네티스/GCP LB 헬스체크는
