@@ -27,7 +27,37 @@ deploy/
 **예외: hiring 크롤러**는 chromium 의존(수백 MB)을 격리하려 `agent-worker` 위에 chromium 을 얹은
 **별도 이미지(`hiring-crawler`, `Dockerfile.crawler`)**를 쓴다 — 나머지 유닛은 슬림 base 유지.
 
-## 1) 이미지 빌드 & 푸시 (레포 루트에서, context=`.`)
+## 0) 자동 배포 (main 머지 → 배포)
+
+`.github/workflows/deploy.yml` 이 `main` push 시 이미지 5개를 빌드·푸시하고 `k8s/kustomization.yaml`
+의 태그를 커밋 SHA(`sha-<12자>`)로 핀해 되돌려 커밋한다. **그 매니페스트 변경**을 Argo CD 가 자동
+sync 한다(폴링 ~3분). 아래 §1·§2 수동 절차는 이제 폴백/최초 부트스트랩용이다.
+
+> **왜 태그를 바꿔야 하나.** 매니페스트가 `:latest` 로 고정돼 있으면 코드를 바꿔도 `deploy/k8s` 에
+> diff 가 없다 → Argo 는 "바뀐 게 없다"고 보고 아무것도 하지 않고, 파드는 옛 이미지를 계속 돌린다.
+> 커밋 SHA 태그는 불변이라 **롤백·추적**도 된다.
+
+**사람이 한 번 해 둘 것** (없으면 워크플로가 인증 단계에서 실패한다):
+
+| 종류 | 이름 | 값 |
+|---|---|---|
+| Secret | `GCP_SA_KEY` | Artifact Registry 쓰기 권한(`roles/artifactregistry.writer`)이 있는 서비스 계정의 JSON 키 |
+| Variable | `NEXT_PUBLIC_MAIN_API_BASE_URL` | 예: `https://api.signal-alpha.cloud` |
+| Variable | `NEXT_PUBLIC_PORTONE_STORE_ID` 등 | `web/Dockerfile` 의 `ARG NEXT_PUBLIC_*` 와 1:1 |
+
+`NEXT_PUBLIC_*` 은 **빌드 타임에 번들로 인라인**된다. 런타임 env 로는 안 바뀌므로 도메인이 바뀌면
+반드시 Variable 을 고치고 재빌드해야 한다.
+
+**루프 방지**: 워크플로가 `main` 에 미는 핀 커밋은 `kustomization.yaml` 한 파일만 건드리는데,
+`on.push.paths` 가 그 파일을 제외하므로 자신을 다시 트리거하지 않는다(게다가 `GITHUB_TOKEN` 으로
+민 커밋은 애초에 워크플로를 트리거하지 않는다 — 이중 방어).
+
+**롤백**: Actions 에서 `Deploy` 를 `workflow_dispatch` 로 돌리며 `tag` 에 옛 태그를 넣는다.
+
+⚠️`main` 에 브랜치 보호(직접 push 금지)가 걸려 있으면 마지막 핀 커밋 push 가 실패한다. 그 경우
+`github-actions[bot]` 을 우회 허용 목록에 넣거나, 핀 커밋을 PR 로 여는 방식으로 바꿔야 한다.
+
+## 1) 이미지 빌드 & 푸시 (수동 · 레포 루트에서, context=`.`)
 ```bash
 REG=asia-northeast3-docker.pkg.dev/PROJECT_ID/signal-alpha
 docker build -f services/agent-worker/Dockerfile -t $REG/agent-worker:TAG .

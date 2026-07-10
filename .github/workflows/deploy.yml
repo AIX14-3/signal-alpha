@@ -1,0 +1,160 @@
+name: Deploy
+
+# main 에 코드가 들어오면 이미지를 빌드·푸시하고, kustomization 의 이미지 태그를 그 커밋 SHA 로
+# 핀해서 되돌려 커밋한다. 그 매니페스트 변경을 ArgoCD 가 집어 간다(자동 sync, 기본 폴링 ~3분).
+#
+# 왜 태그를 바꿔야 하나: 매니페스트가 `:latest` 로 고정돼 있으면 코드를 아무리 바꿔도
+# `deploy/k8s` 에 diff 가 없다 → Argo 는 "바뀐 게 없다"고 보고 아무것도 하지 않는다. 파드는
+# 옛 이미지를 계속 돌린다. 커밋 SHA 태그는 불변이라 롤백·추적도 된다.
+#
+# ⚠️루프 주의: 이 워크플로는 main 에 커밋을 밀어 넣는다. 그 커밋이 자신을 다시 트리거하지
+# 않도록 `paths` 에서 kustomization.yaml 을 제외한다(그 파일만 바뀌면 실행되지 않는다).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "web/**"
+      - "services/**"
+      - "packages/**"
+      - "database/**"
+      - "deploy/k8s/**"
+      - ".github/workflows/deploy.yml"
+      - "!deploy/k8s/kustomization.yaml"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "이미지 태그(비우면 커밋 SHA)"
+        required: false
+
+# 배포가 겹치면 나중 것이 먼저 끝나 옛 이미지로 핀될 수 있다. 앞선 실행은 취소한다.
+concurrency:
+  group: deploy-main
+  cancel-in-progress: true
+
+env:
+  REGION: asia-northeast3
+  PROJECT_ID: signal-alpha-demo
+  REPOSITORY: signal-alpha
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # 자기 자신이 만든 핀 커밋으로는 돌지 않는다(paths 제외와 이중 방어).
+    if: github.actor != 'github-actions[bot]'
+    permissions:
+      contents: write # kustomization 태그 핀 커밋을 main 에 되돌려 푸시한다.
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # 핀 커밋을 푸시해야 하므로 토큰이 붙은 체크아웃이 필요하다.
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 이미지 태그 결정
+        id: meta
+        run: |
+          TAG="${{ inputs.tag }}"
+          [ -z "$TAG" ] && TAG="sha-$(git rev-parse --short=12 HEAD)"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "registry=${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}" >> "$GITHUB_OUTPUT"
+
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Artifact Registry 로그인
+        run: gcloud auth configure-docker ${REGION}-docker.pkg.dev --quiet
+
+      - uses: docker/setup-buildx-action@v3
+
+      # agent-worker 를 먼저 만든다 — hiring-crawler 가 이걸 base 로 얹는다(Dockerfile.crawler).
+      - name: build & push — agent-worker
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/agent-worker/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.registry }}/agent-worker:${{ steps.meta.outputs.tag }}
+          cache-from: type=gha,scope=agent-worker
+          cache-to: type=gha,scope=agent-worker,mode=max
+
+      - name: build & push — hiring-crawler
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/agent-worker/Dockerfile.crawler
+          push: true
+          build-args: |
+            BASE_IMAGE=${{ steps.meta.outputs.registry }}/agent-worker:${{ steps.meta.outputs.tag }}
+          tags: ${{ steps.meta.outputs.registry }}/hiring-crawler:${{ steps.meta.outputs.tag }}
+          cache-from: type=gha,scope=hiring-crawler
+          cache-to: type=gha,scope=hiring-crawler,mode=max
+
+      - name: build & push — main-server
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/main-server/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.registry }}/main-server:${{ steps.meta.outputs.tag }}
+          cache-from: type=gha,scope=main-server
+          cache-to: type=gha,scope=main-server,mode=max
+
+      - name: build & push — db-migrate
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: database/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.registry }}/db-migrate:${{ steps.meta.outputs.tag }}
+          cache-from: type=gha,scope=db-migrate
+          cache-to: type=gha,scope=db-migrate,mode=max
+
+      # web 의 NEXT_PUBLIC_* 은 **빌드 타임에 번들로 인라인**된다. 런타임 env 로는 못 바꾸므로
+      # 도메인이 바뀌면 반드시 여기 값을 고쳐 재빌드해야 한다(deploy/README §1 참조).
+      - name: build & push — web
+        uses: docker/build-push-action@v6
+        with:
+          context: ./web
+          file: web/Dockerfile
+          target: runner
+          push: true
+          build-args: |
+            NEXT_PUBLIC_MAIN_API_BASE_URL=${{ vars.NEXT_PUBLIC_MAIN_API_BASE_URL }}
+            NEXT_PUBLIC_PORTONE_STORE_ID=${{ vars.NEXT_PUBLIC_PORTONE_STORE_ID }}
+            NEXT_PUBLIC_PORTONE_CHANNEL_KEY_IDENTITY=${{ vars.NEXT_PUBLIC_PORTONE_CHANNEL_KEY_IDENTITY }}
+            NEXT_PUBLIC_PORTONE_CHANNEL_KEY_PAYMENT=${{ vars.NEXT_PUBLIC_PORTONE_CHANNEL_KEY_PAYMENT }}
+            NEXT_PUBLIC_NAVER_CLIENT_ID=${{ vars.NEXT_PUBLIC_NAVER_CLIENT_ID }}
+            NEXT_PUBLIC_GOOGLE_CLIENT_ID=${{ vars.NEXT_PUBLIC_GOOGLE_CLIENT_ID }}
+            NEXT_PUBLIC_KAKAO_CLIENT_ID=${{ vars.NEXT_PUBLIC_KAKAO_CLIENT_ID }}
+          tags: ${{ steps.meta.outputs.registry }}/web:${{ steps.meta.outputs.tag }}
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,scope=web,mode=max
+
+      # 여기까지 왔으면 다섯 이미지가 모두 레지스트리에 있다. 이제서야 매니페스트를 옮긴다 —
+      # 먼저 핀하면 아직 없는 이미지를 가리켜 ImagePullBackOff 가 난다.
+      - name: kustomization 이미지 태그 핀
+        run: python deploy/scripts/pin_image_tags.py deploy/k8s/kustomization.yaml "${{ steps.meta.outputs.tag }}"
+
+      - name: 핀 커밋을 main 에 되돌려 푸시
+        run: |
+          if git diff --quiet -- deploy/k8s/kustomization.yaml; then
+            echo "태그가 이미 ${{ steps.meta.outputs.tag }} — 커밋할 게 없다"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add deploy/k8s/kustomization.yaml
+          git commit -m "chore(deploy): 이미지 태그를 ${{ steps.meta.outputs.tag }} 로 핀"
+          # 그 사이 main 이 움직였을 수 있다. 이 커밋은 한 파일만 건드리므로 rebase 가 안전하다.
+          git pull --rebase origin main
+          git push origin HEAD:main
+
+      - name: 요약
+        run: |
+          echo "### 배포 태그 \`${{ steps.meta.outputs.tag }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "이미지 5개를 푸시하고 매니페스트를 핀했다. ArgoCD 가 자동 sync 한다(폴링 ~3분)." >> "$GITHUB_STEP_SUMMARY"
+          echo "롤백: 이 워크플로를 \`workflow_dispatch\` 로 옛 태그를 넣어 다시 돌린다." >> "$GITHUB_STEP_SUMMARY"
