@@ -46,7 +46,7 @@ GET /api/signals/by-stock/{stock_code}
 GET /api/signals/{signal_id}
 POST /api/signals/{signal_id}/read
 
-# 저널은 전체 구독 전용 — 비구독 402 SUBSCRIPTION_REQUIRED
+# 저널은 로그인 회원 누구나 이용 (구독 게이트 없음, 비로그인만 401)
 GET    /api/journals
 POST   /api/journals
 GET    /api/journals/{journal_id}

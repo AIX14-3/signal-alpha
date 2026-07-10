@@ -35,8 +35,7 @@ type JournalState = {
   remove: (id: number) => Promise<void>;
 };
 
-// 저널은 전체 구독 전용 — 비구독이면 API 가 402 SUBSCRIPTION_REQUIRED 를 던진다.
-// 게이트 화면(구독 유도)은 소비 컴포넌트가 user.subscription_active 로 선분기한다.
+// 저널은 로그인 회원 누구나 이용 — 구독 게이트 없음(비로그인만 401). 소비 컴포넌트는 user 로만 분기.
 export const useJournalStore = create<JournalState>((set, get) => ({
   items: [],
   count: 0,

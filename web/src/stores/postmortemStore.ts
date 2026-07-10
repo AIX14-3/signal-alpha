@@ -1,7 +1,7 @@
 "use client";
 
-// 매매 부검 스토어 — 수기 체결 입력·계획·단건/패턴 부검. 전 기능 구독 전용(402)이라
-// 게이트는 소비 컴포넌트가 user.subscription_active 로 선분기(journalStore 관례).
+// 매매 부검 스토어 — 수기 체결 입력·계획·단건/패턴 부검. 로그인 회원 누구나 이용(구독 게이트 없음).
+// 소비 컴포넌트는 user 로만 분기한다(비로그인만 401).
 
 import { create } from "zustand";
 import {

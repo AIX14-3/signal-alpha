@@ -1,6 +1,6 @@
 "use client";
 
-// 매매 의사결정 부검 — 수기 체결 입력·계획·단건/패턴 부검. 구독 전용.
+// 매매 의사결정 부검 — 수기 체결 입력·계획·단건/패턴 부검. 로그인 회원 누구나 이용.
 // 스탠스: 예측 아님·사후확신 없음. "그때 관측 가능했던 신호"로만 판단한다.
 
 import Link from "next/link";
@@ -15,14 +15,13 @@ import { usePostmortemStore } from "@/stores/postmortemStore";
 export default function PostmortemPage() {
   const user = useAuthStore((s) => s.user);
   const status = useAuthStore((s) => s.status);
-  const subscribed = user?.subscription_active === true;
 
   const loadOverview = usePostmortemStore((s) => s.loadOverview);
   const error = usePostmortemStore((s) => s.error);
 
   useEffect(() => {
-    if (subscribed) void loadOverview();
-  }, [subscribed, loadOverview]);
+    if (status === "authenticated" && user) void loadOverview();
+  }, [status, user, loadOverview]);
 
   if (status !== "authenticated" || !user) {
     return (
@@ -31,22 +30,6 @@ export default function PostmortemPage() {
         <Link href="/login" className="brand-grad mt-4 inline-block rounded-full px-6 py-2.5 text-[14px] font-bold text-white">
           로그인
         </Link>
-      </main>
-    );
-  }
-
-  if (!subscribed) {
-    return (
-      <main data-page="postmortem">
-        <div className="card px-6 py-8 text-center" data-flow="postmortem-subscribe">
-          <p className="font-bold">매매 부검은 구독 회원 전용 기능입니다.</p>
-          <p className="mt-2 text-[13.5px] text-muted">
-            내 실매매를 사후확신 없이 부검합니다 — 계획 대비 실제, 그때 관측 가능했던 신호로.
-          </p>
-          <Link href="/pricing" className="brand-grad mt-4 inline-block rounded-full px-6 py-2.5 text-[14px] font-bold text-white">
-            구독 안내 보기
-          </Link>
-        </div>
       </main>
     );
   }
