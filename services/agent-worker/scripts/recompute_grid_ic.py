@@ -52,18 +52,20 @@ def _grid_asofs(dates: list, grid_days: int, asof_from: date, horizon: int) -> l
     return out
 
 
-async def build_grid(conn, *, grid_days, horizon, asof_from) -> dict:
+async def build_grid(conn, *, grid_days, horizons, asof_from) -> dict:
     series = await load_price_series(conn)  # {sid: (dates, closes)}
     stock_ids = sorted(series.keys())
     max_asof = max(series[sid][0][-1] for sid in stock_ids if series[sid][0])
-    # 종목별 규칙 격자
-    grid = {sid: _grid_asofs(series[sid][0], grid_days, asof_from, horizon) for sid in stock_ids}
+    hmax = max(horizons)
+    # 종목별 규칙 격자 — 모든 horizon 공유(같은 asof 집합 → 사과 대 사과 비교). 최대 horizon 만큼 미래 필요.
+    grid = {sid: _grid_asofs(series[sid][0], grid_days, asof_from, hmax) for sid in stock_ids}
     n_asofs = sum(len(v) for v in grid.values())
-    print(f"종목 {len(stock_ids)} · 격자 asof {n_asofs}건(간격 {grid_days}세션, {asof_from}~) · horizon {horizon}d", flush=True)
+    print(f"종목 {len(stock_ids)} · 격자 asof {n_asofs}건(간격 {grid_days}세션, {asof_from}~) · horizons {horizons}d", flush=True)
 
     from signal_alpha_data_access.repositories import RawDetailRepository
     repo = RawDetailRepository(conn)
-    src_res = {}
+    # triples_by[src][h] = [(score_100, fwd, asof), ...]
+    triples_by = {s[0]: {h: [] for h in horizons} for s in SOURCES}
     for src, kind, loader_key, date_key, ind_fn, eval_fn, cfg_cls in SOURCES:
         cfg = cfg_cls.from_env() if cfg_cls else None
         loader = (
@@ -77,39 +79,56 @@ async def build_grid(conn, *, grid_days, horizon, asof_from) -> dict:
             if loader_key == "hiring" and ev:
                 sbs[sid] = ev[0].metadata.get("sector_demand")
 
-        triples = []
         for sid in stock_ids:
             for asof in grid[sid]:
                 pit = pit_rows(rbs.get(sid) or [], asof, date_key=date_key)
                 if not pit:
                     continue
-                fwd = forward_return(series, sid, asof, horizon)
-                if fwd is None:
-                    continue
-                score = await _score(kind, pit, asof, cfg, sbs.get(sid), ind_fn, eval_fn)
-                triples.append((score * 50.0 + 50.0, float(fwd), asof))
-        src_res[src] = _source_metrics(triples)
-        m = src_res[src]
-        wf = "[" + ",".join(_fmt(x).strip() for x in (m.get("wf_ics") or [])) + "]"
-        note = " (⚠️자기참조)" if src == "PRICE" else ""
-        print(f"  ▸ {src:8} N={m['n']:6}  중립-IC {_fmt(m['ic_neutral'])}  강신호-IC {_fmt(m['ic_neutral_strong'])}  "
-              f"워크포워드 {wf}  perm-p {m['perm_p_neutral']}{note}", flush=True)
-    return {"asofs": n_asofs, "source_ic": src_res}
+                score = await _score(kind, pit, asof, cfg, sbs.get(sid), ind_fn, eval_fn)  # 점수는 1회만
+                s100 = score * 50.0 + 50.0
+                for h in horizons:
+                    fwd = forward_return(series, sid, asof, h)
+                    if fwd is not None:
+                        triples_by[src][h].append((s100, float(fwd), asof))
+        print(f"  {src} 점수 재계산 완료", flush=True)
+
+    # horizon × source 지표
+    by_h = {h: {src: _source_metrics(triples_by[src][h]) for src in triples_by} for h in horizons}
+    return {"asofs": n_asofs, "by_h": by_h, "horizons": horizons}
 
 
-async def main(horizon, grid_days, asof_from) -> None:
+async def main(horizons, grid_days, asof_from) -> None:
     db = os.environ.get("DATABASE_URL", "")
     _require_local(db)
     pool = await asyncpg.create_pool(dsn=db, min_size=1, max_size=4)
     try:
         async with pool.acquire() as conn:
-            results = await build_grid(conn, grid_days=grid_days, horizon=horizon, asof_from=asof_from)
+            results = await build_grid(conn, grid_days=grid_days, horizons=horizons, asof_from=asof_from)
     finally:
         await pool.close()
-    print("=" * 80)
-    sug = _recommend(results["source_ic"], include_price=False)
-    print(f"권장: weight_mode = {sug['mode']}  ({sug['rationale']})")
-    print("해석: 규칙 격자라 이벤트 앵커 희박 문제 없음. 특허/주가는 2019~ 조밀(2020 급락 포함).")
+    by_h, hs = results["by_h"], results["horizons"]
+    srcs = [s[0] for s in SOURCES]
+
+    print("=" * 84)
+    print(f"소스 × horizon 시장중립 IC (규칙격자, {asof_from}~, 간격 {grid_days}세션)")
+    print("=" * 84)
+    header = "  소스     " + "".join(f"{str(h) + 'd':>12}" for h in hs)
+    print(header)
+    for src in srcs:
+        cells = []
+        for h in hs:
+            m = by_h[h][src]
+            cells.append(f"{_fmt(m['ic_neutral'])}({m['n']})")
+        note = " ⚠️자기참조" if src == "PRICE" else ""
+        print(f"  {src:8} " + "".join(f"{c:>12}" for c in cells) + note)
+    print("-" * 84)
+    # horizon 별 권장 + 자격 후보(중립IC≥0.05·순열통과·워크포워드 전블록 양수)
+    for h in hs:
+        sug = _recommend(by_h[h], include_price=False)
+        print(f"  [{h:>2}d] 권장 {sug['mode']:6} — {sug['rationale']}")
+    print("-" * 84)
+    print("해석: 셀=시장중립 IC(N). 짧은 horizon에서 어떤 소스가 IC≥0.05·유의·시간일관을 만족하는지 확인.")
+    print("      (워크포워드 상세는 필요 시 --horizons 단일값으로 재실행 — _source_metrics 에 보존됨.)")
 
 
 def _d(s: str) -> date:
@@ -118,10 +137,11 @@ def _d(s: str) -> date:
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--horizon", type=int, default=20, choices=(1, 5, 20))
+    ap.add_argument("--horizons", default="1,3,5,10,20", help="forward return 기간(콤마 리스트, 거래일)")
     ap.add_argument("--grid-days", type=int, default=20, help="asof 간격(거래일). 20≈월별")
     ap.add_argument("--asof-from", type=_d, default=_d("2019-01-01"))
     ap.add_argument("--wf-blocks", type=int, default=_rc.WF_BLOCKS, help="워크포워드 시간분할 블록 수")
     args = ap.parse_args()
     _rc.WF_BLOCKS = args.wf_blocks  # 규칙격자 워크포워드 블록 수 반영
-    asyncio.run(main(args.horizon, args.grid_days, args.asof_from))
+    horizons = [int(x) for x in args.horizons.split(",") if x.strip()]
+    asyncio.run(main(horizons, args.grid_days, args.asof_from))
