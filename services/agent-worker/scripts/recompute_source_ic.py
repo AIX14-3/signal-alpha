@@ -12,9 +12,16 @@
 
 스코프: 대체데이터 3소스(PATENT·DATALAB·HIRING). PRICE/DART/REPORT 제외.
 
+정직한 유의성(엠바고): asof 격자가 촘촘해 인접 asof 의 20일 미래창이 겹치면 독립표본이 실제보다
+많아 보여 순열검정이 유의성을 과대평가한다(예: 소표본 HIRING 이 겹침에선 perm-p 0.0 으로 뜬다).
+``--embargo-days`` 로 종목별 asof 를 그만큼 간격으로 솎아 forward 창 겹침을 없앤다(기본 28일 ≈
+20거래일). 시장중립 IC·효과크기 하한(MIN_ABS_IC)이 base-rate 함정을 잡는다면, 엠바고는 자기상관
+가짜 유의를 잡는다(상호보완).
+
 Run (services/agent-worker, LOCAL DB only):
     export DATABASE_URL="postgresql://signal_alpha:signal_alpha_password@localhost:5432/signal_alpha"
-    python scripts/recompute_source_ic.py
+    python scripts/recompute_source_ic.py                    # 엠바고 28일(비겹침)
+    python scripts/recompute_source_ic.py --embargo-days 0   # 겹침 허용(옛 동작·비교용)
     python scripts/recompute_source_ic.py --asof-from 2021-01-01 --asof-to 2026-06-01 --json out.json
 """
 from __future__ import annotations
@@ -129,6 +136,34 @@ def _require_local(db_url: str) -> None:
         raise SystemExit(f"refusing: DATABASE_URL host not local ({db_url.split('@')[-1]}).")
 
 
+def _embargo(labeled: list, days: int) -> list:
+    """종목별로 asof 를 ``days`` 이상 간격으로 솎아 forward 창 겹침을 없앤다(정직한 독립표본).
+
+    asof 격자가 촘촘하면 인접 asof 의 20일 미래창이 대부분 겹쳐, 실제 독립표본이 훨씬 적은데도
+    순열검정이 유의성을 과대평가한다(코드 곳곳 주석의 '패널 자기상관 → p값 과대낙관'의 근원).
+    종목마다 asof 오름차순으로 훑어 직전 채택 asof 로부터 days 이상 지난 것만 남긴다(그리디
+    비겹침). 기본 28일 ≈ 20거래일 → 20일 forward 창이 서로 물리지 않는다. days<=0 이면 솎지
+    않음(겹침 허용·옛 동작).
+    """
+    if days <= 0:
+        return labeled
+    from collections import defaultdict
+
+    by_stock: dict = defaultdict(list)
+    for row in labeled:
+        by_stock[int(row["stock_id"])].append(row)
+    kept: list = []
+    for rows in by_stock.values():
+        last: date | None = None
+        for row in sorted(rows, key=lambda r: r["asof_date"]):
+            a = row["asof_date"]
+            if last is None or (a - last).days >= days:
+                kept.append(row)
+                last = a
+    kept.sort(key=lambda r: (r["asof_date"], int(r["stock_id"])))
+    return kept
+
+
 def _demean(vals: list[float], keys: list) -> list[float]:
     """같은 key(예: asof 날짜) 그룹의 평균을 뺀 값 리스트."""
     from collections import defaultdict
@@ -162,22 +197,40 @@ def _source_metrics(triples: list[tuple[float, float, object]]) -> dict:
 MIN_ABS_IC = 0.05
 
 
-def _recommend(src_res: dict, *, include_price: bool = False) -> dict:
-    """권장 가중은 **시장중립 IC** 기준(raw 아님). 자격: N≥MIN_N·중립IC≥MIN_ABS_IC·순열검정 통과.
+# 엠바고 스윕: 겹침(0)부터 강한 비겹침(42)까지. 진짜 방향신호라면 이 전반에서 재현돼야 한다.
+# 단일 엠바고는 양끝 함정에 취약하다 — 0(겹침)=자기상관 가짜유의, 큰값=소표본 가짜유의. 서로
+# 다른 소스가 각 끝에서만 떠 재현 안 되면 노이즈다(등가중 유지).
+EMBARGO_SWEEP = (0, 14, 28, 42)
+MIN_REPLICATION = 2  # 비겹침 엠바고(14/28/42) 중 이 횟수 이상 자격 충족해야 '재현' 인정
+# 독립표본 검정력 하한: 엠바고로 겹침을 없애면 독립 N 이 급감한다(4773→수백). 이 패널은 23종목·
+# 이벤트앵커라 asof 의 ~52%가 단독(1종목) 날짜 → 시장중립 IC(날짜별 demean)가 소수 다종목 날짜에
+# 좌우돼 소표본서 부풀려진다(IC 가 N 줄수록 커지는 게 그 징후). 방향 IC 를 '진짜'로 인정하려면
+# 자격 엠바고 실행들의 독립 N 이 최소 이만큼은 돼야 한다(그 미만은 '검증 필요 후보'로만 표기).
+MIN_INDEP_N = 250
 
-    유의성만이 아니라 효과크기 하한(MIN_ABS_IC)을 함께 요구해 대표본 노이즈를 배제한다.
+
+def _eligible(src_res: dict, *, include_price: bool = False) -> dict:
+    """이 실행에서 자격을 만족한 소스 → 시장중립 IC. 자격: N≥MIN_N·중립IC≥MIN_ABS_IC·순열검정 통과.
+
+    유의성만이 아니라 효과크기 하한(MIN_ABS_IC)을 함께 요구해 노이즈를 배제한다.
     """
-    eligible = {}
+    out = {}
     for src, m in src_res.items():
         if src == "PRICE" and not include_price:
             continue
         icn, n, p = m.get("ic_neutral"), m.get("n", 0), m.get("perm_p_neutral")
         if (icn is not None and icn >= MIN_ABS_IC and n >= MIN_N
                 and p is not None and p <= PERM_P_GATE):
-            eligible[src] = icn
+            out[src] = icn
+    return out
+
+
+def _recommend(src_res: dict, *, include_price: bool = False) -> dict:
+    """단일 실행 기준 권장(참고용). 재현성 판정은 스윕(_recommend_robust)이 한다."""
+    eligible = _eligible(src_res, include_price=include_price)
     if not eligible:
         return {"mode": "equal", "weights": {},
-                "rationale": f"시장중립 IC≥{MIN_ABS_IC}·유의 소스 없음 → 등가중 유지(대표본 노이즈 배제)."}
+                "rationale": f"시장중립 IC≥{MIN_ABS_IC}·유의 소스 없음 → 등가중."}
     total = sum(eligible.values())
     weights = {s: 0.0 for s in SCORING_SOURCES}
     for s, icn in eligible.items():
@@ -186,16 +239,58 @@ def _recommend(src_res: dict, *, include_price: bool = False) -> dict:
             "rationale": f"{sorted(eligible)} 가 시장중립 IC 로도 유의미 양수 → IC 비례 가중."}
 
 
-async def recompute(conn, *, asof_from, asof_to, universe) -> dict:
+def _recommend_robust(per_embargo: dict) -> dict:
+    """엠바고 스윕 결과 → **재현성 + 검정력** 기반 권장. 비겹침 엠바고(>0) 중 MIN_REPLICATION
+    이상에서 자격을 충족(재현)하고 **그 실행들의 독립 N 이 MIN_INDEP_N 이상**인 소스만 '진짜
+    신호'로 인정한다. 재현은 되나 N 이 얇으면(소표본 아티팩트 의심) '검증 필요 후보'로만 표기.
+
+    per_embargo: {embargo: {"labels": int, "eligible": {src: ic_neutral}, "src_res": {...}}}
+    """
+    nonzero = [e for e in per_embargo if e > 0]
+    qualify_count: dict[str, int] = {}
+    ic_by_src: dict[str, list[float]] = {}
+    n_by_src: dict[str, list[int]] = {}
+    for e in nonzero:
+        for s, icn in per_embargo[e]["eligible"].items():
+            qualify_count[s] = qualify_count.get(s, 0) + 1
+            ic_by_src.setdefault(s, []).append(icn)
+            n_by_src.setdefault(s, []).append(per_embargo[e]["src_res"].get(s, {}).get("n", 0))
+
+    replicated = {s for s, c in qualify_count.items() if c >= MIN_REPLICATION}
+    recommended = {s: sum(ic_by_src[s]) / len(ic_by_src[s]) for s in replicated
+                   if min(n_by_src[s]) >= MIN_INDEP_N}
+    candidates = sorted(replicated - set(recommended))  # 재현은 되나 검정력 부족
+
+    if not recommended:
+        cand_note = (f" 재현은 됐으나 독립 N<{MIN_INDEP_N}(소표본 아티팩트 의심): {candidates}"
+                     if candidates else "")
+        why = (f"{MIN_REPLICATION}회+ 재현하며 독립 N≥{MIN_INDEP_N} 인 소스 없음.{cand_note}")
+        return {"mode": "equal", "weights": {}, "robust": {}, "candidates": candidates,
+                "rationale": f"{why} → 등가중 유지(단일 엠바고·소표본 가짜유의 배제)."}
+    total = sum(recommended.values())
+    weights = {s: 0.0 for s in SCORING_SOURCES}
+    for s, icn in recommended.items():
+        weights[s] = round(icn / total * len(recommended), 3)
+    return {"mode": "ic", "weights": weights, "robust": recommended, "candidates": candidates,
+            "rationale": f"{sorted(recommended)} 가 {MIN_REPLICATION}회+ 재현 & 독립 N≥{MIN_INDEP_N} → IC 비례 가중."}
+
+
+async def recompute(conn, *, asof_from, asof_to, universe, embargo_days) -> dict:
     from signal_alpha_data_access.repositories import EventStudyRepository, RawDetailRepository
 
     labels = await EventStudyRepository(conn).list_for_training(
         asof_from=asof_from, asof_to=asof_to, universe_snapshot=universe
     )
     labeled = [row for row in labels if row[TARGET] is not None]
+    raw_n = len(labeled)
+    labeled = _embargo(labeled, embargo_days)  # forward 창 비겹침 솎기(정직한 독립표본)
     stock_ids = sorted({int(row["stock_id"]) for row in labeled})
     max_asof = max(row["asof_date"] for row in labeled)
-    print(f"라벨 {len(labels)}건 중 {TARGET} 유효 {len(labeled)}건 · 종목 {len(stock_ids)}개 — 재계산 시작")
+    emb_note = (
+        f"엠바고 {embargo_days}일(비겹침) {raw_n}→{len(labeled)}건"
+        if embargo_days > 0 else f"{len(labeled)}건(겹침 허용)"
+    )
+    print(f"라벨 {len(labels)}건 중 {TARGET} 유효 · {emb_note} · 종목 {len(stock_ids)}개 — 재계산 시작")
 
     repo = RawDetailRepository(conn)
     src_res: dict[str, dict] = {}
@@ -231,36 +326,86 @@ async def recompute(conn, *, asof_from, asof_to, universe) -> dict:
         note = " (⚠️자기참조)" if src == "PRICE" else ""
         print(f"  ▸ {src:8} N={m['n']:5}  raw-IC {_fmt(m['ic'])}  시장중립-IC {_fmt(m['ic_neutral'])}  "
               f"hit {_fmt(m['hit_rate'], True)}  perm-p(중립) {m['perm_p_neutral']}{note}")
-    return {"labels": len(labeled), "source_ic_20d": src_res}
+    return {"labels": len(labeled), "embargo_days": embargo_days, "source_ic_20d": src_res}
 
 
-async def main(json_out: str | None, asof_from: date, asof_to: date, universe: str | None) -> None:
+def _print_replication_table(per_embargo: dict) -> None:
+    """소스 × 엠바고 → 시장중립 IC(자격 충족 시 ✓). 어느 엠바고에서 뜨고 지는지 한눈에."""
+    embargos = sorted(per_embargo)
+    nonzero = [e for e in embargos if e > 0]
+    print("\n[재현성 표 — 시장중립 IC (✓=자격: 중립IC≥%.2f·순열검정 통과·N≥%d)]" % (MIN_ABS_IC, MIN_N))
+    print("  라벨수    " + "".join(f"e={e:<8}" for e in embargos))
+    print("           " + "".join(f"{per_embargo[e]['labels']:<10}" for e in embargos))
+    for s in [x for x in SCORING_SOURCES if x != "PRICE"]:
+        if not any(per_embargo[e]["src_res"].get(s, {}).get("n") for e in embargos):
+            continue  # 전 엠바고서 데이터 없음
+        cells = []
+        for e in embargos:
+            m = per_embargo[e]["src_res"].get(s, {})
+            icn = m.get("ic_neutral")
+            mark = "✓" if s in per_embargo[e]["eligible"] else " "
+            cells.append(f"{_fmt(icn).strip()}{mark}")
+        qual = sum(1 for e in nonzero if s in per_embargo[e]["eligible"])
+        print(f"  {s:8} " + "".join(f"{c:<10}" for c in cells) + f" 재현 {qual}/{len(nonzero)}")
+
+
+async def main(
+    json_out: str | None, asof_from: date, asof_to: date, universe: str | None, embargo_days: int | None
+) -> None:
     db = os.environ.get("DATABASE_URL", "")
     _require_local(db)
     pool = await asyncpg.create_pool(dsn=db, min_size=1, max_size=4)
     try:
         async with pool.acquire() as conn:
-            results = await recompute(conn, asof_from=asof_from, asof_to=asof_to, universe=universe)
+            if embargo_days is not None:
+                # 단일 엠바고(상세 검사용). 재현성 판정은 안 함 — 참고 권장만.
+                results = await recompute(
+                    conn, asof_from=asof_from, asof_to=asof_to, universe=universe, embargo_days=embargo_days
+                )
+                out: dict = dict(results)
+                out["suggested"] = _recommend(results["source_ic_20d"])
+            else:
+                # 기본: 엠바고 스윕 → 재현성 기반 권장(단일 엠바고 양끝 가짜유의 배제).
+                per_embargo: dict = {}
+                for e in EMBARGO_SWEEP:
+                    res = await recompute(
+                        conn, asof_from=asof_from, asof_to=asof_to, universe=universe, embargo_days=e
+                    )
+                    per_embargo[e] = {
+                        "labels": res["labels"],
+                        "eligible": _eligible(res["source_ic_20d"]),
+                        "src_res": res["source_ic_20d"],
+                    }
+                    print()
+                _print_replication_table(per_embargo)
+                out = {
+                    "sweep": {
+                        str(e): {"labels": v["labels"],
+                                 "eligible": {s: round(i, 4) for s, i in v["eligible"].items()}}
+                        for e, v in per_embargo.items()
+                    },
+                    "suggested": _recommend_robust(per_embargo),
+                }
     finally:
         await pool.close()
 
+    suggestion = out["suggested"]
     print("\n" + "=" * 76)
-    print(f"recompute-IC — 재계산 표본 라벨 {results['labels']}건 · 20일 지평선 · 5소스(대체3+DART+주가, REPORT 제외)")
-    print("=" * 76)
-    suggestion = _recommend(results["source_ic_20d"], include_price=False)
-    results["suggested"] = suggestion
     print(f"권장: weight_mode = {suggestion['mode']}  ({suggestion['rationale']})")
     if suggestion["mode"] == "ic":
         print("  → 검토 후 env 적용:")
         print("     ALT_WEIGHT_MODE=ic")
         for src, w in suggestion["weights"].items():
-            print(f"     ALT_WEIGHT_{src}={w}")
-    print("해석: IC 부호=재계산 점수와 선행수익률 상관(양수=예측적). 대체데이터 방향알파는")
-    print("      선례상 대체로 null — null 이면 등가중 유지가 정답(가중=노이즈 과적합 방지).")
+            if w:
+                print(f"     ALT_WEIGHT_{src}={w}")
+    print("해석: 단일 엠바고의 '유의'는 양끝 함정이라 신뢰 금지 — 겹침(e=0)=자기상관 가짜유의,")
+    print("      큰 엠바고=소표본 가짜유의. 진짜라면 여러 엠바고서 재현+충분한 독립 N 이어야 한다.")
+    print("      ⚠️ 이 패널은 23종목·이벤트앵커라 asof 의 ~52%가 단독(1종목) 날짜 → 시장중립 IC 가")
+    print(f"      소수 다종목 날짜에 좌우된다. 검증 필요 후보={suggestion.get('candidates') or '없음'}.")
 
     if json_out:
         import json
-        Path(json_out).write_text(json.dumps(results, indent=2, default=str), encoding="utf-8")
+        Path(json_out).write_text(json.dumps(out, indent=2, default=str), encoding="utf-8")
         print(f"\nJSON 요약 → {json_out}")
 
 
@@ -273,6 +418,8 @@ if __name__ == "__main__":
     ap.add_argument("--asof-from", type=_d, default=_d("2021-01-01"))
     ap.add_argument("--asof-to", type=_d, default=_d("2026-06-01"))
     ap.add_argument("--universe", default=DEFAULT_UNIVERSE, help="event_study_panel universe_snapshot (기본 kospi20_seed)")
+    ap.add_argument("--embargo-days", type=int, default=None,
+                    help="단일 엠바고(일)로 상세 실행. 미지정 시 스윕(0/14/28/42) + 재현성 판정(기본)")
     ap.add_argument("--json", default=None)
     args = ap.parse_args()
-    asyncio.run(main(args.json, args.asof_from, args.asof_to, args.universe))
+    asyncio.run(main(args.json, args.asof_from, args.asof_to, args.universe, args.embargo_days))
