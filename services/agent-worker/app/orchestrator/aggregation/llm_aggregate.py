@@ -102,25 +102,16 @@ async def maybe_llm_aggregate(
     out["final_score"] = verdict.score_100
     out["blend_basis"] = blend_basis(verdict)
     out["summary"] = verdict.headline
-    out["positive_evidence"] = list(verdict.positive_evidence)
-    # 데이터 품질 사실(stale/missing 등 결정론 주의 근거)은 LLM 이 모른다 — 뒤에 보존.
-    out["caution_evidence"] = _dedupe(
-        list(verdict.caution_evidence) + list(aggregate.get("caution_evidence") or [])
-    )
+    # ⚠️ positive/caution_evidence 는 오버라이드하지 않는다 — FE 계약이 구조화 dict
+    # (source/direction/data_status/summary/risk_flags/agent_result_id)인데 LLM 근거는
+    # 문자열이라 형태가 다르다. 소스별 사실 카드는 결정론이 유지하고, LLM 의 종합 근거
+    # 문장은 _meta.llm_aggregate 로만 흘린다(synthesis/표시 계층이 선택 소비).
     out["needs_review"] = bool(aggregate.get("needs_review")) or verdict.conflict
     out["llm_aggregate"] = {
         "model": getattr(client, "model", None),
         "confidence": verdict.confidence,  # [0, 0.85] — consensus(0-100)와 다른 축
         "conflict": verdict.conflict,
+        "positive_evidence": list(verdict.positive_evidence),
+        "caution_evidence": list(verdict.caution_evidence),
     }
-    return out
-
-
-def _dedupe(values: list[str]) -> list[str]:
-    seen: set[str] = set()
-    out: list[str] = []
-    for value in values:
-        if value not in seen:
-            seen.add(value)
-            out.append(value)
     return out

@@ -129,9 +129,10 @@ def test_success_overrides_llm_fields_and_keeps_deterministic_ones():
     assert out["source_agreement"] == "MEDIUM"
     assert out["warning_level"] == "NORMAL"
     assert out["llm_aggregate"]["confidence"] == 0.5
-    # 데이터 품질 주의 근거(결정론)는 LLM 근거 뒤에 보존된다.
-    assert "DATALAB: 데이터 정체(오래됨)" in out["caution_evidence"]
-    assert "대량 순매도" in out["caution_evidence"]
+    # FE 계약 보존: 근거 리스트(구조화 dict)는 결정론 그대로 — LLM 근거 문장은 _meta 로만.
+    assert out["positive_evidence"] == ["결정론 긍정"]
+    assert out["caution_evidence"] == ["DATALAB: 데이터 정체(오래됨)"]
+    assert out["llm_aggregate"]["caution_evidence"] == ["대량 순매도"]
 
 
 def test_llm_failure_keeps_deterministic_blend_and_records_error():
