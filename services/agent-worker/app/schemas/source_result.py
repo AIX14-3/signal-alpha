@@ -129,3 +129,10 @@ class SourceResult:
     prompt_ver: str | None = None
     llm_error: str | None = None
     needs_review: bool | None = None
+    # LLM 코호트 채점 경로 전용(additive). ``llm_confidence`` 는 LLM 이 출력한
+    # [0, 0.85] 자기신뢰 — 결정론 confidence(``build_source_signal._confidence``)와
+    # **다른 축**이라 별도 필드로 분리한다(섞으면 스케일 사고). ``score_change_reason``
+    # 은 직전 점수 대비 |Δ| > 0.3 일 때 LLM 이 적는 변경 사유(표류 감사 재료). 둘 다
+    # method_detail 로만 흐르고 점수·방향에는 영향 없다. 다른 모든 경로에서 None.
+    llm_confidence: float | None = None
+    score_change_reason: str | None = None

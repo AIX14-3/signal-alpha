@@ -147,3 +147,19 @@ async def throttle(seconds: float) -> None:
     """호출 간 간격 — 재시도가 레이트리밋을 앞당기는 역효과를 막는다(실측: 크레딧 조기 소진)."""
     if seconds > 0:
         await asyncio.sleep(seconds)
+
+
+def build_json_client(provider: str, model: str, *, temperature: float = 0.0) -> Any:
+    """프로덕션 채점/판정용 JsonLlm 클라이언트 팩토리 — SCORE_COHORT 와 LLM 집계가 공용.
+
+    vertex  : GCP 결제 직결(ADC/Workload Identity). finishReason·maxOutputTokens·thinking 을
+              제대로 다뤄 스키마 위반의 주원인을 없앤 경로(실측 0%). 프로덕션 기본.
+    aistudio: 선불 크레딧 경로(GeminiJsonClient) — 비교/로컬용.
+    """
+    if provider == "vertex":
+        from app.clients.vertex_client import VertexJsonClient
+
+        return VertexJsonClient(model=model, temperature=temperature)
+    if provider == "aistudio":
+        return GeminiJsonClient(model=model, temperature=temperature)
+    raise ValueError(f"unknown JSON LLM provider: {provider!r}")

@@ -171,4 +171,10 @@ def _method_detail(source_result: SourceResult) -> dict[str, Any]:
         detail["needs_review"] = source_result.needs_review
     if source_result.llm_error:
         detail["llm_error"] = source_result.llm_error
+    # LLM 코호트 채점 provenance(additive). llm_confidence 는 결정론 confidence 와
+    # 다른 축([0, 0.85] LLM 자기신뢰)이라 method_detail 로만 흐른다.
+    if source_result.llm_confidence is not None:
+        detail["llm_confidence"] = source_result.llm_confidence
+    if source_result.score_change_reason:
+        detail["score_change_reason"] = source_result.score_change_reason
     return detail

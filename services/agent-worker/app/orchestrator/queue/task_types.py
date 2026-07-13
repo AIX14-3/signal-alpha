@@ -85,3 +85,10 @@ ENRICH_HIRING = "ENRICH_HIRING"
 ANALYZE_DATALAB = "ANALYZE_DATALAB"
 ANALYZE_HIRING = "ANALYZE_HIRING"
 ANALYZE_PATENT = "ANALYZE_PATENT"
+
+# LLM 코호트 채점 (수식 → LLM 점수 전환) — 코호트 N종목 × 1소스를 LLM 호출 1회로 상대
+# 채점하는 **배치 태스크**. stock_id=NULL + task_context={source, as_of, tickers[]}
+# (RECORD_EPISODE_OUTCOMES 의 배치 선례). LLM_SCORING_ENABLED 게이트 소스의 per-stock
+# ANALYZE_* 를 대체하며, 종목별 결과는 기존 run_key 로 발행돼 AGGREGATE fan-in 이
+# 무변경으로 집어간다. 12 chars (task_type VARCHAR(50)).
+SCORE_COHORT = "score_cohort"

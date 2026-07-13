@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from collections import Counter
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
@@ -67,6 +67,11 @@ class NormalizedSourceResult:
     # HIRING 표시 전용 구조화 데이터(최근 공고의 게시일·마감일). None for 그 외 소스.
     # score_breakdown.HIRING 에 그대로 실린다(patent_meta 동형).
     hiring_meta: dict[str, Any] | None = None
+    # LLM 코호트 채점 경로가 method_detail 에 남긴 것(additive) — LLM 통합 판정의 입력 재료.
+    # highlights = 소스별 근거 문장, llm_confidence = LLM 자기신뢰 [0, 0.85]. 결정론 경로는
+    # highlights 만 채워질 수 있고 llm_confidence 는 None.
+    highlights: list[str] = field(default_factory=list)
+    llm_confidence: float | None = None
 
 
 class AggregateSignalTaskHandler:
@@ -78,6 +83,7 @@ class AggregateSignalTaskHandler:
         episode_recall: Any | None = None,
         requery_enabled: bool | None = None,
     ) -> None:
+        self._connection = connection
         self._analysis_repository = AnalysisRepository(connection)
         self._normalization_repository = NormalizationRepository(connection)
         self._queue_repository = ProcessingQueueRepository(connection)
@@ -167,6 +173,29 @@ class AggregateSignalTaskHandler:
             signal_date=signal_date,
             requery_round=requery_round,
         )
+        # --- LLM 통합 판정 (LLM_AGGREGATE_ENABLED 게이트, 기본 off) ------------------
+        # ⚠️ "숫자는 결정론 소유" 불변식의 의도적 폐기(2026-07-13 승인) — 켜면 signal/
+        # final_score/summary/evidence/blend_basis 를 LLM 판정이 오버라이드한다. detect
+        # (되묻기 트리거)는 결정론 값으로 이미 판단했고, 메모리 judge 는 오버라이드된
+        # aggregate 위에 접힌다. 실패 시 결정론 blend 그대로(+ llm_aggregate_error).
+        from app.core.config import get_settings as _get_settings
+
+        _settings = _get_settings()
+        if _settings.llm_aggregate_enabled:
+            from app.orchestrator.aggregation.llm_aggregate import maybe_llm_aggregate
+
+            ticker = str(task_context.get("stock_code") or "") or await self._resolve_ticker(
+                stock_id
+            )
+            aggregate = await maybe_llm_aggregate(
+                _settings,
+                ticker=ticker,
+                name=await self._resolve_name(stock_id) or ticker,
+                signal_date=signal_date,
+                coarse=coarse,
+                aggregate=aggregate,
+            )
+
         # judge: fold episodic memory (recalled similar past situations) into the
         # evidence framing as a *reference* — never into the headline number.
         memory_reference = build_memory_reference(
@@ -187,8 +216,15 @@ class AggregateSignalTaskHandler:
         # 주가가 SCORING_SOURCES 라 평일 매일 갱신되므로 발행이 중립 50 으로 비지 않는다.
         headline_signal, headline_score, headline_method = _headline(signal_date, aggregate)
         # 점수 산출방식 정직 라벨(표시 전용) — _score_breakdown_with_meta 가 _meta 로 노출한다.
-        aggregate["headline_method"] = headline_method
-        aggregate["scoring_method"] = _scoring_method(headline_method)
+        # LLM 통합 판정이 성공했으면 라벨도 정직하게 llm_aggregate/llm_judgment 로 바꾼다
+        # (숫자는 이미 _headline 이 오버라이드된 aggregate 값을 그대로 돌려줬다).
+        if aggregate.get("llm_aggregate"):
+            headline_method = "llm_aggregate"
+            aggregate["headline_method"] = headline_method
+            aggregate["scoring_method"] = "llm_judgment"
+        else:
+            aggregate["headline_method"] = headline_method
+            aggregate["scoring_method"] = _scoring_method(headline_method)
 
         analysis_result = await self._analysis_repository.upsert_analysis_result(
             stock_id=stock_id,
@@ -319,6 +355,18 @@ class AggregateSignalTaskHandler:
             dedupe=True,
         )
 
+    async def _resolve_ticker(self, stock_id: int) -> str:
+        value = await self._connection.fetchval(
+            "SELECT ticker FROM stocks WHERE id = $1", stock_id
+        )
+        return str(value) if value else str(stock_id)
+
+    async def _resolve_name(self, stock_id: int) -> str | None:
+        value = await self._connection.fetchval(
+            "SELECT name FROM stocks WHERE id = $1", stock_id
+        )
+        return str(value) if value else None
+
     async def _recall_episodes(
         self, stock_id: int, signal_date: date, aggregate: dict[str, Any]
     ) -> list[Any]:
@@ -374,6 +422,12 @@ def _score_breakdown_with_meta(aggregate: dict[str, Any]) -> dict[str, Any]:
         "scoring_method": aggregate.get("scoring_method"),
         "blend_basis": aggregate.get("blend_basis"),
     }
+    # LLM 통합 판정 provenance(표시 전용). llm_aggregate.confidence 는 [0, 0.85] LLM
+    # 자기신뢰 — confidence 컬럼(consensus, 0-100)과 다른 축이라 _meta 로만 흐른다.
+    if aggregate.get("llm_aggregate"):
+        breakdown["_meta"]["llm_aggregate"] = aggregate["llm_aggregate"]
+    if aggregate.get("llm_aggregate_error"):
+        breakdown["_meta"]["llm_aggregate_error"] = aggregate["llm_aggregate_error"]
     return breakdown
 
 
@@ -413,6 +467,12 @@ def _normalize_source_result(row: dict[str, Any]) -> NormalizedSourceResult | No
         data_age_days=_data_age_days(row.get("data_age_days")),
         patent_meta=_patent_meta_summary(detail),
         hiring_meta=_hiring_meta_summary(detail),
+        highlights=_string_list(detail.get("highlights")),
+        llm_confidence=(
+            float(detail["llm_confidence"])
+            if isinstance(detail.get("llm_confidence"), (int, float))
+            else None
+        ),
     )
 
 

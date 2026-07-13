@@ -638,6 +638,17 @@ class DartAnalyzeTaskHandler:
 
     async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
         stock_id = int(task["stock_id"])
+        # LLM 코호트 채점이 DART 점수를 소유하면 skip (이중 발행 방지 — SCORE_COHORT 가
+        # run_key=DART 로 쓰고, fan-in 은 run_key LIKE 'DART%' 최신 1행만 집는다).
+        from app.core.config import get_settings
+
+        if get_settings().llm_scoring_covers("DART"):
+            return {
+                "analyzed_count": 0,
+                "analysis_result_id": None,
+                "agent_result_id": None,
+                "skipped_reason": "llm_scoring",
+            }
         task_context = _task_context(task.get("task_context"))
         signal_event_ids = _source_signal_event_ids(task.get("source_signal_event_ids"))
         if not signal_event_ids:

@@ -155,6 +155,18 @@ services:
       EPISODE_OUTCOME_PRIMARY_DAYS: ${EPISODE_OUTCOME_PRIMARY_DAYS:-20}
       EPISODE_OUTCOME_BATCH_LIMIT: ${EPISODE_OUTCOME_BATCH_LIMIT:-500}
       EPISODE_OUTCOME_INTERVAL_SEC: ${EPISODE_OUTCOME_INTERVAL_SEC:-86400}
+      # LLM 코호트 채점(수식 → LLM 점수 전환) — ⚠️ "숫자는 결정론 소유" 불변식의 의도적 폐기
+      # (2026-07-13 승인, 기본 off). 켜면 대상 소스의 점수를 LLM 이 산출하고 per-stock 결정론
+      # 분석은 skip. vertex 프로바이더는 GOOGLE_CLOUD_PROJECT + ADC(Workload Identity) 필요.
+      LLM_SCORING_ENABLED: ${LLM_SCORING_ENABLED:-false}
+      LLM_SCORING_SOURCES: ${LLM_SCORING_SOURCES:-HIRING,PATENT,DATALAB,DART,REPORT,PRICE}
+      LLM_SCORING_FALLBACK: ${LLM_SCORING_FALLBACK:-rules}
+      LLM_AGGREGATE_ENABLED: ${LLM_AGGREGATE_ENABLED:-false}
+      LLM_COHORT_SIZE: ${LLM_COHORT_SIZE:-10}
+      LLM_SCORING_PROVIDER: ${LLM_SCORING_PROVIDER:-vertex}
+      LLM_SCORING_MODEL: ${LLM_SCORING_MODEL:-}
+      VERTEX_MODEL: ${VERTEX_MODEL:-gemini-2.5-flash}
+      GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT:-}
       # 지정학 리스크 Kill-Switch 감시 데몬 — guard_* 는 backend DB 소유라
       # BACKEND_DATABASE_URL 이 함께 설정된 인스턴스에서만 실동작(없으면 미기동).
       GUARD_ENABLED: ${GUARD_ENABLED:-false}

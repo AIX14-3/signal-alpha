@@ -38,6 +38,7 @@ from app.orchestrator.queue.task_types import (
     PUBLISH_SIGNALS,
     RECORD_EPISODE_OUTCOMES,
     REQUERY_SOURCE,
+    SCORE_COHORT,
     SYNTHESIZE,
 )
 
@@ -69,6 +70,9 @@ DRAIN_ORDER: tuple[str, ...] = (
     ANALYZE_HIRING,
     ANALYZE_PATENT,
     ANALYZE_PRICE,
+    # LLM 코호트 채점 — per-stock ANALYZE_* 를 대체하는 배치 채점(플래그 게이트). AGGREGATE
+    # 앞에 둬 같은 드레인 사이클에서 채점 → 재종합 순으로 흐르게 한다.
+    SCORE_COHORT,
     # 오케스트레이터 되묻기는 AGGREGATE 앞에 둔다: 한 드레인 사이클에서 문제 소스 재분석 →
     # 재종합 순으로 흐르게(되묻기가 새 소스 결과를 남기고, 이어 AGGREGATE 가 재블렌드). 되묻기가
     # 재인큐한 AGGREGATE 는 dedupe + requery_round 상한으로 유한하다(무한루프 없음).
@@ -216,6 +220,21 @@ async def _seed_episode_outcome_task(pool: Any, settings: Settings) -> None:
             logger.info("seeded episode outcome recorder task")
 
 
+async def _seed_cohort_score_tasks(pool: Any, settings: Settings) -> None:
+    """LLM 코호트 채점 태스크 일 1회 시드 (LLM_SCORING_ENABLED 게이트, off 면 no-op).
+
+    가드/멱등은 producer 가 소유(열린 태스크·최근 완료분 있으면 재시드하지 않음 —
+    ``_seed_episode_outcome_task`` 와 같은 결). 시드 실패는 드레인 사이클을 못 막는다."""
+    if not settings.llm_scoring_enabled:
+        return
+    try:
+        from app.orchestrator.cohort.producer import seed_cohort_tasks
+
+        await seed_cohort_tasks(pool, settings)
+    except Exception:  # noqa: BLE001 — daemon must survive seed failures
+        logger.exception("SCORE_COHORT seed failed; retrying next interval")
+
+
 async def run_drain_daemon(
     pool: Any,
     settings: Settings,
@@ -231,6 +250,7 @@ async def run_drain_daemon(
                     runtime_status.mark_started()
                 await _sweep_stale(pool)
                 await _seed_episode_outcome_task(pool, settings)
+                await _seed_cohort_score_tasks(pool, settings)
                 summary = await run_drain_cycle(pool, handler_factory=handler_factory)
                 if runtime_status is not None:
                     runtime_status.mark_cycle(summary)
