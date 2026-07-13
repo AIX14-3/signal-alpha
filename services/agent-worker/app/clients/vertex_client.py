@@ -27,7 +27,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import subprocess
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -40,18 +39,29 @@ class VertexError(RuntimeError):
 
 
 def _access_token() -> str:
-    """ADC 액세스 토큰. gcloud 는 Windows 에서 .cmd 라 shell=True 가 필요하다."""
-    result = subprocess.run(
-        "gcloud auth application-default print-access-token",
-        shell=True, capture_output=True, text=True,
-    )
-    token = result.stdout.strip()
-    if not token:
-        raise VertexError(
-            "ADC 토큰을 얻지 못했다. `gcloud auth application-default login` 을 먼저 실행할 것. "
-            f"stderr={result.stderr.strip()[:200]}"
+    """ADC 액세스 토큰 — google-auth 로 획득.
+
+    로컬은 ``gcloud auth application-default login`` 이 만든 ADC 파일을, GKE 는
+    Workload Identity(메타데이터 서버)를 **같은 코드**로 읽는다. gcloud CLI subprocess 는
+    쓰지 않는다 — 워커 컨테이너에는 gcloud 바이너리가 없다.
+    """
+    import google.auth
+    from google.auth.transport.requests import Request as AuthRequest
+
+    try:
+        credentials, _project = google.auth.default(
+            scopes=["https://www.googleapis.com/auth/cloud-platform"]
         )
-    return token
+        credentials.refresh(AuthRequest())
+    except Exception as exc:
+        raise VertexError(
+            "ADC 자격증명을 얻지 못했다. 로컬은 `gcloud auth application-default login`, "
+            f"배포 환경은 Workload Identity/서비스계정을 확인할 것: {exc}"
+        ) from exc
+    token = credentials.token
+    if not token:
+        raise VertexError("ADC 자격증명 refresh 후에도 토큰이 비어 있다.")
+    return str(token)
 
 
 class VertexJsonClient:
