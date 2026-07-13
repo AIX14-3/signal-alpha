@@ -1,8 +1,13 @@
 """LLM 종합·설명 — 수치/판정 불변, 설명(내러티브)만 생성.
 
+숫자의 소유자는 이제 **상류 채점 단계**다(LLM 코호트 채점 SCORE_COHORT, 또는 플래그 off 시
+결정론 규칙 — 2026-07-13 "숫자는 결정론 소유" 불변식 폐기). 이 서술 단계의 숫자 불변 가드는
+그 폐기와 무관하게 **유지**한다: 판정 주체는 상류 하나여야 하고, 서술 LLM 이 여기서 숫자를
+다시 만지면 판정이 둘이 된다(같은 신호에 두 숫자).
+
 LLM 클라이언트는 기존 ``app.analyzers.dart.llm`` 의 OpenAI/Gemini 클라이언트를 재사용한다.
 응답은 ``headline``/``narrative``/``key_points``/``caution_points`` JSON만 받으며, score·
-direction·signal 같은 수치 필드는 **읽지 않는다**(LLM이 판정을 못 바꾸게). 모든 텍스트는
+direction·signal 같은 수치 필드는 **읽지 않는다**(서술 LLM이 판정을 못 바꾸게). 모든 텍스트는
 투자조언 표현(매수/매도/목표가 등) 검증을 통과해야 한다 — 실패 시 SynthesisError.
 
 ``build_context`` 로 결정론/ML/게이트 입력을 모아 프롬프트에 주고, ``synthesize`` 가 내러티브를
