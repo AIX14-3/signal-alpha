@@ -678,6 +678,22 @@ class AlternativeAnalyzeTaskHandler:
 
     async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
         stock_id = int(task["stock_id"])
+        # LLM 코호트 채점이 이 소스의 점수를 소유하면 per-stock 결정론 분석은 skip —
+        # 같은 (stock, date, run_key) 에 두 경로가 쓰면 최신행이 비결정적으로 이긴다(이중 인큐).
+        from app.core.config import get_settings
+
+        settings = get_settings()
+        registrations = [
+            r for r in self._registrations if not settings.llm_scoring_covers(r.source)
+        ]
+        if not registrations:
+            return {
+                "skipped": "llm_scoring",
+                "stock_id": stock_id,
+                "analyzed_count": 0,
+                "available_sources": [],
+                "sources": [],
+            }
         task_context = _task_context(task.get("task_context"))
         as_of = _to_date(task_context.get("as_of")) if task_context.get("as_of") else date.today()
         stock_code = await self._resolve_stock_code(stock_id, task_context)
@@ -697,7 +713,7 @@ class AlternativeAnalyzeTaskHandler:
 
         sources: list[dict[str, Any]] = []
         available_sources: list[str] = []
-        for registration in self._registrations:
+        for registration in registrations:
             result = await self._run_source(
                 registration, repository, stock_id, stock_code, as_of, context=analysis_context
             )

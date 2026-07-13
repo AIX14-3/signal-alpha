@@ -18,8 +18,14 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any
 
-from app.analyzers.config import DartRuleConfig
-from app.analyzers.scoring import graded
+# B-lite 수식(임팩트 가중 순극성 → graded → 방향)은 백테스트 계측기로 이동(2026-07-13) —
+# 이 모듈은 SourceResult 조립만 담당하고 수식은 reference_rules 에서 가져다 쓴다.
+from app.backtest.reference_rules.dart_score import (
+    impact_weight as _impact_weight,
+)
+from app.backtest.reference_rules.dart_score import (
+    score_impact_weighted_polarity,
+)
 from app.core.korean_labels import DART_EVENT_TYPE_KO, SIGNAL_KO, counts_text
 
 
@@ -143,22 +149,11 @@ def build_dart_analysis_result(events: list[dict[str, Any]]) -> DartAnalysisResu
 
     # B-lite 결정론 점수: 임팩트 가중 순극성 = (Σ긍정_w − Σ부정_w) / Σ방향_w → graded(tanh).
     # 방향(positive/negative) 이벤트가 하나도 없으면 기존 features-only 폴백(unknown/0/no_signal).
-    directional_weight = positive_weight + negative_weight
-    if directional_weight > 0:
-        net = (positive_weight - negative_weight) / directional_weight
-        _config = DartRuleConfig.from_env()
-        score = round(graded(net, scale=_config.polarity_scale, weight=_config.polarity_weight), 3)
-        if score >= _config.positive_threshold:
-            signal_direction = "positive"
-        elif score <= _config.negative_threshold:
-            signal_direction = "negative"
-        else:
-            signal_direction = "neutral"
-        data_status = "ok"
-    else:
-        score = 0.0
-        signal_direction = "unknown"
-        data_status = "no_signal"
+    # 수식 본체는 app.backtest.reference_rules.dart_score(백테스트 계측기)에 있다.
+    polarity = score_impact_weighted_polarity(positive_weight, negative_weight)
+    score = polarity.score
+    signal_direction = polarity.direction
+    data_status = polarity.data_status
 
     derived_features = {
         "total_events": len(events),
@@ -195,14 +190,6 @@ def build_dart_analysis_result(events: list[dict[str, Any]]) -> DartAnalysisResu
         },
         needs_review=needs_review,
     )
-
-
-# 임팩트 레벨 → 수치 가중(매그니튜드 프록시). 미지값은 0.
-_IMPACT_WEIGHTS = {"high": 3.0, "medium": 2.0, "low": 1.0}
-
-
-def _impact_weight(level: str) -> float:
-    return _IMPACT_WEIGHTS.get(level, 0.0)
 
 
 def _empty_derived_features() -> dict[str, Any]:

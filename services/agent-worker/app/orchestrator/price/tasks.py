@@ -52,6 +52,12 @@ class PriceAnalyzeTaskHandler:
 
     async def __call__(self, task: Mapping[str, Any]) -> dict[str, Any]:
         stock_id = int(task["stock_id"])
+        # LLM 코호트 채점이 PRICE 점수를 소유하면 skip (이중 발행 방지 — SCORE_COHORT 가
+        # 같은 run_key=PRICE 로 쓴다).
+        from app.core.config import get_settings
+
+        if get_settings().llm_scoring_covers("PRICE"):
+            return {"skipped": "llm_scoring", "stock_id": stock_id, "analyzed_count": 0}
         task_context = _task_context(task.get("task_context"))
         stock_code = str(task_context.get("stock_code") or "")
         analysis_date = _to_date(

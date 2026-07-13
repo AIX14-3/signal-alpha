@@ -282,6 +282,44 @@ class Settings:
             getenv("EPISODE_OUTCOME_INTERVAL_SEC", "86400")
         )
 
+        # ── LLM 코호트 채점 (수식 → LLM 점수 산출 전환) ──
+        # ⚠️ 이 블록은 "숫자는 결정론이 소유, LLM 은 근거만" 불변식의 **의도적 폐기**다
+        # (2026-07-13 사용자 승인·팀 고지 필요). 켜면 소스 점수·방향을 LLM 코호트 채점기
+        # (analyzers/llm_scorer.score_cohort)가 산출하고, 해당 소스의 기존 per-stock
+        # 결정론 분석 태스크는 skip 된다. 기존 {SOURCE}_LLM_ENABLED(근거 에이전트 게이트)
+        # 와는 의미가 다르므로 이름을 분리한다.
+        self.llm_scoring_enabled = _env_bool("LLM_SCORING_ENABLED", default=False)
+        # 점진 전환용 소스 목록(콤마). 마스터 on + 이 목록에 있는 소스만 LLM 채점.
+        self.llm_scoring_sources = [
+            s.strip().upper()
+            for s in _env_list(
+                "LLM_SCORING_SOURCES",
+                default=["HIRING", "PATENT", "DATALAB", "DART", "REPORT", "PRICE"],
+            )
+        ]
+        # LLM 호출 실패 시: "rules"=결정론 채점(reference_scorer)으로 폴백해 발행 공백 방지
+        # (analysis_source="rules_fallback" 로 관측 가능). "no_signal"=그날 그 소스는 아무것도
+        # 쓰지 않는다 — 집계 fan-in 의 last-known 재사용이 어제 LLM 점수를 이어받는다
+        # (수식 제거(D) 후에는 이 값만 가능해진다).
+        self.llm_scoring_fallback = getenv("LLM_SCORING_FALLBACK", "rules").strip().lower()
+        # 통합 판정(aggregator)의 LLM 전환은 소스 검증 뒤 별도로 켠다.
+        self.llm_aggregate_enabled = _env_bool("LLM_AGGREGATE_ENABLED", default=False)
+        # 코호트(한 프롬프트에 함께 넣어 상대 채점하는 종목 수). 실측 비용 산정 기준 10.
+        self.llm_cohort_size = int(getenv("LLM_COHORT_SIZE", "10"))
+        # 데이터 품질 검증 그래프(정규화·분석 적절성 감사) — 코호트당 LLM 1콜 추가.
+        # 검증은 점수를 바꾸지 않는다: needs_review/risk_flags 승격 + validation_logs 기록만.
+        self.llm_validation_enabled = _env_bool("LLM_VALIDATION_ENABLED", default=False)
+        # vertex(GCP 결제 직결·ADC) | aistudio(선불 크레딧 — 비교용).
+        self.llm_scoring_provider = getenv("LLM_SCORING_PROVIDER", "vertex").strip().lower()
+        self.llm_scoring_model = getenv("LLM_SCORING_MODEL", "") or getenv(
+            "VERTEX_MODEL", "gemini-2.5-flash"
+        )
+
+    def llm_scoring_covers(self, source: str) -> bool:
+        """이 소스의 점수 산출을 LLM 코호트 경로가 소유하는가 — per-stock 결정론 분석
+        핸들러의 skip 판정과 코호트 프로듀서의 대상 소스 선정이 같은 진실을 본다."""
+        return self.llm_scoring_enabled and source.upper() in self.llm_scoring_sources
+
 
 @lru_cache
 def get_settings() -> Settings:

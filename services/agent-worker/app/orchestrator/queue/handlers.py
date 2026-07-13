@@ -30,6 +30,7 @@ from app.orchestrator.queue.task_types import (
     PROCESS_REPORT,
     PUBLISH_SIGNALS,
     RECORD_EPISODE_OUTCOMES,
+    SCORE_COHORT,
     SYNTHESIZE,
 )
 from app.orchestrator.queue.tasks import TaskHandler
@@ -138,6 +139,10 @@ def build_task_handlers(connection: Any) -> dict[str, TaskHandler]:
         # 에피소드 아웃컴 리코더(Wave 3 후속②) — 발행 후 실현결과를 outcome 에 progressive 기록.
         # 종목 무관 배치 스윕. 드레인 데몬이 일 1회 재시드. 숫자 불변(recall 참고용).
         RECORD_EPISODE_OUTCOMES: _build_episode_outcome_handler(connection, settings),
+        # LLM 코호트 채점 (수식 → LLM 점수 전환, LLM_SCORING_ENABLED 게이트) — ⚠️ "숫자는
+        # 결정론 소유" 불변식의 의도적 폐기(2026-07-13 승인). 코호트 배치 1콜로 소스 점수를
+        # LLM 이 산출, 기존 run_key 로 발행. 플래그 off 면 태스크가 시드되지 않아 dormant.
+        SCORE_COHORT: _build_cohort_score_handler(connection, settings),
     }
 
 
@@ -145,6 +150,12 @@ def _build_episode_outcome_handler(connection: Any, settings: Any) -> Any:
     from app.memory import EpisodeOutcomeTaskHandler
 
     return EpisodeOutcomeTaskHandler(connection, settings=settings)
+
+
+def _build_cohort_score_handler(connection: Any, settings: Any) -> Any:
+    from app.orchestrator.cohort.tasks import CohortScoreTaskHandler
+
+    return CohortScoreTaskHandler(connection, settings=settings)
 
 
 def _build_embedder() -> Any | None:
