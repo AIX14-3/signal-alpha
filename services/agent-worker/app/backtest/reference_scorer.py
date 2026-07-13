@@ -19,10 +19,12 @@ forward return 과의 IC 를 잰다.
 프로덕션에서 실행되지 않고 발행물에 영향을 주지 않는다. 파이프라인의 어떤 핸들러도 이 모듈을
 부르지 않는다 — 오직 ``scripts/`` 의 연구 하니스만 부른다.
 
-## 현재는 façade
-지금은 아직 서빙 경로에 결정론 분석기가 살아 있으므로 그쪽을 재사용한다(코드 중복 없음).
-서빙에서 ``rules.py`` / ``scoring.py`` 를 삭제하는 시점에 **본체를 이 파일로 옮기면** 되고,
-호출측(``scripts/recompute_source_ic.py``)은 손대지 않는다. 이 파일이 그 이음매(seam)다.
+## 수식 본체는 ``app.backtest.reference_rules`` (2026-07-13 역전 완료)
+서빙 점수가 LLM 채점(SCORE_COHORT)으로 전환되면서 수식 본체를 ``reference_rules/`` 로
+옮겼다 — 이제 계측기가 수식의 단일 거처다. 서빙 쪽 ``app/analyzers/*/rules.py`` /
+``analyzers/scoring.py`` 는 reference_rules 를 재수출하는 얇은 façade 로 남아
+기존 경로·테스트·LLM 폴백(LLM_SCORING_FALLBACK=rules)이 무변경으로 동작한다.
+호출측(``scripts/recompute_source_ic.py``)은 손대지 않았다.
 """
 
 from __future__ import annotations
@@ -38,14 +40,16 @@ from app.analyzers.config import (
     PatentRuleConfig,
     ReportRuleConfig,
 )
+# DART 는 수식(reference_rules.dart_score)이 아니라 조립까지 포함한 build_dart_analysis_result
+# 를 쓴다 — 이벤트 순회/카운트는 source_result 에 남아 있고 수식만 reference_rules 로 갔다.
 from app.analyzers.dart.source_result import build_dart_analysis_result
-from app.analyzers.report.rules import evaluate_report
 from app.analyzers.datalab.indicators import compute_indicators as datalab_indicators
-from app.analyzers.datalab.rules import evaluate_indicators as datalab_eval
 from app.analyzers.hiring.indicators import compute_indicators as hiring_indicators
-from app.analyzers.hiring.rules import evaluate_indicators as hiring_eval
 from app.analyzers.patent.indicators import compute_indicators as patent_indicators
-from app.analyzers.patent.rules import evaluate_indicators as patent_eval
+from app.backtest.reference_rules.datalab import evaluate_indicators as datalab_eval
+from app.backtest.reference_rules.hiring import evaluate_indicators as hiring_eval
+from app.backtest.reference_rules.patent import evaluate_indicators as patent_eval
+from app.backtest.reference_rules.report import evaluate_report
 from app.analyzers.price.analyzer import PriceAnalyzer
 from app.ml.source_features import KNOWN_AT
 

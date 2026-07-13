@@ -1,35 +1,10 @@
-"""Shared scoring transforms for analyzer rule layers.
+"""DEPRECATED façade — 수식 본체는 ``app.backtest.reference_rules.scoring`` 으로 이동(2026-07-13).
 
-``graded`` replaces the old step-threshold scoring (indicator over a threshold →
-fixed weight) with a smooth, magnitude-aware ``tanh`` mapping:
-
-    score = weight * tanh(value / scale)
-
-Why tanh (vs a dead-zone+ramp): this service does not issue buy/sell calls — it
-surfaces an informational signal shown as a percentage. tanh rises gently from
-zero and saturates *softly* (asymptotically), so it never pins at the extreme and
-needs no hard dead-zone or cap. Noise from tiny samples is handled separately by
-the analyzers' small-sample guard, so the transform itself can stay smooth.
+서빙 점수는 LLM 채점(SCORE_COHORT)으로 전환됐다. 이 모듈은 기존 import 경로
+(``from app.analyzers.scoring import graded``)를 깨지 않기 위한 재수출 껍데기다 —
+새 코드는 ``app.backtest.reference_rules.scoring`` 을 직접 import 할 것.
 """
 
-from __future__ import annotations
+from app.backtest.reference_rules.scoring import graded
 
-import math
-
-
-def graded(value: float, *, scale: float, weight: float) -> float:
-    """Map a signed magnitude to a signed score in ``(-weight, +weight)``.
-
-    ``score = weight * tanh(value / scale)``. Near zero it is ~linear (small
-    input → small score); large inputs approach ±weight without reaching it.
-    ``scale`` sets the soft "knee": at ``value == scale`` the score is
-    ``0.76 * weight``. Both are in the indicator's own units (e.g. 0.10 = +10%).
-    """
-    if scale <= 0:
-        # Degenerate scale → fall back to a hard sign step at full weight.
-        if value > 0:
-            return weight
-        if value < 0:
-            return -weight
-        return 0.0
-    return weight * math.tanh(value / scale)
+__all__ = ["graded"]
