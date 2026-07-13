@@ -13,12 +13,14 @@ name: DataLab Daily
 #   DATABASE_URL, NAVER_CLIENT_ID, NAVER_CLIENT_SECRET, GEMINI_API_KEY
 #   (선택) GEMINI_MODEL, COLLECTOR_VERSION
 # 수동 실행(workflow_dispatch)도 키워드 생성만 수행한다.
+#
+# ⚠️ 2026-07-14 정기 스케줄 폐지 → GKE CronJob `datalab-keywords`(deploy/k8s)로 이전.
+# 이유: ①이 워크플로의 대상 DB(Supabase)가 용량초과로 read-only 잠김(1.5GB>500MB)
+#      ②prod 수집기(GKE altdata-collect)는 Cloud SQL 을 읽어, 여기서 만든 키워드가
+#        prod 수집에 닿지 않는 이원 구조였음.
+# workflow_dispatch 는 남겨둔다(Supabase 복구 시 수동 백필용).
 
 on:
-  schedule:
-    - cron: "0 21 * * *" # 06:00 KST — 키워드 생성 (이후 altdata-collect 06:30 이 수집)
-    - cron: "0 5 * * *" # 14:00 KST — 키워드 생성
-    - cron: "0 13 * * *" # 22:00 KST — 키워드 생성
   workflow_dispatch:
     inputs:
       ticker:

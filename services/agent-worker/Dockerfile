@@ -54,6 +54,16 @@ COPY services/agent-worker/mvp_runtime.py \
      services/agent-worker/run_trade_signal_overlay.py \
      ./
 
+# DataLab 키워드 생성 파이프라인(datalab-keywords CronJob 이 daily_keyword_pipeline.py 실행).
+# 형제 모듈 5개를 함께 COPY 해야 이미지에서 import 된다(미포함 시 ModuleNotFoundError).
+COPY services/agent-worker/daily_keyword_pipeline.py \
+     services/agent-worker/datalab_keyword_validator.py \
+     services/agent-worker/datalab_polarity_keywords.py \
+     services/agent-worker/datalab_polarity_refresh.py \
+     services/agent-worker/keyword_gen_common.py \
+     services/agent-worker/news_event_source.py \
+     ./
+
 EXPOSE 8011
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8011"]

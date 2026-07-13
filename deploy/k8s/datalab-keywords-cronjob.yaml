@@ -1,0 +1,60 @@
+# DataLab 키워드 생성 — 매일 04:00/12:00/20:00 KST CronJob(daily_keyword_pipeline.py).
+# 원래 GitHub Actions(datalab-daily.yml)가 Supabase 에 썼으나 ①Supabase 용량초과 read-only
+# 잠금 ②prod 수집기(altdata-collect 04:30 KST)는 Cloud SQL 을 읽는 이원 구조라, 수집기가
+# 실제로 읽는 DB(WORKER_DATABASE_URL)에 직접 쓰도록 GKE 로 이전했다. 04:00 실행이 같은 날
+# 04:30 수집에 신선 키워드를 공급한다.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: datalab-keywords
+  namespace: signal-alpha
+  labels:
+    app.kubernetes.io/part-of: signal-alpha
+    app.kubernetes.io/name: datalab-keywords
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  schedule: "0 4,12,20 * * *"
+  timeZone: "Asia/Seoul"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/part-of: signal-alpha
+            app.kubernetes.io/name: datalab-keywords
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: datalab-keywords
+              image: signal-alpha-agent-worker
+              command: ["python", "daily_keyword_pipeline.py"]
+              envFrom:
+                - configMapRef: { name: signal-alpha-config }
+                - secretRef: { name: signal-alpha-secrets }
+              env:
+                - name: SERVICE_NAME
+                  value: datalab-keywords
+                - name: DATABASE_URL          # 수집 DB (키워드 테이블)
+                  valueFrom: { secretKeyRef: { name: signal-alpha-secrets, key: WORKER_DATABASE_URL } }
+                # 키워드 생성 LLM 은 Vertex 경로 — AI Studio 크레딧 고갈(429)과 분리.
+                # 노드 SA 에 cloud-platform 스코프가 없어 metadata ADC 불가 → SA 키 파일로 인증.
+                - name: KEYWORD_LLM_PROVIDER
+                  value: "vertex"
+                - name: GOOGLE_APPLICATION_CREDENTIALS
+                  value: /var/secrets/vertex/key.json
+              volumeMounts:
+                - name: vertex-sa-key
+                  mountPath: /var/secrets/vertex
+                  readOnly: true
+          volumes:
+            # Argo 미추적 수동 Secret(signal-alpha-secrets 관례와 동일). 없어도 파드는 뜨되
+            # LLM 호출만 실패한다(optional) — 키 설치 전 배포를 막지 않기 위함.
+            - name: vertex-sa-key
+              secret:
+                secretName: vertex-sa-key
+                optional: true

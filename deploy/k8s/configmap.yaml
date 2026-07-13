@@ -42,6 +42,8 @@ data:
   DART_FETCH_DOCUMENTS: "true"
   OPENAI_BASE_URL: "https://api.openai.com/v1"
   GEMINI_BASE_URL: "https://generativelanguage.googleapis.com/v1beta"
+  # Vertex AI 경로(LLM 채점·키워드 생성)가 요구하는 GCP 프로젝트. 비밀 아님.
+  GOOGLE_CLOUD_PROJECT: "signal-alpha-demo"
   # 끝단 종합 LLM(키 없으면 결정론 폴백).
   SYNTHESIS_USE_LLM: "false"
   # 리포트 저장 백엔드. 초기 인클러스터 브링업은 local(PVC) — GCS ADC 는 GKE 에서
