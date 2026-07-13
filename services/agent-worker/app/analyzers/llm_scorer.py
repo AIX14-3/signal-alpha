@@ -234,6 +234,15 @@ def parse_scores(payload: Any, cohort: list[StockContext]) -> list[StockScore]:
     return out
 
 
+SCHEMA_RETRIES = 2
+"""스키마 위반 재시도 횟수.
+
+실측(gemini-2.5-flash, 42콜): **10회(24%)가 'scores' 키 누락**으로 실패했다. 전송 오류가 아니라
+모델이 계약을 안 지킨 것이라 클라이언트의 HTTP 재시도로는 안 잡힌다. 여기서 계약 위반을 잡아
+**위반 사유를 프롬프트에 되먹여** 다시 묻는다. 이 재시도율 자체가 모델 선정의 핵심 지표다
+(같은 프롬프트에서 스키마를 못 지키는 모델은 운영에 못 쓴다)."""
+
+
 async def score_cohort(
     client: JsonLlm,
     *,
@@ -241,9 +250,18 @@ async def score_cohort(
     asof: str,
     cohort: list[StockContext],
 ) -> list[StockScore]:
-    """코호트 전체를 **한 번의 호출**로 상대 채점한다."""
+    """코호트 전체를 **한 번의 호출**로 상대 채점한다. 스키마 위반은 되먹여 재시도."""
     if not cohort:
         return []
     prompt = build_prompt(source, asof, cohort)
-    payload = await client.generate_json(prompt)
-    return parse_scores(payload, cohort)
+    last: LlmScorerError | None = None
+    for attempt in range(SCHEMA_RETRIES + 1):
+        payload = await client.generate_json(
+            prompt if attempt == 0 else f"{prompt}\n\n## 직전 응답이 계약을 위반했다\n{last}\n"
+            "반드시 위 JSON 스키마를 정확히 지켜 다시 응답하라."
+        )
+        try:
+            return parse_scores(payload, cohort)
+        except LlmScorerError as exc:
+            last = exc
+    raise last or LlmScorerError("score_cohort failed")

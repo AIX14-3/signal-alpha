@@ -36,8 +36,10 @@ from app.analyzers.config import (
     DataLabRuleConfig,
     HiringRuleConfig,
     PatentRuleConfig,
+    ReportRuleConfig,
 )
 from app.analyzers.dart.source_result import build_dart_analysis_result
+from app.analyzers.report.rules import evaluate_report
 from app.analyzers.datalab.indicators import compute_indicators as datalab_indicators
 from app.analyzers.datalab.rules import evaluate_indicators as datalab_eval
 from app.analyzers.hiring.indicators import compute_indicators as hiring_indicators
@@ -48,17 +50,44 @@ from app.analyzers.price.analyzer import PriceAnalyzer
 from app.ml.source_features import KNOWN_AT
 
 # (SRC, kind, loader_key, date_key, indicators_fn, eval_fn, config_cls)
-#   kind=rules : compute_indicators + evaluate_indicators (대체데이터 3소스)
-#   kind=dart  : build_dart_analysis_result(events).score
-#   kind=price : PriceAnalyzer().analyze  (⚠️ 자기참조: 과거가격→미래가격, 대체데이터 알파 아님)
-# REPORT 제외: 결정론 분석기/로더 경로가 없다(밸류에이션 별도 경로).
+#   kind=rules  : compute_indicators + evaluate_indicators (대체데이터 3소스)
+#   kind=dart   : build_dart_analysis_result(events).score
+#   kind=report : evaluate_report(revision_pct, upside_pct) — 목표주가 리비전 + upside
+#   kind=price  : PriceAnalyzer().analyze  (⚠️ 자기참조: 과거가격→미래가격, 대체데이터 알파 아님)
 SOURCES: list[tuple[str, str, str, str, Any, Any, Any]] = [
     ("PATENT", "rules", "patent", KNOWN_AT["patent"], patent_indicators, patent_eval, PatentRuleConfig),
     ("DATALAB", "rules", "datalab", KNOWN_AT["datalab"], datalab_indicators, datalab_eval, DataLabRuleConfig),
     ("HIRING", "rules", "hiring", KNOWN_AT["hiring"], hiring_indicators, hiring_eval, HiringRuleConfig),
     ("DART", "dart", "dart", KNOWN_AT["dart"], None, None, DartRuleConfig),
+    ("REPORT", "report", "report", KNOWN_AT["report"], None, None, ReportRuleConfig),
     ("PRICE", "price", "price", KNOWN_AT["price"], None, None, None),
 ]
+
+
+def report_indicators(pit: list[dict], current_close: float | None) -> tuple[float | None, float | None]:
+    """목표주가 이력 → (revision_pct, upside_pct). 순수 산술 — 판단 없음.
+
+    ``pit`` 은 ``report_valuation_facts`` 행(``publish_date``·``target_price``)이며 이미 PIT
+    필터를 통과했다. 같은 날 여러 증권사가 내면 평균을 그날의 목표가로 본다.
+    """
+    by_day: dict[str, list[float]] = {}
+    for row in pit:
+        target = row.get("target_price")
+        day = row.get("publish_date")
+        if target is None or day is None:
+            continue
+        by_day.setdefault(str(day)[:10], []).append(float(target))
+    if not by_day:
+        return None, None
+    ordered = sorted(by_day.items())
+    latest = sum(ordered[-1][1]) / len(ordered[-1][1])
+    revision = None
+    if len(ordered) >= 2:
+        prior = sum(ordered[-2][1]) / len(ordered[-2][1])
+        if prior > 0:
+            revision = (latest - prior) / prior
+    upside = (latest - current_close) / current_close if (current_close and current_close > 0) else None
+    return revision, upside
 
 
 def dart_blite_events(pit: list[dict]) -> list[dict]:
@@ -97,10 +126,14 @@ async def score_source(
     sector: Any = None,
     ind_fn: Callable[..., Any] | None = None,
     eval_fn: Callable[..., Any] | None = None,
+    current_close: float | None = None,
 ) -> float:
     """소스 kind 별 결정론 점수 재계산. ``pit`` 은 누수차단된 행. signed ``[-1, +1]`` 반환."""
     if kind == "dart":
         return build_dart_analysis_result(dart_blite_events(pit)).score
+    if kind == "report":
+        revision, upside = report_indicators(pit, current_close)
+        return evaluate_report(revision_pct=revision, upside_pct=upside, config=cfg).score
     if kind == "price":
         result = await PriceAnalyzer().analyze("", [SimpleNamespace(metadata={"rows": pit})])
         return result.score
