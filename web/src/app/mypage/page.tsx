@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { createPost, deleteMe, updateMe, type Journal } from "@/lib/apiClient";
+import { StockLogo } from "@/components/StockLogo";
+import { useWatchlistDayChange } from "@/hooks/useWatchlistDayChange";
 import { isSocialDevMode, SOCIAL_PROVIDERS, socialAuthCode, startSocialOAuth } from "@/lib/social";
 import {
   hasRetrospective,
@@ -98,8 +100,13 @@ export default function MyPage() {
   );
 }
 
+// 시세 등락 색은 한국 관례(상승=빨강 / 하락=파랑).
+const KR_UP = "#ef4444";
+const KR_DOWN = "#3b82f6";
+
 function WatchlistTab() {
   const { items, count, loading, error, load, remove } = useWatchlistStore();
+  const changes = useWatchlistDayChange(items);
   useEffect(() => {
     void load();
   }, [load]);
@@ -118,14 +125,29 @@ function WatchlistTab() {
       <p className="mb-3 text-[13px] text-muted">{count}개 등록 (무제한)</p>
       <div className="space-y-2">
         {items.map((item) => (
-          <div key={item.stock.id} className="card flex items-center justify-between px-5 py-4">
-            <Link href={`/report/${item.stock.stock_code}`} className="font-bold hover:text-sky-deep">
-              {item.stock.stock_name}
-              <span className="ml-2 text-[13px] font-normal text-muted">{item.stock.stock_code}</span>
+          <div key={item.stock.id} className="card flex items-center justify-between gap-3 px-5 py-4">
+            <Link href={`/report/${item.stock.stock_code}`} className="flex min-w-0 items-center gap-3 font-bold hover:text-sky-deep">
+              <StockLogo code={item.stock.stock_code} name={item.stock.stock_name} size={32} />
+              <span className="min-w-0 truncate">
+                {item.stock.stock_name}
+                <span className="ml-2 text-[13px] font-normal text-muted">{item.stock.stock_code}</span>
+              </span>
             </Link>
-            <button type="button" onClick={() => void remove(item.stock.stock_code)} className="text-[13px] font-semibold text-muted hover:text-red">
-              삭제
-            </button>
+            <div className="flex shrink-0 items-center gap-3">
+              {(() => {
+                const change = changes[item.stock.stock_code];
+                if (!change) return null;
+                const up = change.pct >= 0;
+                return (
+                  <span className="text-[13px] font-bold" style={{ color: up ? KR_UP : KR_DOWN }}>
+                    {up ? "▲" : "▼"} {Math.abs(change.pct).toFixed(2)}%
+                  </span>
+                );
+              })()}
+              <button type="button" onClick={() => void remove(item.stock.stock_code)} className="text-[13px] font-semibold text-muted hover:text-red">
+                삭제
+              </button>
+            </div>
           </div>
         ))}
       </div>
