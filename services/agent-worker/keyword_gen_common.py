@@ -111,7 +111,50 @@ async def fetch_stock(ticker: str) -> dict[str, Any]:
     return dict(row)
 
 
+def _call_vertex_json(prompt: str, *, timeout: float = 60) -> dict[str, Any]:
+    """Vertex 경로 — AI Studio 선불 크레딧과 **별개 주머니**(GCP 결제 직결·ADC).
+
+    AI Studio 크레딧이 마르면 429 로 키워드 생성이 통째로 멈춘다(실제 겪음).
+    ``KEYWORD_LLM_PROVIDER=vertex`` 로 켠다. 토큰은 ``app.clients.vertex_client`` 의
+    google-auth 경로(로컬 ADC 파일 / GKE Workload Identity)를 재사용한다.
+    """
+    from app.clients.vertex_client import _access_token  # 지연 import — aistudio 경로는 무의존
+
+    project = os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("GCP_PROJECT")
+    if not project:
+        raise RuntimeError("GOOGLE_CLOUD_PROJECT is required for KEYWORD_LLM_PROVIDER=vertex.")
+    model = os.getenv("GEMINI_MODEL") or "gemini-2.5-flash-lite"
+    url = (
+        f"https://aiplatform.googleapis.com/v1/projects/{project}/locations/global"
+        f"/publishers/google/models/{model}:generateContent"
+    )
+    body = {
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "temperature": 0.4,
+            "responseMimeType": "application/json",
+            # 2.5 계열 thinking 이 출력 예산을 잠식하지 않게(구조화 JSON 추출엔 불필요).
+            "thinkingConfig": {"thinkingBudget": 0},
+        },
+    }
+    req = Request(
+        url,
+        data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {_access_token()}",
+        },
+        method="POST",
+    )
+    payload = json.loads(read_url(req, timeout=timeout))
+    text = payload["candidates"][0]["content"]["parts"][0]["text"]
+    return json.loads(text)
+
+
 def call_gemini(prompt: str) -> dict[str, Any]:
+    # AI Studio 크레딧 고갈(429)과 무관하게 돌릴 수 있는 GCP 결제 경로(opt-in).
+    if (os.getenv("KEYWORD_LLM_PROVIDER") or "").strip().lower() == "vertex":
+        return _call_vertex_json(prompt)
     api_key = os.getenv("GEMINI_API_KEY", "")
     if not api_key:
         raise RuntimeError("GEMINI_API_KEY is required for keyword generation.")
