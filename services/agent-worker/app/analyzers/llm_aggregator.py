@@ -33,6 +33,7 @@ from app.analyzers.llm_scorer import (
     JsonLlm,
     LlmScorerError,
     StockScore,
+    _ask,
 )
 from app.policy_safety import find_investment_advice_in
 
@@ -40,6 +41,51 @@ PROMPT_VERSION = "aggregate-v1"
 _TEMPLATE = Path(__file__).resolve().parents[1] / "prompts" / "aggregate_v1.md"
 
 _ALLOWED_SIGNALS = {"positive", "neutral", "negative", "mixed"}
+
+# 통합 판정 출력 스키마 — responseSchema 로 **API 가 강제**한다.
+# ⚠️ 스키마는 '형태'만 보장하고 '값의 의미'는 보장하지 않는다(Google 문서도 명시). score 범위
+# [-1,1]·confidence 상한 0.85·no_signal 소스 기여 금지는 여전히 parse_verdicts 가 검증한다.
+AGGREGATE_SCHEMA: dict = {
+    "type": "OBJECT",
+    "properties": {
+        "verdicts": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "ticker": {"type": "STRING"},
+                    "final_score": {"type": "NUMBER"},
+                    "confidence": {"type": "NUMBER"},
+                    "signal": {
+                        "type": "STRING",
+                        "enum": ["positive", "neutral", "negative", "mixed"],
+                    },
+                    "conflict": {"type": "BOOLEAN"},
+                    "headline": {"type": "STRING"},
+                    "positive_evidence": {"type": "ARRAY", "items": {"type": "STRING"}},
+                    "caution_evidence": {"type": "ARRAY", "items": {"type": "STRING"}},
+                    "contributing": {
+                        "type": "ARRAY",
+                        "items": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "source": {"type": "STRING"},
+                                "weight": {"type": "NUMBER"},
+                                "why": {"type": "STRING"},
+                            },
+                            "required": ["source", "weight", "why"],
+                        },
+                    },
+                },
+                "required": [
+                    "ticker", "final_score", "confidence", "signal", "conflict",
+                    "headline", "positive_evidence", "caution_evidence", "contributing",
+                ],
+            },
+        }
+    },
+    "required": ["verdicts"],
+}
 
 
 @dataclass(frozen=True)
@@ -199,15 +245,18 @@ async def aggregate_cohort(
     per_stock: dict[str, dict[str, StockScore]],
     names: dict[str, str],
 ) -> list[Verdict]:
-    """스키마 위반은 사유를 되먹여 재시도(llm_scorer.score_cohort 와 동일 정책)."""
+    """스키마는 ``AGGREGATE_SCHEMA`` 로 API 가 강제한다. 그래도 남는 의미 위반(점수 범위·
+    no_signal 기여 등)은 사유를 되먹여 재시도(llm_scorer.score_cohort 와 동일 정책)."""
     if not per_stock:
         return []
     prompt = build_prompt(asof, per_stock, names)
     last: LlmScorerError | None = None
     for attempt in range(SCHEMA_RETRIES + 1):
-        payload = await client.generate_json(
+        payload = await _ask(
+            client,
             prompt if attempt == 0 else f"{prompt}\n\n## 직전 응답이 계약을 위반했다\n{last}\n"
-            "반드시 위 JSON 스키마를 정확히 지켜 다시 응답하라."
+            "반드시 위 JSON 스키마를 정확히 지켜 다시 응답하라.",
+            AGGREGATE_SCHEMA,
         )
         try:
             return parse_verdicts(payload, per_stock)

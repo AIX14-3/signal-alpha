@@ -65,7 +65,7 @@ class VertexJsonClient:
         location: str = "global",
         temperature: float = 0.0,
         max_output_tokens: int = 16000,
-        thinking_budget: int = 0,
+        thinking_budget: int | None = None,
         max_attempts: int = 6,
         timeout: float = 120.0,
     ) -> None:
@@ -76,6 +76,16 @@ class VertexJsonClient:
         self._location = location
         self._temperature = temperature
         self._max_output_tokens = max_output_tokens
+        # thinking 정책은 **모델마다 다르다**:
+        #   - 2.5 flash / flash-lite : thinking 이 기본 활성이지만 0으로 끌 수 있다.
+        #     구조화 추출에 thinking 은 불필요하고 출력 예산만 먹으므로 끈다.
+        #   - 2.5 pro                : **0을 허용하지 않는다**(HTTP 400
+        #     "does not support setting thinking_budget to 0"). 최소 예산을 줘야 한다.
+        # 명시값이 없으면 모델명으로 자동 결정한다 — 안 그러면 pro 가 100% 실패한다(실측).
+        # pro 의 최소치를 너무 작게 주면(실측 128) 8k 프롬프트에서 thinking 이 바닥나 응답이
+        # 무너진다(위반율 71%). 넉넉히 준다.
+        if thinking_budget is None:
+            thinking_budget = 2048 if "pro" in self._model else 0
         self._thinking_budget = thinking_budget
         self._max_attempts = max(1, max_attempts)
         self._timeout = timeout
@@ -98,13 +108,17 @@ class VertexJsonClient:
             f"/publishers/google/models/{self._model}:generateContent"
         )
 
-    async def generate_json(self, prompt: str) -> Any:
+    async def generate_json(self, prompt: str, schema: dict | None = None) -> Any:
         """429 는 **크레딧 고갈이 아니라 공유 용량 스로틀**(Resource exhausted)이다 — 지수 백오프로
-        넘긴다. AI Studio 의 'prepayment credits depleted' 와 달리 기다리면 풀린다."""
+        넘긴다. AI Studio 의 'prepayment credits depleted' 와 달리 기다리면 풀린다.
+
+        ``schema`` 를 주면 ``responseSchema`` 로 **API 가 스키마를 강제**한다 — 프롬프트로 부탁하는
+        게 아니라 디코딩 단계에서 강제되므로 "필수 키 누락"이 구조적으로 불가능해진다.
+        """
         last: Exception | None = None
         for attempt in range(self._max_attempts):
             try:
-                return await asyncio.to_thread(self._call, prompt)
+                return await asyncio.to_thread(self._call, prompt, schema)
             except VertexError as exc:
                 last = exc
                 if not getattr(exc, "retryable", False) or attempt == self._max_attempts - 1:
@@ -112,19 +126,25 @@ class VertexJsonClient:
             await asyncio.sleep(min(60.0, 4.0 * (2 ** attempt)))  # 4,8,16,32,60s
         raise VertexError(str(last))
 
-    def _call(self, prompt: str) -> Any:
+    def _call(self, prompt: str, schema: dict | None = None) -> Any:
         if self._token is None:
             self._token = _access_token()
+        generation_config: dict[str, Any] = {
+            "temperature": self._temperature,
+            "responseMimeType": "application/json",
+            # 잘림 방지 — 코호트 응답은 길다.
+            "maxOutputTokens": self._max_output_tokens,
+            # thinking 정책은 모델별로 다르다(__init__ 참조).
+            "thinkingConfig": {"thinkingBudget": self._thinking_budget},
+        }
+        if schema is not None:
+            # responseMimeType 은 "JSON 이어라"까지만 강제한다 — **스키마는 강제하지 않는다.**
+            # 그래서 'scores' 키 누락이 나왔다. responseSchema 는 디코딩을 스키마에 묶어
+            # 이 실패 모드를 원천 제거한다.
+            generation_config["responseSchema"] = schema
         body: dict[str, Any] = {
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-            "generationConfig": {
-                "temperature": self._temperature,
-                "responseMimeType": "application/json",
-                # 잘림 방지 — 코호트 응답은 길다.
-                "maxOutputTokens": self._max_output_tokens,
-                # 구조화 추출에 thinking 은 불필요하고, 출력 예산만 먹는다.
-                "thinkingConfig": {"thinkingBudget": self._thinking_budget},
-            },
+            "generationConfig": generation_config,
         }
         req = Request(
             self._url(),

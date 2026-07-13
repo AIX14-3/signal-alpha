@@ -54,12 +54,51 @@ class LlmScorerError(RuntimeError):
 
 
 class JsonLlm(Protocol):
-    """``GeminiJsonClient`` / 향후 다른 프로바이더가 만족하는 최소 계약."""
+    """``GeminiJsonClient`` / ``VertexJsonClient`` / 향후 다른 프로바이더의 최소 계약.
+
+    ``schema`` 를 받는 구현은 **API 레벨 스키마 강제**를 쓴다(권장). 안 받는 구현도 동작하도록
+    호출측이 TypeError 를 잡아 폴백한다.
+    """
 
     @property
     def model(self) -> str: ...
 
-    async def generate_json(self, prompt: str) -> Any: ...
+    async def generate_json(self, prompt: str, schema: dict | None = ...) -> Any: ...
+
+
+# 소스 채점 출력 스키마 — responseSchema 로 **API 가 강제**한다.
+# 프롬프트로 "이 형식을 지켜라"라고 부탁하는 것과 달리, 디코딩 자체가 스키마에 묶여
+# 필수 키 누락이 구조적으로 불가능해진다. (responseMimeType=JSON 은 "JSON 이어라"까지만
+# 강제하고 스키마는 강제하지 않는다 — 그래서 'scores' 누락이 24% 나왔다.)
+SCORE_SCHEMA: dict = {
+    "type": "OBJECT",
+    "properties": {
+        "scores": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "ticker": {"type": "STRING"},
+                    "score": {"type": "NUMBER"},
+                    "confidence": {"type": "NUMBER"},
+                    "no_signal": {"type": "BOOLEAN"},
+                    "evidence": {"type": "ARRAY", "items": {"type": "STRING"}},
+                    "score_change_reason": {"type": "STRING", "nullable": True},
+                },
+                "required": ["ticker", "score", "confidence", "no_signal", "evidence"],
+            },
+        }
+    },
+    "required": ["scores"],
+}
+
+
+async def _ask(client: JsonLlm, prompt: str, schema: dict) -> Any:
+    """스키마 강제를 지원하면 쓰고, 아니면 프롬프트-only 로 폴백."""
+    try:
+        return await client.generate_json(prompt, schema)  # type: ignore[call-arg]
+    except TypeError:
+        return await client.generate_json(prompt)
 
 
 # 소스별 가이드 — "무엇이 확장/위축의 흔적인가"를 말해줄 뿐, **수치 임계표는 주지 않는다.**
@@ -261,9 +300,11 @@ async def score_cohort(
     prompt = build_prompt(source, asof, cohort)
     last: LlmScorerError | None = None
     for attempt in range(SCHEMA_RETRIES + 1):
-        payload = await client.generate_json(
+        payload = await _ask(
+            client,
             prompt if attempt == 0 else f"{prompt}\n\n## 직전 응답이 계약을 위반했다\n{last}\n"
-            "반드시 위 JSON 스키마를 정확히 지켜 다시 응답하라."
+            "반드시 위 JSON 스키마를 정확히 지켜 다시 응답하라.",
+            SCORE_SCHEMA,
         )
         try:
             return parse_scores(payload, cohort)
