@@ -20,29 +20,38 @@ export default function CommunityPage() {
 
   return (
     <div className="py-10" data-page="community">
-      <div className="overflow-hidden rounded-[20px] bg-navy px-7 py-6">
-        <h1 className="text-[22px] font-extrabold tracking-tight text-white">
-          커뮤니티 <span className="font-mono text-[13px] font-semibold text-sky">/ signals</span>
-        </h1>
-        <p className="mt-1.5 text-[12.5px] text-muted">
-          데이터 방향성 기록(저널)을 공유하고 서로의 근거를 살펴보세요.
-        </p>
+      <div className="relative overflow-hidden rounded-[20px] border border-line bg-surface px-7 py-6 shadow-[var(--shadow-card)]">
+        {/* 옅은 라벤더 오라 — 검은 밴드 대신 라이트 톤으로 브랜드감만 얹는다(리포트 결과 통일). */}
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0"
+          style={{
+            background:
+              "linear-gradient(180deg, rgba(139,92,246,.08) 0%, rgba(139,92,246,.02) 34%, transparent 62%)",
+          }}
+        />
+        <div className="relative">
+          <h1 className="text-[32px] font-extrabold tracking-tight text-navy">커뮤니티</h1>
+          <p className="mt-1.5 text-[12.5px] text-muted">
+            데이터 방향성 기록(저널)을 공유하고 서로의 근거를 살펴보세요.
+          </p>
 
-        <div className="mt-[18px] flex gap-5" data-flow="community-sort">
-          {SORTS.map(([key, label]) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => void load(key)}
-              className={`border-b-2 pb-2 text-[12.5px] font-semibold ${
-                sort === key
-                  ? "border-sky text-white"
-                  : "border-transparent text-muted hover:text-white"
-              }`}
-            >
-              {label}
-            </button>
-          ))}
+          <div className="mt-4 flex gap-5" data-flow="community-sort">
+            {SORTS.map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => void load(key)}
+                className={`border-b-2 pb-2 text-[12.5px] font-semibold transition ${
+                  sort === key
+                    ? "border-sky-deep text-navy"
+                    : "border-transparent text-muted hover:text-navy"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 

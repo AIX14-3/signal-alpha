@@ -1,103 +1,72 @@
 "use client";
 
 import Link from "next/link";
+import { StockLogo } from "@/components/StockLogo";
 import type { CommunityPost } from "@/lib/apiClient";
-import { authorLabel, formatDate, postDirection } from "./util";
+import { authorLabel, formatDate } from "./util";
 
-const DIRECTION_STYLE = {
-  long: {
-    grad: "linear-gradient(160deg,#ecfdf5,#d1fae5)",
-    ticker: "#065f46",
-    tag: "#10b981",
-    value: "#059669",
-  },
-  short: {
-    grad: "linear-gradient(160deg,#fef2f2,#fee2e2)",
-    ticker: "#991b1b",
-    tag: "#ef4444",
-    value: "#dc2626",
-  },
-  neutral: {
-    grad: "linear-gradient(160deg,#f5f3ff,#ede9fe)",
-    ticker: "#5b21b6",
-    tag: "#8a97ab",
-    value: "#36425c",
-  },
-} as const;
-
-// 피드 목록의 게시글 카드. 상세로 링크. 저널 라이브 참조가 있으면 좌측에 종목 시그널 블록,
-// show_pnl 이면 수익률% 를 함께 노출(가격·절대손익은 응답에 아예 없음).
+// 피드 목록의 게시글 카드(게시판 행 형식): [글번호] [회사 로고·이름] | [제목 + 작성자·날짜] [🔥 · 반응].
+// 카드 자체에 테두리가 있으므로 내부는 박스를 겹치지 않고 소프트 칩·구분선으로만 영역을 나눈다.
 export function PostCard({ post }: { post: CommunityPost }) {
   const j = post.journal;
-  const dir = postDirection(post);
-  const style = DIRECTION_STYLE[dir.kind];
 
   return (
     <Link
       href={`/community/${post.id}`}
-      className="flex overflow-hidden rounded-[16px] border border-line bg-surface shadow-[0_1px_2px_rgba(15,27,51,.04)] transition hover:-translate-y-[2px] hover:shadow-[0_10px_28px_rgba(15,27,51,.10)]"
+      className="flex items-center gap-4 rounded-[16px] border border-line bg-surface px-5 py-3.5 shadow-[0_1px_2px_rgba(15,27,51,.04)] transition hover:-translate-y-[2px] hover:border-[rgba(139,92,246,0.4)] hover:shadow-[0_10px_28px_rgba(15,27,51,.10)]"
       data-flow="community-post-card"
     >
-      {j?.stock && (
-        <div
-          className="flex w-[96px] shrink-0 flex-col justify-between border-r border-line px-3 py-[15px]"
-          style={{ background: style.grad }}
-        >
-          <div>
-            <div className="font-mono text-[12px] font-bold" style={{ color: style.ticker }}>
-              {j.stock.ticker}
-            </div>
-            <div className="mt-0.5 text-[11px] font-bold text-navy">
+      {/* 글번호 — 본문과 같은 서체(Pretendard). 정렬만 tabular-nums 로 고정 폭. */}
+      <span className="w-[44px] shrink-0 text-center text-[14px] font-bold tabular-nums text-muted">
+        {post.id}
+      </span>
+
+      {/* 회사 로고 + 이름 — 인라인 */}
+      {j?.stock ? (
+        <div className="flex w-[132px] shrink-0 items-center gap-2.5">
+          <StockLogo code={j.stock.ticker} name={j.stock.name} size={36} />
+          <div className="min-w-0">
+            <div className="truncate text-[13px] font-bold leading-tight text-navy">
               {j.stock.name ?? j.stock.ticker}
             </div>
-          </div>
-          <div>
-            <div
-              className="text-[9.5px] font-bold uppercase tracking-wide"
-              style={{ color: style.tag }}
-            >
-              {dir.icon} {dir.label}
+            <div className="mt-0.5 truncate text-[10.5px] text-muted">
+              {j.stock.ticker}
             </div>
-            {dir.pctText ? (
-              <div
-                className="mt-0.5 text-[18px] font-extrabold leading-tight tabular-nums"
-                style={{ color: style.value }}
-              >
-                {dir.pctText}
-              </div>
-            ) : (
-              <div className="mt-[3px] text-[12.5px] font-bold leading-tight text-navy-soft">
-                관망
-              </div>
-            )}
           </div>
         </div>
+      ) : (
+        <div className="w-[132px] shrink-0" aria-hidden />
       )}
 
-      <div className="min-w-0 flex-1 px-4 py-[15px]">
-        <div className="flex items-start justify-between gap-2.5">
-          <h3 className="text-[14.5px] font-extrabold leading-snug">{post.title}</h3>
-          {post.ranking_score != null && (
-            <span className="shrink-0 text-[10.5px] font-extrabold text-sky-deep">
-              🔥{Math.round(post.ranking_score)}
-            </span>
-          )}
-        </div>
+      {/* 구분선 */}
+      <div className="h-9 w-px shrink-0 bg-line" aria-hidden />
 
-        {post.body && (
-          <p className="mt-2 line-clamp-2 text-[12.5px] leading-[1.5] text-navy-soft">
-            {post.body}
-          </p>
-        )}
-
-        <div className="mt-[11px] flex items-center gap-2.5 text-[11px] text-muted">
+      {/* 제목 + 작성자·날짜 */}
+      <div className="min-w-0 flex-1">
+        {/* 제목 안의 사이점(·)도 제거 — 앞뒤 공백을 한 칸으로 정리한다. */}
+        <h3 className="truncate text-[15px] font-extrabold leading-snug text-navy">
+          {post.title.replace(/\s*·\s*/g, " ")}
+        </h3>
+        <div className="mt-1.5 flex items-center gap-2 text-[11px] text-muted">
           <span className="font-semibold text-navy-soft">{authorLabel(post.author)}</span>
           <span>{formatDate(post.created_at)}</span>
-          <span className="ml-auto flex items-center gap-[11px]">
-            <span>♥ {post.like_count}</span>
-            <span>💬 {post.comment_count}</span>
-            <span>👁 {post.view_count}</span>
+        </div>
+      </div>
+
+      {/* 우측: 인기 점수 + 반응 */}
+      <div className="flex shrink-0 flex-col items-end gap-1.5">
+        {post.ranking_score != null && (
+          <span
+            className="rounded-full px-2 py-0.5 text-[10.5px] font-extrabold"
+            style={{ background: "rgba(249,115,22,.12)", color: "#ea580c" }}
+          >
+            🔥 {Math.round(post.ranking_score)}
           </span>
+        )}
+        <div className="flex items-center gap-3 text-[11px] text-muted">
+          <span>♥ {post.like_count}</span>
+          <span>💬 {post.comment_count}</span>
+          <span>👁 {post.view_count}</span>
         </div>
       </div>
     </Link>
