@@ -13,6 +13,7 @@ import {
 } from "@/lib/apiClient";
 import { WatchlistButton } from "@/components/WatchlistButton";
 import { CountUpScore } from "@/components/CountUpScore";
+import { StockLogo } from "@/components/StockLogo";
 import { EvidenceList } from "@/components/EvidenceList";
 import { EvidenceTimeline } from "@/components/EvidenceTimeline";
 import { MarketIndices } from "@/components/MarketIndices";
@@ -116,14 +117,18 @@ function ReportPageInner() {
 
       {/* 헤더 */}
       <div className="mt-4 flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <div className="text-[13px] text-muted">
-            {report.stock.stock_code} · {report.stock.market ?? "—"} · {report.stock.sector ?? "—"}
+        <div className="flex items-center gap-3.5">
+          {/* 회사 로고 — 발행된 로고가 있으면 이미지, 없으면 종목명 이니셜 폴백(StockLogo 내부 처리). */}
+          <StockLogo code={report.stock.stock_code} name={report.stock.stock_name} size={56} />
+          <div>
+            <div className="text-[13px] text-muted">
+              {report.stock.stock_code} · {report.stock.market ?? "—"} · {report.stock.sector ?? "—"}
+            </div>
+            <h1 className="my-1 text-[32px] font-extrabold">{report.stock.stock_name} 리포트</h1>
+            {report.report_version?.updated_at && (
+              <span className="text-[12px] text-muted">업데이트 {report.report_version.updated_at.slice(0, 16).replace("T", " ")}</span>
+            )}
           </div>
-          <h1 className="my-1 text-[32px] font-extrabold">{report.stock.stock_name} 리포트</h1>
-          {report.report_version?.updated_at && (
-            <span className="text-[12px] text-muted">업데이트 {report.report_version.updated_at.slice(0, 16).replace("T", " ")}</span>
-          )}
         </div>
         <div className="text-right">
           <div className="mt-2">
@@ -141,7 +146,7 @@ function ReportPageInner() {
           </div>
         </div>
         <div className="flex-1 min-w-[240px]">
-          <span className={`pill ${tone(dir.tone)}`} style={{ padding: "5px 11px" }}>{dir.label}</span>
+          <span className={`pill ${dir.pill}`} style={{ padding: "5px 11px" }}>{dir.label}</span>
           {report.warning_level && report.warning_level !== "NORMAL" ? (
             <span
               className="pill down ml-2"
@@ -440,7 +445,7 @@ function SourceCard({
       >
         <div className="flex items-center gap-2 font-bold">
           <SourceIcon source={sourceKey} size={18} className="text-navy-soft" /> {meta.label}
-          <span className={`pill ${tone(dir.tone)} ml-auto`} style={{ padding: "3px 9px", fontSize: 12 }}>{dir.label}</span>
+          <span className={`pill ${dir.pill} ml-auto`} style={{ padding: "3px 9px", fontSize: 12 }}>{dir.label}</span>
         </div>
         {/* 점수/상태 줄은 높이를 고정한다 — 소스마다 글자 크기가 달라 요약 시작선이 어긋난다. */}
         <div className="mt-3 flex h-[40px] items-baseline gap-1">
