@@ -254,6 +254,7 @@ async def run(days: int, model: str, out_json: str | None, do_memory: bool) -> N
         # asof 별 · 소스별 결과
         out: dict[str, dict[str, dict[str, dict]]] = {}
         calls = 0
+        schema_fails = 0
 
         for asof in asofs:
             closes = {
@@ -309,7 +310,18 @@ async def run(days: int, model: str, out_json: str | None, do_memory: bool) -> N
                     scored = await score_cohort(client, source=src, asof=str(asof), cohort=cohort)
                     calls += 1
                 except Exception as exc:  # noqa: BLE001
-                    print(f"  [{asof}] {src}: LLM 실패 — {exc}")
+                    # 429(크레딧 고갈/레이트리밋)는 **즉시 중단**한다. 계속 돌면 모든 소스가
+                    # 조용히 '실패'로 떨어져 '스키마 위반'처럼 보이는 오염된 결과가 나온다
+                    # (실제로 한 번 그렇게 오독했다).
+                    if "429" in str(exc):
+                        raise SystemExit(
+                            f"\n❌ API 쿼터/크레딧 소진 (HTTP 429) — 실행 중단.\n"
+                            f"   부분 결과는 신뢰할 수 없다(모든 소스가 실패로 떨어져 스키마\n"
+                            f"   위반처럼 보인다). 키를 충전하거나 다른 프로바이더로 재실행할 것.\n"
+                            f"   원문: {exc}"
+                        ) from exc
+                    print(f"  [{asof}] {src}: 스키마 위반 — {exc}")
+                    schema_fails += 1
                     continue
                 for s in scored:
                     day[s.ticker][src].update({
@@ -344,7 +356,10 @@ async def run(days: int, model: str, out_json: str | None, do_memory: bool) -> N
                             "blend_basis": blend_basis(v),
                         }
                 except Exception as exc:  # noqa: BLE001
-                    print(f"  [{asof}] AGGREGATE 실패 — {exc}")
+                    if "429" in str(exc):
+                        raise SystemExit(f"\n❌ API 쿼터/크레딧 소진 (429) — 중단. {exc}") from exc
+                    print(f"  [{asof}] AGGREGATE 스키마 위반 — {exc}")
+                    schema_fails += 1
             out[str(asof)] = day
             line = " | ".join(
                 f"{t} {(day[t].get('_verdict') or {}).get('final_score', 0.0):+.2f}"
@@ -353,7 +368,10 @@ async def run(days: int, model: str, out_json: str | None, do_memory: bool) -> N
             )
             print(f"[{asof}] 통합 → {line}")
 
-        print(f"\nLLM 호출 {calls}회 (코호트 배치: 종목 3개를 1회로 처리)")
+        total = calls + schema_fails
+        rate = (schema_fails / total * 100) if total else 0.0
+        print(f"\nLLM 호출: 성공 {calls}회 / 스키마 위반 {schema_fails}회 "
+              f"(위반율 {rate:.1f}%) — 위반율은 모델 선정 1순위 지표")
         _print_matrix(out, asofs, stocks)
 
         if do_memory:
