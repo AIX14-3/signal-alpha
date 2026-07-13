@@ -47,6 +47,7 @@ from app.analyzers.llm_scorer import (  # noqa: E402
 from app.backtest.reference_scorer import SOURCES, score_source  # noqa: E402
 from app.clients.embedding_client import GeminiEmbeddingClient  # noqa: E402
 from app.clients.gemini_client import GeminiJsonClient  # noqa: E402
+from app.clients.vertex_client import VertexEmbeddingClient, VertexJsonClient  # noqa: E402
 from app.memory.situation import SituationInput, build_situation_text  # noqa: E402
 from app.ml.source_features import pit_rows  # noqa: E402
 from app.ml.train_source_models import _PriceTrainingLoader, _build_loader  # noqa: E402
@@ -226,10 +227,48 @@ async def _report_rows(conn, stock_id: int, asof: date) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-async def run(days: int, model: str, out_json: str | None, do_memory: bool) -> None:
+def _abort_if_quota(exc: Exception, asof, where: str) -> None:
+    """쿼터 소진이면 **즉시 중단**. 계속 돌면 모든 소스가 조용히 '실패'로 떨어져
+    **스키마 위반처럼 보이는 오염된 결과**가 나온다(실제로 한 번 그렇게 오독했다).
+
+    단, 429 를 두 종류로 구분한다:
+      - AI Studio "prepayment credits depleted" → **회복 불가**. 충전 전엔 못 돈다.
+      - Vertex "Resource exhausted"            → **일시적 공유 용량 스로틀**. 클라이언트가
+        지수 백오프로 재시도하며, 그걸 다 소진하고도 실패했다면 그때만 여기 도달한다.
+    """
+    text = str(exc)
+    if "429" not in text:
+        return
+    depleted = "credits are depleted" in text
+    kind = "선불 크레딧 소진(회복 불가 — 충전 필요)" if depleted else \
+        "용량 스로틀(백오프 재시도까지 모두 소진)"
+    raise SystemExit(
+        f"\n❌ [{asof}] {where}: HTTP 429 — {kind}. 실행 중단.\n"
+        f"   부분 결과는 신뢰하지 말 것(모든 소스가 실패로 떨어져 스키마 위반처럼 보인다).\n"
+        f"   원문: {text[:300]}"
+    ) from exc
+
+
+def _build_client(provider: str, model: str):
+    """프로바이더 중립 — 채점기는 JsonLlm 프로토콜만 본다.
+
+    vertex : GCP 결제계좌 직결(ADC). AI Studio 선불 크레딧과 무관 → 크레딧 소진으로 안 멈춘다.
+             finishReason/maxOutputTokens/thinking 을 제대로 다뤄 스키마 위반의 주원인을 없앤다.
+    aistudio: 기존 GeminiJsonClient(선불 크레딧 경로). 비교용으로 남긴다.
+    """
+    if provider == "vertex":
+        return VertexJsonClient(model=model, temperature=0.0)
+    if provider == "aistudio":
+        return GeminiJsonClient(model=model, temperature=0.0)
+    raise SystemExit(f"unknown provider: {provider}")
+
+
+async def run(
+    days: int, model: str, out_json: str | None, do_memory: bool, provider: str = "vertex"
+) -> None:
     db_url = os.environ["DATABASE_URL"]
     _require_local(db_url)
-    client = GeminiJsonClient(model=model, temperature=0.0)
+    client = _build_client(provider, model)
 
     conn = await asyncpg.connect(db_url)
     try:
@@ -247,7 +286,7 @@ async def run(days: int, model: str, out_json: str | None, do_memory: bool) -> N
             )
         ][::-1]
 
-        print(f"=== 3종목 × 6소스 × {len(asofs)}일 — model {model} ===")
+        print(f"=== 3종목 × 6소스 × {len(asofs)}일 — {provider}/{model} ===")
         print(f"asof: {asofs[0]} ~ {asofs[-1]}\n")
 
         repo = RawDetailRepository(conn)
@@ -255,6 +294,7 @@ async def run(days: int, model: str, out_json: str | None, do_memory: bool) -> N
         out: dict[str, dict[str, dict[str, dict]]] = {}
         calls = 0
         schema_fails = 0
+        tok_in = tok_out = tok_think = 0
 
         for asof in asofs:
             closes = {
@@ -309,17 +349,12 @@ async def run(days: int, model: str, out_json: str | None, do_memory: bool) -> N
                 try:
                     scored = await score_cohort(client, source=src, asof=str(asof), cohort=cohort)
                     calls += 1
+                    u = getattr(client, "last_usage", {}) or {}
+                    tok_in += u.get("input_tokens", 0)
+                    tok_out += u.get("output_tokens", 0)
+                    tok_think += u.get("thought_tokens", 0)
                 except Exception as exc:  # noqa: BLE001
-                    # 429(크레딧 고갈/레이트리밋)는 **즉시 중단**한다. 계속 돌면 모든 소스가
-                    # 조용히 '실패'로 떨어져 '스키마 위반'처럼 보이는 오염된 결과가 나온다
-                    # (실제로 한 번 그렇게 오독했다).
-                    if "429" in str(exc):
-                        raise SystemExit(
-                            f"\n❌ API 쿼터/크레딧 소진 (HTTP 429) — 실행 중단.\n"
-                            f"   부분 결과는 신뢰할 수 없다(모든 소스가 실패로 떨어져 스키마\n"
-                            f"   위반처럼 보인다). 키를 충전하거나 다른 프로바이더로 재실행할 것.\n"
-                            f"   원문: {exc}"
-                        ) from exc
+                    _abort_if_quota(exc, asof, src)
                     print(f"  [{asof}] {src}: 스키마 위반 — {exc}")
                     schema_fails += 1
                     continue
@@ -341,6 +376,10 @@ async def run(days: int, model: str, out_json: str | None, do_memory: bool) -> N
                         names={t: n for _s, t, n in stocks},
                     )
                     calls += 1
+                    u = getattr(client, "last_usage", {}) or {}
+                    tok_in += u.get("input_tokens", 0)
+                    tok_out += u.get("output_tokens", 0)
+                    tok_think += u.get("thought_tokens", 0)
                     for v in verdicts:
                         day[v.ticker]["_verdict"] = {
                             "final_score": v.final_score,
@@ -372,10 +411,18 @@ async def run(days: int, model: str, out_json: str | None, do_memory: bool) -> N
         rate = (schema_fails / total * 100) if total else 0.0
         print(f"\nLLM 호출: 성공 {calls}회 / 스키마 위반 {schema_fails}회 "
               f"(위반율 {rate:.1f}%) — 위반율은 모델 선정 1순위 지표")
+        if tok_in or tok_out:
+            # gemini-2.5-flash 공시 단가(2026-07): 입력 $0.30 / 출력 $2.50 per 1M.
+            cost = tok_in / 1e6 * 0.30 + tok_out / 1e6 * 2.50
+            per_day = cost / max(1, len(asofs))
+            print(f"토큰 실측: 입력 {tok_in:,} / 출력 {tok_out:,} / thinking {tok_think:,}")
+            print(f"비용: ${cost:.4f} ({len(asofs)}일·3종목) → 1일 3종목 ${per_day:.4f}")
+            print(f"  ↳ 200종목 환산(코호트 10종목 가정): 1일 약 ${per_day / 3 * 200 / 10 * 3:.2f} "
+                  f"· 월 약 ${per_day / 3 * 200 / 10 * 3 * 30:.0f}")
         _print_matrix(out, asofs, stocks)
 
         if do_memory:
-            await _memory_check(conn, out, asofs, stocks)
+            await _memory_check(conn, out, asofs, stocks, provider)
 
         if out_json:
             Path(out_json).write_text(
@@ -445,12 +492,14 @@ def _print_matrix(out, asofs, stocks) -> None:
         print(row)
 
 
-async def _memory_check(conn, out, asofs, stocks) -> None:
+async def _memory_check(conn, out, asofs, stocks, provider: str = "vertex") -> None:
     """에피소드 메모리(pgvector) 표류 탐지기로서 실제 작동하는지 확인."""
     print("\n" + "=" * 100)
     print("에피소드 메모리 검증 — 임베딩 저장 → 코사인 KNN 회상 → 점수 일관성")
     print("=" * 100)
-    embedder = GeminiEmbeddingClient()
+    # 임베딩도 프로바이더를 맞춰야 한다 — 채점만 Vertex 로 넘기고 임베딩을 AI Studio 로
+    # 두면 크레딧이 마르는 순간 여기서 터진다(실제로 그랬다).
+    embedder = VertexEmbeddingClient() if provider == "vertex" else GeminiEmbeddingClient()
     print(f"embedding model: {embedder.model}")
 
     stored = 0
@@ -528,10 +577,11 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--days", type=int, default=7)
     ap.add_argument("--model", default="gemini-2.5-flash")
+    ap.add_argument("--provider", default="vertex", choices=["vertex", "aistudio"])
     ap.add_argument("--json", dest="out_json", default=None)
     ap.add_argument("--no-memory", action="store_true")
     args = ap.parse_args()
-    asyncio.run(run(args.days, args.model, args.out_json, not args.no_memory))
+    asyncio.run(run(args.days, args.model, args.out_json, not args.no_memory, args.provider))
 
 
 if __name__ == "__main__":
