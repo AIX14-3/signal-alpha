@@ -96,11 +96,12 @@ def _task():
     }
 
 
-def _settings(fallback="rules"):
+def _settings(fallback="rules", validation=False):
     return SimpleNamespace(
         llm_scoring_fallback=fallback,
         llm_scoring_provider="vertex",
         llm_scoring_model="fake",
+        llm_validation_enabled=validation,
     )
 
 

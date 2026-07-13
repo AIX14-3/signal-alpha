@@ -306,6 +306,9 @@ class Settings:
         self.llm_aggregate_enabled = _env_bool("LLM_AGGREGATE_ENABLED", default=False)
         # 코호트(한 프롬프트에 함께 넣어 상대 채점하는 종목 수). 실측 비용 산정 기준 10.
         self.llm_cohort_size = int(getenv("LLM_COHORT_SIZE", "10"))
+        # 데이터 품질 검증 그래프(정규화·분석 적절성 감사) — 코호트당 LLM 1콜 추가.
+        # 검증은 점수를 바꾸지 않는다: needs_review/risk_flags 승격 + validation_logs 기록만.
+        self.llm_validation_enabled = _env_bool("LLM_VALIDATION_ENABLED", default=False)
         # vertex(GCP 결제 직결·ADC) | aistudio(선불 크레딧 — 비교용).
         self.llm_scoring_provider = getenv("LLM_SCORING_PROVIDER", "vertex").strip().lower()
         self.llm_scoring_model = getenv("LLM_SCORING_MODEL", "") or getenv(

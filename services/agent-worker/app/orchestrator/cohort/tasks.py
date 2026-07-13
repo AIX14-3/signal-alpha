@@ -141,6 +141,7 @@ class CohortScoreTaskHandler:
 
         results: list[SourceResult]
         llm_model: str | None = None
+        client: Any | None = None
         try:
             client = self._build_client()
             scored = await score_cohort(client, source=source, asof=str(as_of), cohort=cohort)
@@ -163,6 +164,18 @@ class CohortScoreTaskHandler:
             results = await self._rules_fallback(spec, cohort, pit_by_ticker, close_by_ticker, as_of, str(exc))
             mode = "rules_fallback"
 
+        # 데이터 품질 검증 그래프 (opt-in) — 정규화·분석 적절성을 감사해 needs_review/
+        # risk_flags 를 승격한다. 점수는 절대 바꾸지 않는다. 실패해도 발행을 못 막는다.
+        validation_by_ticker: dict[str, Any] = {}
+        if self._settings.llm_validation_enabled and results:
+            try:
+                validation_by_ticker = await self._validate(
+                    source, as_of, pit_by_ticker, results,
+                    client=client if mode == "llm" else None,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("SCORE_COHORT %s 데이터 품질 검증 실패(무시): %s", source, exc)
+
         stock_id_of = {t: sid for sid, t, _n in stocks}
         persistence = AlternativeSignalPersistence(
             self._connection,
@@ -174,6 +187,16 @@ class CohortScoreTaskHandler:
             stock_id = stock_id_of.get(result.stock_code)
             if stock_id is None:
                 continue
+            verdict = validation_by_ticker.get(result.stock_code)
+            if verdict is not None and not verdict.ok:
+                # 검증은 점수를 바꾸지 않는다 — 검토 플래그와 품질 사유만 승격.
+                from dataclasses import replace
+
+                result = replace(
+                    result,
+                    needs_review=True,
+                    risk_flags=[*result.risk_flags, "data_quality"],
+                )
             try:
                 signal = build_source_signal(result, self._aggregator_config)
                 ids = await persistence.save(
@@ -193,6 +216,11 @@ class CohortScoreTaskHandler:
                     },
                     priority="batch",
                 )
+                # 검증 결과를 관측 가능한 sink(validation_logs)에 남긴다 — 통과도 기록해
+                # "검증이 돌았는데 깨끗했다"와 "검증이 안 돌았다"를 구분할 수 있게.
+                if verdict is not None:
+                    for agent_result_id in ids.get("agent_result_ids") or []:
+                        await self._record_validation(agent_result_id, verdict)
             except Exception as exc:  # noqa: BLE001 — 한 종목 발행 실패 격리
                 logger.warning(
                     "SCORE_COHORT %s: %s 발행 실패: %s", source, result.stock_code, exc
@@ -228,6 +256,49 @@ class CohortScoreTaskHandler:
         return build_json_client(
             self._settings.llm_scoring_provider, self._settings.llm_scoring_model
         )
+
+    async def _validate(
+        self,
+        source: str,
+        as_of: date,
+        pit_by_ticker: dict[str, list[dict]],
+        results: list[SourceResult],
+        *,
+        client: Any | None,
+    ) -> dict[str, Any]:
+        """데이터 품질 검증 그래프 실행 → ticker→verdict. langgraph 는 지연 import
+        (플래그 off 경로는 langgraph 미의존 — registry 의 cause 에이전트 관례)."""
+        from app.agents.validation import ValidationGraphAgent
+
+        scored = {
+            r.stock_code: {
+                "score": r.score,
+                "direction": r.direction,
+                "no_signal": r.data_status == "no_signal",
+                "evidence": [item.summary for item in r.evidence_items],
+            }
+            for r in results
+        }
+        agent = ValidationGraphAgent(client=client)
+        verdicts = await agent.validate(
+            source=source, asof=as_of, pit_by_ticker=pit_by_ticker, scored=scored
+        )
+        return {v.ticker: v for v in verdicts}
+
+    async def _record_validation(self, agent_result_id: int, verdict: Any) -> None:
+        """validation_logs 기록 — 실패해도 발행을 못 막는다(best-effort)."""
+        try:
+            from signal_alpha_data_access.repositories import NormalizationRepository
+
+            await NormalizationRepository(self._connection).record_validation_log(
+                target_type="agent_result",
+                target_id_int=int(agent_result_id),
+                validation_type="data_quality",
+                passed=bool(verdict.ok),
+                message="; ".join(verdict.issues)[:500] or "clean",
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("validation_logs 기록 실패(무시): %s", exc)
 
     async def _rules_fallback(
         self,
