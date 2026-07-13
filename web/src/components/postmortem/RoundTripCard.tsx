@@ -30,9 +30,12 @@ export function RoundTripCard({ trip }: { trip: RoundTrip }) {
           {formatDate(trip.opened_at)} → {trip.is_open ? "보유 중" : formatDate(trip.closed_at)}
           {trip.holding_days !== null && !trip.is_open ? ` · ${trip.holding_days}일 보유` : ""}
         </span>
-        <span className={`text-[15px] font-bold ${pnlClass(trip.realized_pnl_pct)}`}>
-          {trip.is_open ? "미청산" : formatPct(trip.realized_pnl_pct)}
-        </span>
+        {/* 미청산(보유 중)은 우측 손익 배지를 표시하지 않는다 — 좌측 "보유 중"으로 이미 드러난다. */}
+        {!trip.is_open && (
+          <span className={`text-[15px] font-bold ${pnlClass(trip.realized_pnl_pct)}`}>
+            {formatPct(trip.realized_pnl_pct)}
+          </span>
+        )}
       </div>
 
       <div className="mt-1 text-[13px] text-navy-soft">
@@ -47,7 +50,7 @@ export function RoundTripCard({ trip }: { trip: RoundTrip }) {
 
       {/* 계획 대비 실제 */}
       {pva.has_plan && pva.evaluated ? (
-        <div className="mt-3 rounded-lg bg-surface-2 px-4 py-3 text-[13px] text-navy-soft">
+        <div className="mt-3 rounded-lg border border-line bg-white px-4 py-3 text-[13px] text-navy-soft">
           <p className="font-semibold text-navy">계획 대비 실제</p>
           {pva.thesis ? <p className="mt-1">근거: {pva.thesis}</p> : null}
           {pva.planned_stop_pct !== undefined ? (
@@ -61,7 +64,7 @@ export function RoundTripCard({ trip }: { trip: RoundTrip }) {
           {pva.planned_target_pct !== undefined ? (
             <p className="mt-1">
               목표 {formatPct(pva.planned_target_pct)}
-              {pva.reached_target ? " 도달." : " 미도달."}
+              {pva.reached_target ? " 도달" : " 미도달"}
             </p>
           ) : null}
         </div>
@@ -80,7 +83,7 @@ export function RoundTripCard({ trip }: { trip: RoundTrip }) {
           <ul className="mt-1 space-y-1">
             {trip.observed_signals.map((s, i) => (
               <li key={i} className="text-[12.5px] text-navy-soft">
-                {formatDate(s.signal_date)} · {signalKindLabel(s.kind)}
+                {formatDate(s.signal_date)} {signalKindLabel(s.kind)}
                 {detailHolder(s.detail) ? ` (${detailHolder(s.detail)})` : ""}
               </li>
             ))}

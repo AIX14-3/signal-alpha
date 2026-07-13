@@ -53,19 +53,23 @@ export function consensusPercent(score: number | null | undefined): string {
 }
 
 /** direction → 데이터 방향성 라벨 (투자 권유 표현 금지). */
+// tone = 의미색(리포트 서류철 뒷표지 등 up/down/flat 공용).
+// pill = 방향 배지 전용 색 클래스(한국 관례: 긍정=빨강/부정=파랑, 불일치=보라, 중립=회색).
+//        경고/주의 배지(.pill.down)와 분리하려고 별도 클래스를 둔다.
 export function directionLabel(direction: string | null | undefined): {
   label: string;
   tone: "up" | "down" | "flat";
+  pill: "dir-pos" | "dir-neg" | "dir-mixed" | "dir-neutral";
 } {
   switch ((direction ?? "").toUpperCase()) {
     case "POSITIVE":
-      return { label: "긍정 방향", tone: "up" };
+      return { label: "긍정 방향", tone: "up", pill: "dir-pos" };
     case "NEGATIVE":
-      return { label: "부정 방향", tone: "down" };
+      return { label: "부정 방향", tone: "down", pill: "dir-neg" };
     case "MIXED":
-      return { label: "혼조", tone: "flat" };
+      return { label: "불일치", tone: "flat", pill: "dir-mixed" };
     default:
-      return { label: "중립", tone: "flat" };
+      return { label: "중립", tone: "flat", pill: "dir-neutral" };
   }
 }
 
@@ -235,6 +239,20 @@ export function dateTimeShortKST(value: string | null | undefined): string {
   }).formatToParts(d);
   const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
   return `${get("month")}.${get("day")} ${get("hour")}:${get("minute")}`;
+}
+
+// 뉴스 목록용 날짜만 KST 표기 "MM.DD"(시각 제외).
+export function dateShortKST(value: string | null | undefined): string {
+  if (!value) return "-";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  const parts = new Intl.DateTimeFormat("ko-KR", {
+    timeZone: "Asia/Seoul",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(d);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+  return `${get("month")}.${get("day")}`;
 }
 
 // 수집/LLM 유래 URL은 신뢰할 수 없다 — href 로 렌더하기 전 http(s) 스킴만 허용한다.

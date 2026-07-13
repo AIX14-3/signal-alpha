@@ -31,6 +31,33 @@ export function viewLabel(view: string | null | undefined): string {
   return VIEW_LABEL[view] ?? view;
 }
 
+// 시그널 블록(카드·상세) 색 — 라이트 패널 위에 얹는다. long=초록 / short=빨강 은 방향 의미색,
+// neutral 은 브랜드 보라 대신 중립 슬레이트(과한 보라 방지). 목록·상세가 이 한 벌을 공유한다.
+export const SIGNAL_STYLE = {
+  // 한국 주식시장 관례 — 수익(+)=빨강, 손실(−)=파랑. neutral 은 중립 슬레이트.
+  long: {
+    grad: "linear-gradient(160deg,#fef2f2,#fee2e2)",
+    border: "#fecaca",
+    ticker: "#991b1b",
+    tag: "#ef4444",
+    value: "#dc2626",
+  },
+  short: {
+    grad: "linear-gradient(160deg,#eff6ff,#dbeafe)",
+    border: "#bfdbfe",
+    ticker: "#1e40af",
+    tag: "#3b82f6",
+    value: "#2563eb",
+  },
+  neutral: {
+    grad: "linear-gradient(160deg,#f8fafc,#eef2f7)",
+    border: "#e2e8f0",
+    ticker: "#334155",
+    tag: "#64748b",
+    value: "#334155",
+  },
+} as const;
+
 export type PostDirection = {
   kind: "long" | "short" | "neutral";
   label: string;
@@ -50,7 +77,7 @@ export function postDirection(post: {
     const up = pnl >= 0;
     return {
       kind: up ? "long" : "short",
-      label: up ? "LONG" : "SHORT",
+      label: up ? "수익" : "손실",
       icon: up ? "▲" : "▼",
       pctText: `${up ? "+" : ""}${pnl.toFixed(2)}%`,
     };

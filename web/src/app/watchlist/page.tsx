@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { getSignalsByStockIds, type SignalListItem } from "@/lib/apiClient";
+import { StockLogo } from "@/components/StockLogo";
 import { directionLabel, scoreText, sourceLabel, warningLevelLabel } from "@/lib/format";
 import { useAuthStore } from "@/stores/authStore";
 import { useWatchlistStore } from "@/stores/watchlistStore";
@@ -18,10 +19,6 @@ const SOURCE_KEYS = ["dart", "price", "report", "datalab", "patent", "hiring"] a
 const NEUTRAL_SCORE = 50;
 /** 이 폭 안이면 중립으로 본다. 50.0 을 빨간(긍정) 막대로 그리면 없는 방향이 생긴다. */
 const NEUTRAL_BAND = 0.5;
-
-function tone(t: "up" | "down" | "flat"): string {
-  return t === "up" ? "up" : t === "down" ? "down" : "flat";
-}
 
 /** 변화량 표기. null 은 "변화 없음"이 아니라 비교 불가다 — 다르게 보여 준다. */
 function DeltaBadge({ change }: { change: SignalListItem["change"] }) {
@@ -98,7 +95,7 @@ function SourceBars({ item }: { item: SignalListItem }) {
       <div className="mt-1 flex gap-1.5">
         {SOURCE_KEYS.map((key) => (
           <span key={key} className="flex-1 truncate text-center text-[10px] text-muted">
-            {sourceLabel(key)}
+            {key === "report" ? "리포트" : sourceLabel(key)}
           </span>
         ))}
       </div>
@@ -119,13 +116,17 @@ function WatchCard({ item, code }: { item: SignalListItem; code: string }) {
       data-stock={code}
     >
       <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <div className="truncate text-[15px] font-bold">{item.stock.stock_name ?? code}</div>
-          <div className="text-[12px] text-muted">
-            {code} · {item.stock.market ?? "—"}
+        <div className="flex min-w-0 items-center gap-2.5">
+          {/* 회사 로고 — 발행분 있으면 이미지, 없으면 종목명 이니셜(StockLogo 내부 폴백). */}
+          <StockLogo code={code} name={item.stock.stock_name} size={36} />
+          <div className="min-w-0">
+            <div className="truncate text-[15px] font-bold">{item.stock.stock_name ?? code}</div>
+            <div className="text-[12px] text-muted">
+              {code} · {item.stock.market ?? "—"}
+            </div>
           </div>
         </div>
-        <span className={`pill ${tone(dir.tone)} shrink-0`} style={{ padding: "3px 9px", fontSize: 12 }}>
+        <span className={`pill ${dir.pill} shrink-0`} style={{ padding: "3px 9px", fontSize: 12 }}>
           {dir.label}
         </span>
       </div>
@@ -154,7 +155,7 @@ function WatchCard({ item, code }: { item: SignalListItem; code: string }) {
 
       <SourceBars item={item} />
 
-      <div className="mt-3 text-[13px] font-semibold text-sky-deep">리포트 보기 →</div>
+      <div className="mt-3 text-[13px] font-semibold text-navy">리포트 보기 →</div>
     </Link>
   );
 }

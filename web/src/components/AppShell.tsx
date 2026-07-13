@@ -66,7 +66,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 onClick={() => void logout()}
                 className="rounded-full border border-line px-4 py-2 text-[13.5px] font-semibold text-navy-soft hover:border-navy hover:text-navy"
               >
-                {user.nickname ?? user.member_code} · 로그아웃
+                로그아웃
               </button>
             ) : (
               <Link
@@ -87,7 +87,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       </main>
 
       <footer className="relative z-10 border-t border-line py-8 text-center text-[13px] text-muted">
-        Signal α · 데이터 방향성과 근거를 제공하는 서비스 (투자 권유·수익 보장 아님)
+        Signal α 데이터 방향성과 근거를 제공하는 서비스 (투자 권유 수익 보장 아님)
       </footer>
 
       <Toaster />

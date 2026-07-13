@@ -20,10 +20,12 @@ export function EvidenceList({
   emptyText: string;
 }) {
   const accent = tone === "up" ? "긍정" : "주의";
+  // 배지 색 = 한국 관례(긍정=빨강 / 주의·부정=파랑). 방향 pill 과 동일 클래스.
+  const pillCls = tone === "up" ? "dir-pos" : "dir-neg";
   return (
     <section className="glass mt-4 p-5" data-section={`evidence-${tone}`}>
       <div className="flex items-center gap-2">
-        <span className={`pill ${tone}`} style={{ padding: "3px 10px", fontSize: 12 }}>
+        <span className={`pill ${pillCls}`} style={{ padding: "3px 10px", fontSize: 12 }}>
           {accent}
         </span>
         <h2 className="text-[16px] font-bold">{title}</h2>

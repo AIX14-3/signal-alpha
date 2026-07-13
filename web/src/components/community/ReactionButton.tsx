@@ -100,7 +100,7 @@ export function ReactionButton({
         active
           ? type === "like"
             ? "brand-grad text-white shadow-[0_6px_14px_rgba(124,58,237,.25)]"
-            : "border border-line bg-surface-2 text-sky-deep"
+            : "border border-line bg-white text-sky-deep"
           : "border border-line text-navy-soft hover:border-navy hover:text-navy"
       }`}
     >
