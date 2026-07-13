@@ -13,6 +13,7 @@ resources:
   - collector.yaml
   - scheduler.yaml
   - altdata-cronjob.yaml
+  - datalab-keywords-cronjob.yaml
   - hiring-cronjob.yaml
   - journal-outcomes-cronjob.yaml
   - community-rankings-cronjob.yaml
