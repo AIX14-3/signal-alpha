@@ -14,10 +14,13 @@ from app.orchestrator.cohort.tasks import CohortScoreTaskHandler
 
 
 class _FakeConnection:
-    def __init__(self, stock_rows):
+    def __init__(self, stock_rows, prev_score_rows=None):
         self._stock_rows = stock_rows
+        self._prev_score_rows = prev_score_rows or []
 
     async def fetch(self, query, *args):
+        if "agent_results" in query:
+            return self._prev_score_rows
         return self._stock_rows
 
     async def fetchval(self, query, *args):
@@ -66,8 +69,10 @@ class _FakeClient:
     def __init__(self, payload=None, error=None):
         self._payload = payload
         self._error = error
+        self.prompts = []
 
     async def generate_json(self, prompt, schema=None):
+        self.prompts.append(prompt)
         if self._error is not None:
             raise self._error
         return self._payload
@@ -164,6 +169,33 @@ def test_llm_failure_with_rules_fallback_publishes_observably(monkeypatch):
     assert result.analysis_source == "rules_fallback"
     assert result.score == 0.25
     assert "schema violation" in (result.llm_error or "")
+
+
+def test_prev_score_recalled_pit_and_injected_into_prompt():
+    """메모리를 채점 입력으로: 직전 점수(PIT)가 prev_score 로 프롬프트에 주입돼
+    앵커링 규범(|Δ|>0.3 → score_change_reason 필수)이 발화한다."""
+    client = _FakeClient(
+        payload={"scores": [{
+            "ticker": "005930", "score": 0.1, "confidence": 0.4,
+            "no_signal": False, "evidence": ["소폭 개선"],
+        }]}
+    )
+    handler = CohortScoreTaskHandler(
+        _FakeConnection(
+            _stock_rows(),
+            prev_score_rows=[
+                {"analysis_date": "2026-07-12", "score": "-0.2"},
+                {"analysis_date": "2026-07-11", "score": "0.1"},
+            ],
+        ),
+        settings=_settings(),
+        client_factory=lambda: client,
+    )
+    out = asyncio.run(handler(_task()))
+    assert out["status"] == "success"
+    prompt = client.prompts[0]
+    assert '"prev_score": -0.2' in prompt  # 가장 최근(직전) 점수만 앵커
+    assert "own_scores_recent" in prompt  # 최근 궤적은 self_history 로
 
 
 def test_pit_filter_drops_future_rows():

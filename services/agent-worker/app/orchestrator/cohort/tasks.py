@@ -116,6 +116,13 @@ class CohortScoreTaskHandler:
                 continue
             close = await self._latest_close(stock_id, as_of) if spec.needs_close else None
             evidence, history = build_evidence(source, pit, close)
+            # 메모리를 채점 **입력**으로: 이 소스의 직전 점수들을 PIT(analysis_date < as_of)로
+            # 회상해 주입한다. 프롬프트 규범("증거가 실질적으로 안 변했으면 점수도 크게 변하면
+            # 안 된다 · |Δ| > 0.3 이면 score_change_reason 필수")이 이 값으로 비로소 발화한다
+            # — 점수 표류(삼성 7일 0.00→−0.60→0.00 실측)의 직접 대응책.
+            prev_scores = await self._prev_scores(stock_id, spec.run_key, as_of)
+            if prev_scores:
+                history = {**history, "own_scores_recent": prev_scores}
             pit_by_ticker[ticker] = pit
             close_by_ticker[ticker] = close
             cohort.append(
@@ -125,6 +132,7 @@ class CohortScoreTaskHandler:
                     evidence=evidence,
                     self_history=history,
                     attention=build_attention(pit, as_of) if source == "DATALAB" else None,
+                    prev_score=prev_scores[0]["score"] if prev_scores else None,
                 )
             )
 
@@ -286,6 +294,34 @@ class CohortScoreTaskHandler:
             tickers,
         )
         return [(int(r["id"]), str(r["ticker"]), str(r["name"] or r["ticker"])) for r in rows]
+
+    async def _prev_scores(
+        self, stock_id: int, run_key: str, as_of: date, limit: int = 5
+    ) -> list[dict[str, Any]]:
+        """이 소스의 직전 채점들(부호 점수·최신순). ⚠️ PIT: ``analysis_date < as_of`` 만 —
+        같은 날 재실행분을 넣으면 자기 출력을 되먹이는 루프가 된다."""
+        rows = await self._connection.fetch(
+            """
+            SELECT ar.analysis_date, ag.method_detail->>'score' AS score
+            FROM agent_results ag
+            JOIN analysis_results ar ON ar.id = ag.result_id
+            WHERE ar.stock_id = $1 AND ar.run_key = $2 AND ar.analysis_date < $3
+              AND ag.method_detail->>'score' IS NOT NULL
+            ORDER BY ar.analysis_date DESC
+            LIMIT $4
+            """,
+            stock_id,
+            run_key,
+            as_of,
+            limit,
+        )
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            try:
+                out.append({"date": str(r["analysis_date"]), "score": float(r["score"])})
+            except (TypeError, ValueError):
+                continue
+        return out
 
     async def _latest_close(self, stock_id: int, as_of: date) -> float | None:
         value = await self._connection.fetchval(
