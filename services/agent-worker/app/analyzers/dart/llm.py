@@ -12,27 +12,10 @@ from typing import Any, Protocol
 
 from app.analyzers.dart.financials import extract_dart_financial_metrics
 from app.analyzers.dart.source_result import DartAnalysisResult
-from app.policy_safety import contains_policy_recommendation
+from app.policy_safety import find_investment_advice_in
 
 PROMPT_VERSION = "dart-llm-v1"
 _ALLOWED_DIRECTIONS = {"positive", "negative", "neutral", "mixed"}
-_PROHIBITED_ADVICE_REGEXES = [
-    re.compile(r"\bbuy\b", re.IGNORECASE),
-    re.compile(r"\bsell\b", re.IGNORECASE),
-    re.compile(r"\bhold\b", re.IGNORECASE),
-    re.compile(r"\btarget\s+price\b", re.IGNORECASE),
-]
-_PROHIBITED_ADVICE_PATTERNS = [
-    "buy",
-    "sell",
-    "hold",
-    "target price",
-    "매수",
-    "매도",
-    "보유",
-    "목표가",
-    "투자 추천",
-]
 _HIGH_IMPACT_EVENT_TYPES = {
     "annual_report",
     "business_report",
@@ -429,15 +412,8 @@ def _string_list(value: Any, key: str) -> list[str]:
 
 
 def _reject_investment_advice(values: list[str]) -> None:
-    text = " ".join(values)
-    for pattern in _PROHIBITED_ADVICE_REGEXES:
-        if pattern.search(text):
-            raise DartLlmAnalysisError("DART LLM response contained investment advice language.")
-    lowered = text.lower()
-    for pattern in _PROHIBITED_ADVICE_PATTERNS:
-        if pattern in {"buy", "sell", "hold", "target price"}:
-            continue
-        if pattern.lower() in lowered:
-            raise DartLlmAnalysisError("DART LLM response contained investment advice language.")
-    if contains_policy_recommendation(text):
-        raise DartLlmAnalysisError("DART LLM response contained investment advice language.")
+    hit = find_investment_advice_in(values)
+    if hit is not None:
+        raise DartLlmAnalysisError(
+            f"DART LLM response contained investment advice language: {hit}"
+        )

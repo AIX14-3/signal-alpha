@@ -18,36 +18,11 @@ from pathlib import Path
 from typing import Any
 
 from app.analyzers.dart.llm import LlmClient
-from app.policy_safety import contains_policy_recommendation
+from app.policy_safety import find_investment_advice_in
 
 PROMPT_VERSION = "synthesis-v1"
 
-# 투자조언 표현 차단 — dart/llm.py 와 동일 취지(여기서는 설명 텍스트 전체에 적용).
-# 주의: "매수"/"매도" 단순 부분 문자열은 "순매도"·"매도세"·"매수세 유입" 같은 *서술적* 시장
-# 표현까지 걸어 불필요한 결정론 폴백을 유발한다. 그래서 **지시(directive) 표현**(추천/권유/
-# ~하세요/~하라 등)만 차단해 사실 묘사는 통과시킨다.
-_PROHIBITED_ADVICE_REGEXES = [
-    re.compile(r"\bbuy\b", re.IGNORECASE),
-    re.compile(r"\bsell\b", re.IGNORECASE),
-    re.compile(r"\bhold\b", re.IGNORECASE),
-    re.compile(r"\btarget\s+price\b", re.IGNORECASE),
-    re.compile(r"매[수도]\s*(?:추천|권장|권유|의견|하세요|하라|해야|하시)"),
-    re.compile(r"매[수도](?:를|을)\s*권"),
-    # 패러프레이즈(narrate/base.reject_advice 와 parity) — 토큰을 피한 지시 표현도 차단.
-    re.compile(r"적극\s*매[수도]"),
-    re.compile(r"비중\s*(?:을|를)?\s*(?:확대|축소|늘리|줄이)"),
-    re.compile(r"담으(?:세요|십시오)"),
-    re.compile(r"들어가도\s*좋"),
-]
-_PROHIBITED_ADVICE_SUBSTRINGS = (
-    "목표가",
-    "투자 추천",
-    "투자추천",
-    "비중 확대",
-    "비중 축소",
-    "적극 매수",
-    "적극 매도",
-)
+# 투자조언 표현 차단은 ``app.policy_safety`` 단일 소스(directive-only)로 통합됐다.
 
 
 class SynthesisError(ValueError):
@@ -146,12 +121,6 @@ def _string_list(value: Any, key: str) -> list[str]:
 
 
 def _reject_investment_advice(values: list[str]) -> None:
-    text = " ".join(values)
-    for pattern in _PROHIBITED_ADVICE_REGEXES:
-        if pattern.search(text):
-            raise SynthesisError("Synthesis LLM response contained investment advice language.")
-    for substring in _PROHIBITED_ADVICE_SUBSTRINGS:
-        if substring in text:
-            raise SynthesisError("Synthesis LLM response contained investment advice language.")
-    if contains_policy_recommendation(text):
-        raise SynthesisError("Synthesis LLM response contained investment advice language.")
+    hit = find_investment_advice_in(values)
+    if hit is not None:
+        raise SynthesisError(f"Synthesis LLM response contained investment advice language: {hit}")

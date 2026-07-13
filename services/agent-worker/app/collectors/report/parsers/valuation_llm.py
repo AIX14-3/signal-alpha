@@ -5,15 +5,9 @@ import json
 import re
 from typing import Any
 
+from app.policy_safety import find_investment_advice
+
 ALLOWED_METHODOLOGIES = {"PER", "PBR", "EV_EBITDA", "SOTP", "DCF", "mixed", "unknown"}
-FORBIDDEN_ADVICE_PATTERNS = (
-    re.compile(r"\bbuy\b", re.IGNORECASE),
-    re.compile(r"\bsell\b", re.IGNORECASE),
-    re.compile(r"\bhold\b", re.IGNORECASE),
-    re.compile(r"\btarget\s+price\b", re.IGNORECASE),
-    re.compile(r"\brecommend(?:ation)?\b", re.IGNORECASE),
-    re.compile(r"매수|매도|보유|투자\s*추천|목표가"),
-)
 
 VALUATION_ENRICHMENT_PROMPT = """
 You classify broker-report valuation context for Signal Alpha.
@@ -131,9 +125,11 @@ def _optional_short_text(value: Any) -> str | None:
 
 def _reject_advice(values: list[str | None]) -> None:
     text = "\n".join(value for value in values if value)
-    for pattern in FORBIDDEN_ADVICE_PATTERNS:
-        if pattern.search(text):
-            raise ValueError("Valuation LLM output contains investment advice language.")
+    hit = find_investment_advice(text)
+    if hit is not None:
+        raise ValueError(
+            f"Valuation LLM output contains investment advice language: {hit}"
+        )
 
 
 def _run_complete(awaitable: Any) -> str:
