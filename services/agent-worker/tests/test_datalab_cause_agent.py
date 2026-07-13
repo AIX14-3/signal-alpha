@@ -141,6 +141,35 @@ class LeadLagTest(unittest.TestCase):
         self.assertIsNone(ll.preliminary_cause)
         self.assertEqual(ll.price_points, 1)
 
+    # --- 하락 대칭 (과거엔 임계값이 전부 >= +5% 라 폭락은 라벨이 안 붙었다) -------------
+    # cause 는 방향이 아니라 **타이밍**(누가 먼저였나) 축이다. 악재 급등(리콜·횡령·실적쇼크)에도
+    # 원인 태그가 붙어야 하고, 안 붙으면 제품이 하락 급등을 영영 설명하지 못한다.
+
+    def test_catalyst_when_search_leads_a_crash(self):
+        rows = _spiking_rows()
+        ll = compute_lead_lag(rows, self._prices(0.0, -0.12), as_of=AS_OF, lookback_days=LOOKBACK)
+        self.assertEqual(ll.preliminary_cause, "catalyst")
+        self.assertIn("하락", ll.note)
+
+    def test_fomo_when_price_crashed_before_search(self):
+        rows = _spiking_rows()
+        ll = compute_lead_lag(rows, self._prices(-0.12, 0.0), as_of=AS_OF, lookback_days=LOOKBACK)
+        self.assertEqual(ll.preliminary_cause, "fomo")
+        self.assertIn("하락", ll.note)
+
+    def test_price_led_when_search_flat_but_price_crashes(self):
+        rows = _flat_rows()
+        ll = compute_lead_lag(rows, self._prices(0.0, -0.12), as_of=AS_OF, lookback_days=LOOKBACK)
+        self.assertEqual(ll.preliminary_cause, "price_led")
+
+    def test_small_moves_stay_ambiguous_in_both_directions(self):
+        rows = _spiking_rows()
+        for recent in (0.02, -0.02):  # |변동| < 5% → 모호
+            ll = compute_lead_lag(
+                rows, self._prices(0.0, recent), as_of=AS_OF, lookback_days=LOOKBACK
+            )
+            self.assertIsNone(ll.preliminary_cause)
+
 
 # ---------------------------------------------------------------------------
 # graph agent

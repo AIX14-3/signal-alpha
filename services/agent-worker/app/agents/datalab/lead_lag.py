@@ -10,6 +10,16 @@ recent OHLCV close series. Pure and clock-free: ``as_of`` is supplied by the cal
 The result is a *prelabel* — the LLM classifier confirms it and writes the human
 rationale; on LLM failure the agent falls back to this label. No buy/sell call:
 this is a trace tag (docs §9).
+
+⚠️ ``catalyst`` 를 방향 신호로 승격하지 말 것 (2026-07-13 실측, 3종목·2021~2026):
+catalyst 시점의 20일 forward return 은 기준선 대비 +3.0%p 로 겉보기엔 유의(perm_p .0005)하나 —
+  1. 겹치는 forward 창 때문에 121관측이 사실상 **독립표본 6개**뿐이다. 비겹침으로 재면
+     t = −0.62 로 유의성이 사라진다.
+  2. ``price_led``(**검색이 안 올랐는데** 최근 5% 이상 움직인 그룹)가 **+3.4%p 로 더 높다.**
+     두 그룹의 유일한 차이가 검색인데 검색이 오른 쪽이 낮다 → 이 수익은 전부 "최근에 움직였다"
+     (모멘텀)에서 나오고 **검색의 기여는 0(혹은 음)** 이다.
+이 라벨은 과거 에피소드의 **서술**이지 예측이 아니다. 검색의 실증된 예측력은 방향이 아니라
+매그니튜드 축(→ ``analyzers/datalab/attention.py``)에만 있다.
 """
 
 from __future__ import annotations
@@ -85,6 +95,21 @@ def compute_lead_lag(
     )
 
 
+def _moved(pct: float) -> bool:
+    """의미 있는 가격 변동인가 — **부호 무관**(상승·하락 대칭).
+
+    과거엔 세 분기 모두 ``>= PRICE_MOVE_THRESHOLD`` 였다. 그래서 검색이 선행한 **폭락**은
+    catalyst/price_led 어디에도 안 잡히고 '모호'로 빠졌다 — 악재 급등(리콜·횡령·실적쇼크)에
+    원인 태그가 영영 안 붙는 비대칭. cause 는 방향이 아니라 **타이밍**(누가 먼저였나)을 말하는
+    축이므로 크기로만 판정해야 한다.
+    """
+    return abs(pct) >= PRICE_MOVE_THRESHOLD
+
+
+def _dir(pct: float) -> str:
+    return "상승" if pct > 0 else "하락"
+
+
 def _prelabel(
     search_momentum: float | None,
     prior_return: float | None,
@@ -94,17 +119,19 @@ def _prelabel(
         return None, "가격 수익률 산출 불가"
     rising = search_momentum is not None and search_momentum > SEARCH_RISE_THRESHOLD
 
-    if rising and prior_return >= PRICE_MOVE_THRESHOLD:
-        # Price already jumped in the prior window; search is chasing it now.
+    if rising and _moved(prior_return):
+        # Price already moved in the prior window; search is chasing it now.
         return "fomo", (
-            f"가격이 먼저 {prior_return * 100:+.0f}% 상승한 뒤 검색이 따라붙음(FOMO 패턴)"
+            f"가격이 먼저 {prior_return * 100:+.0f}% {_dir(prior_return)}한 뒤 "
+            f"검색이 따라붙음(FOMO 패턴)"
         )
-    if rising and recent_return >= PRICE_MOVE_THRESHOLD and prior_return < PRICE_MOVE_THRESHOLD:
-        # Search rose while price was flat, then price followed: search led.
+    if rising and _moved(recent_return) and not _moved(prior_return):
+        # Search rose while price was flat, then price followed.
         return "catalyst", (
-            f"검색이 먼저 오르고 가격이 뒤따라 {recent_return * 100:+.0f}% 상승(촉매 패턴)"
+            f"검색이 먼저 오르고 가격이 뒤따라 {recent_return * 100:+.0f}% "
+            f"{_dir(recent_return)}(촉매 패턴)"
         )
-    if recent_return >= PRICE_MOVE_THRESHOLD and not rising:
+    if _moved(recent_return) and not rising:
         # Price moving without a search rise: search merely tracks price.
         return "price_led", (
             f"검색 변화 없이 가격만 {recent_return * 100:+.0f}% 변동(가격 주도)"

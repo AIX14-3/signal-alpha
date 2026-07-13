@@ -32,7 +32,6 @@ import os
 import sys
 from datetime import date
 from pathlib import Path
-from types import SimpleNamespace
 
 _HERE = Path(__file__).resolve()
 sys.path.insert(0, str(_HERE.parents[1]))  # agent-worker 루트 (app.* 임포트)
@@ -41,21 +40,10 @@ sys.path.insert(0, str(_HERE.parent))  # scripts (ic_diagnostic 재사용)
 
 import asyncpg  # noqa: E402
 
-from app.analyzers.config import (  # noqa: E402
-    DartRuleConfig,
-    DataLabRuleConfig,
-    HiringRuleConfig,
-    PatentRuleConfig,
-)
-from app.analyzers.dart.source_result import build_dart_analysis_result  # noqa: E402
-from app.analyzers.datalab.indicators import compute_indicators as datalab_indicators  # noqa: E402
-from app.analyzers.datalab.rules import evaluate_indicators as datalab_eval  # noqa: E402
-from app.analyzers.hiring.indicators import compute_indicators as hiring_indicators  # noqa: E402
-from app.analyzers.hiring.rules import evaluate_indicators as hiring_eval  # noqa: E402
-from app.analyzers.patent.indicators import compute_indicators as patent_indicators  # noqa: E402
-from app.analyzers.patent.rules import evaluate_indicators as patent_eval  # noqa: E402
-from app.analyzers.price.analyzer import PriceAnalyzer  # noqa: E402
-from app.ml.source_features import KNOWN_AT, pit_rows  # noqa: E402
+# 결정론 채점기는 app/backtest/reference_scorer.py 를 통해서만 쓴다(분석기 내부 직접 import 금지).
+# 서빙 경로가 LLM 점수로 넘어가 rules.py 가 사라져도 이 하니스는 그대로 돈다 — 그 이음매가 façade 다.
+from app.backtest.reference_scorer import SOURCES, score_source  # noqa: E402
+from app.ml.source_features import pit_rows  # noqa: E402
 from app.ml.train_source_models import _PriceTrainingLoader, _build_loader  # noqa: E402
 from ic_diagnostic import (  # noqa: E402
     MIN_N,
@@ -76,59 +64,9 @@ except Exception:  # noqa: BLE001
 TARGET = "fwd_return_20d"
 DEFAULT_UNIVERSE = "kospi20_seed"
 
-# (SRC, kind, loader_key, date_key, indicators_fn, eval_fn, config_cls). kind:
-#   rules = compute_indicators + evaluate_indicators (대체데이터 3소스)
-#   dart  = build_dart_analysis_result(events).score (결정론 DART 점수)
-#   price = PriceAnalyzer().analyze (⚠️ 자기참조: 과거가격→미래가격, 대체데이터 알파 아님)
-SOURCES = [
-    ("PATENT", "rules", "patent", KNOWN_AT["patent"], patent_indicators, patent_eval, PatentRuleConfig),
-    ("DATALAB", "rules", "datalab", KNOWN_AT["datalab"], datalab_indicators, datalab_eval, DataLabRuleConfig),
-    ("HIRING", "rules", "hiring", KNOWN_AT["hiring"], hiring_indicators, hiring_eval, HiringRuleConfig),
-    ("DART", "dart", "dart", KNOWN_AT["dart"], None, None, DartRuleConfig),
-    ("PRICE", "price", "price", KNOWN_AT["price"], None, None, None),
-]
-# REPORT 제외: 결정론 분석기/로더 경로가 없고(밸류에이션 별도 경로) 로컬 데이터 27건·최근이라
-# 20일 선행수익률 미경과 → 측정 불가. 데이터·경로 확보 시 별도.
-
-
-def _dart_blite_events(pit: list[dict]) -> list[dict]:
-    """DART ownership 이벤트에 B-lite 방향/임팩트를 부여한다(프로덕션 코드 불변, 하니스 전용).
-
-    build_dart_analysis_result 의 B-lite 는 event['signal_direction']·['impact_level'] 로 임팩트
-    가중 순극성을 낸다. 수집된 ownership 이벤트엔 이 파생 필드가 없어 상수 0(no_signal)이 된다.
-    소스 주석(source_result.py:161)이 명시한 대로 **내부자 shares_delta 부호**를 방향으로,
-    ratio_delta 크기를 임팩트로 매핑해 B-lite 경로를 활성화한다(#805 의도의 근사).
-    """
-    out = []
-    for e in pit:
-        d = dict(e)
-        sd = e.get("shares_delta")
-        d["signal_direction"] = (
-            "positive" if (sd is not None and float(sd) > 0)
-            else "negative" if (sd is not None and float(sd) < 0)
-            else "unknown"
-        )
-        rd = e.get("ratio_delta")
-        mag = abs(float(rd)) if rd is not None else 0.0
-        d["impact_level"] = "high" if mag >= 1.0 else "medium" if mag >= 0.2 else "low"
-        out.append(d)
-    return out
-
-
-async def _score(kind, pit, asof, cfg, sector, ind_fn, eval_fn) -> float:
-    """소스 kind 별 점수 재계산(누수차단된 pit 행 입력). signed [-1, +1] 반환."""
-    if kind == "dart":
-        return build_dart_analysis_result(_dart_blite_events(pit)).score
-    if kind == "price":
-        res = await PriceAnalyzer().analyze("", [SimpleNamespace(metadata={"rows": pit})])
-        return res.score
-    # rules (patent/datalab/hiring)
-    lookback = getattr(cfg, "lookback_days", 30)
-    if ind_fn is hiring_indicators:
-        ind = ind_fn(pit, as_of=asof, lookback_days=lookback, sector_demand=sector)
-    else:
-        ind = ind_fn(pit, as_of=asof, lookback_days=lookback)
-    return eval_fn(ind, cfg).score
+# SOURCES 테이블·결정론 채점기(_score)·DART B-lite 파생은 app/backtest/reference_scorer.py 로
+# 옮겼다. 서빙이 LLM 점수로 넘어가도 이 하니스는 그 façade 만 보므로 그대로 돈다.
+_score = score_source
 
 
 def _require_local(db_url: str) -> None:
