@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { BackgroundFX } from "@/components/BackgroundFX";
+import { CommunityPopularSection } from "@/components/CommunityPopularSection";
 import { HomeLeftPane } from "@/components/HomeLeftPane";
 import { HomeRightPane } from "@/components/HomeRightPane";
 import { MarketIndices } from "@/components/MarketIndices";
@@ -32,6 +33,8 @@ export default function HomePage() {
           <HomeLeftPane />
           <HomeRightPane />
         </div>
+        {/* 커뮤니티 인기순위 — 2컬럼 아래 전체 폭 밴드로 배치(좌우 폭을 가득 채운다). */}
+        <CommunityPopularSection />
       </div>
     </>
   );

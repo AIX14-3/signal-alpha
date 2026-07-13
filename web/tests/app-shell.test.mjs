@@ -47,9 +47,9 @@ test("home dashboard wires market-indices/watchlist bands and the two-column lay
   assert.match(page, /HomeLeftPane/);
   assert.match(page, /HomeRightPane/);
   assert.doesNotMatch(page, /HomeSidebar/);
-  // 우 pane 은 실시간 분석 종목 / 커뮤니티 인기순위 2섹션을 조립한다(관심종목은 상단 밴드로 승격).
+  // 우 pane 은 실시간 분석 종목만 담고, 커뮤니티 인기순위는 2컬럼 아래 전체 폭 밴드(page.tsx)로 분리됐다.
   assert.match(rightPane, /LiveAnalysisSection/);
-  assert.match(rightPane, /CommunityPopularSection/);
+  assert.match(page, /CommunityPopularSection/);
   assert.doesNotMatch(rightPane, /WatchlistSection/);
   // 실시간 분석 아코디언: 캔들 차트 + 리포트(useReportStore) + 전체 리포트 링크 배선.
   assert.match(liveAnalysis, /StockCandleChart/);

@@ -42,7 +42,7 @@ const KR_DOWN = "#3b82f6";
 // 분봉은 자주, 그 외는 느슨하게. 장 종료 후에는 값이 안 변하므로 폴링 자체를 멈춘다.
 const REFRESH_MS: Record<string, number> = { min: 20_000, day: 60_000, month: 300_000, year: 300_000 };
 
-/** KRX 정규장(평일 09:00–15:35 KST) 여부. 장 밖에서는 폴링하지 않는다(무의미한 호출·쿼터 낭비). */
+/** KRX 정규장(평일 09:00–15:35 KST) 여부. 장 밖에서는 폴링하지 않는다(무의미한 호출 쿼터 낭비). */
 function isMarketOpen(now = new Date()): boolean {
   const kst = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Seoul" }));
   const day = kst.getDay();
@@ -85,7 +85,7 @@ export function StockChart({ stockCode, stockName }: { stockCode: string; stockN
   const boxRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Area" | "Line" | "Candlestick"> | null>(null);
-  // 기간·차트 모양을 바꾼 직후 한 번만 화면에 맞춘다. 폴링 갱신 때 맞추면 사용자의 확대가 풀린다.
+  // 기간 차트 모양을 바꾼 직후 한 번만 화면에 맞춘다. 폴링 갱신 때 맞추면 사용자의 확대가 풀린다.
   const shouldFitRef = useRef(true);
 
   const fetchPrices = useCallback(
@@ -159,8 +159,9 @@ export function StockChart({ stockCode, stockName }: { stockCode: string; stockN
         background: { type: ColorType.Solid, color: "transparent" },
         textColor: "#64748b",
         fontSize: 11,
+        attributionLogo: false, // TradingView 로고 워터마크 숨김
       },
-      grid: { horzLines: { color: "rgba(124,58,237,.06)" }, vertLines: { color: "rgba(124,58,237,.04)" } },
+      grid: { horzLines: { color: "rgba(15,27,51,.06)" }, vertLines: { color: "rgba(15,27,51,.04)" } },
       rightPriceScale: { borderVisible: false },
       timeScale: { borderVisible: false, timeVisible: tf === "min" },
     });
@@ -273,7 +274,7 @@ export function StockChart({ stockCode, stockName }: { stockCode: string; stockN
                 onClick={() => setChartType(key)}
                 aria-pressed={chartType === key}
                 className={`rounded-full px-3 py-1 text-[12px] font-semibold transition ${
-                  chartType === key ? "bg-white text-sky-deep shadow-sm" : "text-muted hover:text-navy"
+                  chartType === key ? "bg-white text-navy shadow-sm" : "text-muted hover:text-navy"
                 }`}
               >
                 {label}
@@ -289,7 +290,7 @@ export function StockChart({ stockCode, stockName }: { stockCode: string; stockN
                 onClick={() => setTf(key)}
                 aria-pressed={tf === key}
                 className={`rounded-full px-3 py-1 text-[12.5px] font-semibold ${
-                  tf === key ? "brand-grad text-white" : "border border-line text-navy-soft hover:border-navy"
+                  tf === key ? "bg-navy text-white" : "border border-line text-navy-soft hover:border-navy"
                 }`}
               >
                 {label}
@@ -303,9 +304,9 @@ export function StockChart({ stockCode, stockName }: { stockCode: string; stockN
         <p className="mt-2 text-[11.5px] text-muted">* 데모용 예시 시세입니다(실데이터 아님).</p>
       ) : data ? (
         <p className="mt-2 text-[11.5px] text-muted">
-          출처: Yahoo Finance · 지연 시세
-          {updatedAt && ` · ${updatedAt.toLocaleTimeString("ko-KR")} 갱신`}
-          {!live && " · 장 마감(갱신 중지)"}
+          출처: Yahoo Finance   지연 시세
+          {updatedAt && `   ${updatedAt.toLocaleTimeString("ko-KR")} 갱신`}
+          {!live && "   장 마감(갱신 중지)"}
         </p>
       ) : null}
     </section>

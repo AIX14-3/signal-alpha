@@ -12,7 +12,7 @@ import { useAuthStore } from "@/stores/authStore";
 import { useToastStore } from "@/stores/toastStore";
 import { ReactionButton } from "./ReactionButton";
 import { ReportButton } from "./ReportButton";
-import { authorLabel, avatarGradient, avatarInitial, formatDate } from "./util";
+import { authorLabel, formatDate } from "./util";
 
 const PAGE = 20;
 
@@ -146,7 +146,7 @@ export function CommentList({
               {repliesOf(c.id).length > 0 && (
                 <ul className="mt-3.5 space-y-3.5 pl-[24px]">
                   {repliesOf(c.id).map((r) => (
-                    <li key={r.id} className="border-l-2 border-[#ede9fe] pl-3.5">
+                    <li key={r.id}>
                       <CommentItem
                         comment={r}
                         mine={!!user && r.author.member_code === user.member_code}
@@ -189,64 +189,55 @@ function CommentItem({
   onDelete: () => void;
 }) {
   const label = authorLabel(comment.author);
-  const seed = comment.author.member_code ?? label;
 
   return (
-    <div className="flex gap-2.5">
-      <div
-        className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-[11px] font-mono text-[12px] font-extrabold text-white"
-        style={{ background: avatarGradient(seed) }}
-      >
-        {avatarInitial(label)}
+    <div className="rounded-[14px] border border-line bg-surface px-4 py-3 shadow-[0_1px_2px_rgba(15,27,51,.03)]">
+      <div className="flex items-center gap-2 text-[11.5px] text-muted">
+        <span className="font-bold text-navy-soft">{label}</span>
+        <span>{formatDate(comment.created_at)}</span>
+        {isPostAuthor && (
+          <span className="rounded-[5px] bg-sky/12 px-1.5 py-px text-[9px] font-extrabold text-sky-deep">
+            작성자
+          </span>
+        )}
       </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2 text-[11.5px] text-muted">
-          <span className="font-bold text-navy-soft">{label}</span>
-          <span>{formatDate(comment.created_at)}</span>
-          {isPostAuthor && (
-            <span className="rounded-[5px] bg-sky/12 px-1.5 py-px text-[9px] font-extrabold text-sky-deep">
-              작성자
-            </span>
-          )}
-        </div>
-        <p className="mt-1 whitespace-pre-wrap text-[13.5px] leading-[1.6]">{comment.body}</p>
-        <div className="mt-1.5 flex items-center gap-3.5">
-          <ReactionButton
-            variant="inline"
-            target="comment"
-            targetId={comment.id}
-            count={comment.like_count}
-            active={comment.my_reactions.like}
-          />
-          <ReactionButton
-            variant="inline"
-            target="comment"
-            targetId={comment.id}
-            type="bookmark"
-            count={comment.bookmark_count}
-            active={comment.my_reactions.bookmark}
-          />
-          {onReply && (
-            <button
-              type="button"
-              onClick={onReply}
-              className="text-[11.5px] font-semibold text-muted hover:text-sky-deep"
-            >
-              답글
-            </button>
-          )}
-          {mine ? (
-            <button
-              type="button"
-              onClick={onDelete}
-              className="text-[11.5px] font-semibold text-muted hover:text-red"
-            >
-              삭제
-            </button>
-          ) : (
-            <ReportButton target="comment" targetId={comment.id} />
-          )}
-        </div>
+      <p className="mt-1.5 whitespace-pre-wrap text-[13.5px] leading-[1.6]">{comment.body}</p>
+      <div className="mt-2 flex items-center gap-3.5">
+        <ReactionButton
+          variant="inline"
+          target="comment"
+          targetId={comment.id}
+          count={comment.like_count}
+          active={comment.my_reactions.like}
+        />
+        <ReactionButton
+          variant="inline"
+          target="comment"
+          targetId={comment.id}
+          type="bookmark"
+          count={comment.bookmark_count}
+          active={comment.my_reactions.bookmark}
+        />
+        {onReply && (
+          <button
+            type="button"
+            onClick={onReply}
+            className="text-[11.5px] font-semibold text-muted hover:text-navy"
+          >
+            답글
+          </button>
+        )}
+        {mine ? (
+          <button
+            type="button"
+            onClick={onDelete}
+            className="text-[11.5px] font-semibold text-muted hover:text-red"
+          >
+            삭제
+          </button>
+        ) : (
+          <ReportButton target="comment" targetId={comment.id} />
+        )}
       </div>
     </div>
   );

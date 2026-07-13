@@ -74,7 +74,7 @@ export function EvidenceTimeline({ stockCode }: { stockCode: string }) {
                       (item.source_name ?? "근거")
                     )}
                   </span>
-                  <span className={`pill ${dir.tone}`} style={{ padding: "1px 8px", fontSize: 11 }}>
+                  <span className={`pill ${dir.pill}`} style={{ padding: "1px 8px", fontSize: 11 }}>
                     {dir.label}
                   </span>
                 </div>
@@ -101,7 +101,7 @@ export function EvidenceTimeline({ stockCode }: { stockCode: string }) {
           type="button"
           onClick={() => setExpanded((v) => !v)}
           aria-expanded={expanded}
-          className="mt-3 inline-flex items-center gap-1 text-[12.5px] font-semibold text-sky-deep hover:underline"
+          className="mt-3 inline-flex items-center gap-1 text-[12.5px] font-semibold text-navy hover:underline"
         >
           {expanded ? (
             <>

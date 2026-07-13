@@ -12,8 +12,8 @@ import { directionLabel, sourceLabel } from "@/lib/format";
 import { SourceIcon } from "@/components/SourceIcon";
 
 // S6 과거 유사 사례 — "이런 신호 뒤 주가가 어땠나"를 event_study_panel 실측 20일 수익률로
-// 문서형(제안서) 레이아웃에 보여준다. 값은 서술·참고용(인과·미래보장 아님). "유사"는 결정론
-// (같은 종목·소스·방향)이며, 프로덕션에서 임베딩 코사인 recall 로 교체 가능(계약 동일).
+// 문서형(제안서) 레이아웃에 보여준다. 값은 서술 참고용(인과 미래보장 아님). "유사"는 결정론
+// (같은 종목 소스 방향)이며, 프로덕션에서 임베딩 코사인 recall 로 교체 가능(계약 동일).
 
 function pctText(v: number | null | undefined): string {
   if (v == null) return "—";
@@ -22,7 +22,8 @@ function pctText(v: number | null | undefined): string {
 
 function retClass(v: number | null | undefined): string {
   if (v == null) return "text-muted";
-  return v > 0 ? "text-[#10b981]" : v < 0 ? "text-[#ef4444]" : "text-navy-soft";
+  // 한국 시장 관례 — 상승=빨강, 하락=파랑(캔들 KR_UP/KR_DOWN 과 동일).
+  return v > 0 ? "text-[#ef4444]" : v < 0 ? "text-[#3b82f6]" : "text-navy-soft";
 }
 
 export function PrecedentSection({ stockCode }: { stockCode: string }) {
@@ -49,9 +50,9 @@ export function PrecedentSection({ stockCode }: { stockCode: string }) {
       <span className="file-tab">
         <FileText size={13} /> 사례
       </span>
-      <h2 className="text-[18px] font-bold">과거 유사 사례 · 이후 {data.horizon_days}일 실측</h2>
+      <h2 className="text-[18px] font-bold">과거 유사 사례   이후 {data.horizon_days}일 실측</h2>
       <p className="mt-1 text-[12.5px] text-muted">
-        이 종목에서 같은 소스·방향의 신호가 과거에 발생한 뒤, {data.horizon_days}거래일 동안 주가가
+        이 종목에서 같은 소스 방향의 신호가 과거에 발생한 뒤, {data.horizon_days}거래일 동안 주가가
         실제로 어떻게 움직였는지 집계한 <b>참고 통계</b>입니다. 인과관계나 미래 수익을 보장하지 않습니다.
       </p>
 
@@ -81,8 +82,8 @@ export function PrecedentSection({ stockCode }: { stockCode: string }) {
       )}
 
       <p className="mt-4 border-t border-line pt-3 text-[11.5px] text-muted">
-        ※ event_study_panel 의 실측 {data.horizon_days}일 수익률 기준. <b>시장대비</b>는 코스피20
-        벤치마크를 뺀 초과수익입니다. 표본·기간 편향이 있을 수 있어 판단 보조로만 활용하세요.
+        ※ 과거 유사 사례의 실측 {data.horizon_days}일 수익률 기준. <b>시장대비</b>는 코스피20
+        벤치마크를 뺀 초과수익입니다. 표본 기간 편향이 있을 수 있어 판단 보조로만 활용하세요.
       </p>
     </section>
   );
@@ -97,7 +98,8 @@ function PrecedentGroupRow({ g }: { g: PrecedentGroup }) {
         <SourceIcon source={src} size={16} className="text-navy-soft" />
         {sourceLabel(src)}
       </span>
-      <span className={`pill ${dir.tone === "up" ? "up" : dir.tone === "down" ? "down" : "flat"}`} style={{ padding: "2px 8px", fontSize: 11.5 }}>
+      {/* 방향 배지 — 한국 관례색(dir.pill): 긍정=빨강/부정=파랑/불일치=보라/중립=회색. */}
+      <span className={`pill ${dir.pill}`} style={{ padding: "2px 8px", fontSize: 11.5 }}>
         {dir.label}
       </span>
       <span className="text-[12.5px] text-muted">과거 {g.count ?? 0}회</span>
@@ -129,7 +131,7 @@ function PrecedentExampleRow({ e }: { e: PrecedentExample }) {
         <SourceIcon source={src} size={13} /> {sourceLabel(src)}
       </span>
       <span className="text-muted">{dir.label}</span>
-      {e.title && <span className="truncate text-navy-soft">· {e.title}</span>}
+      {e.title && <span className="truncate text-navy-soft">  {e.title}</span>}
       <span className="ml-auto text-muted">
         시장대비 <b className={retClass(e.abnormal_return)}>{pctText(e.abnormal_return)}</b>
       </span>

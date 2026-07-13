@@ -16,6 +16,9 @@ import { referenceLinks } from "@/lib/sourceLinks";
 // 소스 상세 본문 — 우측 슬라이드오버(SourceDetailPanel)와 전체 페이지
 // (/report/[ticker]/[source])가 공유한다. 표현만 담당하고 데이터 로딩은 호출부 몫.
 
+// 영향도(impact_level) 코드 → 한글 표기.
+const IMPACT_LABEL: Record<string, string> = { high: "높음", medium: "보통", low: "낮음" };
+
 // 장기 출원 추이 — 연도별 출원 건수 막대 차트(외부 라이브러리 없이 CSS 막대, 테마 토큰 사용).
 function FilingTrendChart({ data }: { data: { year: number; count: number; incomplete: boolean }[] }) {
   const max = Math.max(...data.map((d) => d.count), 1);
@@ -30,7 +33,7 @@ function FilingTrendChart({ data }: { data: { year: number; count: number; incom
         <div key={d.year} className="flex flex-1 flex-col items-center justify-end gap-1">
           <div className="text-[11px] text-muted">{d.count}</div>
           {/* 아직 공개분이 다 안 들어온 연도는 실제보다 적게 잡힌다 → 값은 그대로 두고
-              반투명·점선 테두리로 "확정치 아님"을 알린다. */}
+              반투명 점선 테두리로 "확정치 아님"을 알린다. */}
           <div
             className={`w-full rounded-t bg-sky-deep${d.incomplete ? " opacity-40" : ""}`}
             style={
@@ -80,11 +83,11 @@ export function SourceDetailBody({ detail, source }: { detail: SourceDetail; sou
       {/* 판정 요약 */}
       <section className="glass p-5">
         <div className="flex flex-wrap items-center gap-2">
-          <span className={`pill ${dir.tone}`} style={{ padding: "5px 11px" }}>
+          <span className={`pill ${dir.pill}`} style={{ padding: "5px 11px" }}>
             {dir.label}
           </span>
           <span className="text-[13px] text-muted">
-            점수 {detail.score ?? "–"} · {detail.data_status ?? "—"}
+            점수 {detail.score ?? "–"}
           </span>
         </div>
         <p className="mt-3 text-[14px] text-navy-soft">{detail.summary ?? "요약이 없습니다."}</p>
@@ -167,9 +170,9 @@ export function SourceDetailBody({ detail, source }: { detail: SourceDetail; sou
                     )}
                   </div>
                   <div className="mt-1 text-[12px] text-muted">
-                    공개 {p.publication_date?.slice(0, 10) ?? "—"} · 출원{" "}
+                    공개 {p.publication_date?.slice(0, 10) ?? "—"}   출원{" "}
                     {p.application_date?.slice(0, 10) ?? "—"}
-                    {p.tech_category ? ` · ${p.tech_category}` : ""}
+                    {p.tech_category ? `   ${p.tech_category}` : ""}
                   </div>
                 </li>
               );
@@ -178,7 +181,7 @@ export function SourceDetailBody({ detail, source }: { detail: SourceDetail; sou
         </Section>
       )}
 
-      {/* HIRING 전용 — 최근 공고의 게시일·마감 상태 */}
+      {/* HIRING 전용 — 최근 공고의 게시일 마감 상태 */}
       {source === "hiring" && detail.hiring && detail.hiring.postings.length > 0 && (
         <Section
           title={`최근 채용 공고 (${detail.hiring.postings.length}건)`}
@@ -228,9 +231,9 @@ export function SourceDetailBody({ detail, source }: { detail: SourceDetail; sou
                     게시 {p.posting_date?.slice(0, 10) ?? "—"}
                     {posted ? ` (${posted})` : ""}
                     {alwaysOpen
-                      ? " · 마감일 없음"
+                      ? "   마감일 없음"
                       : p.closing_date_display
-                        ? ` · 마감 ${p.closing_date_display}`
+                        ? `   마감 ${p.closing_date_display}`
                         : ""}
                   </div>
                 </li>
@@ -255,10 +258,10 @@ export function SourceDetailBody({ detail, source }: { detail: SourceDetail; sou
                   <span>{it.title ?? "근거 문서"}</span>
                   <ExternalLink size={13} className="mt-[3px] shrink-0" aria-hidden="true" />
                 </a>
-                <div className="mt-1 text-[12px] text-muted">
-                  {it.event_date?.slice(0, 10) ?? "—"}
-                  {it.source_name ? ` · ${it.source_name}` : ""}
-                  {it.impact_level ? ` · 영향도 ${it.impact_level}` : ""}
+                <div className="mt-1 flex flex-wrap items-center gap-x-2 text-[12px] text-muted">
+                  <span>{it.event_date?.slice(0, 10) ?? "—"}</span>
+                  {it.source_name ? <span>{it.source_name}</span> : null}
+                  {it.impact_level ? <span>영향도 {IMPACT_LABEL[it.impact_level] ?? it.impact_level}</span> : null}
                 </div>
                 {it.summary && <p className="mt-1 text-[12.5px] text-navy-soft">{it.summary}</p>}
               </li>

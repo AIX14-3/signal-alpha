@@ -78,6 +78,24 @@ a {
   background: var(--color-surface-2);
   color: var(--color-navy-soft);
 }
+/* 방향 전용 pill 색 — 경고/주의(.pill.down)와 분리한다.
+   한국 관례: 긍정=빨강 / 부정=파랑. 불일치=보라, 중립=회색. */
+.pill.dir-pos {
+  background: rgba(239, 68, 68, 0.12);
+  color: var(--color-red);
+}
+.pill.dir-neg {
+  background: rgba(59, 130, 246, 0.12);
+  color: #2563eb;
+}
+.pill.dir-mixed {
+  background: rgba(139, 92, 246, 0.14);
+  color: #7c3aed;
+}
+.pill.dir-neutral {
+  background: var(--color-surface-2);
+  color: var(--color-navy-soft);
+}
 
 /* ---------- 글래스모피즘(투명 카드) + 파일 폴더탭 (리포트 재구성) ---------- */
 html {
@@ -400,13 +418,14 @@ html {
   background: inherit;
   filter: brightness(0.92);
 }
-.folder-back.up {
-  background: linear-gradient(160deg, #34d399, var(--color-green));
-}
-.folder-back.down {
+/* 폴더 색은 점수(50 기준)와 일치시킨다 — 한국 관례: 50점 이상 빨강, 50점 미만 파랑. */
+.folder-back.pos {
   background: linear-gradient(160deg, #f87171, var(--color-red));
 }
-/* 중립은 무채색 — 보라(브랜드색)를 쓰면 판정이 있는 것처럼 읽힌다. */
+.folder-back.neg {
+  background: linear-gradient(160deg, #60a5fa, #2563eb);
+}
+/* 점수가 없는 소스(수집 전 등)는 무채색 — 판정이 있는 것처럼 읽히지 않게. */
 .folder-back.flat {
   background: linear-gradient(160deg, #cbd5e1, #94a3b8);
 }

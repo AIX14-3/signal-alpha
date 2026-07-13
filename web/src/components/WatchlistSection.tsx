@@ -3,8 +3,13 @@
 import Link from "next/link";
 import { useEffect } from "react";
 import { StockLogo } from "@/components/StockLogo";
+import { useWatchlistDayChange } from "@/hooks/useWatchlistDayChange";
 import { useAuthStore } from "@/stores/authStore";
 import { useWatchlistStore } from "@/stores/watchlistStore";
+
+// 시세 등락 색은 한국 관례(상승=빨강 / 하락=파랑).
+const KR_UP = "#ef4444";
+const KR_DOWN = "#3b82f6";
 
 // 관심종목 — 대시보드 상단 가로 밴드. 로그인 시 내 워치리스트, 비로그인 시 로그인 유도(NFR-1).
 // 항목 클릭은 해당 종목 리포트 상세페이지(/report/[code])로 이동한다.
@@ -13,6 +18,7 @@ export function WatchlistSection() {
   const items = useWatchlistStore((s) => s.items);
   const loading = useWatchlistStore((s) => s.loading);
   const load = useWatchlistStore((s) => s.load);
+  const changes = useWatchlistDayChange(items);
 
   useEffect(() => {
     if (user) void load();
@@ -67,6 +73,19 @@ export function WatchlistSection() {
                 </span>
                 <span className="text-[11px] text-muted">{w.stock.stock_code}</span>
               </span>
+              {(() => {
+                const change = changes[w.stock.stock_code];
+                if (!change) return null;
+                const up = change.pct >= 0;
+                return (
+                  <span
+                    className="ml-auto shrink-0 text-[12px] font-bold"
+                    style={{ color: up ? KR_UP : KR_DOWN }}
+                  >
+                    {up ? "▲" : "▼"} {Math.abs(change.pct).toFixed(2)}%
+                  </span>
+                );
+              })()}
             </Link>
           ))}
         </div>

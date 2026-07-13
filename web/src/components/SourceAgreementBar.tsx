@@ -6,11 +6,12 @@ import { agreementLabel } from "@/lib/format";
 
 // 소스 간 일치도 — "여러 소스가 같은 방향을 가리키는가"를 방향별 개수로 구체적으로 보여준다.
 // (추상적 % 대신 "N개 소스 중 M개가 ○○ 방향" + 방향 분포 막대) → 종합 점수(방향의 세기)와 구분.
+// 색 = 한국 관례(긍정=빨강 / 부정=파랑). 혼조·중립은 무채색. 칩(cls)·게이지 바(color) 동일 기준.
 const DIRECTIONS: { key: string; label: string; cls: string; color: string }[] = [
-  { key: "positive", label: "긍정", cls: "up", color: "rgba(34,197,94,.85)" },
+  { key: "positive", label: "긍정", cls: "dir-pos", color: "rgba(239,68,68,.85)" },
   { key: "mixed", label: "혼조", cls: "flat", color: "rgba(148,163,184,.8)" },
   { key: "neutral", label: "중립", cls: "flat", color: "rgba(148,163,184,.5)" },
-  { key: "negative", label: "부정", cls: "down", color: "rgba(239,68,68,.85)" },
+  { key: "negative", label: "부정", cls: "dir-neg", color: "rgba(59,130,246,.85)" },
 ];
 
 export function SourceAgreementBar({
