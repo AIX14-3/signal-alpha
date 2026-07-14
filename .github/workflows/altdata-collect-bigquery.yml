@@ -18,9 +18,11 @@ name: AltData Collect (BigQuery)
 #   DATABASE_URL          (실적재 시 필수) dry-run 은 DB 미접속이라 불필요.
 # google-cloud-bigquery 는 정식 의존성이 아니라 `uv run --with` 로 임시 주입한다.
 
+# ⚠️ 2026-07-14 정기 스케줄 폐지 — 대상 DB(Supabase)가 폐기됐다(용량초과 read-only 잠김·
+# 팀 확인: 운영 DB는 Cloud SQL). 07-05부터 secret 비번 stale 로 연속 실패 중이기도 했다.
+# Cloud SQL 쪽 대응: 없음 — 클러스터에 BigQuery 인증 경로 없음(후속 과제).
+# workflow_dispatch 는 수동 디버그용으로 보존.
 on:
-  schedule:
-    - cron: "0 19 * * 0" # 월요일 04:00 KST (주1회)
   workflow_dispatch:
     inputs:
       dry_run:

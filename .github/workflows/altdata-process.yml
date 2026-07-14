@@ -14,9 +14,11 @@ name: AltData Process
 #       기존 구조가 대량 백로그(특허 ~15만건)를 90분에 못 비우던 문제 대응. 그래도 첫
 #       대량 백로그는 1회로 다 못 비울 수 있어 매일 반복 소화 + 필요시 동시성 상향(env)으로 처리.
 
+# ⚠️ 2026-07-14 정기 스케줄 폐지 — 대상 DB(Supabase)가 폐기됐다(용량초과 read-only 잠김·
+# 팀 확인: 운영 DB는 Cloud SQL). 07-05부터 secret 비번 stale 로 연속 실패 중이기도 했다.
+# Cloud SQL 쪽 대응: 워커 드레인 데몬(QUEUE_DRAIN_DAEMON_ENABLED)이 큐를 상시 처리.
+# workflow_dispatch 는 수동 디버그용으로 보존.
 on:
-  schedule:
-    - cron: "0 22 * * *" # 07:00 KST — altdata-collect(06:30) 30분 뒤
   workflow_dispatch:
     inputs:
       ticker:
