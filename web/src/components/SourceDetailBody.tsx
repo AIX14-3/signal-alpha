@@ -157,12 +157,26 @@ export function SourceDetailBody({ detail, source }: { detail: SourceDetail; sou
           <ul className="mt-3 space-y-3">
             {detail.patent.recent_publications.map((p, i) => {
               const since = relativeDayLabel(p.publication_date);
+              // 원문 링크(Google Patents) — 채용 공고 링크와 동일 패턴(safeHttpUrl 검증).
+              const href = safeHttpUrl(p.url);
               return (
                 <li key={p.application_no ?? i} className="border-t border-line pt-3 first:border-0 first:pt-0">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-[13.5px] font-semibold text-navy-soft">
-                      {p.title ?? p.application_no ?? "특허"}
-                    </span>
+                    {href ? (
+                      <a
+                        href={href}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1.5 text-[13.5px] font-semibold text-sky-deep hover:underline"
+                      >
+                        {p.title ?? p.application_no ?? "특허"}
+                        <ExternalLink size={13} aria-hidden="true" />
+                      </a>
+                    ) : (
+                      <span className="text-[13.5px] font-semibold text-navy-soft">
+                        {p.title ?? p.application_no ?? "특허"}
+                      </span>
+                    )}
                     {since && (
                       <span className="pill flat shrink-0" style={{ padding: "1px 8px", fontSize: 11 }}>
                         공개 {since}
@@ -235,6 +249,47 @@ export function SourceDetailBody({ detail, source }: { detail: SourceDetail; sou
                       : p.closing_date_display
                         ? `   마감 ${p.closing_date_display}`
                         : ""}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </Section>
+      )}
+
+      {/* DATALAB 전용 — 분석에 쓰인 검색 키워드(어떤 키워드가 떴는지) */}
+      {source === "datalab" && detail.datalab && detail.datalab.keywords.length > 0 && (
+        <Section
+          title={`분석에 쓰인 검색 키워드 (${detail.datalab.keywords.length}건)`}
+          hint="네이버 검색량 분석에 실제 사용된 키워드입니다. '급증'은 분석 기간 중 검색량이 튀었다는 뜻이고, 수치는 네이버 상대 검색지수(0~100)입니다."
+        >
+          <ul className="mt-3 space-y-3">
+            {detail.datalab.keywords.map((k, i) => {
+              const observed = relativeDayLabel(k.observed_date);
+              return (
+                <li key={k.keyword ?? i} className="border-t border-line pt-3 first:border-0 first:pt-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-[13.5px] font-semibold text-navy-soft">
+                      {k.keyword ?? "키워드"}
+                    </span>
+                    {k.spiked && (
+                      <span className="pill up shrink-0" style={{ padding: "1px 8px", fontSize: 11 }}>
+                        검색 급증
+                      </span>
+                    )}
+                    {k.polarity === "risk" && (
+                      <span className="pill down shrink-0" style={{ padding: "1px 8px", fontSize: 11 }}>
+                        악재성
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-1 text-[12px] text-muted">
+                    검색지수 {k.search_index != null ? Math.round(k.search_index) : "—"}
+                    {k.change_pct != null
+                      ? `   변화 ${k.change_pct > 0 ? "+" : ""}${k.change_pct.toFixed(1)}%`
+                      : ""}
+                    {k.observed_date ? `   관측 ${k.observed_date.slice(0, 10)}` : ""}
+                    {observed ? ` (${observed})` : ""}
                   </div>
                 </li>
               );

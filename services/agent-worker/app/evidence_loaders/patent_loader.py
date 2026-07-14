@@ -80,9 +80,29 @@ def _row(record: Any) -> dict[str, Any]:
         "tech_category": record["tech_category"],
         "is_new_category": bool(record["is_new_category"]),
         "source_url": record["source_url"],
+        "url": _patent_url(record),
         "llm_features": features,
         "significance": features.get("significance") if features else None,
     }
+
+
+def _patent_url(record: Any) -> str | None:
+    """특허 원문 링크. BigQuery 적재분은 extra_payload.publication_number
+    (예 ``KR-1020230012345-A``)를 갖고, Google Patents 는 하이픈 없는 공개번호를
+    경로로 받는다 → 직링크 조립. 없으면 raw_documents.source_url 폴백(특허는 현재
+    수집기가 안 채워 대개 NULL), 그것도 없으면 None(화면은 링크 없는 제목으로 렌더).
+    """
+    payload = record.get("extra_payload") if hasattr(record, "get") else None
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except json.JSONDecodeError:
+            payload = None
+    if isinstance(payload, dict):
+        publication_number = payload.get("publication_number")
+        if isinstance(publication_number, str) and publication_number.strip():
+            return f"https://patents.google.com/patent/{publication_number.replace('-', '')}"
+    return record["source_url"] or None
 
 
 def _features(record: Any) -> dict[str, Any] | None:

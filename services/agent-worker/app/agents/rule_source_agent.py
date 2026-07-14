@@ -67,6 +67,8 @@ def _to_output(result: SourceResult, prompt_ver: str) -> SourceAgentOutput:
         method_detail["patent"] = asdict(result.patent_meta)
     if result.hiring_meta is not None:
         method_detail["hiring"] = asdict(result.hiring_meta)
+    if result.datalab_meta is not None:
+        method_detail["datalab"] = asdict(result.datalab_meta)
     return SourceAgentOutput(
         source=result.source,
         stock_code=result.stock_code,

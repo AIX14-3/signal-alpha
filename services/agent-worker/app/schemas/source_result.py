@@ -50,6 +50,21 @@ class PatentMeta:
 
 
 @dataclass(frozen=True)
+class DataLabMeta:
+    """DATALAB 소스의 화면용 구조화 데이터(점수/방향에는 영향 없음, 표시 전용).
+
+    "어떤 키워드가 떴는지"를 원본 그대로 보여준다:
+      - ``keywords``: 분석 창에 실제 쓰인 키워드 목록(스파이크 우선·최신 관측 기준 상위 N건).
+        각 원소 = {keyword, keyword_group, polarity, observed_date, search_index,
+        change_pct, spiked}. ``spiked`` 는 창 내 is_spike 관측이 하나라도 있으면 True.
+    persistence 가 agent_results.method_detail.datalab 으로 실어 score_breakdown.DATALAB
+    까지 흐른다(새 컬럼/마이그 없음). HIRING 의 hiring_meta 선례와 동형.
+    """
+
+    keywords: list[dict] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class HiringMeta:
     """HIRING 소스의 화면용 구조화 데이터(점수/방향에는 영향 없음, 표시 전용).
 
@@ -98,6 +113,10 @@ class SourceResult:
     # source. score/direction 에는 영향 없음 — persistence 가 method_detail.hiring 으로
     # 실어 score_breakdown.HIRING 까지 흘린다(patent_meta 동형).
     hiring_meta: "HiringMeta | None" = None
+    # DATALAB 표시 전용 구조화 데이터(분석에 쓰인 키워드 목록). None for every other
+    # source. score/direction 에는 영향 없음 — persistence 가 method_detail.datalab 으로
+    # 실어 score_breakdown.DATALAB 까지 흘린다(hiring_meta 동형).
+    datalab_meta: "DataLabMeta | None" = None
     # LLM provenance: model name when an LLM contributed to this source's result
     # (e.g. DataLab polarity classification). None for pure-rule output. Flows to
     # agent_results.llm_model in persistence.

@@ -162,6 +162,10 @@ def _method_detail(source_result: SourceResult) -> dict[str, Any]:
     # 로만 흐른다 — 점수·방향 불변.
     if source_result.hiring_meta is not None:
         detail["hiring"] = {"postings": source_result.hiring_meta.postings}
+    # DATALAB 표시 전용 구조화 데이터(분석에 쓰인 키워드 목록). hiring 과 동일하게 JSONB
+    # 로만 흐른다 — 점수·방향 불변.
+    if source_result.datalab_meta is not None:
+        detail["datalab"] = {"keywords": source_result.datalab_meta.keywords}
     # Agent provenance — DART/REPORT lanes already persist these in method_detail
     # (dart/tasks.py), so mirror them here. Written only when the round-trip
     # carried them, keeping legacy (analyzer-direct) detail shapes unchanged.

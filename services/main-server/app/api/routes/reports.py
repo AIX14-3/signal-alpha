@@ -119,6 +119,8 @@ async def get_source_detail(
         "patent": _patent_detail(breakdown) if source == "patent" else None,
         # HIRING 은 최근 공고의 게시일·마감일을 추가 노출. 그 외 소스는 None.
         "hiring": _hiring_detail(breakdown) if source == "hiring" else None,
+        # DATALAB 은 분석에 쓰인 검색 키워드 목록을 추가 노출. 그 외 소스는 None.
+        "datalab": _datalab_detail(breakdown) if source == "datalab" else None,
         "items": items,
         "notice": NOTICE,
     }
@@ -962,6 +964,23 @@ def _hiring_detail(breakdown: dict[str, Any]) -> dict[str, Any] | None:
         return None
     postings = block.get("postings")
     return {"postings": postings if isinstance(postings, list) else []}
+
+
+def _datalab_detail(breakdown: dict[str, Any]) -> dict[str, Any] | None:
+    """score_breakdown.DATALAB.datalab(분석에 쓰인 키워드 목록)을 노출. 없으면 None.
+
+    각 원소 = {keyword, keyword_group, polarity, observed_date, search_index,
+    change_pct, spiked}. ``spiked`` 는 분석 창 내 검색 급증 관측 여부 — "어떤 키워드가
+    떴는지"의 원본 근거다. 정렬(스파이크 우선)은 워커가 이미 수행했다.
+    """
+    datalab = breakdown.get("DATALAB")
+    if not isinstance(datalab, dict):
+        return None
+    block = datalab.get("datalab")
+    if not isinstance(block, dict):
+        return None
+    keywords = block.get("keywords")
+    return {"keywords": keywords if isinstance(keywords, list) else []}
 
 
 def _prediction_rate_block(source: str, predictions: dict[str, Any]) -> dict[str, Any]:
