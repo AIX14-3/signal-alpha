@@ -21,6 +21,10 @@ web
 # --- 문서 / 플랜 (런타임 무관) ---
 docs
 **/*.md
+# 예외: LLM 프롬프트는 런타임 자산이다 — 이 예외가 없으면 이미지에서 빠져
+# SCORE_COHORT 등 LLM 경로가 FileNotFoundError 로 죽는다(2026-07-14 prod 실측,
+# LLM 플래그가 전부 off 였던 동안 잠복해 있던 결함).
+!services/agent-worker/app/prompts/*.md
 
 # --- 파이썬 캐시 / 가상환경 / 빌드 산출물 ---
 .venv
