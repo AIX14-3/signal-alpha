@@ -67,6 +67,9 @@ class NormalizedSourceResult:
     # HIRING 표시 전용 구조화 데이터(최근 공고의 게시일·마감일). None for 그 외 소스.
     # score_breakdown.HIRING 에 그대로 실린다(patent_meta 동형).
     hiring_meta: dict[str, Any] | None = None
+    # DATALAB 표시 전용 구조화 데이터(분석에 쓰인 키워드 목록). None for 그 외 소스.
+    # score_breakdown.DATALAB 에 그대로 실린다(hiring_meta 동형).
+    datalab_meta: dict[str, Any] | None = None
     # LLM 코호트 채점 경로가 method_detail 에 남긴 것(additive) — LLM 통합 판정의 입력 재료.
     # highlights = 소스별 근거 문장, llm_confidence = LLM 자기신뢰 [0, 0.85]. 결정론 경로는
     # highlights 만 채워질 수 있고 llm_confidence 는 None.
@@ -467,6 +470,7 @@ def _normalize_source_result(row: dict[str, Any]) -> NormalizedSourceResult | No
         data_age_days=_data_age_days(row.get("data_age_days")),
         patent_meta=_patent_meta_summary(detail),
         hiring_meta=_hiring_meta_summary(detail),
+        datalab_meta=_datalab_meta_summary(detail),
         highlights=_string_list(detail.get("highlights")),
         llm_confidence=(
             float(detail["llm_confidence"])
@@ -486,6 +490,12 @@ def _hiring_meta_summary(detail: dict[str, Any]) -> dict[str, Any] | None:
     """method_detail.hiring(최근 공고의 게시일·마감일)을 그대로 노출. 없으면 None."""
     hiring = detail.get("hiring")
     return dict(hiring) if isinstance(hiring, dict) else None
+
+
+def _datalab_meta_summary(detail: dict[str, Any]) -> dict[str, Any] | None:
+    """method_detail.datalab(분석에 쓰인 키워드 목록)을 그대로 노출. 없으면 None."""
+    datalab = detail.get("datalab")
+    return dict(datalab) if isinstance(datalab, dict) else None
 
 
 def _data_age_days(value: Any) -> int:
@@ -606,6 +616,7 @@ def _blend_group(
         data_age_days=max(r.data_age_days for r in group),
         patent_meta=next((r.patent_meta for r in group if r.patent_meta is not None), None),
         hiring_meta=next((r.hiring_meta for r in group if r.hiring_meta is not None), None),
+        datalab_meta=next((r.datalab_meta for r in group if r.datalab_meta is not None), None),
     )
 
 
@@ -817,6 +828,8 @@ def _score_breakdown(results: list[NormalizedSourceResult]) -> dict[str, dict[st
             **({"patent": result.patent_meta} if result.patent_meta is not None else {}),
             # HIRING 표시 전용(최근 공고의 게시일·마감일). None 이면 키 생략(그 외 소스).
             **({"hiring": result.hiring_meta} if result.hiring_meta is not None else {}),
+            # DATALAB 표시 전용(분석에 쓰인 키워드 목록). None 이면 키 생략(그 외 소스).
+            **({"datalab": result.datalab_meta} if result.datalab_meta is not None else {}),
         }
     return breakdown
 

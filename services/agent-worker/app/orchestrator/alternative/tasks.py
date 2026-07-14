@@ -50,6 +50,7 @@ from app.orchestrator.queue.task_types import (
     ENRICH_PATENT,
 )
 from app.schemas.source_result import (
+    DataLabMeta,
     EvidenceItem,
     HiringMeta,
     PatentMeta,
@@ -925,6 +926,7 @@ def _from_output(output: SourceAgentOutput) -> SourceResult:
         # persistence 가 보는 SourceResult 에서 사라져 score_breakdown 까지 못 간다.
         patent_meta=_restore_patent_meta(detail),
         hiring_meta=_restore_hiring_meta(detail),
+        datalab_meta=_restore_datalab_meta(detail),
     )
 
 
@@ -948,6 +950,15 @@ def _restore_hiring_meta(detail: dict[str, Any]) -> HiringMeta | None:
         return None
     postings = block.get("postings")
     return HiringMeta(postings=list(postings) if isinstance(postings, list) else [])
+
+
+def _restore_datalab_meta(detail: dict[str, Any]) -> DataLabMeta | None:
+    """method_detail.datalab → DataLabMeta. 없거나 모양이 다르면 None(점수 경로 무영향)."""
+    block = detail.get("datalab")
+    if not isinstance(block, dict):
+        return None
+    keywords = block.get("keywords")
+    return DataLabMeta(keywords=list(keywords) if isinstance(keywords, list) else [])
 
 
 def analysis_task_context(as_of: str) -> dict[str, Any]:

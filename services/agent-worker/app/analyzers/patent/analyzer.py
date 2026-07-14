@@ -108,6 +108,8 @@ def _patent_meta(rows: list[dict], metadata: dict) -> PatentMeta:
             "application_date": row.get("application_date"),
             "publication_date": row.get("publication_date"),
             "tech_category": row.get("tech_category"),
+            # 원문 링크(로더가 publication_number 로 조립한 Google Patents URL, 없으면 None).
+            "url": row.get("url"),
         }
         for row in rows[:_RECENT_PUBLICATIONS_LIMIT]
     ]

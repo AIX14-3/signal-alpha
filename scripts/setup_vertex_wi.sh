@@ -8,6 +8,10 @@
 # ⚠️ [2/4] 노드풀 GKE_METADATA 전환은 노드 롤링 재생성을 유발한다(풀당 수 분,
 #    서비스 순간 영향 가능). 한가한 시간대에 실행 권장.
 #
+# ⚠️ 서지 업그레이드 금지: 지역 SSD 쿼터가 205/250GB 라 서지 노드(+100GB 부트디스크)
+#    생성이 QUOTA_EXCEEDED 로 실패한다(2026-07-14 실측). maxSurge=0·maxUnavailable=1 로
+#    추가 노드 없이 한 대씩 교체한다 — 교체 중 노드 1대 분량 용량이 잠시 빠진다.
+#
 # 실행:  bash scripts/setup_vertex_wi.sh
 # 롤백(플래그만):
 #   kubectl patch secret signal-alpha-secrets -n signal-alpha --type merge \
@@ -20,13 +24,28 @@ ZONE=asia-northeast3-a
 CLUSTER=sa-gke
 GSA=vertex-llm@${PROJECT}.iam.gserviceaccount.com
 
-echo "[1/4] 클러스터 Workload Identity 풀 활성화 (노드 무영향, 수 분)"
-gcloud container clusters update "$CLUSTER" --zone "$ZONE" \
-  --workload-pool="${PROJECT}.svc.id.goog"
+echo "[1/4] 클러스터 Workload Identity 풀 활성화 (노드 무영향, 수 분 — 이미 켜져 있으면 즉시 통과)"
+CURRENT_POOL=$(gcloud container clusters describe "$CLUSTER" --zone "$ZONE" \
+  --format='value(workloadIdentityConfig.workloadPool)')
+if [ "$CURRENT_POOL" = "${PROJECT}.svc.id.goog" ]; then
+  echo "  이미 활성화됨 — skip"
+else
+  gcloud container clusters update "$CLUSTER" --zone "$ZONE" \
+    --workload-pool="${PROJECT}.svc.id.goog"
+fi
 
-echo "[2/4] 노드풀 3개 GKE_METADATA 전환 (⚠️풀별 노드 롤링 재생성)"
+echo "[2/4] 노드풀 3개 GKE_METADATA 전환 (⚠️풀별 노드 롤링 재생성·서지 없이 1대씩)"
 for POOL in default-pool small-pool private-pool; do
-  echo "  - $POOL ..."
+  MODE=$(gcloud container node-pools describe "$POOL" --cluster "$CLUSTER" --zone "$ZONE" \
+    --format='value(config.workloadMetadataConfig.mode)')
+  if [ "$MODE" = "GKE_METADATA" ]; then
+    echo "  - $POOL 이미 전환됨 — skip"
+    continue
+  fi
+  echo "  - $POOL: 서지 0 설정(SSD 쿼터 회피)"
+  gcloud container node-pools update "$POOL" --cluster "$CLUSTER" --zone "$ZONE" \
+    --max-surge-upgrade=0 --max-unavailable-upgrade=1
+  echo "  - $POOL: GKE_METADATA 롤링 (한 대씩 교체)"
   gcloud container node-pools update "$POOL" --cluster "$CLUSTER" --zone "$ZONE" \
     --workload-metadata=GKE_METADATA
 done

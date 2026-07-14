@@ -12,7 +12,7 @@ import unittest
 from app.agents import RuleSourceAgent, SourceAgentInput
 from app.orchestrator.alternative.tasks import _from_output
 from app.orchestrator.alternative_persistence import _method_detail
-from app.schemas.source_result import HiringMeta, PatentMeta, SourceResult
+from app.schemas.source_result import DataLabMeta, HiringMeta, PatentMeta, SourceResult
 
 _POSTING = {
     "job_title": "2026 계약학과 모집",
@@ -28,6 +28,16 @@ _PUBLICATION = {
     "application_date": "2023-01-05",
     "publication_date": "2024-07-10",
     "tech_category": "H01M",
+    "url": "https://patents.google.com/patent/KR1020240012345A",
+}
+_KEYWORD = {
+    "keyword": "삼성전자 주가",
+    "keyword_group": "005930_BRAND",
+    "polarity": "demand",
+    "observed_date": "2026-07-10",
+    "search_index": 87.5,
+    "change_pct": 42.1,
+    "spiked": True,
 }
 
 
@@ -67,6 +77,18 @@ def _patent_result() -> SourceResult:
     )
 
 
+def _datalab_result() -> SourceResult:
+    return SourceResult(
+        source="DATALAB",
+        stock_code="005930",
+        direction="positive",
+        score=0.3,
+        summary="검색량 증가.",
+        data_status="ok",
+        datalab_meta=DataLabMeta(keywords=[dict(_KEYWORD)]),
+    )
+
+
 class DisplayMetaRoundTripTest(unittest.IsolatedAsyncioTestCase):
     async def _round_trip(self, result: SourceResult) -> SourceResult:
         agent = RuleSourceAgent(_StubAnalyzer(result))
@@ -88,6 +110,12 @@ class DisplayMetaRoundTripTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(restored.patent_meta.recent_publications, [_PUBLICATION])
         self.assertEqual(restored.patent_meta.filing_trend, [{"year": 2024, "count": 12}])
 
+    async def test_datalab_meta_survives_agent_round_trip(self):
+        restored = await self._round_trip(_datalab_result())
+        self.assertIsNotNone(restored.datalab_meta)
+        assert restored.datalab_meta is not None
+        self.assertEqual(restored.datalab_meta.keywords, [_KEYWORD])
+
     async def test_round_trip_keeps_score_and_direction_unchanged(self):
         # 표시 전용 필드를 실어도 점수 경로는 불변이어야 한다.
         original = _patent_result()
@@ -106,6 +134,10 @@ class DisplayMetaRoundTripTest(unittest.IsolatedAsyncioTestCase):
         detail = _method_detail(patent)
         self.assertEqual(detail["patent"]["recent_publications"], [_PUBLICATION])
 
+        datalab = await self._round_trip(_datalab_result())
+        detail = _method_detail(datalab)
+        self.assertEqual(detail["datalab"], {"keywords": [_KEYWORD]})
+
     async def test_sources_without_meta_keep_method_detail_shape(self):
         # 값이 없는 소스는 키 자체가 생기지 않아야 한다(기존 계약 유지).
         plain = SourceResult(
@@ -119,9 +151,11 @@ class DisplayMetaRoundTripTest(unittest.IsolatedAsyncioTestCase):
         restored = await self._round_trip(plain)
         self.assertIsNone(restored.hiring_meta)
         self.assertIsNone(restored.patent_meta)
+        self.assertIsNone(restored.datalab_meta)
         detail = _method_detail(restored)
         self.assertNotIn("hiring", detail)
         self.assertNotIn("patent", detail)
+        self.assertNotIn("datalab", detail)
 
 
 if __name__ == "__main__":

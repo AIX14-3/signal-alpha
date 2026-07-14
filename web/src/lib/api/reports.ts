@@ -95,6 +95,7 @@ export type PatentPublication = {
   application_date: string | null; // 출원일
   publication_date: string | null; // 공개일(시장 노출 시점)
   tech_category: string | null;
+  url?: string | null; // 특허 원문 링크(Google Patents). 없으면 링크 없는 제목으로 렌더.
 };
 
 export type PatentFilingTrendPoint = {
@@ -124,6 +125,23 @@ export type HiringDetail = {
   postings: HiringPosting[];
 };
 
+// DataLab 검색 키워드 1건(표시 전용, score_breakdown.DATALAB.datalab.keywords).
+// spiked=true 는 분석 창 내 검색 급증 관측이 있었다는 뜻 — "어떤 키워드가 떴는지"의 원본.
+export type DataLabKeyword = {
+  keyword: string | null;
+  keyword_group?: string | null;
+  polarity?: string | null; // demand | risk | neutral
+  observed_date?: string | null; // 최신 관측일
+  search_index?: number | null; // 최신 검색지수(네이버 상대값 0~100)
+  change_pct?: number | null; // 전기간 대비 변화율
+  spiked?: boolean | null;
+};
+
+// DataLab 표시 전용 구조화 데이터(score_breakdown.DATALAB.datalab). DATALAB 소스에만 존재.
+export type DataLabDetail = {
+  keywords: DataLabKeyword[];
+};
+
 export type SourceDetail = {
   stock: { stock_code: string; stock_name: string | null };
   source: SourceKey;
@@ -136,6 +154,7 @@ export type SourceDetail = {
   valuation?: ReportValuation | null;
   patent?: PatentDetail | null;
   hiring?: HiringDetail | null;
+  datalab?: DataLabDetail | null;
   items: SourceDetailItem[];
   notice: string;
 };

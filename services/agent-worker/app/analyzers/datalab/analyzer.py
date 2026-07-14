@@ -13,7 +13,11 @@ from app.analyzers.datalab.attention import compute_attention_spike
 from app.analyzers.datalab.indicators import compute_indicators
 from app.analyzers.datalab.rules import evaluate_indicators
 from app.schemas.evidence import RawEvidence
-from app.schemas.source_result import EvidenceItem, SourceResult
+from app.schemas.source_result import DataLabMeta, EvidenceItem, SourceResult
+
+# 화면 표시용 키워드 상한 — 원본(어떤 키워드가 떴는지)을 보여주는 목적이라
+# 스파이크 우선으로 추린 뒤 이 수까지만 싣는다(점수/방향 무영향).
+_KEYWORD_DISPLAY_LIMIT = 20
 
 
 class DataLabAnalyzer:
@@ -121,7 +125,47 @@ class DataLabAnalyzer:
             attention_note=attention.evidence_text if (attention and attention.risk_flag) else None,
             expected_fwd_vol_mult=attention.expected_fwd_vol_mult if attention else None,
             expected_fwd_volume_mult=attention.expected_fwd_volume_mult if attention else None,
+            datalab_meta=_datalab_meta(rows),
         )
+
+
+def _datalab_meta(rows: list[dict]) -> DataLabMeta:
+    """화면용 키워드 목록 조립(표시 전용 — 점수/방향 무영향).
+
+    rows 는 (키워드 × 관측일) 단위라 키워드별로 접는다: 최신 관측 1행을 대표로 삼고,
+    창 내 is_spike 가 한 번이라도 있으면 ``spiked=True``. 정렬은 스파이크 우선 →
+    최신 검색지수 내림차순(사용자가 "뜬 키워드"를 먼저 보게).
+    rows 는 로더가 최신 관측일 순으로 실어주므로 첫 등장 행이 곧 최신 관측이다.
+    """
+    latest_by_keyword: dict[str, dict] = {}
+    spiked: set[str] = set()
+    for row in rows:
+        keyword = row.get("keyword")
+        if not keyword:
+            continue
+        if keyword not in latest_by_keyword:
+            latest_by_keyword[keyword] = row
+        if row.get("is_spike"):
+            spiked.add(keyword)
+    entries = [
+        {
+            "keyword": keyword,
+            "keyword_group": row.get("keyword_group"),
+            "polarity": row.get("polarity"),
+            "observed_date": row.get("observed_date"),
+            "search_index": row.get("search_index"),
+            "change_pct": row.get("change_pct"),
+            "spiked": keyword in spiked,
+        }
+        for keyword, row in latest_by_keyword.items()
+    ]
+    entries.sort(
+        key=lambda e: (
+            not e["spiked"],
+            -(e["search_index"] if isinstance(e["search_index"], (int, float)) else 0.0),
+        )
+    )
+    return DataLabMeta(keywords=entries[:_KEYWORD_DISPLAY_LIMIT])
 
 
 def _attention(metadata: dict, as_of: date, config: DataLabRuleConfig):
