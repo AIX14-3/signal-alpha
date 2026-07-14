@@ -12,9 +12,11 @@ name: AltData Collect (BigQuery daily)
 # ⚠️ 필요한 리포 Secrets: GCP_SA_KEY(미등록 시 auth 실패·continue-on-error 격리),
 #   GOOGLE_CLOUD_PROJECT, DATABASE_URL(실적재 시). 상세는 주간 워크플로 주석 참조.
 
+# ⚠️ 2026-07-14 정기 스케줄 폐지 — 대상 DB(Supabase)가 폐기됐다(용량초과 read-only 잠김·
+# 팀 확인: 운영 DB는 Cloud SQL). 07-05부터 secret 비번 stale 로 연속 실패 중이기도 했다.
+# Cloud SQL 쪽 대응: 없음 — 클러스터에 BigQuery 인증 경로 없음(후속 과제).
+# workflow_dispatch 는 수동 디버그용으로 보존.
 on:
-  schedule:
-    - cron: "30 20 * * *" # 매일 05:30 KST (KIPRIS 06:30 · process 07:00 이전)
   workflow_dispatch:
     inputs:
       dry_run:

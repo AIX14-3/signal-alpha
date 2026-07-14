@@ -14,9 +14,11 @@ name: AltData Collect
 # (특허 BigQuery 백필은 별도 워크플로 altdata-collect-bigquery.yml(주1회·GCP_SA_KEY 인증)이
 #  담당하며 이 워크플로와 무관 — 여기선 GOOGLE_CLOUD_PROJECT 불필요)
 
+# ⚠️ 2026-07-14 정기 스케줄 폐지 — 대상 DB(Supabase)가 폐기됐다(용량초과 read-only 잠김·
+# 팀 확인: 운영 DB는 Cloud SQL). 07-05부터 secret 비번 stale 로 연속 실패 중이기도 했다.
+# Cloud SQL 쪽 대응: GKE CronJob `altdata-collect`(deploy/k8s, 04:30 KST 동일 작업).
+# workflow_dispatch 는 수동 디버그용으로 보존.
 on:
-  schedule:
-    - cron: "30 21 * * *" # 06:30 KST — datalab-daily 06:00 키워드 생성 직후
   workflow_dispatch:
     inputs:
       ticker:
