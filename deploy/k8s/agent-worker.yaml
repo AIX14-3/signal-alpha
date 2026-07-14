@@ -55,16 +55,13 @@ spec:
         app.kubernetes.io/name: agent-worker
     spec:
       terminationGracePeriodSeconds: 60   # SIGTERM→lifespan finally(데몬 cancel→pool.close)
+      # Vertex ADC = Workload Identity(KSA vertex-llm → GSA vertex-llm). SA 키는 org 정책
+      # (iam.disableServiceAccountKeyCreation)이 발급을 금지해 불가. LLM 채점이 사용.
+      serviceAccountName: vertex-llm
       volumes:
         - name: report-storage
           persistentVolumeClaim:
             claimName: agent-worker-reports
-        # Vertex ADC — 노드 SA 에 cloud-platform 스코프가 없어 SA 키 파일로 인증.
-        # Argo 미추적 수동 Secret. 없어도 파드는 뜨되 Vertex 호출만 실패(optional).
-        - name: vertex-sa-key
-          secret:
-            secretName: vertex-sa-key
-            optional: true
       containers:
         - name: agent-worker
           image: signal-alpha-agent-worker
@@ -82,9 +79,6 @@ spec:
             # BACKEND_DATABASE_URL 는 envFrom 으로 주입됨(발행 대상).
             - name: QUEUE_DRAIN_DAEMON_ENABLED
               value: "true"
-            # Vertex ADC(SA 키 파일). LLM 채점(LLM_SCORING_*, Secret 토글)이 사용.
-            - name: GOOGLE_APPLICATION_CREDENTIALS
-              value: /var/secrets/vertex/key.json
             - name: PRICE_COLLECTOR_ENABLED
               value: "false"
           readinessProbe:                          # 트래픽 수용 가능성 = DB 도달성
@@ -99,9 +93,6 @@ spec:
           volumeMounts:
             - name: report-storage
               mountPath: /data/report-storage   # REPORT_LOCAL_STORAGE_DIR 와 일치
-            - name: vertex-sa-key
-              mountPath: /var/secrets/vertex
-              readOnly: true
           resources:
             requests: { cpu: "100m", memory: "256Mi" }
             limits: { cpu: "1", memory: "1Gi" }

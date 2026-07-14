@@ -29,6 +29,9 @@ spec:
             app.kubernetes.io/name: datalab-keywords
         spec:
           restartPolicy: Never
+          # Vertex ADC = Workload Identity(KSA vertex-llm → GSA vertex-llm). SA 키는
+          # org 정책(iam.disableServiceAccountKeyCreation)이 발급을 금지해 불가.
+          serviceAccountName: vertex-llm
           containers:
             - name: datalab-keywords
               image: signal-alpha-agent-worker
@@ -42,19 +45,5 @@ spec:
                 - name: DATABASE_URL          # 수집 DB (키워드 테이블)
                   valueFrom: { secretKeyRef: { name: signal-alpha-secrets, key: WORKER_DATABASE_URL } }
                 # 키워드 생성 LLM 은 Vertex 경로 — AI Studio 크레딧 고갈(429)과 분리.
-                # 노드 SA 에 cloud-platform 스코프가 없어 metadata ADC 불가 → SA 키 파일로 인증.
                 - name: KEYWORD_LLM_PROVIDER
                   value: "vertex"
-                - name: GOOGLE_APPLICATION_CREDENTIALS
-                  value: /var/secrets/vertex/key.json
-              volumeMounts:
-                - name: vertex-sa-key
-                  mountPath: /var/secrets/vertex
-                  readOnly: true
-          volumes:
-            # Argo 미추적 수동 Secret(signal-alpha-secrets 관례와 동일). 없어도 파드는 뜨되
-            # LLM 호출만 실패한다(optional) — 키 설치 전 배포를 막지 않기 위함.
-            - name: vertex-sa-key
-              secret:
-                secretName: vertex-sa-key
-                optional: true
